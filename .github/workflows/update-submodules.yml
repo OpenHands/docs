@@ -1,4 +1,4 @@
-name: Update Submodules
+name: Update Submodule
 
 on:
   # Allow manual triggering
@@ -6,14 +6,14 @@ on:
   
   # Trigger via repository dispatch from source repos
   repository_dispatch:
-    types: [docs-updated]
+    types: [update]
   
-  # Schedule to check for updates daily
+  # Schedule to check for updates daily (for repos we don't control)
   schedule:
     - cron: '0 6 * * *'  # Daily at 6 AM UTC
 
 jobs:
-  update-submodules:
+  update:
     runs-on: ubuntu-latest
     
     steps:
@@ -23,13 +23,28 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           submodules: recursive
       
-      - name: Update submodules
+      - name: Update specific submodule
+        if: github.event.client_payload.module
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git submodule update --init --recursive --checkout -f --remote -- "${{ github.event.client_payload.module }}"
+          git config --global user.name "GitHub Action"
+          git config --global user.email "noreply@github.com"
           
-          # Update all submodules to latest commits
+          # Check if there are any changes
+          if git diff --quiet --exit-code; then
+            echo "No submodule updates available for ${{ github.event.client_payload.module }}"
+            exit 0
+          fi
+          
+          git commit -am "deploy: ${{ github.event.client_payload.module }} - ${{ github.event.client_payload.sha }}"
+          git push
+      
+      - name: Update all submodules (scheduled run)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
           git submodule update --remote --recursive
+          git config --global user.name "GitHub Action"
+          git config --global user.email "noreply@github.com"
           
           # Check if there are any changes
           if git diff --quiet --exit-code; then
@@ -37,16 +52,5 @@ jobs:
             exit 0
           fi
           
-          # Commit and push changes
-          git add .
-          git commit -m "chore: update submodules to latest versions
-          
-          Co-authored-by: openhands <openhands@all-hands.dev>"
+          git commit -am "chore: update all submodules to latest versions"
           git push
-      
-      - name: Create summary
-        run: |
-          echo "## Submodule Update Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Updated submodules:" >> $GITHUB_STEP_SUMMARY
-          git submodule foreach 'echo "- $name: $(git log --oneline -1)"' >> $GITHUB_STEP_SUMMARY

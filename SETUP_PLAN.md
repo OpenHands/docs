@@ -34,15 +34,14 @@ All-Hands-AI/docs (main documentation repo)
    - Added setup and maintenance documentation
 
 4. **Automation Workflows (Docs Repo)**
-   - `update-submodules.yml`: Updates submodules automatically
-   - `trigger-update.yml`: Handles repository dispatch events
-   - Scheduled daily checks for updates
+   - `update-submodules.yml`: Updates specific submodules via repository dispatch or all submodules on schedule
+   - Handles both targeted updates (from source repos) and scheduled bulk updates
    - Manual trigger capability
 
 ### 🔄 Next Steps
 
 1. **Add Trigger Workflow to OpenHands Repo**
-   - Copy `openhands-workflow-trigger.yml` to `OpenHands/.github/workflows/trigger-docs-update.yml`
+   - Copy `dispatch-to-docs.yml` to `OpenHands/.github/workflows/dispatch-to-docs.yml`
    - This will trigger docs repo updates when OpenHands docs change
 
 2. **Configure Mintlify Deployment**
@@ -61,10 +60,10 @@ All-Hands-AI/docs (main documentation repo)
 
 1. **Developer makes changes to OpenHands/docs/**
 2. **Changes are pushed/merged to main branch**
-3. **OpenHands trigger workflow runs** (`trigger-docs-update.yml`)
-4. **Docs repo receives repository dispatch event**
+3. **OpenHands dispatch workflow runs** (`dispatch-to-docs.yml`)
+4. **Docs repo receives repository dispatch event with module info**
 5. **Docs repo update workflow runs** (`update-submodules.yml`)
-6. **Submodules are updated to latest commits**
+6. **Specific submodule (openhands-repo) is updated to latest commit**
 7. **Changes are committed and pushed to docs repo**
 8. **Mintlify automatically rebuilds and deploys the site**
 
