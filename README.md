@@ -4,16 +4,10 @@ This repository aggregates documentation from multiple All Hands AI repositories
 
 ## Structure
 
-- `openhands-repo/` - Git submodule linking to the OpenHands repository
-- `docs.json` - Mintlify configuration file that references `openhands-repo/docs/`
+- `openhands/` - Git submodule linking to the OpenHands repository
+- `agent-sdk/` - Git submodule linking to the agent-sdk repository
+- `docs.json` - Mintlify configuration file that references docs in these repos
 - `.github/workflows/` - GitHub Actions for automatic submodule updates
-
-## Git Submodules
-
-This repository uses Git submodules to link documentation from source repositories:
-
-- **OpenHands**: `openhands-repo/` submodule points to `All-Hands-AI/OpenHands`
-  - Documentation is accessed via `openhands-repo/docs/`
 
 ## Adding New Documentation Sources
 
@@ -53,11 +47,12 @@ git commit -m "Update submodules to latest versions"
 To run the documentation site locally:
 
 ```bash
-# Install Mintlify CLI
-npm i -g @mintlify/cli
+npm install -g mint
+# or
+yarn global add mint
 
-# Start the development server
-mintlify dev
+# Preview local changes
+mint dev
 ```
 
 ## Deployment
