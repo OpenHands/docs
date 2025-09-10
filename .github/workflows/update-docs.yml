@@ -87,6 +87,7 @@ jobs:
           tmpdir="$(mktemp -d)"
           echo "Using temp dir: $tmpdir"
 
+          # Authenticated clone for private repos
           auth_repo="$REPO"
           if [[ "$auth_repo" == https://github.com/* && -n "${TOKEN:-}" ]]; then
             auth_repo="${auth_repo/https:\/\/github.com/https:\/\/x-access-token:${TOKEN}@github.com}"
@@ -103,22 +104,34 @@ jobs:
             exit 1
           fi
 
+          # Create the split branch containing only SUBDIR history
           git subtree split --prefix="$SUBDIR" -b subtree-split
           popd >/dev/null
 
+          # Wire temp repo as a local remote
           if git remote get-url upstream-temp >/dev/null 2>&1; then
             git remote remove upstream-temp
           fi
           git remote add upstream-temp "file://$tmpdir/src"
 
-          if [[ -d "$DEST_PREFIX" && -n "$(ls -A "$DEST_PREFIX" 2>/dev/null || true)" ]]; then
+          # Decide add vs pull based on whether DEST_PREFIX exists in HEAD
+          prefix_in_head=false
+          if git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+            if git ls-tree -d --name-only HEAD "$DEST_PREFIX" | grep -qx "$DEST_PREFIX"; then
+              prefix_in_head=true
+            fi
+          fi
+
+          if [[ "$prefix_in_head" == true ]]; then
             echo "Updating existing subtree at $DEST_PREFIX"
             git subtree pull --prefix="$DEST_PREFIX" upstream-temp subtree-split --squash
           else
             echo "Adding new subtree at $DEST_PREFIX"
-            mkdir -p "$DEST_PREFIX"
-            git add -A "$DEST_PREFIX"
-            git commit -m "chore(subtree): prepare $DEST_PREFIX" || true
+            # Ensure no conflicting path exists in the working tree
+            if [[ -e "$DEST_PREFIX" ]]; then
+              echo "Removing conflicting untracked path: $DEST_PREFIX"
+              rm -rf "$DEST_PREFIX"
+            fi
             git subtree add --prefix="$DEST_PREFIX" upstream-temp subtree-split --squash
           fi
 
