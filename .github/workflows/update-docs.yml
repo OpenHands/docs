@@ -36,115 +36,113 @@ jobs:
         run: |
           set -euo pipefail
           EVENT="${{ github.event_name }}"
-
           SUBDIR="docs"
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             MODULE="${{ inputs.module }}"
             BRANCH="${{ inputs.branch || 'main' }}"
             REF="${{ inputs.ref || '' }}"
           else
+            # repository_dispatch payload expected:
+            # { "ref": "...", "sha": "...", "module": "agent-sdk", "branch": "main" }
             MODULE="${{ github.event.client_payload.module }}"
             BRANCH="${{ github.event.client_payload.branch || 'main' }}"
             REF="${{ github.event.client_payload.ref || '' }}"
           fi
 
           if [[ -z "${MODULE}" ]]; then
-            echo "ERROR: client_payload.module (or inputs.module) is required." >&2
+            echo "ERROR: module is required (inputs.module or client_payload.module)" >&2
             exit 1
           fi
 
           OWNER="${{ github.repository_owner }}"
-          REPO="https://github.com/${OWNER}/${MODULE}.git"
+          SRC_REPO_URL="https://github.com/${OWNER}/${MODULE}.git"
 
-          if [[ -z "${REF}" ]]; then
-            REF="${BRANCH}"
-          fi
+          # Use REF if provided; else fall back to branch
+          [[ -z "${REF}" ]] && REF="${BRANCH}"
 
-          DEST_PREFIX="${MODULE}"
-
-          echo "REPO=$REPO"           >> "$GITHUB_OUTPUT"
-          echo "REF=$REF"             >> "$GITHUB_OUTPUT"
-          echo "SUBDIR=$SUBDIR"       >> "$GITHUB_OUTPUT"
-          echo "DEST_PREFIX=$DEST_PREFIX" >> "$GITHUB_OUTPUT"
-          echo "MODULE=$MODULE"       >> "$GITHUB_OUTPUT"
+          DEST_PREFIX="${MODULE,,}"  # lowercase module name as dest prefix
+          echo "SRC_REPO_URL=$SRC_REPO_URL"   >> "$GITHUB_OUTPUT"
+          echo "REF=$REF"                     >> "$GITHUB_OUTPUT"
+          echo "SUBDIR=$SUBDIR"               >> "$GITHUB_OUTPUT"
+          echo "DEST_PREFIX=$DEST_PREFIX"     >> "$GITHUB_OUTPUT"
+          echo "MODULE=$MODULE"               >> "$GITHUB_OUTPUT"
 
       - name: Configure Git author
         run: |
           git config user.name "all-hands-bot"
           git config user.email "contact@all-hands.dev"
 
-      - name: Vendor ${{ steps.cfg.outputs.SUBDIR }} into ${{ steps.cfg.outputs.DEST_PREFIX }} (git subtree)
+      - name: Fetch only ${{ steps.cfg.outputs.SUBDIR }} via sparse-checkout
         env:
-          REPO: ${{ steps.cfg.outputs.REPO }}
+          SRC_REPO_URL: ${{ steps.cfg.outputs.SRC_REPO_URL }}
           REF: ${{ steps.cfg.outputs.REF }}
           SUBDIR: ${{ steps.cfg.outputs.SUBDIR }}
-          DEST_PREFIX: ${{ steps.cfg.outputs.DEST_PREFIX }}
           TOKEN: ${{ env.TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-
           tmpdir="$(mktemp -d)"
           echo "Using temp dir: $tmpdir"
 
-          # Authenticated clone for private repos
-          auth_repo="$REPO"
-          if [[ "$auth_repo" == https://github.com/* && -n "${TOKEN:-}" ]]; then
-            auth_repo="${auth_repo/https:\/\/github.com/https:\/\/x-access-token:${TOKEN}@github.com}"
+          # Authenticated URL for private repos
+          auth_url="$SRC_REPO_URL"
+          if [[ "$auth_url" == https://github.com/* && -n "${TOKEN:-}" ]]; then
+            auth_url="${auth_url/https:\/\/github.com/https:\/\/x-access-token:${TOKEN}@github.com}"
           fi
 
-          git clone --no-tags --filter=blob:none "$auth_repo" "$tmpdir/src"
-          pushd "$tmpdir/src" >/dev/null
+          # Init + sparse-checkout only SUBDIR
+          git -C "$tmpdir" init -q src
+          git -C "$tmpdir/src" remote add origin "$auth_url"
+          git -C "$tmpdir/src" config core.sparseCheckout true
+          git -C "$tmpdir/src" sparse-checkout init --cone
+          git -C "$tmpdir/src" sparse-checkout set "$SUBDIR"
+          git -C "$tmpdir/src" fetch --depth=1 origin "$REF"
+          git -C "$tmpdir/src" checkout -q FETCH_HEAD
 
-          git fetch --no-tags --quiet origin "$REF"
-          git checkout --quiet FETCH_HEAD
-
-          if [[ ! -d "$SUBDIR" ]]; then
-            echo "ERROR: '$SUBDIR' does not exist in $REPO at ref $REF" >&2
+          if [[ ! -d "$tmpdir/src/$SUBDIR" ]]; then
+            echo "ERROR: '$SUBDIR' not found at $SRC_REPO_URL@$REF" >&2
             exit 1
           fi
 
-          # Create the split branch containing only SUBDIR history
-          git subtree split --prefix="$SUBDIR" -b subtree-split
-          popd >/dev/null
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
 
-          # Wire temp repo as a local remote
-          if git remote get-url upstream-temp >/dev/null 2>&1; then
-            git remote remove upstream-temp
-          fi
-          git remote add upstream-temp "file://$tmpdir/src"
+      - name: Sync into repo root at ${{ steps.cfg.outputs.DEST_PREFIX }} (flatten docs/ -> module/)
+        env:
+          TMPDIR: ${{ env.TMPDIR }}
+          SUBDIR: ${{ steps.cfg.outputs.SUBDIR }}
+          DEST_PREFIX: ${{ steps.cfg.outputs.DEST_PREFIX }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEST_PREFIX"
 
-          # Decide add vs pull based on whether DEST_PREFIX exists in HEAD
-          prefix_in_head=false
-          if git rev-parse -q --verify HEAD >/dev/null 2>&1; then
-            if git ls-tree -d --name-only HEAD "$DEST_PREFIX" | grep -qx "$DEST_PREFIX"; then
-              prefix_in_head=true
-            fi
+          # Mirror (add/update/delete) files from SUBDIR/* into DEST_PREFIX/
+          # Exclude VCS bits and common CI folders from upstream to avoid noise
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.gitignore' \
+            "$TMPDIR/src/$SUBDIR/" "$DEST_PREFIX/"
+
+          # Optional: ensure a folder exists in git if upstream docs is empty
+          if [ -z "$(ls -A "$DEST_PREFIX")" ]; then
+            touch "$DEST_PREFIX/.gitkeep"
           fi
 
-          if [[ "$prefix_in_head" == true ]]; then
-            echo "Updating existing subtree at $DEST_PREFIX"
-            git subtree pull --prefix="$DEST_PREFIX" upstream-temp subtree-split --squash
-          else
-            echo "Adding new subtree at $DEST_PREFIX"
-            # Ensure no conflicting path exists in the working tree
-            if [[ -e "$DEST_PREFIX" ]]; then
-              echo "Removing conflicting untracked path: $DEST_PREFIX"
-              rm -rf "$DEST_PREFIX"
-            fi
-            git subtree add --prefix="$DEST_PREFIX" upstream-temp subtree-split --squash
-          fi
+          # Stage changes for commit
+          git add -A "$DEST_PREFIX"
 
       - name: Commit and push if changed
         env:
           MODULE: ${{ steps.cfg.outputs.MODULE }}
+        shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet && git diff --cached --quiet; then
+          if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
           SRC_SHA="${{ github.event.client_payload.sha || '' }}"
-          MSG="update: ${MODULE} ${{ github.event.client_payload.ref || inputs.ref || '' }} ${SRC_SHA}"
-          git commit -am "$MSG"
+          REF_STR="${{ github.event.client_payload.ref || inputs.ref || inputs.branch || '' }}"
+          git commit -m "vendor(copy): ${MODULE} ${REF_STR} ${SRC_SHA}"
           git push
