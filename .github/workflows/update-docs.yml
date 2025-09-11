@@ -15,6 +15,13 @@ on:
       ref:
         description: "Specific ref (SHA/tag/branch). Overrides branch if provided."
         required: false
+      source_folder:
+        description: "Folder in source repo to copy"
+        required: false
+        default: "docs"
+      dest_prefix:
+        description: "Destination folder name in this repo"
+        required: false
 
 permissions:
   contents: write
@@ -36,17 +43,21 @@ jobs:
         run: |
           set -euo pipefail
           EVENT="${{ github.event_name }}"
-          SUBDIR="docs"
+
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
             MODULE="${{ inputs.module }}"
             BRANCH="${{ inputs.branch || 'main' }}"
             REF="${{ inputs.ref || '' }}"
+            SOURCE_FOLDER="${{ inputs.source_folder || 'docs' }}"
+            DEST_PREFIX_IN="${{ inputs.dest_prefix || '' }}"
           else
             # repository_dispatch payload expected:
-            # { "ref": "...", "sha": "...", "module": "agent-sdk", "branch": "main" }
+            # { "ref": "...", "sha": "...", "module": "agent-sdk", "branch": "main", "source_folder": "docs", "dest_prefix": "agent-sdk" }
             MODULE="${{ github.event.client_payload.module }}"
             BRANCH="${{ github.event.client_payload.branch || 'main' }}"
             REF="${{ github.event.client_payload.ref || '' }}"
+            SOURCE_FOLDER="${{ github.event.client_payload.source_folder || 'docs' }}"
+            DEST_PREFIX_IN="${{ github.event.client_payload.dest_prefix || '' }}"
           fi
 
           if [[ -z "${MODULE}" ]]; then
@@ -60,10 +71,22 @@ jobs:
           # Use REF if provided; else fall back to branch
           [[ -z "${REF}" ]] && REF="${BRANCH}"
 
-          DEST_PREFIX="${MODULE,,}"  # lowercase module name as dest prefix
+          # Determine destination prefix
+          if [[ -n "${DEST_PREFIX_IN}" ]]; then
+            DEST_PREFIX="${DEST_PREFIX_IN}"
+          else
+            DEST_PREFIX="${MODULE,,}"
+          fi
+
+          echo "Resolved:"
+          echo "  MODULE=${MODULE}"
+          echo "  SOURCE_FOLDER=${SOURCE_FOLDER}"
+          echo "  DEST_PREFIX=${DEST_PREFIX}"
+          echo "  REF=${REF}"
+
           echo "SRC_REPO_URL=$SRC_REPO_URL"   >> "$GITHUB_OUTPUT"
           echo "REF=$REF"                     >> "$GITHUB_OUTPUT"
-          echo "SUBDIR=$SUBDIR"               >> "$GITHUB_OUTPUT"
+          echo "SOURCE_FOLDER=$SOURCE_FOLDER" >> "$GITHUB_OUTPUT"
           echo "DEST_PREFIX=$DEST_PREFIX"     >> "$GITHUB_OUTPUT"
           echo "MODULE=$MODULE"               >> "$GITHUB_OUTPUT"
 
@@ -72,11 +95,11 @@ jobs:
           git config user.name "all-hands-bot"
           git config user.email "contact@all-hands.dev"
 
-      - name: Fetch only ${{ steps.cfg.outputs.SUBDIR }} via sparse-checkout
+      - name: Fetch only ${{ steps.cfg.outputs.SOURCE_FOLDER }} via sparse-checkout
         env:
           SRC_REPO_URL: ${{ steps.cfg.outputs.SRC_REPO_URL }}
           REF: ${{ steps.cfg.outputs.REF }}
-          SUBDIR: ${{ steps.cfg.outputs.SUBDIR }}
+          SOURCE_FOLDER: ${{ steps.cfg.outputs.SOURCE_FOLDER }}
           TOKEN: ${{ env.TOKEN }}
         shell: bash
         run: |
@@ -90,39 +113,39 @@ jobs:
             auth_url="${auth_url/https:\/\/github.com/https:\/\/x-access-token:${TOKEN}@github.com}"
           fi
 
-          # Init + sparse-checkout only SUBDIR
+          # Init + sparse-checkout only SOURCE_FOLDER
           git -C "$tmpdir" init -q src
           git -C "$tmpdir/src" remote add origin "$auth_url"
           git -C "$tmpdir/src" config core.sparseCheckout true
           git -C "$tmpdir/src" sparse-checkout init --cone
-          git -C "$tmpdir/src" sparse-checkout set "$SUBDIR"
+          git -C "$tmpdir/src" sparse-checkout set "$SOURCE_FOLDER"
           git -C "$tmpdir/src" fetch --depth=1 origin "$REF"
           git -C "$tmpdir/src" checkout -q FETCH_HEAD
 
-          if [[ ! -d "$tmpdir/src/$SUBDIR" ]]; then
-            echo "ERROR: '$SUBDIR' not found at $SRC_REPO_URL@$REF" >&2
+          if [[ ! -d "$tmpdir/src/$SOURCE_FOLDER" ]]; then
+            echo "ERROR: '$SOURCE_FOLDER' not found at $SRC_REPO_URL@$REF" >&2
             exit 1
           fi
 
           echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
 
-      - name: Sync into repo root at ${{ steps.cfg.outputs.DEST_PREFIX }} (flatten docs/ -> module/)
+      - name: Sync into repo root at ${{ steps.cfg.outputs.DEST_PREFIX }}
         env:
           TMPDIR: ${{ env.TMPDIR }}
-          SUBDIR: ${{ steps.cfg.outputs.SUBDIR }}
+          SOURCE_FOLDER: ${{ steps.cfg.outputs.SOURCE_FOLDER }}
           DEST_PREFIX: ${{ steps.cfg.outputs.DEST_PREFIX }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$DEST_PREFIX"
 
-          # Mirror (add/update/delete) files from SUBDIR/* into DEST_PREFIX/
+          # Mirror (add/update/delete) files from SOURCE_FOLDER/* into DEST_PREFIX/
           # Exclude VCS bits and common CI folders from upstream to avoid noise
           rsync -a --delete \
             --exclude='.git/' \
             --exclude='.github/' \
             --exclude='.gitignore' \
-            "$TMPDIR/src/$SUBDIR/" "$DEST_PREFIX/"
+            "$TMPDIR/src/$SOURCE_FOLDER/" "$DEST_PREFIX/"
 
           # Optional: ensure a folder exists in git if upstream docs is empty
           if [ -z "$(ls -A "$DEST_PREFIX")" ]; then
@@ -142,6 +165,10 @@ jobs:
             echo "No changes to commit."
             exit 0
           fi
+          SRC_SHA="${{ github.event.client_payload.sha || '' }}"
+          REF_STR="${{ github.event.client_payload.ref || inputs.ref || inputs.branch || '' }}"
+          git commit -m "vendor(copy): ${MODULE} ${REF_STR} ${SRC_SHA}"
+          git push
           SRC_SHA="${{ github.event.client_payload.sha || '' }}"
           REF_STR="${{ github.event.client_payload.ref || inputs.ref || inputs.branch || '' }}"
           git commit -m "vendor(copy): ${MODULE} ${REF_STR} ${SRC_SHA}"
