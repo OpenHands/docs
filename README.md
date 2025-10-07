@@ -4,9 +4,10 @@ This repository aggregates documentation from multiple All Hands AI repositories
 
 ## Structure
 
-- `docs.json` - Mintlify configuration file that references docs in these repos
-- `.github/workflows/` - GitHub Actions for automatic `docs` updates
-- `docs/` Folders synced from other repos, e.g., `openhands/`, `agent-sdk/`
+- `docs.json` - Mintlify configuration file that references docs in these repos.
+- `openhands/` - Main OpenHands docs.
+- `sdk` - Agent SDK docs.
+- `success-stories/` - Success stories docs.
 
 ## Adding New Documentation Sources
 
@@ -14,8 +15,6 @@ To add documentation from a new repository:
 
 1. Add workflow [like this](https://github.com/All-Hands-AI/agent-sdk/blob/main/.github/workflows/deploy-docs.yml) to the new repo.
 2. Update `docs.json` to include navigation for the new content (e.g., `new-repo/docs/`)
-3. Commit the changes and manually trigger the [update-docs workflow](.github/workflows/update-docs.yml)
-
 
 ## Local Development
 
