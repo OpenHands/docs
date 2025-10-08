@@ -1,0 +1,367 @@
+---
+title: Architecture Overview
+description: Understanding the OpenHands Agent SDK architecture and core design principles
+---
+
+# Architecture Overview
+
+The OpenHands Agent SDK is built on a modern, event-sourced architecture that prioritizes **correctness**, **reproducibility**, and **production-readiness**. This page provides a high-level overview of the system's components and design principles.
+
+## High-Level Architecture
+
+```mermaid
+graph TB
+    subgraph "User Code"
+        User[User Application]
+    end
+    
+    subgraph "OpenHands SDK"
+        Conv[Conversation<br/>Orchestrator]
+        Agent[Agent<br/>Stateless Processor]
+        LLM[LLM<br/>Abstraction Layer]
+        Tools[Tool Registry<br/>& Executors]
+        State[ConversationState<br/>Event Store]
+        Security[Security<br/>Analyzer]
+        
+        Conv --> Agent
+        Conv --> State
+        Agent --> LLM
+        Agent --> Tools
+        Agent --> State
+        Conv --> Security
+    end
+    
+    subgraph "External Services"
+        LLMProviders[100+ LLM Providers<br/>via LiteLLM]
+        MCPServers[MCP Tool Servers]
+        Workspace[Sandboxed<br/>Workspace]
+    end
+    
+    User --> Conv
+    LLM --> LLMProviders
+    Tools --> MCPServers
+    Tools --> Workspace
+    
+    style Agent fill:#e1f5ff
+    style State fill:#ffe1e1
+    style LLM fill:#e1ffe1
+    style Tools fill:#fff5e1
+```
+
+## Core Components
+
+The SDK consists of five main components that work together:
+
+### 1. **ConversationState** - Event-Sourced State Management
+
+The single source of truth for all conversation state, derived from an immutable event log.
+
+```mermaid
+graph LR
+    subgraph "Event Store"
+        E1[Event 1<br/>UserMessage]
+        E2[Event 2<br/>AgentAction]
+        E3[Event 3<br/>Observation]
+        E4[Event N<br/>...]
+    end
+    
+    subgraph "Derived State"
+        Status[Agent Status]
+        History[Conversation<br/>History]
+        Metrics[Cost & Token<br/>Tracking]
+    end
+    
+    E1 --> Status
+    E2 --> Status
+    E3 --> Status
+    E4 --> Status
+    
+    E1 --> History
+    E2 --> History
+    E3 --> History
+    E4 --> History
+    
+    E1 --> Metrics
+    E2 --> Metrics
+    E3 --> Metrics
+    E4 --> Metrics
+    
+    style E1 fill:#ffe1e1
+    style E2 fill:#ffe1e1
+    style E3 fill:#ffe1e1
+    style E4 fill:#ffe1e1
+```
+
+**Key Features:**
+- **Immutable Event Log**: All state changes are recorded as events
+- **Perfect Reproducibility**: Same events → same state, always
+- **Time-Travel Debugging**: Replay any conversation from its event log
+- **Automatic Persistence**: Events auto-save to disk when configured
+
+### 2. **Agent** - Stateless Event Processor
+
+Pure, stateless functions that consume events and produce new events.
+
+```mermaid
+graph LR
+    Input[ConversationState<br/>Events] --> Agent[Agent.step<br/>Stateless Processor]
+    Agent --> Actions[Action Events]
+    
+    subgraph "Agent Configuration"
+        LLMConfig[LLM Config]
+        ToolConfig[Tool Config]
+        Context[Context Files]
+        Security[Security Policy]
+    end
+    
+    LLMConfig --> Agent
+    ToolConfig --> Agent
+    Context --> Agent
+    Security --> Agent
+    
+    style Agent fill:#e1f5ff
+    style Input fill:#ffe1e1
+    style Actions fill:#ffe1e1
+```
+
+**Key Features:**
+- **Stateless Design**: All state lives in `ConversationState`
+- **Immutable Configuration**: Agents are fully defined by their frozen config
+- **Composable**: Support for sub-agents and delegation
+- **Pause/Resume**: Natural support via event sourcing
+
+### 3. **LLM** - Model-Agnostic Abstraction
+
+Unified interface to 100+ language model providers.
+
+```mermaid
+graph TB
+    Agent[Agent] --> LLM[LLM<br/>Unified Interface]
+    
+    subgraph "Features"
+        Router[LLM Router<br/>Dynamic Selection]
+        NonNative[Non-Function-Calling<br/>Support]
+        Metrics[Token & Cost<br/>Tracking]
+    end
+    
+    LLM --> Router
+    LLM --> NonNative
+    LLM --> Metrics
+    
+    subgraph "Providers"
+        OpenAI[OpenAI]
+        Anthropic[Anthropic]
+        Bedrock[AWS Bedrock]
+        Azure[Azure OpenAI]
+        OSS[Open Source<br/>Models]
+        Other[100+ Others...]
+    end
+    
+    Router --> OpenAI
+    Router --> Anthropic
+    Router --> Bedrock
+    Router --> Azure
+    Router --> OSS
+    Router --> Other
+    
+    style LLM fill:#e1ffe1
+```
+
+**Key Features:**
+- **100+ Providers**: Via LiteLLM integration
+- **Auto-Detection**: Model capabilities detected automatically
+- **Multi-LLM Routing**: Dynamic model selection based on task
+- **Built-in Metrics**: Automatic cost and token tracking
+
+### 4. **Tool System** - Extensible Execution
+
+Type-safe, extensible tool system with MCP support.
+
+```mermaid
+graph TB
+    Agent[Agent] --> Registry[Tool Registry]
+    
+    subgraph "Built-in Tools"
+        Bash[Tmux-based<br/>Bash Terminal]
+        FileEdit[File Editor]
+        Browser[Chromium<br/>Browser]
+        TaskTracker[TODO List<br/>Tracker]
+    end
+    
+    subgraph "Custom Tools"
+        Custom1[Your Custom<br/>Tool 1]
+        Custom2[Your Custom<br/>Tool 2]
+    end
+    
+    subgraph "MCP Tools"
+        MCP1[MCP Server 1<br/>Tools]
+        MCP2[MCP Server 2<br/>Tools]
+    end
+    
+    Registry --> Bash
+    Registry --> FileEdit
+    Registry --> Browser
+    Registry --> TaskTracker
+    Registry --> Custom1
+    Registry --> Custom2
+    Registry --> MCP1
+    Registry --> MCP2
+    
+    style Registry fill:#fff5e1
+    style Bash fill:#e1f5ff
+    style FileEdit fill:#e1f5ff
+    style Browser fill:#e1f5ff
+    style TaskTracker fill:#e1f5ff
+```
+
+**Key Features:**
+- **Type-Safe**: Pydantic models for actions and observations
+- **MCP Native**: First-class Model Context Protocol support
+- **Built-in Tools**: Production-ready bash, file, browser tools
+- **Easy Extension**: Simple interface for custom tools
+
+### 5. **Security** - Defense in Depth
+
+Multi-layered security framework for safe agent execution.
+
+```mermaid
+graph TB
+    Action[Agent Action] --> Analyzer[Security Analyzer]
+    
+    subgraph "Analysis Layers"
+        RuleBased[Rule-Based<br/>Fast Detection]
+        LLMBased[LLM-Based<br/>Semantic Analysis]
+    end
+    
+    Analyzer --> RuleBased
+    Analyzer --> LLMBased
+    
+    subgraph "Risk Assessment"
+        Low[LOW<br/>Read-only ops]
+        Medium[MEDIUM<br/>Project modifications]
+        High[HIGH<br/>System-level ops]
+    end
+    
+    RuleBased --> Low
+    RuleBased --> Medium
+    RuleBased --> High
+    LLMBased --> High
+    
+    subgraph "Confirmation Policy"
+        AutoApprove[Auto-approve<br/>LOW/MEDIUM]
+        RequireConfirm[Require<br/>Confirmation]
+    end
+    
+    Low --> AutoApprove
+    Medium --> AutoApprove
+    High --> RequireConfirm
+    
+    style Analyzer fill:#ffcccc
+    style High fill:#ff9999
+```
+
+**Key Features:**
+- **Two-Tier Analysis**: Rule-based + LLM semantic analysis
+- **Risk Levels**: LOW, MEDIUM, HIGH, UNKNOWN
+- **Confirmation Policies**: Customizable approval workflows
+- **Secrets Management**: Auto-masking of sensitive data
+
+## Design Principles
+
+### Event Sourcing
+
+All state changes are recorded as immutable events, enabling perfect reproducibility and time-travel debugging.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Conversation
+    participant Agent
+    participant EventStore
+    participant LLM
+    
+    User->>Conversation: send_message("Create a file")
+    Conversation->>EventStore: Append UserMessageEvent
+    Conversation->>Agent: step(state)
+    Agent->>LLM: Generate action
+    LLM-->>Agent: ToolCall
+    Agent->>EventStore: Append ActionEvent
+    Conversation->>Tool: Execute action
+    Tool-->>Conversation: Result
+    Conversation->>EventStore: Append ObservationEvent
+    
+    Note over EventStore: All events persisted<br/>Perfect reproducibility
+```
+
+### Immutability
+
+All core components (Agent, LLM, Tools) are immutable and type-safe, eliminating state corruption bugs.
+
+### Stateless Agents
+
+Agents are pure functions with no internal state, making them testable, composable, and naturally distributed.
+
+### Configuration as Code
+
+All configuration is defined in code using type-safe Pydantic models, eliminating config-code drift.
+
+## Event Flow
+
+The core execution loop follows a simple action-observation pattern:
+
+```mermaid
+graph LR
+    Start([User Message]) --> State1[ConversationState]
+    State1 --> Agent1[Agent.step]
+    Agent1 --> LLM1[LLM Call]
+    LLM1 --> Action[ActionEvent]
+    Action --> Security[Security Check]
+    Security --> Execute[Execute Tool]
+    Execute --> Obs[ObservationEvent]
+    Obs --> State2[Update State]
+    State2 --> Agent2[Agent.step]
+    Agent2 --> Decision{Done?}
+    Decision -->|No| LLM2[LLM Call]
+    LLM2 --> Action
+    Decision -->|Yes| End([Finish])
+    
+    style Action fill:#ffe1e1
+    style Obs fill:#ffe1e1
+    style State1 fill:#ffe1e1
+    style State2 fill:#ffe1e1
+```
+
+## Key Benefits
+
+### 🎯 Correctness & Reliability
+- **Immutable events** eliminate state corruption bugs
+- **Event sourcing** ensures perfect reproducibility
+- **Type-safe APIs** catch errors at compile time
+
+### 🛠️ Developer Experience
+- **Stateless design** enables simple unit testing
+- **Event replay** provides time-travel debugging
+- **Clear interfaces** make extension straightforward
+
+### 🚀 Production Ready
+- **Built-in server** with REST/WebSocket APIs
+- **Container sandboxing** for isolation
+- **Authentication & secrets management** out of the box
+
+### 🌐 Ecosystem Integration
+- **Native MCP support** for thousands of tools
+- **100+ LLM providers** via LiteLLM
+- **Standards-aligned** for easy integration
+
+### 🔬 Research Flexibility
+- **Custom agents** for arbitrary reasoning strategies
+- **LLM routers** for A/B testing
+- **Event logs** for retrospective analysis
+
+## Next Steps
+
+- **[Core Components](/sdk/core/overview)** - Deep dive into SDK components
+- **[Hello World Tutorial](/sdk/getting-started)** - Build your first agent
+- **[Advanced Features](/sdk/advanced/overview)** - Context management, workflows
+- **[Production Deployment](/sdk/production/overview)** - Deploy agents at scale
+- **[API Reference](/sdk/api)** - Complete API documentation

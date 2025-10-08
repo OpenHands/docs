@@ -1,0 +1,364 @@
+---
+title: Core Components Overview
+description: Deep dive into OpenHands SDK's core architectural components
+---
+
+# Core Components
+
+The OpenHands SDK consists of five core components that work together to provide a robust, production-ready agent framework. This section provides detailed documentation for each component.
+
+## Component Interaction
+
+```mermaid
+graph TB
+    subgraph "Your Application"
+        App[Application Code]
+    end
+    
+    subgraph "SDK Core"
+        Conv[Conversation<br/>Entry Point]
+        State[ConversationState<br/>Event Store]
+        Agent[Agent<br/>Decision Logic]
+        LLM[LLM<br/>Model Access]
+        Tools[Tools<br/>Action Execution]
+    end
+    
+    App -->|1. Create & Configure| Conv
+    App -->|2. Send Message| Conv
+    Conv -->|3. Append Event| State
+    Conv -->|4. Request Action| Agent
+    Agent -->|5. Query Model| LLM
+    Agent -->|6. Return Action| Conv
+    Conv -->|7. Security Check| State
+    Conv -->|8. Execute| Tools
+    Tools -->|9. Return Result| Conv
+    Conv -->|10. Append Observation| State
+    
+    State -.->|Read State| Agent
+    State -.->|Persist Events| State
+    
+    style Conv fill:#e1f5ff
+    style State fill:#ffe1e1
+    style Agent fill:#e1ffe1
+    style LLM fill:#fff5e1
+    style Tools fill:#ffe1ff
+```
+
+## Components Overview
+
+### 1. Conversation
+
+**Purpose**: Orchestrates the agent execution loop and provides the main API.
+
+```python
+from openhands.sdk import Conversation
+
+conversation = Conversation(
+    agent=agent,
+    persistence_dir="./conversations",  # Auto-save events
+)
+
+# Synchronous execution
+conversation.send_message("Create a Python file")
+conversation.run()
+
+# Asynchronous execution
+await conversation.arun()
+
+# Pause and resume
+conversation.pause()
+conversation.resume()
+```
+
+**Key Responsibilities:**
+- Message handling and event orchestration
+- Agent execution loop management
+- Security policy enforcement
+- Event persistence and state management
+
+[Learn more →](/sdk/core/conversation)
+
+### 2. ConversationState
+
+**Purpose**: Single source of truth derived from immutable event log.
+
+```python
+from openhands.sdk.conversation import ConversationState
+
+# State is derived from events
+state = ConversationState()
+state.append_event(user_message_event)
+state.append_event(action_event)
+state.append_event(observation_event)
+
+# Query computed state
+status = state.agent_execution_status  # RUNNING, PAUSED, FINISHED, etc.
+history = state.conversation_history   # All LLM-convertible events
+metrics = state.metrics                # Token counts, costs
+```
+
+**Key Features:**
+- Event-sourced state management
+- Automatic persistence to disk
+- Perfect reproducibility
+- Time-travel debugging via replay
+
+[Learn more →](/sdk/core/state)
+
+### 3. Agent
+
+**Purpose**: Stateless decision-making logic that converts events to actions.
+
+```python
+from openhands.sdk.agent import AgentBase
+
+class CustomAgent(AgentBase):
+    def step(self, state: ConversationState) -> Generator[Event, None, None]:
+        """Generate action events based on current state."""
+        # Convert events to LLM messages
+        messages = self.build_llm_messages(state)
+        
+        # Call LLM with tools
+        response = self.llm.completion(
+            messages=messages,
+            tools=self.get_tool_definitions()
+        )
+        
+        # Yield action events
+        for action in self.parse_actions(response):
+            yield action
+```
+
+**Key Features:**
+- Fully stateless and immutable
+- Support for sub-agents and delegation
+- Natural pause/resume support
+- Observable via callbacks
+
+[Learn more →](/sdk/core/agent)
+
+### 4. LLM
+
+**Purpose**: Unified interface to 100+ language model providers.
+
+```python
+from openhands.sdk import LLM
+from pydantic import SecretStr
+
+# Model-agnostic configuration
+llm = LLM(
+    model="anthropic/claude-sonnet-4",
+    api_key=SecretStr("..."),
+    temperature=0.7,
+)
+
+# Automatic capability detection
+features = llm.get_features()
+print(features.native_tool_calling)  # True for Claude
+print(features.vision_support)       # True for Claude
+
+# Multi-LLM routing
+from openhands.sdk.llm.router import MultimodalRouter
+
+router = MultimodalRouter(
+    default_llm=text_only_llm,
+    multimodal_llm=vision_llm,
+)
+llm = router.route(messages)  # Auto-selects based on content
+```
+
+**Key Features:**
+- 100+ providers via LiteLLM
+- Native support for non-function-calling models
+- Built-in cost and token tracking
+- Multi-LLM routing
+
+[Learn more →](/sdk/core/llm)
+
+### 5. Tools
+
+**Purpose**: Type-safe, extensible action execution framework.
+
+```python
+from openhands.sdk.tool import ToolExecutor
+from pydantic import BaseModel
+
+class MyAction(BaseModel):
+    query: str
+
+class MyObservation(BaseModel):
+    result: str
+
+class MyTool(ToolExecutor[MyAction, MyObservation]):
+    """Custom tool with type-safe actions and observations."""
+    
+    def __call__(self, action: MyAction) -> MyObservation:
+        # Execute action
+        result = self.process(action.query)
+        return MyObservation(result=result)
+
+# Register tool
+from openhands.sdk.tool import register_tool
+register_tool("my_tool", MyTool)
+```
+
+**Key Features:**
+- Type-safe actions and observations
+- Native MCP support
+- Built-in production tools
+- Simple extension interface
+
+[Learn more →](/sdk/core/tools)
+
+## Event Flow
+
+The components interact through events in a simple action-observation loop:
+
+```mermaid
+sequenceDiagram
+    participant App as Your App
+    participant Conv as Conversation
+    participant State as ConversationState
+    participant Agent
+    participant LLM
+    participant Tool
+    
+    App->>Conv: send_message("task")
+    Conv->>State: append UserMessageEvent
+    
+    loop Until Done
+        Conv->>Agent: step(state)
+        Agent->>State: Read events
+        Agent->>LLM: completion(messages, tools)
+        LLM-->>Agent: Tool calls
+        Agent->>Conv: yield ActionEvent(s)
+        
+        Conv->>State: append ActionEvent
+        Conv->>Tool: execute(action)
+        Tool-->>Conv: observation
+        Conv->>State: append ObservationEvent
+    end
+    
+    Conv->>State: Set status = FINISHED
+    Conv-->>App: Done
+```
+
+## State Management
+
+All state is derived from the event log, ensuring perfect reproducibility:
+
+```mermaid
+graph TB
+    subgraph "Event Log (Source of Truth)"
+        E1[UserMessageEvent]
+        E2[ActionEvent]
+        E3[ObservationEvent]
+        E4[ActionEvent]
+        E5[ObservationEvent]
+        E6[AgentFinishedEvent]
+    end
+    
+    subgraph "Derived State"
+        Status[Agent Status<br/>RUNNING → FINISHED]
+        History[Conversation History<br/>LLM Context]
+        Metrics[Token Count: 5,234<br/>Cost: $0.15]
+        Tasks[TODO Items<br/>Created: 3, Done: 2]
+    end
+    
+    E1 --> Status
+    E2 --> Status
+    E3 --> Status
+    E4 --> Status
+    E5 --> Status
+    E6 --> Status
+    
+    E1 --> History
+    E2 --> History
+    E3 --> History
+    E4 --> History
+    E5 --> History
+    E6 --> History
+    
+    E2 --> Metrics
+    E3 --> Metrics
+    E4 --> Metrics
+    E5 --> Metrics
+    
+    E2 --> Tasks
+    E5 --> Tasks
+    
+    style E1 fill:#ffe1e1
+    style E2 fill:#ffe1e1
+    style E3 fill:#ffe1e1
+    style E4 fill:#ffe1e1
+    style E5 fill:#ffe1e1
+    style E6 fill:#ffe1e1
+```
+
+## Configuration Pattern
+
+All components use immutable, type-safe configuration:
+
+```python
+from openhands.sdk import Agent, LLM, Conversation
+from openhands.sdk.tool import BashTool, FileEditorTool
+
+# Immutable configuration
+llm = LLM(model="...", api_key=SecretStr("..."))  # Frozen after creation
+
+agent = Agent(
+    llm=llm,
+    tools=[BashTool(), FileEditorTool()],
+    context=AgentContext(...),
+    security_analyzer=SecurityAnalyzer(...),
+)  # Immutable configuration
+
+# Configuration is part of the agent
+conversation = Conversation(agent=agent)
+
+# To change configuration, create new instances
+new_llm = llm.model_copy(update={"temperature": 0.9})
+new_agent = agent.model_copy(update={"llm": new_llm})
+```
+
+## Persistence and Replay
+
+Events automatically persist and can be replayed for debugging:
+
+```python
+# Enable persistence
+conversation = Conversation(
+    agent=agent,
+    persistence_dir="./conversations",
+    conversation_id="my-task-123",
+)
+
+conversation.send_message("Create a file")
+conversation.run()
+
+# Later: Replay the exact conversation
+from openhands.sdk.conversation import load_conversation
+
+loaded = load_conversation(
+    persistence_dir="./conversations",
+    conversation_id="my-task-123",
+)
+
+# State is identical - perfect reproducibility
+assert loaded.state.agent_execution_status == conversation.state.agent_execution_status
+```
+
+## Component Documentation
+
+- **[Conversation](/sdk/core/conversation)** - Orchestration and API
+- **[ConversationState](/sdk/core/state)** - Event-sourced state management
+- **[Agent](/sdk/core/agent)** - Stateless decision logic
+- **[LLM](/sdk/core/llm)** - Model abstraction and routing
+- **[Tools](/sdk/core/tools)** - Action execution framework
+
+## Next Steps
+
+- **[Architecture Overview](/sdk/architecture)** - High-level system design
+- **[Advanced Features](/sdk/advanced/overview)** - Context management, workflows
+- **[Security](/sdk/security/overview)** - Defense in depth
+- **[Production](/sdk/production/overview)** - Deploy at scale
