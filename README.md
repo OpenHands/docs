@@ -6,6 +6,7 @@ This repository aggregates documentation from multiple All Hands AI repositories
 
 - `docs.json` - Mintlify configuration file that references docs in these repos.
 - `openhands/` - Main OpenHands docs.
+- `openapi/` - API References.
 - `sdk/` - Agent SDK docs.
 - `success-stories/` - Success stories docs.
 
