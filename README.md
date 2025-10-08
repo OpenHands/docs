@@ -14,7 +14,7 @@ This repository aggregates documentation from multiple All Hands AI repositories
 
 To add documentation from a new repository:
 
-1. Add workflow [like this](https://github.com/All-Hands-AI/agent-sdk/blob/main/.github/workflows/deploy-docs.yml) to the new repo.
+1. Add workflow [like this](https://github.com/OpenHands/agent-sdk/blob/main/.github/workflows/deploy-docs.yml) to the new repo.
 2. Update `docs.json` to include navigation for the new content (e.g., `new-repo/docs/`)
 
 ## Local Development
