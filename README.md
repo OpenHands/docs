@@ -1,6 +1,6 @@
-# All Hands AI Documentation
+# OpenHands Documentation
 
-This repository aggregates documentation from multiple All Hands AI repositories to provide a unified documentation site powered by Mintlify.
+This repository provides a unified documentation site powered by Mintlify.
 
 ## Structure
 
@@ -9,13 +9,6 @@ This repository aggregates documentation from multiple All Hands AI repositories
 - `openapi/` - API References.
 - `sdk/` - Agent SDK docs.
 - `success-stories/` - Success stories docs.
-
-## Adding New Documentation Sources
-
-To add documentation from a new repository:
-
-1. Add workflow [like this](https://github.com/All-Hands-AI/agent-sdk/blob/main/.github/workflows/deploy-docs.yml) to the new repo.
-2. Update `docs.json` to include navigation for the new content (e.g., `new-repo/docs/`)
 
 ## Local Development
 
