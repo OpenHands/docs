@@ -1,0 +1,90 @@
+name: Sync agent-sdk OpenAPI spec
+
+on:
+  repository_dispatch:
+    types: [update-agent-sdk]
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Target branch in docs repo (defaults to main)'
+        required: false
+        type: string
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  generate-openapi:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.ALLHANDS_BOT_GITHUB_PAT || secrets.GITHUB_TOKEN }}
+      TARGET_BRANCH: ${{ github.event.client_payload.target_branch || inputs.target_branch || 'main' }}
+    steps:
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure Git
+        run: |
+          git config user.name "all-hands-bot"
+          git config user.email "contact@all-hands.dev"
+
+      - name: Setup target branch
+        run: |
+          echo "Target branch: $TARGET_BRANCH"
+          
+          # Fetch all branches
+          git fetch origin
+          
+          # Check if target branch exists on remote
+          if git ls-remote --heads origin "$TARGET_BRANCH" | grep -q "$TARGET_BRANCH"; then
+            echo "Branch $TARGET_BRANCH exists, checking out"
+            git checkout "$TARGET_BRANCH"
+            git pull origin "$TARGET_BRANCH"
+          else
+            echo "Branch $TARGET_BRANCH does not exist, creating new branch"
+            git checkout -b "$TARGET_BRANCH"
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Clone agent-sdk
+        env:
+          TOKEN: ${{ env.TOKEN }}
+        run: |
+          # Get source branch from payload or default to main
+          SOURCE_BRANCH="${{ github.event.client_payload.branch || 'main' }}"
+          
+          tmpdir="$(mktemp -d)"
+          echo "Cloning agent-sdk from branch: $SOURCE_BRANCH to $tmpdir"
+          
+          auth_url="https://x-access-token:${TOKEN}@github.com/${{ github.repository_owner }}/agent-sdk.git"
+          git clone --depth=1 --branch="$SOURCE_BRANCH" "$auth_url" "$tmpdir/agent-sdk"
+          
+          echo "SDK_DIR=$tmpdir/agent-sdk" >> "$GITHUB_ENV"
+          echo "SOURCE_BRANCH=$SOURCE_BRANCH" >> "$GITHUB_ENV"
+
+      - name: Generate OpenAPI spec
+        run: |
+          cd "$SDK_DIR"
+          uv sync --frozen
+          mkdir -p "$GITHUB_WORKSPACE/openapi"
+          SCHEMA_PATH="$GITHUB_WORKSPACE/openapi/agent-sdk.json" \
+            uv run python openhands/agent_server/openapi.py
+
+      - name: Commit and push OpenAPI spec
+        run: |
+          git add openapi/agent-sdk.json
+          
+          if git diff --cached --quiet; then
+            echo "No OpenAPI changes to commit."
+          else
+            SHA="${{ github.event.client_payload.sha || 'manual' }}"
+            BRANCH="${SOURCE_BRANCH:-main}"
+            git commit -m "sync(openapi): agent-sdk/$BRANCH ${SHA:0:7}"
+            git push origin "$TARGET_BRANCH"
+          fi
