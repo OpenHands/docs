@@ -1,15 +1,10 @@
-name: Sync agent-sdk OpenAPI spec
+name: Sync agent-sdk changes
 
 on:
   repository_dispatch:
     types: [update-agent-sdk]
   workflow_dispatch:
     inputs:
-      target_branch:
-        description: 'Target branch in docs repo (defaults to main)'
-        required: false
-        type: string
-        default: 'main'
 
 permissions:
   contents: write
@@ -19,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TOKEN: ${{ secrets.ALLHANDS_BOT_GITHUB_PAT || secrets.GITHUB_TOKEN }}
-      TARGET_BRANCH: ${{ github.event.client_payload.target_branch || inputs.target_branch || 'main' }}
     steps:
       - name: Checkout docs repo
         uses: actions/checkout@v4
@@ -31,23 +25,6 @@ jobs:
         run: |
           git config user.name "all-hands-bot"
           git config user.email "contact@all-hands.dev"
-
-      - name: Setup target branch
-        run: |
-          echo "Target branch: $TARGET_BRANCH"
-          
-          # Fetch all branches
-          git fetch origin
-          
-          # Check if target branch exists on remote
-          if git ls-remote --heads origin "$TARGET_BRANCH" | grep -q "$TARGET_BRANCH"; then
-            echo "Branch $TARGET_BRANCH exists, checking out"
-            git checkout "$TARGET_BRANCH"
-            git pull origin "$TARGET_BRANCH"
-          else
-            echo "Branch $TARGET_BRANCH does not exist, creating new branch"
-            git checkout -b "$TARGET_BRANCH"
-          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -71,7 +48,7 @@ jobs:
       - name: Generate OpenAPI spec
         run: |
           cd "$SDK_DIR"
-          uv sync --frozen
+          make build
           mkdir -p "$GITHUB_WORKSPACE/openapi"
           SCHEMA_PATH="$GITHUB_WORKSPACE/openapi/agent-sdk.json" \
             uv run python openhands/agent_server/openapi.py
@@ -86,5 +63,5 @@ jobs:
             SHA="${{ github.event.client_payload.sha || 'manual' }}"
             BRANCH="${SOURCE_BRANCH:-main}"
             git commit -m "sync(openapi): agent-sdk/$BRANCH ${SHA:0:7}"
-            git push origin "$TARGET_BRANCH"
+            git push origin
           fi
