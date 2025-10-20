@@ -114,10 +114,9 @@ def resolve_paths() -> tuple[Path, Path]:
             print(f"📁 Using Agent SDK path: {p}")
             return docs_root, p
 
-    # If none exist, fail with a helpful message
-    print("❌ Agent SDK path not found in any of the expected locations.")
-    print("   Set AGENT_SDK_PATH, or checkout the repo to one of the tried paths above.")
-    sys.exit(1)
+    # If none exist, skip gracefully (no-op) rather than failing CI
+    print("❌ Agent SDK path not found in any of the expected locations. Skipping sync.")
+    return docs_root, Path()
 
 
 def update_doc_file(
@@ -150,22 +149,17 @@ def update_doc_file(
             adj_start = start_pos + offset
             adj_end = end_pos + offset
 
-            opening_line_match = re.search(
-                r"```python[^\n]*\s+" + re.escape(file_ref),
-                new_content[adj_start:adj_end],
-            )
-            if opening_line_match:
-                opening_line = opening_line_match.group(0)
-                # Preserve trailing newline behavior
-                if actual_content.endswith("\n"):
-                    new_block = f"{opening_line}\n{actual_content}```"
-                else:
-                    new_block = f"{opening_line}\n{actual_content}\n```"
-                old_block = new_content[adj_start:adj_end]
+            old_block = new_content[adj_start:adj_end]
+            opening_line = old_block.split("\n", 1)[0]
+            # Preserve trailing newline behavior
+            if actual_content.endswith("\n"):
+                new_block = f"{opening_line}\n{actual_content}```"
+            else:
+                new_block = f"{opening_line}\n{actual_content}\n```"
 
-                new_content = new_content[:adj_start] + new_block + new_content[adj_end:]
-                offset += len(new_block) - len(old_block)
-                changes_made = True
+            new_content = new_content[:adj_start] + new_block + new_content[adj_end:]
+            offset += len(new_block) - len(old_block)
+            changes_made = True
 
     if changes_made:
         try:
@@ -181,6 +175,11 @@ def update_doc_file(
 
 def main() -> None:
     docs_root, agent_sdk_path = resolve_paths()
+    if not agent_sdk_path or not agent_sdk_path.exists():
+        # No-op if agent-sdk isn't checked out
+        print("No agent-sdk checkout available. Nothing to sync.")
+        print("=" * 60)
+        return
 
     # Find all MDX files
     mdx_files = find_mdx_files(docs_root)
@@ -211,14 +210,8 @@ def main() -> None:
         print(f"✅ Updated {total_changes} file(s):")
         for file in files_changed:
             print(f"   - {file}")
-        if "GITHUB_OUTPUT" in os.environ:
-            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-                f.write("changes=true\n")
     else:
         print("✅ All code blocks are in sync!")
-        if "GITHUB_OUTPUT" in os.environ:
-            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-                f.write("changes=false\n")
     print("=" * 60)
 
 
