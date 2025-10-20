@@ -230,34 +230,68 @@ for i, message in enumerate(llm_messages):
 
 ## Key Points
 
+### Tool Registration
+Tools are registered using `register_tool()` and referenced by name:
+
+```python
+# Register a simple tool class
+register_tool("FileEditorTool", FileEditorTool)
+
+# Register a factory function that creates multiple tools
+register_tool("BashAndGrepToolSet", _make_bash_and_grep_tools)
+
+# Use registered tools by name
+tools = [
+    Tool(name="FileEditorTool"),
+    Tool(name="BashAndGrepToolSet"),
+]
+```
+
 ### Factory Functions
 Tool factory functions receive `conv_state` as a parameter, allowing access to workspace information:
 
 ```python
-def make_tools(conv_state) -> list[ToolDefinition]:
-    working_dir = conv_state.workspace.working_dir
+def _make_bash_and_grep_tools(conv_state) -> list[ToolDefinition]:
+    """Create execute_bash and custom grep tools sharing one executor."""
+    bash_executor = BashExecutor(working_dir=conv_state.workspace.working_dir)
     # Create and configure tools...
-    return [tool1, tool2]
+    return [bash_tool, grep_tool]
 ```
 
 ### Shared Executors
 Multiple tools can share executors for efficiency and state consistency:
 
 ```python
-# Both tools use the same BashExecutor and working directory
 bash_executor = BashExecutor(working_dir=conv_state.workspace.working_dir)
 bash_tool = execute_bash_tool.set_executor(executor=bash_executor)
-grep_tool = ToolDefinition(..., executor=GrepExecutor(bash_executor))
+
+grep_executor = GrepExecutor(bash_executor)
+grep_tool = ToolDefinition(
+    name="grep",
+    description=_GREP_DESCRIPTION,
+    action_type=GrepAction,
+    observation_type=GrepObservation,
+    executor=grep_executor,
+)
 ```
 
 ### Output Formatting
-The `to_llm_content()` method formats observations for the LLM:
+The `to_llm_content()` property formats observations for the LLM:
 
 ```python
 @property
-def to_llm_content(self):
-    # Return clear, structured text for the LLM
-    return [TextContent(text=f"Found {self.count} results...")]
+def to_llm_content(self) -> Sequence[TextContent | ImageContent]:
+    if not self.count:
+        return [TextContent(text="No matches found.")]
+    files_list = "\n".join(f"- {f}" for f in self.files[:20])
+    sample = "\n".join(self.matches[:10])
+    more = "\n..." if self.count > 10 else ""
+    ret = (
+        f"Found {self.count} matching lines.\n"
+        f"Files:\n{files_list}\n"
+        f"Sample:\n{sample}{more}"
+    )
+    return [TextContent(text=ret)]
 ```
 
 ## Running the Example
@@ -279,5 +313,4 @@ Create custom tools when you need to:
 ## Next Steps
 
 - **[Tool System Architecture](/sdk/architecture/sdk/tool)** - Deep dive into the tool system
-- **[MCP Integration](/sdk/guides/standalone-sdk/mcp-integration)** - Use Model Context Protocol servers
-- **[Pre-built Tools](/sdk/architecture/tools/overview)** - Browse available tools
+- **[Model Context Protocol (MCP) Integration](/sdk/guides/mcp)** - Use Model Context Protocol servers
