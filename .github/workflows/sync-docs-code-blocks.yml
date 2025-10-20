@@ -21,9 +21,13 @@ permissions:
 jobs:
   sync-code-blocks:
     runs-on: ubuntu-latest
-    # Prevent loops when the bot's own commit triggers another push
     if: github.actor != 'github-actions[bot]'
     steps:
+      - name: Checkout docs repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Checkout agent-sdk
         uses: actions/checkout@v4
         with:
@@ -32,27 +36,19 @@ jobs:
           ref: ${{ github.event.inputs.agent_sdk_ref || 'main' }}
           fetch-depth: 0
 
-      - name: Sync code blocks
-        id: sync
-        env:
-          # Optional, explicit override (script will also auto-detect without this)
-          AGENT_SDK_PATH: ${{ github.workspace }}/agent-sdk
-        run: |
-          python .github/scripts/sync_code_blocks.py
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Sync code blocks
-        id: sync
+        id: detect_changes
+        env:
+          AGENT_SDK_PATH: ${{ github.workspace }}/agent-sdk
         shell: bash
         run: |
           set -euo pipefail
           python .github/scripts/sync_code_blocks.py
-
-          # Expose whether any files changed
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -60,7 +56,7 @@ jobs:
           fi
 
       - name: Commit and push changes
-        if: steps.sync.outputs.changes == 'true'
+        if: steps.detect_changes.outputs.changes == 'true'  # <-- updated reference
         shell: bash
         run: |
           set -euo pipefail
