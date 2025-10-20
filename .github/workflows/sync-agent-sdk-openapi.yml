@@ -1,0 +1,90 @@
+name: Sync agent-sdk OpenAPI
+
+on:
+  push:
+    branches:
+      - '**'      # run on every branch
+  schedule:
+    - cron: '0 2 * * *'   # nightly catch-up
+  workflow_dispatch:
+    inputs:
+      agent_sdk_ref:
+        description: 'Agent SDK branch/tag/commit to generate from'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  sync-openapi:
+    runs-on: ubuntu-latest
+    # Avoid infinite loops on our own commits
+    if: github.actor != 'github-actions[bot]'
+
+    env:
+      # GITHUB_TOKEN is fine.
+      GH_CLONE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # For workflow_dispatch this will be set; for push/schedule it will fall back to main.
+      AGENT_SDK_REF: ${{ github.event.inputs.agent_sdk_ref || 'main' }}
+
+    steps:
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout agent-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: All-Hands-AI/agent-sdk
+          path: agent-sdk
+          ref: ${{ env.AGENT_SDK_REF }}
+          fetch-depth: 0
+          # If private, uncomment:
+          # token: ${{ env.GH_CLONE_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "all-hands-bot"
+          git config user.email "contact@all-hands.dev"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Generate OpenAPI spec
+        working-directory: agent-sdk
+        env:
+          SCHEMA_PATH: ${{ github.workspace }}/openapi/agent-sdk.json
+        run: |
+          set -euo pipefail
+          make build
+          mkdir -p "$(dirname "$SCHEMA_PATH")"
+          uv run python openhands-agent-server/openhands/agent_server/openapi.py
+
+      - name: Detect changes
+        id: detect_changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push OpenAPI spec
+        if: steps.detect_changes.outputs.changes == 'true'
+        run: |
+          set -euo pipefail
+          git add openapi/agent-sdk.json
+          # Re-check in case only unrelated files changed
+          if git diff --cached --quiet; then
+            echo "No OpenAPI changes to commit."
+            exit 0
+          fi
+
+          SHA_SHORT="$(git -C agent-sdk rev-parse --short=7 HEAD || echo manual)"
+          BRANCH="${AGENT_SDK_REF:-main}"
+
+          git commit -m "sync(openapi): agent-sdk/${BRANCH} ${SHA_SHORT}"
+          git push
