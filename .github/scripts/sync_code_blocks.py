@@ -198,9 +198,9 @@ def main() -> None:
             print(f"\n📋 Processing {mdx_file.relative_to(docs_root)}")
             print(f"   Found {len(code_blocks)} code block(s) with file references")
 
-            if update_doc_file(mdxx_file := mdx_file, content=content, code_blocks=code_blocks, agent_sdk_path=agent_sdk_path):
+            if update_doc_file(mdx_file, content=content, code_blocks=code_blocks, agent_sdk_path=agent_sdk_path):
                 total_changes += 1
-                files_changed.append(str(mdxx_file.relative_to(docs_root)))
+                files_changed.append(str(mdx_file.relative_to(docs_root)))
         except Exception as e:
             print(f"❌ Error processing {mdx_file}: {e}")
             continue

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   update:
@@ -53,15 +54,26 @@ jobs:
           SCHEMA_PATH="$GITHUB_WORKSPACE/openapi/agent-sdk.json" \
             uv run python openhands/agent_server/openapi.py
 
-      - name: Commit and push OpenAPI spec
+      - name: Create branch for OpenAPI update
         run: |
           git add openapi/agent-sdk.json
-          
           if git diff --cached --quiet; then
             echo "No OpenAPI changes to commit."
-          else
-            SHA="${{ github.event.client_payload.sha || 'manual' }}"
-            BRANCH="${SOURCE_BRANCH:-main}"
-            git commit -m "sync(openapi): agent-sdk/$BRANCH ${SHA:0:7}"
-            git push origin
+            exit 0
           fi
+          BRANCH_NAME="sync/agent-sdk-openapi-${SOURCE_BRANCH:-main}"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> "$GITHUB_ENV"
+          git checkout -b "$BRANCH_NAME"
+          SHA="${{ github.event.client_payload.sha || 'manual' }}"
+          BRANCH="${SOURCE_BRANCH:-main}"
+          git commit -m "sync(openapi): agent-sdk/$BRANCH ${SHA:0:7}"
+          git push origin "$BRANCH_NAME"
+
+      - name: Open PR for OpenAPI update
+        if: env.BRANCH_NAME != ''
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: ${{ env.BRANCH_NAME }}
+          title: "sync(openapi): update Agent SDK OpenAPI spec"
+          body: "Automated update to openapi/agent-sdk.json"
+          labels: documentation
