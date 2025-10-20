@@ -2,27 +2,6 @@
 
 The documentation for this project follows a synchronized approach where code examples in the docs are automatically kept in sync with the actual example files in the agent-sdk repository.
 
-## Documentation Structure
-
-### Dual-Repository Setup
-The documentation system operates across two repositories:
-1. **agent-sdk**: Contains source code and example files
-2. **docs**: Contains MDX documentation files
-
-These repositories are designed to be checked out at the same level in the filesystem, allowing the sync script to reference both.
-
-### GitHub Workflow
-
-**Location**: `docs/.github/workflows/sync-docs-code-blocks.yml`
-
-**Process:**
-1. Checkout docs repository
-2. Checkout agent-sdk repository (sibling directory)
-3. Install Python and dependencies
-4. Run sync script
-5. Commit and push changes if needed
-6. Create PR or push directly
-
 
 ## Automatic Code Synchronization
 
