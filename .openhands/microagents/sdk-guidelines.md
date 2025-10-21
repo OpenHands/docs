@@ -1,43 +1,29 @@
-# OpenHands Documentation Repository
+# OpenHands SDK Documentation Guidelines
 
-This repository contains the official documentation for OpenHands, including guides for the Agent SDK and the client OpenHands applications. The documentation is deployed using Mintlify and features an automated code synchronization system.
-
-## Repository Purpose
-
-- **OpenHands Docs**: User guides, tutorials, and reference documentation for OpenHands core application
-- **Agent SDK Docs**: Developer documentation for the OpenHands Agent SDK
+These instructions are ONLY for modifying the documentation associated with the agent SDK which mainly lives under the
+sdk folder.
 
 ## Repository Structure
 
+Applicable files when modifying the agent SDK documentation:
+
 ```
 docs/
-├── .openhands/microagents/     # Repository microagents (like this file)
+├── .openhands/microagents/sdk-guidelines.md     # Guidelines for changing SDK documentation (this file)
 ├── .github/
 │   ├── scripts/
 │   │   └── sync_code_blocks.py # Code synchronization script
 │   └── workflows/              # CI/CD workflows
-├── openhands/                  # OpenHands core documentation
-│   └── usage/
-│       ├── microagents/        # Microagent documentation
-│       ├── cloud/              # Cloud service docs
-│       ├── settings/           # Settings documentation
-│       └── ...
 ├── sdk/                        # Agent SDK documentation
 │   ├── guides/                 # SDK tutorials and guides
 │   └── arch/                   # Architecture documentation
 └── docs.json                   # Mintlify navigation configuration
 ```
 
-### Key Files
+## Agent SDK Documentation System Overview
 
-- **`docs.json`**: Mintlify configuration including navigation structure, theme, and redirects
-- **Microagent docs**: `openhands/usage/microagents/microagents-*.mdx`
-- **Sync script**: `.github/scripts/sync_code_blocks.py`
-- **This microagent**: `.openhands/microagents/repo.md`
-
-## Documentation System Overview
-
-The documentation follows a synchronized approach where code examples are automatically kept in sync with actual example files in the agent-sdk repository.
+The documentation follows a synchronized approach where code examples are automatically kept in sync with actual 
+example files in the agent-sdk repository.
 
 ## Automatic Code Synchronization
 
@@ -79,11 +65,12 @@ pattern = r'```python[^\n]*\s+(examples/[^\s]+\.py)\n(.*?)```'
 - Captures file path: `examples/01_standalone_sdk/02_custom_tools.py`
 - Captures code content between opening and closing ```
 
-
 ## MDX Documentation Format
 
 ### Standard Structure
-Documentation is deployed with Mintlify from GitHub. The files follow this pattern (see `docs/sdk/guides/custom-tools.mdx` and `docs/sdk/guides/mcp.mdx` as reference):
+
+Documentation is deployed with Mintlify from GitHub. The files follow this pattern 
+(see `docs/sdk/guides/custom-tools.mdx` and `docs/sdk/guides/mcp.mdx` as reference):
 
 1. **Frontmatter** - YAML metadata with title and description
 2. **Introduction** - Brief overview of the feature
@@ -206,7 +193,6 @@ This example is available on GitHub: [examples/01_standalone_sdk/02_custom_tools
 4. **Consistency**: Follow existing patterns
    - Use same icon/expandable syntax
    - Include "Running the Example" bash block
-   - Add <Note> component with GitHub link
    - Structure sections similarly to other guides
 
 5. **Testing**: Before committing documentation
@@ -265,7 +251,7 @@ You can check https://www.mintlify.com/docs for documentation on what our doc si
 - **File**: `.github/workflows/sync-agent-sdk-openapi.yml`
 - **Purpose**: Syncs OpenAPI specifications for API documentation
 
-## Notes for Contributors
+## Notes
 
 - For agent-sdk examples, ensure the file path in code blocks is correct
 - For short agent-sdk examples, you don't need `expandable` in example file
