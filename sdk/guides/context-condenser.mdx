@@ -3,13 +3,59 @@ title: Context Condenser
 description: Manage agent memory by condensing conversation history to save tokens.
 ---
 
+## What is a Context Condenser?
+
+A **context condenser** is a crucial component that addresses one of the most persistent challenges in AI agent development: managing growing conversation context efficiently. As conversations with AI agents grow longer, the cumulative history leads to:
+
+- **💰 Increased API Costs**: More tokens in the context means higher costs per API call
+- **⏱️ Slower Response Times**: Larger contexts take longer to process
+- **📉 Reduced Effectiveness**: LLMs become less effective when dealing with excessive irrelevant information
+
+The context condenser solves this by intelligently summarizing older parts of the conversation while preserving essential information needed for the agent to continue working effectively.
+
+## Default Implementation: LLMSummarizingCondenser
+
+OpenHands SDK provides `LLMSummarizingCondenser` as the default condenser implementation. This condenser uses an LLM to generate summaries of conversation history when it exceeds the configured size limit.
+
+### How It Works
+
+When conversation history exceeds a defined threshold, the LLM-based condenser:
+
+1. **Keeps recent messages intact** - The most recent exchanges remain unchanged for immediate context
+2. **Preserves key information** - Important details like user goals, technical specifications, and critical files are retained
+3. **Summarizes older content** - Earlier parts of the conversation are condensed into concise summaries using LLM-generated summaries
+4. **Maintains continuity** - The agent retains awareness of past progress without processing every historical interaction
+
+![Condenser Overview](https://openhands.dev/assets/blog/20250409-oh-condenser-release/condenser-overview.png)
+
+
+This approach achieves remarkable efficiency gains:
+- Up to **2x reduction** in per-turn API costs
+- **Consistent response times** even in long sessions
+- **Equivalent or better performance** on software engineering tasks
+
+Learn more about the implementation and benchmarks in our [blog post on context condensation](https://openhands.dev/blog/openhands-context-condensensation-for-more-efficient-ai-agents).
+
+### Extensibility
+
+The `LLMSummarizingCondenser` extends the `RollingCondenser` base class, which provides a framework for condensers that work with rolling conversation history. You can create custom condensers by extending base classes ([source code](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/condenser/base.py)):
+
+- **`RollingCondenser`** - For condensers that apply condensation to rolling history
+- **`CondenserBase`** - For more specialized condensation strategies
+
+This architecture allows you to implement custom condensation logic tailored to your specific needs while leveraging the SDK's conversation management infrastructure.
+
+
+### Example Usage
+
 <Note>
 This example is available on GitHub: [examples/01_standalone_sdk/14_context_condenser.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/14_context_condenser.py)
 </Note>
 
+
 Automatically condense conversation history when context length exceeds limits, reducing token usage while preserving important information:
 
-```python icon="python" examples/01_standalone_sdk/14_context_condenser.py
+```python icon="python" expandable examples/01_standalone_sdk/14_context_condenser.py
 """
 To manage context in long-running conversations, the agent can use a context condenser
 that keeps the conversation history within a specified size limit. This example
@@ -158,16 +204,23 @@ uv run python examples/01_standalone_sdk/14_context_condenser.py
 
 ### Setting Up Condensing
 
-Configure a condenser when creating the agent:
+Create a `LLMSummarizingCondenser` to manage the context. 
+The condenser will automatically truncate conversation history when it exceeds max_size, and replaces the dropped events with an LLM-generated summary.
+
+This condenser triggers when there are more than `max_context_length` events in
+the conversation history, and always keeps the first `keep_first` events (system prompts,
+initial user messages) to preserve important context.
 
 ```python highlight={3-4}
-from openhands.sdk.context import LLMCondenser
+from openhands.sdk.context import LLMSummarizingCondenser
 
-condenser = LLMCondenser(llm=llm, max_context_length=100000)
+condenser = LLMSummarizingCondenser(
+    llm=llm.model_copy(update={"usage_id": "condenser"}), max_size=10, keep_first=2
+)
+
+# Agent with condenser
 agent = Agent(llm=llm, tools=tools, condenser=condenser)
 ```
-
-When context exceeds `max_context_length`, the condenser summarizes older messages to reduce token usage while maintaining important information.
 
 ## Next Steps
 
