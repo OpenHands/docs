@@ -1,0 +1,126 @@
+---
+title: Streaming & Interactive Terminal
+description: Stream events in real-time to display agent progress and reasoning to users.
+---
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/06_interactive_terminal_w_reasoning.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/06_interactive_terminal_w_reasoning.py)
+</Note>
+
+Stream agent events in real-time to display progress and reasoning to users:
+
+```python icon="python" expandable examples/01_standalone_sdk/06_interactive_terminal_w_reasoning.py
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool, register_tool
+from openhands.tools.execute_bash import BashTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Tools
+cwd = os.getcwd()
+register_tool("BashTool", BashTool)
+tools = [
+    Tool(
+        name="BashTool",
+        params={"no_change_timeout_seconds": 3},
+    )
+]
+
+# Agent
+agent = Agent(llm=llm, tools=tools)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+conversation = Conversation(
+    agent=agent, callbacks=[conversation_callback], workspace=cwd
+)
+
+conversation.send_message(
+    "Enter python interactive mode by directly running `python3`, then tell me "
+    "the current time, and exit python interactive mode."
+)
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/06_interactive_terminal_w_reasoning.py
+```
+
+### Streaming Mode
+
+Process events as they occur in real-time:
+
+```python highlight={4-7}
+conversation = Conversation(agent=agent)
+conversation.send_message("Build a web server")
+
+for event in conversation.stream():
+    if isinstance(event, Action):
+        print(f"🔧 Action: {event}")
+    elif isinstance(event, Observation):
+        print(f"👁️ Result: {event}")
+```
+
+### Single-Turn Mode
+
+Wait for the agent to complete before continuing (see [Hello World](/sdk/guides/hello-world)):
+
+```python highlight={3}
+conversation = Conversation(agent=agent)
+conversation.send_message("Create a Python script")
+conversation.run()  # Blocks until done
+```
+
+### Displaying Reasoning
+
+Show the agent's thought process during execution:
+
+```python highlight={2-3}
+for event in conversation.stream():
+    if hasattr(event, 'reasoning') and event.reasoning:
+        print(f"💭 {event.reasoning}")
+    elif isinstance(event, Action):
+        print(f"🔧 {event.tool_name}")
+```
+
+## Next Steps
+
+- **[Pause and Resume](/sdk/guides/pause-and-resume)** - Control execution flow
+- **[Async Operations](/sdk/guides/async)** - Non-blocking streaming

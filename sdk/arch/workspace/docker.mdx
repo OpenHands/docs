@@ -1,0 +1,330 @@
+---
+title: DockerWorkspace
+description: Execute agent operations in isolated Docker containers with automatic container lifecycle management.
+---
+
+DockerWorkspace provides isolated execution environments using Docker containers. It automatically manages container lifecycle, networking, and resource allocation.
+
+**Source**: [`openhands/workspace/docker/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/openhands/workspace/docker)
+
+## Overview
+
+DockerWorkspace provides:
+- Automatic container creation and cleanup
+- Network isolation and port management
+- Custom or pre-built Docker images
+- Environment variable forwarding
+- File system mounting
+- Resource limits and controls
+
+## Usage
+
+### Basic Usage
+
+```python
+from openhands.workspace import DockerWorkspace
+
+workspace = DockerWorkspace(
+    working_dir="/workspace",
+    base_image="python:3.12"
+)
+
+with workspace:
+    result = workspace.execute_command("python --version")
+    print(result.stdout)  # Python 3.12.x
+```
+
+### With Pre-built Image
+
+```python
+workspace = DockerWorkspace(
+    working_dir="/workspace",
+    server_image="ghcr.io/all-hands-ai/agent-server:latest"
+)
+```
+
+## Configuration
+
+**Source**: [`openhands/workspace/docker/workspace.py`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands/workspace/docker/workspace.py)
+
+### Core Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `working_dir` | `str` | `"/workspace"` | Working directory in container |
+| `base_image` | `str \| None` | `None` | Base image to build agent server from |
+| `server_image` | `str \| None` | `None` | Pre-built agent server image |
+| `host_port` | `int \| None` | `None` | Host port to bind (auto-assigned if None) |
+| `forward_env` | `list[str]` | `["DEBUG"]` | Environment variables to forward |
+| `container_name` | `str \| None` | `None` | Container name (auto-generated if None) |
+| `platform` | `str \| None` | `None` | Target platform (e.g., "linux/amd64") |
+
+### Using Base Image
+
+Build agent server on top of custom base image:
+
+```python
+workspace = DockerWorkspace(
+    base_image="ubuntu:22.04",
+    working_dir="/workspace"
+)
+```
+
+Agent server components are installed on top of the base image.
+
+### Using Pre-built Server Image
+
+Use pre-built agent server image:
+
+```python
+workspace = DockerWorkspace(
+    server_image="ghcr.io/all-hands-ai/agent-server:latest",
+    working_dir="/workspace"
+)
+```
+
+Faster startup, no build time required.
+
+## Lifecycle Management
+
+### Automatic Cleanup
+
+```python
+with DockerWorkspace(base_image="python:3.12") as workspace:
+    # Container created
+    workspace.execute_command("pip install requests")
+    # Commands execute in container
+# Container automatically stopped and removed
+```
+
+### Manual Management
+
+```python
+workspace = DockerWorkspace(base_image="python:3.12")
+
+# Manually start (happens automatically in context manager)
+# Use workspace
+result = workspace.execute_command("ls")
+
+# Manually cleanup
+workspace.__exit__(None, None, None)
+```
+
+## Environment Configuration
+
+### Forward Environment Variables
+
+```python
+import os
+
+os.environ["DATABASE_URL"] = "postgres://..."
+os.environ["API_KEY"] = "secret"
+
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    forward_env=["DATABASE_URL", "API_KEY", "DEBUG"]
+)
+
+with workspace:
+    result = workspace.execute_command("echo $DATABASE_URL")
+    # Outputs: postgres://...
+```
+
+### Custom Container Name
+
+```python
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    container_name="my-agent-container"
+)
+```
+
+Useful for debugging and monitoring.
+
+### Platform Specification
+
+```python
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    platform="linux/amd64"  # Force specific platform
+)
+```
+
+Useful for Apple Silicon Macs running amd64 images.
+
+## Port Management
+
+DockerWorkspace automatically finds available ports for container communication:
+
+```python
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    host_port=None  # Auto-assign (default)
+)
+
+# Or specify explicit port
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    host_port=8000  # Use specific port
+)
+```
+
+## File Operations
+
+### File Upload
+
+```python
+workspace.file_upload(
+    source_path="local_file.txt",
+    destination_path="/workspace/file.txt"
+)
+```
+
+### File Download
+
+```python
+workspace.file_download(
+    source_path="/workspace/output.txt",
+    destination_path="local_output.txt"
+)
+```
+
+## Building Docker Images
+
+DockerWorkspace can build custom agent server images:
+
+**Source**: [`openhands/agent_server/docker/build.py`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands/agent_server/docker/build.py)
+
+```python
+from openhands.agent_server.docker.build import (
+    BuildOptions,
+    build
+)
+
+# Build custom image
+image_name = build(
+    BuildOptions(
+        base_image="ubuntu:22.04",
+        target="runtime",  # or "dev"
+        platform="linux/amd64",
+        context_dir="."
+    )
+)
+
+# Use built image
+workspace = DockerWorkspace(server_image=image_name)
+```
+
+## Use with Conversation
+
+```python
+from openhands.sdk import Agent, Conversation
+from openhands.tools import BashTool, FileEditorTool
+from openhands.workspace import DockerWorkspace
+
+# Create workspace
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    working_dir="/workspace"
+)
+
+# Create agent
+agent = Agent(
+    llm=llm,
+    tools=[BashTool.create(), FileEditorTool.create()]
+)
+
+# Use in conversation
+with workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+    conversation.send_message("Create a Python web scraper")
+    conversation.run()
+```
+
+See [`examples/02_remote_agent_server/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/examples/02_remote_agent_server) for complete examples.
+
+## Security Benefits
+
+### Isolation
+
+- **Process Isolation**: Container runs separately from host
+- **File System Isolation**: Limited access to host file system
+- **Network Isolation**: Separate network namespace
+
+### Resource Limits
+
+```python
+# Resource limits are configurable via Docker
+# Set through Docker API or Dockerfile
+```
+
+### Sandboxing
+
+DockerWorkspace provides strong sandboxing:
+- Agent cannot access host file system
+- Agent cannot interfere with host processes
+- Agent operates in controlled environment
+
+## Performance Considerations
+
+### Container Startup Time
+
+- **Base Image Build**: 30-60 seconds (first time)
+- **Pre-built Image**: 5-10 seconds
+- **Subsequent Runs**: Uses cached images
+
+### Optimization Tips
+
+1. **Use Pre-built Images**: Faster than building from base image
+2. **Cache Base Images**: Docker caches layers
+3. **Minimize Image Size**: Smaller images start faster
+4. **Reuse Containers**: For multiple operations (advanced)
+
+## Troubleshooting
+
+### Container Fails to Start
+
+```python
+# Check Docker is running
+docker ps
+
+# Check logs
+docker logs <container_name>
+
+# Verify image exists
+docker images
+```
+
+### Port Already in Use
+
+```python
+# Specify different port
+workspace = DockerWorkspace(
+    base_image="python:3.12",
+    host_port=8001  # Use alternative port
+)
+```
+
+### Permission Issues
+
+```python
+# Ensure Docker has necessary permissions
+# On Linux, add user to docker group:
+# sudo usermod -aG docker $USER
+```
+
+## Best Practices
+
+1. **Use Context Managers**: Always use `with` statement
+2. **Pre-build Images**: Build agent server images ahead of time
+3. **Set Resource Limits**: Configure appropriate limits
+4. **Monitor Containers**: Track resource usage
+5. **Clean Up**: Ensure containers are removed after use
+6. **Use Specific Tags**: Pin image versions for reproducibility
+
+## See Also
+
+- **[RemoteAPIWorkspace](/sdk/architecture/workspace/remote_api.mdx)** - API-based remote execution
+- **[Agent Server](/sdk/architecture/agent_server/overview.mdx)** - Server running in container
+- **[SDK Workspace](/sdk/architecture/sdk/workspace.mdx)** - Base workspace interface
+- **[Examples](https://github.com/All-Hands-AI/agent-sdk/tree/main/examples/02_remote_agent_server)** - Docker workspace examples

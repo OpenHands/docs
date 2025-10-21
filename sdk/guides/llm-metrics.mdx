@@ -1,0 +1,131 @@
+---
+title: LLM Metrics
+description: Track token usage, costs, and performance metrics for your agents.
+---
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/13_get_llm_metrics.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/13_get_llm_metrics.py)
+</Note>
+
+Track token usage, costs, and performance metrics from LLM interactions:
+
+```python icon="python" expandable examples/01_standalone_sdk/13_get_llm_metrics.py
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool, register_tool
+from openhands.tools.execute_bash import BashTool
+from openhands.tools.file_editor import FileEditorTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+cwd = os.getcwd()
+register_tool("BashTool", BashTool)
+register_tool("FileEditorTool", FileEditorTool)
+tools = [
+    Tool(name="BashTool"),
+    Tool(name="FileEditorTool"),
+]
+
+# Add MCP Tools
+mcp_config = {"mcpServers": {"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]}}}
+
+# Agent
+agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+# Conversation
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+)
+
+logger.info("Starting conversation with MCP integration...")
+conversation.send_message(
+    "Read https://github.com/OpenHands/OpenHands and write 3 facts "
+    "about the project into FACTS.txt."
+)
+conversation.run()
+
+conversation.send_message("Great! Now delete that file.")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+
+assert llm.metrics is not None
+print(
+    f"Conversation finished. Final LLM metrics with details: {llm.metrics.model_dump()}"
+)
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/13_get_llm_metrics.py
+```
+
+### Getting Metrics
+
+Access metrics after running the conversation:
+
+```python highlight={3-6}
+conversation.run()
+
+metrics = conversation.get_llm_metrics()
+print(f"Input tokens: {metrics.input_tokens}")
+print(f"Output tokens: {metrics.output_tokens}")
+print(f"Total cost: ${metrics.cost:.4f}")
+```
+
+### Tracking Changes Over Time
+
+Compare metrics between operations:
+
+```python highlight={1,4}
+initial_metrics = conversation.get_llm_metrics()
+conversation.send_message("more work")
+conversation.run()
+final_metrics = conversation.get_llm_metrics()
+
+tokens_used = final_metrics.input_tokens - initial_metrics.input_tokens
+```
+
+Metrics include: `input_tokens`, `output_tokens`, `cost`, `api_calls`, and `cache_reads` (if supported).
+
+## Next Steps
+
+- **[Conversation Costs](/sdk/guides/conversation-costs)** - Calculate costs per conversation
+- **[LLM Routing](/sdk/guides/llm-routing)** - Optimize costs with smart routing
