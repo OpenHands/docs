@@ -4,7 +4,7 @@ This repository contains the official documentation for OpenHands, including gui
 
 ## Repository Purpose
 
-- **OpenHands Docs**: User guides, tutorials, and reference documentation for OpenHands core application
+- **OpenHands Docs**: User guides, tutorials, and reference documentation for OpenHands client applications
 - **Agent SDK Docs**: Developer documentation for the OpenHands Agent SDK
 
 ## Repository Structure
@@ -140,6 +140,24 @@ This example is available on GitHub: [examples/01_standalone_sdk/02_custom_tools
 </Note>
 ```
 
+## Working with Microagent Documentation
+
+When modifying microagent-related documentation files:
+
+1. Location: Microagent documentation is in `openhands/usage/microagents/`
+2. Navigation: Update `docs.json` if adding new pages to the microagents section
+3. Consistency: Follow the existing structure in microagent documentation files
+4. Cross-references: Link between related microagent pages using relative paths
+5. Examples: Include practical examples with proper code blocks (non-synced)
+
+### Key Microagent Documentation Files
+
+- `microagents-overview.mdx`: Introduction and types of microagents
+- `microagents-repo.mdx`: General microagents (always loaded)
+- `microagents-keyword.mdx`: Keyword-triggered microagents
+- `microagents-org.mdx`: Organization and user microagents
+- `microagents-public.mdx`: Global microagents (contributing guide)
+
 ## Writing New Documentation
 
 ### Step-by-Step Guide
@@ -265,8 +283,10 @@ You can check https://www.mintlify.com/docs for documentation on what our doc si
 - **File**: `.github/workflows/sync-agent-sdk-openapi.yml`
 - **Purpose**: Syncs OpenAPI specifications for API documentation
 
-## Notes for Contributors
+## Notes
 
+- Microagents take up context window space - keep them focused and concise
+- Test keyword triggers to ensure they activate appropriately
 - For agent-sdk examples, ensure the file path in code blocks is correct
-- For short agent-sdk examples, you don't need `expandable` in example file
-- When you add new pages that need to refer to agent-sdk example script, you should create an empty block with correct block name (refer to the python example script correctly), then run `python .github/scripts/sync_code_blocks.py` to sync it
+- When adding new microagent types, update both the code and documentation
+- Remember: this repo.md file is itself a microagent example!
