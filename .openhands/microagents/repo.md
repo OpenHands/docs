@@ -1,7 +1,43 @@
-# Documentation System Overview
+# OpenHands Documentation Repository
 
-The documentation for this project follows a synchronized approach where code examples in the docs are automatically kept in sync with the actual example files in the agent-sdk repository.
+This repository contains the official documentation for OpenHands, including guides for the Agent SDK and the client OpenHands applications. The documentation is deployed using Mintlify and features an automated code synchronization system.
 
+## Repository Purpose
+
+- **OpenHands Docs**: User guides, tutorials, and reference documentation for OpenHands core application
+- **Agent SDK Docs**: Developer documentation for the OpenHands Agent SDK
+
+## Repository Structure
+
+```
+docs/
+├── .openhands/microagents/     # Repository microagents (like this file)
+├── .github/
+│   ├── scripts/
+│   │   └── sync_code_blocks.py # Code synchronization script
+│   └── workflows/              # CI/CD workflows
+├── openhands/                  # OpenHands core documentation
+│   └── usage/
+│       ├── microagents/        # Microagent documentation
+│       ├── cloud/              # Cloud service docs
+│       ├── settings/           # Settings documentation
+│       └── ...
+├── sdk/                        # Agent SDK documentation
+│   ├── guides/                 # SDK tutorials and guides
+│   └── arch/                   # Architecture documentation
+└── docs.json                   # Mintlify navigation configuration
+```
+
+### Key Files
+
+- **`docs.json`**: Mintlify configuration including navigation structure, theme, and redirects
+- **Microagent docs**: `openhands/usage/microagents/microagents-*.mdx`
+- **Sync script**: `.github/scripts/sync_code_blocks.py`
+- **This microagent**: `.openhands/microagents/repo.md`
+
+## Documentation System Overview
+
+The documentation follows a synchronized approach where code examples are automatically kept in sync with actual example files in the agent-sdk repository.
 
 ## Automatic Code Synchronization
 
@@ -213,6 +249,24 @@ name: Example Workflow
 on: [push]
 ```
 
-## Mintlify documentation
+## Mintlify Documentation
 
-You can check https://www.mintlify.com/docs for documentation on what our doc site supported.
+You can check https://www.mintlify.com/docs for documentation on what our doc site supports.
+
+## CI/CD Workflows
+
+### Code Synchronization Workflow
+- **File**: `.github/workflows/sync-docs-code-blocks.yml`
+- **Triggers**: Push to any branch, daily at 2 AM UTC, manual dispatch
+- **Purpose**: Keeps code blocks in sync with agent-sdk examples
+- **Actions**: Checks out both repositories, runs sync script, commits changes if needed
+
+### OpenAPI Sync Workflow
+- **File**: `.github/workflows/sync-agent-sdk-openapi.yml`
+- **Purpose**: Syncs OpenAPI specifications for API documentation
+
+## Notes for Contributors
+
+- For agent-sdk examples, ensure the file path in code blocks is correct
+- For short agent-sdk examples, you don't need `expandable` in example file
+- When you add new pages that need to refer to agent-sdk example script, you should create an empty block with correct block name (refer to the python example script correctly), then run `python .github/scripts/sync_code_blocks.py` to sync it
