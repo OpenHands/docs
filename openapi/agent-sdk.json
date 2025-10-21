@@ -1489,14 +1489,14 @@
         }
       }
     },
-    "/api/bash/execute_bash_command": {
+    "/api/bash/start_bash_command": {
       "post": {
         "tags": [
           "Bash"
         ],
         "summary": "Start Bash Command",
-        "description": "Execute a bash command",
-        "operationId": "start_bash_command_api_bash_execute_bash_command_post",
+        "description": "Execute a bash command in the background",
+        "operationId": "start_bash_command_api_bash_start_bash_command_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1514,6 +1514,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BashCommand"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/bash/execute_bash_command": {
+      "post": {
+        "tags": [
+          "Bash"
+        ],
+        "summary": "Execute Bash Command",
+        "description": "Execute a bash command and wait for a result",
+        "operationId": "execute_bash_command_api_bash_execute_bash_command_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecuteBashRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BashOutput"
                 }
               }
             }
@@ -2015,7 +2057,7 @@
             "description": "Optional AgentContext to initialize the agent with specific context.",
             "examples": [
               {
-                "microagents": [
+                "skills": [
                   {
                     "content": "When you see this message, you should reply like you are a grumpy cat forced to use the internet.",
                     "name": "repo.md",
@@ -2100,32 +2142,13 @@
       },
       "AgentContext-Output": {
         "properties": {
-          "microagents": {
+          "skills": {
             "items": {
-              "oneOf": [
-                {
-                  "$ref": "#/components/schemas/KnowledgeMicroagent"
-                },
-                {
-                  "$ref": "#/components/schemas/RepoMicroagent"
-                },
-                {
-                  "$ref": "#/components/schemas/TaskMicroagent"
-                }
-              ],
-              "title": "BaseMicroagent",
-              "discriminator": {
-                "propertyName": "kind",
-                "mapping": {
-                  "openhands__sdk__context__microagents__microagent__KnowledgeMicroagent-Output__1": "#/components/schemas/KnowledgeMicroagent",
-                  "openhands__sdk__context__microagents__microagent__RepoMicroagent-Output__1": "#/components/schemas/RepoMicroagent",
-                  "openhands__sdk__context__microagents__microagent__TaskMicroagent-Output__1": "#/components/schemas/TaskMicroagent"
-                }
-              }
+              "$ref": "#/components/schemas/Skill"
             },
             "type": "array",
-            "title": "Microagents",
-            "description": "List of available microagents that can extend the user's input."
+            "title": "Skills",
+            "description": "List of available skills that can extend the user's input."
           },
           "system_message_suffix": {
             "anyOf": [
@@ -2154,7 +2177,7 @@
         },
         "type": "object",
         "title": "AgentContext",
-        "description": "Central structure for managing prompt extension.\n\nAgentContext unifies all the contextual inputs that shape how the system\nextends and interprets user prompts. It combines both static environment\ndetails and dynamic, user-activated extensions from microagents.\n\nSpecifically, it provides:\n- **Repository context / Repo Microagents**: Information about the active codebase,\n  branches, and repo-specific instructions contributed by repo microagents.\n- **Runtime context**: Current execution environment (hosts, working\n  directory, secrets, date, etc.).\n- **Conversation instructions**: Optional task- or channel-specific rules\n  that constrain or guide the agent\u2019s behavior across the session.\n- **Knowledge Microagents**: Extensible components that can be triggered by user input\n  to inject knowledge or domain-specific guidance.\n\nTogether, these elements make AgentContext the primary container responsible\nfor assembling, formatting, and injecting all prompt-relevant context into\nLLM interactions."
+        "description": "Central structure for managing prompt extension.\n\nAgentContext unifies all the contextual inputs that shape how the system\nextends and interprets user prompts. It combines both static environment\ndetails and dynamic, user-activated extensions from skills.\n\nSpecifically, it provides:\n- **Repository context / Repo Skills**: Information about the active codebase,\n  branches, and repo-specific instructions contributed by repo skills.\n- **Runtime context**: Current execution environment (hosts, working\n  directory, secrets, date, etc.).\n- **Conversation instructions**: Optional task- or channel-specific rules\n  that constrain or guide the agent\u2019s behavior across the session.\n- **Knowledge Skills**: Extensible components that can be triggered by user input\n  to inject knowledge or domain-specific guidance.\n\nTogether, these elements make AgentContext the primary container responsible\nfor assembling, formatting, and injecting all prompt-relevant context into\nLLM interactions."
       },
       "AgentErrorEvent": {
         "properties": {
@@ -3076,13 +3099,13 @@
           "confirmation_policy": {
             "$ref": "#/components/schemas/ConfirmationPolicyBase"
           },
-          "activated_knowledge_microagents": {
+          "activated_knowledge_skills": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Activated Knowledge Microagents",
-            "description": "List of activated knowledge microagents name"
+            "title": "Activated Knowledge Skills",
+            "description": "List of activated knowledge skills name"
           },
           "stats": {
             "$ref": "#/components/schemas/ConversationStats-Output",
@@ -3829,62 +3852,30 @@
           "description"
         ],
         "title": "InputMetadata",
-        "description": "Metadata for task microagent inputs."
+        "description": "Metadata for task skill inputs."
       },
-      "KnowledgeMicroagent": {
+      "KeywordTrigger": {
         "properties": {
-          "kind": {
-            "type": "string",
-            "const": "KnowledgeMicroagent",
-            "title": "Kind",
-            "default": "KnowledgeMicroagent"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source",
-            "description": "The source path or identifier of the microagent. When it is None, it is treated as a programmatically defined microagent."
-          },
           "type": {
             "type": "string",
-            "enum": [
-              "knowledge",
-              "repo",
-              "task"
-            ],
+            "const": "keyword",
             "title": "Type",
-            "default": "knowledge"
+            "default": "keyword"
           },
-          "triggers": {
+          "keywords": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Triggers",
-            "description": "List of triggers for the microagent"
+            "title": "Keywords"
           }
         },
         "type": "object",
         "required": [
-          "name",
-          "content"
+          "keywords"
         ],
-        "title": "KnowledgeMicroagent",
-        "description": "Knowledge micro-agents provide specialized expertise that's triggered by keywords\nin conversations.\n\nThey help with:\n- Language best practices\n- Framework guidelines\n- Common patterns\n- Tool usage"
+        "title": "KeywordTrigger",
+        "description": "Trigger for keyword-based skills.\n\nThese skills are activated when specific keywords appear in the user's query."
       },
       "LLM": {
         "properties": {
@@ -4622,13 +4613,13 @@
             "$ref": "#/components/schemas/Message",
             "description": "The exact LLM message for this message event"
           },
-          "activated_microagents": {
+          "activated_skills": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Activated Microagents",
-            "description": "List of activated microagent name"
+            "title": "Activated Skills",
+            "description": "List of activated skill name"
           },
           "extended_content": {
             "items": {
@@ -5074,66 +5065,6 @@
         "title": "RemoteWorkspace",
         "description": "Remote Workspace Implementation."
       },
-      "RepoMicroagent": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "const": "RepoMicroagent",
-            "title": "Kind",
-            "default": "RepoMicroagent"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source",
-            "description": "The source path or identifier of the microagent. When it is None, it is treated as a programmatically defined microagent."
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "knowledge",
-              "repo",
-              "task"
-            ],
-            "title": "Type",
-            "default": "repo"
-          },
-          "mcp_tools": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mcp Tools",
-            "description": "MCP tools configuration for the microagent. It should conform to the MCPConfig schema: https://gofastmcp.com/clients/client#configuration-format"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "content"
-        ],
-        "title": "RepoMicroagent",
-        "description": "Microagent specialized for repository-specific knowledge and guidelines.\n\nRepoMicroagents are loaded from `.openhands/microagents/repo.md` files within\nrepositories and contain private, repository-specific instructions that are\nautomatically loaded when\nworking with that repository. They are ideal for:\n    - Repository-specific guidelines\n    - Team practices and conventions\n    - Project-specific workflows\n    - Custom documentation references"
-      },
       "ResponseLatency": {
         "properties": {
           "model": {
@@ -5292,6 +5223,84 @@
         ],
         "title": "SetConfirmationPolicyRequest",
         "description": "Payload to set confirmation policy for a conversation."
+      },
+      "Skill": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/KeywordTrigger"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TaskTrigger"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "keyword": "#/components/schemas/KeywordTrigger",
+                    "task": "#/components/schemas/TaskTrigger"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source",
+            "description": "The source path or identifier of the skill. When it is None, it is treated as a programmatically defined skill."
+          },
+          "mcp_tools": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Tools",
+            "description": "MCP tools configuration for the skill (repo skills only). It should conform to the MCPConfig schema: https://gofastmcp.com/clients/client#configuration-format"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/InputMetadata"
+            },
+            "type": "array",
+            "title": "Inputs",
+            "description": "Input metadata for the skill (task skills only)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "content",
+          "trigger"
+        ],
+        "title": "Skill",
+        "description": "A skill provides specialized knowledge or functionality.\n\nSkills use triggers to determine when they should be activated:\n- None: Always active, for repository-specific guidelines\n- KeywordTrigger: Activated when keywords appear in user messages\n- TaskTrigger: Activated for specific tasks, may require user input"
       },
       "StartConversationRequest": {
         "properties": {
@@ -5522,69 +5531,6 @@
         ],
         "title": "TaskItem"
       },
-      "TaskMicroagent": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "const": "TaskMicroagent",
-            "title": "Kind",
-            "default": "TaskMicroagent"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source",
-            "description": "The source path or identifier of the microagent. When it is None, it is treated as a programmatically defined microagent."
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "knowledge",
-              "repo",
-              "task"
-            ],
-            "title": "Type",
-            "default": "task"
-          },
-          "triggers": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Triggers",
-            "description": "List of triggers for the microagent"
-          },
-          "inputs": {
-            "items": {
-              "$ref": "#/components/schemas/InputMetadata"
-            },
-            "type": "array",
-            "title": "Inputs",
-            "description": "Input metadata for the microagent. Only exists for task microagents"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "content"
-        ],
-        "title": "TaskMicroagent",
-        "description": "TaskMicroagent is a special type of KnowledgeMicroagent that requires user input.\n\nThese microagents are triggered by a special format: \"/{agent_name}\"\nand will prompt the user for any required inputs before proceeding."
-      },
       "TaskTrackerAction": {
         "properties": {
           "kind": {
@@ -5650,6 +5596,29 @@
         "type": "object",
         "title": "TaskTrackerObservation",
         "description": "This data class represents the result of a task tracking operation."
+      },
+      "TaskTrigger": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "task",
+            "title": "Type",
+            "default": "task"
+          },
+          "triggers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Triggers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "triggers"
+        ],
+        "title": "TaskTrigger",
+        "description": "Trigger for task-specific skills.\n\nThese skills are activated for specific task types and can modify prompts."
       },
       "TextContent": {
         "properties": {
@@ -6172,28 +6141,6 @@
           }
         },
         "title": "CondenserBase"
-      },
-      "BaseMicroagent": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/KnowledgeMicroagent"
-          },
-          {
-            "$ref": "#/components/schemas/RepoMicroagent"
-          },
-          {
-            "$ref": "#/components/schemas/TaskMicroagent"
-          }
-        ],
-        "discriminator": {
-          "propertyName": "kind",
-          "mapping": {
-            "openhands__sdk__context__microagents__microagent__KnowledgeMicroagent-Input__1": "#/components/schemas/KnowledgeMicroagent",
-            "openhands__sdk__context__microagents__microagent__RepoMicroagent-Input__1": "#/components/schemas/RepoMicroagent",
-            "openhands__sdk__context__microagents__microagent__TaskMicroagent-Input__1": "#/components/schemas/TaskMicroagent"
-          }
-        },
-        "title": "BaseMicroagent"
       },
       "BaseWorkspace": {
         "oneOf": [
