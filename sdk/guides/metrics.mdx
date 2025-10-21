@@ -1,0 +1,417 @@
+---
+title: Metrics Tracking
+description: Track token usage, costs, and latency metrics for your agents.
+---
+
+## Overview
+
+The OpenHands SDK provides comprehensive metrics tracking at two levels: individual LLM metrics and aggregated conversation-level costs:
+- You can access detailed metrics from each LLM instance using the `llm.metrics` object to track token usage, costs, and latencies per API call.
+- For a complete view, use `conversation.conversation_stats` to get aggregated costs across all LLMs used in a conversation, including the primary agent LLM and any auxiliary LLMs (such as those used by the [context condenser](/sdk/guides/context-condenser)).
+
+## Getting Metrics from Individual LLMs
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/13_get_llm_metrics.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/13_get_llm_metrics.py)
+</Note>
+
+Track token usage, costs, and performance metrics from LLM interactions:
+
+```python icon="python" expandable examples/01_standalone_sdk/13_get_llm_metrics.py
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool, register_tool
+from openhands.tools.execute_bash import BashTool
+from openhands.tools.file_editor import FileEditorTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+cwd = os.getcwd()
+register_tool("BashTool", BashTool)
+register_tool("FileEditorTool", FileEditorTool)
+tools = [
+    Tool(name="BashTool"),
+    Tool(name="FileEditorTool"),
+]
+
+# Add MCP Tools
+mcp_config = {"mcpServers": {"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]}}}
+
+# Agent
+agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+# Conversation
+conversation = Conversation(
+    agent=agent,
+    callbacks=[conversation_callback],
+    workspace=cwd,
+)
+
+logger.info("Starting conversation with MCP integration...")
+conversation.send_message(
+    "Read https://github.com/OpenHands/OpenHands and write 3 facts "
+    "about the project into FACTS.txt."
+)
+conversation.run()
+
+conversation.send_message("Great! Now delete that file.")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+
+assert llm.metrics is not None
+print(
+    f"Conversation finished. Final LLM metrics with details: {llm.metrics.model_dump()}"
+)
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/13_get_llm_metrics.py
+```
+
+### Accessing Individual LLM Metrics
+
+Access metrics directly from the LLM object after running the conversation:
+
+```python highlight={3-4}
+conversation.run()
+
+assert llm.metrics is not None
+print(f"Final LLM metrics: {llm.metrics.model_dump()}")
+```
+
+The `llm.metrics` object is an instance of the [Metrics class](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/llm/utils/metrics.py), which provides detailed information including:
+
+- `accumulated_cost` - Total accumulated cost across all API calls
+- `accumulated_token_usage` - Aggregated token usage with fields like:
+  - `prompt_tokens` - Number of input tokens processed
+  - `completion_tokens` - Number of output tokens generated
+  - `cache_read_tokens` - Cache hits (if supported by the model)
+  - `cache_write_tokens` - Cache writes (if supported by the model)
+  - `reasoning_tokens` - Reasoning tokens (for models that support extended thinking)
+  - `context_window` - Context window size used
+- `costs` - List of individual cost records per API call
+- `token_usages` - List of detailed token usage records per API call
+- `response_latencies` - List of response latency metrics per API call
+
+For more details on the available metrics and methods, refer to the [source code](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/llm/utils/metrics.py).
+
+## Using LLM Registry for Cost Tracking
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/05_use_llm_registry.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/05_use_llm_registry.py)
+</Note>
+
+The LLM Registry allows you to maintain a centralized registry of LLM instances, each identified by a unique `usage_id`. This is particularly useful for tracking costs across different LLMs used in your application.
+
+```python icon="python" expandable examples/01_standalone_sdk/05_use_llm_registry.py
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    LLMRegistry,
+    Message,
+    TextContent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool, register_tool
+from openhands.tools.execute_bash import BashTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM using LLMRegistry
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+
+# Create LLM instance
+main_llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Create LLM registry and add the LLM
+llm_registry = LLMRegistry()
+llm_registry.add(main_llm)
+
+# Get LLM from registry
+llm = llm_registry.get("agent")
+
+# Tools
+cwd = os.getcwd()
+register_tool("BashTool", BashTool)
+tools = [Tool(name="BashTool")]
+
+# Agent
+agent = Agent(llm=llm, tools=tools)
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+conversation = Conversation(
+    agent=agent, callbacks=[conversation_callback], workspace=cwd
+)
+
+conversation.send_message("Please echo 'Hello!'")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+
+print("=" * 100)
+print(f"LLM Registry usage IDs: {llm_registry.list_usage_ids()}")
+
+# Demonstrate getting the same LLM instance from registry
+same_llm = llm_registry.get("agent")
+print(f"Same LLM instance: {llm is same_llm}")
+
+# Demonstrate requesting a completion directly from an LLM
+completion_response = llm.completion(
+    messages=[
+        Message(role="user", content=[TextContent(text="Say hello in one word.")])
+    ]
+)
+# Access the response content
+if completion_response.choices and completion_response.choices[0].message:  # type: ignore
+    content = completion_response.choices[0].message.content  # type: ignore
+    print(f"Direct completion response: {content}")
+else:
+    print("No response content available")
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/05_use_llm_registry.py
+```
+
+### How the LLM Registry Works
+
+Each LLM is created with a unique `usage_id` (e.g., "agent", "condenser") that serves as its identifier in the registry. The registry maintains references to all LLM instances, allowing you to:
+
+1. **Register LLMs**: Add LLM instances to the registry with `llm_registry.add(llm)`
+2. **Retrieve LLMs**: Get LLM instances by their usage ID with `llm_registry.get("usage_id")`
+3. **List Usage IDs**: View all registered usage IDs with `llm_registry.list_usage_ids()`
+4. **Track Costs Separately**: Each LLM's metrics are tracked independently by its usage ID
+
+This pattern is essential when using multiple LLMs in your application, such as having a primary agent LLM and a separate LLM for context condensing.
+
+### Getting Aggregated Conversation Costs
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/21_generate_extraneous_conversation_costs.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/21_generate_extraneous_conversation_costs.py)
+</Note>
+
+Beyond individual LLM metrics, you can access aggregated costs for an entire conversation using `conversation.conversation_stats`. This is particularly useful when your conversation involves multiple LLMs, such as the main agent LLM and auxiliary LLMs for tasks like context condensing.
+
+```python icon="python" expandable examples/01_standalone_sdk/21_generate_extraneous_conversation_costs.py
+import os
+
+from pydantic import SecretStr
+from tabulate import tabulate
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    LLMSummarizingCondenser,
+    Message,
+    TextContent,
+    get_logger,
+)
+from openhands.sdk.tool.registry import register_tool
+from openhands.sdk.tool.spec import Tool
+from openhands.tools.execute_bash import (
+    BashTool,
+)
+
+
+logger = get_logger(__name__)
+
+# Configure LLM using LLMRegistry
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+
+# Create LLM instance
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+llm_condenser = LLM(
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+    usage_id="condenser",
+)
+
+# Tools
+register_tool("BashTool", BashTool)
+
+condenser = LLMSummarizingCondenser(llm=llm_condenser, max_size=10, keep_first=2)
+
+cwd = os.getcwd()
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(
+            name="BashTool",
+        ),
+    ],
+    condenser=condenser,
+)
+
+conversation = Conversation(agent=agent, workspace=cwd)
+conversation.send_message(
+    message=Message(
+        role="user",
+        content=[TextContent(text="Please echo 'Hello!'")],
+    )
+)
+conversation.run()
+
+
+# Demonstrate extraneous costs part of the conversation
+second_llm = LLM(
+    usage_id="demo-secondary",
+    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    base_url="https://llm-proxy.eval.all-hands.dev",
+    api_key=SecretStr(api_key),
+)
+conversation.llm_registry.add(second_llm)
+completion_response = second_llm.completion(
+    messages=[Message(role="user", content=[TextContent(text="echo 'More spend!'")])]
+)
+
+
+# Access total spend
+spend = conversation.conversation_stats.get_combined_metrics()
+print("\n=== Total Spend for Conversation ===\n")
+print(f"Accumulated Cost: ${spend.accumulated_cost:.6f}")
+if spend.accumulated_token_usage:
+    print(f"Prompt Tokens: {spend.accumulated_token_usage.prompt_tokens}")
+    print(f"Completion Tokens: {spend.accumulated_token_usage.completion_tokens}")
+    print(f"Cache Read Tokens: {spend.accumulated_token_usage.cache_read_tokens}")
+    print(f"Cache Write Tokens: {spend.accumulated_token_usage.cache_write_tokens}")
+
+
+spend_per_usage = conversation.conversation_stats.usage_to_metrics
+print("\n=== Spend Breakdown by Usage ID ===\n")
+rows = []
+for usage_id, metrics in spend_per_usage.items():
+    rows.append(
+        [
+            usage_id,
+            f"${metrics.accumulated_cost:.6f}",
+            metrics.accumulated_token_usage.prompt_tokens
+            if metrics.accumulated_token_usage
+            else 0,
+            metrics.accumulated_token_usage.completion_tokens
+            if metrics.accumulated_token_usage
+            else 0,
+        ]
+    )
+
+print(
+    tabulate(
+        rows,
+        headers=["Usage ID", "Cost", "Prompt Tokens", "Completion Tokens"],
+        tablefmt="github",
+    )
+)
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/21_generate_extraneous_conversation_costs.py
+```
+
+### Understanding Conversation Stats
+
+The `conversation.conversation_stats` object provides comprehensive cost tracking across all LLMs used in a conversation. It is an instance of the [ConversationStats class](https://github.com/All-Hands-AI/agent-sdk/blob/32e1e75f7e962033a8fd6773a672612e07bc8c0d/openhands-sdk/openhands/sdk/conversation/conversation_stats.py), which provides the following key features:
+
+#### Key Methods and Properties
+
+- **`usage_to_metrics`**: A dictionary mapping usage IDs to their respective `Metrics` objects. This allows you to track costs separately for each LLM used in the conversation.
+  
+- **`get_combined_metrics()`**: Returns a single `Metrics` object that aggregates costs across all LLMs used in the conversation. This gives you the total cost of the entire conversation.
+
+- **`get_metrics_for_usage(usage_id: str)`**: Retrieves the `Metrics` object for a specific usage ID, allowing you to inspect costs for individual LLMs.
+
+```python
+# Get combined metrics for the entire conversation
+total_metrics = conversation.conversation_stats.get_combined_metrics()
+print(f"Total cost: ${total_metrics.accumulated_cost:.6f}")
+
+# Get metrics for a specific LLM by usage ID
+agent_metrics = conversation.conversation_stats.get_metrics_for_usage("agent")
+print(f"Agent cost: ${agent_metrics.accumulated_cost:.6f}")
+
+# Access all usage IDs and their metrics
+for usage_id, metrics in conversation.conversation_stats.usage_to_metrics.items():
+    print(f"{usage_id}: ${metrics.accumulated_cost:.6f}")
+```
+
+## Next Steps
+
+- **[Context Condenser](/sdk/guides/context-condenser)** - Learn about context management and how it uses separate LLMs
+- **[LLM Routing](/sdk/guides/llm-routing)** - Optimize costs with smart routing between different models
+- **[Conversation Costs](/sdk/guides/conversation-costs)** - Calculate costs per conversation
