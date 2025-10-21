@@ -1,7 +1,96 @@
-# Documentation System Overview
+# OpenHands Documentation Repository
 
-The documentation for this project follows a synchronized approach where code examples in the docs are automatically kept in sync with the actual example files in the agent-sdk repository.
+This repository contains the official documentation for OpenHands, including guides for the core application and the Agent SDK. The documentation is deployed using Mintlify and features an automated code synchronization system.
 
+## Repository Purpose
+
+- **OpenHands Docs**: User guides, tutorials, and reference documentation for OpenHands core application
+- **Agent SDK Docs**: Developer documentation for the OpenHands Agent SDK
+- **Microagents Documentation**: Guidelines for creating and using microagents (specialized prompts)
+
+## Microagents in This Repository
+
+This repository demonstrates the use of microagents - specialized prompts that provide domain-specific knowledge to OpenHands. You are currently reading the `repo.md` general microagent.
+
+### Microagent Types
+
+1. **General Microagents** (e.g., `.openhands/microagents/repo.md`)
+   - Always loaded as part of the context
+   - Provide repository-specific guidelines and knowledge
+   - No frontmatter required (optional `agent` field defaults to 'CodeActAgent')
+
+2. **Keyword-Triggered Microagents** (e.g., `.openhands/microagents/trigger_name.md`)
+   - Loaded only when specific keywords appear in prompts
+   - Frontmatter with `triggers` field is **required**
+   - Format:
+     ```yaml
+     ---
+     triggers:
+       - keyword1
+       - keyword2
+     agent: CodeActAgent  # optional, defaults to CodeActAgent
+     ---
+     ```
+
+3. **Organization/User Microagents**
+   - Placed in a `.openhands` repository under the organization or user
+   - Applied to all repositories belonging to that organization/user
+   - Can be any type (general or keyword-triggered)
+   - For GitLab: use `openhands-config` repository name instead
+
+4. **Global Microagents**
+   - Keyword-triggered microagents in the main OpenHands repository
+   - Available to all OpenHands users
+   - Located at `github.com/All-Hands-AI/OpenHands/tree/main/microagents`
+
+### Creating Effective Microagents
+
+**Best Practices:**
+- Keep microagents focused on specific domains or tasks
+- Use clear, unambiguous instructions
+- Include practical examples of common use cases
+- Specify any constraints or limitations
+- For keyword triggers, use specific words to avoid false activations
+- Document required credentials or environment variables
+- Consider how the microagent interacts with other components
+
+**When to Create a Microagent:**
+- Repository-specific guidelines that should always be followed
+- Domain expertise for specific tools, languages, or frameworks
+- Automated responses for common patterns or requests
+- Integration guidance for external APIs or services
+
+## Repository Structure
+
+```
+docs/
+├── .openhands/microagents/     # Repository microagents (like this file)
+├── .github/
+│   ├── scripts/
+│   │   └── sync_code_blocks.py # Code synchronization script
+│   └── workflows/              # CI/CD workflows
+├── openhands/                  # OpenHands core documentation
+│   └── usage/
+│       ├── microagents/        # Microagent documentation
+│       ├── cloud/              # Cloud service docs
+│       ├── settings/           # Settings documentation
+│       └── ...
+├── sdk/                        # Agent SDK documentation
+│   ├── guides/                 # SDK tutorials and guides
+│   └── arch/                   # Architecture documentation
+└── docs.json                   # Mintlify navigation configuration
+```
+
+### Key Files
+
+- **`docs.json`**: Mintlify configuration including navigation structure, theme, and redirects
+- **Microagent docs**: `openhands/usage/microagents/microagents-*.mdx`
+- **Sync script**: `.github/scripts/sync_code_blocks.py`
+- **This microagent**: `.openhands/microagents/repo.md`
+
+## Documentation System Overview
+
+The documentation follows a synchronized approach where code examples are automatically kept in sync with actual example files in the agent-sdk repository.
 
 ## Automatic Code Synchronization
 
@@ -213,6 +302,44 @@ name: Example Workflow
 on: [push]
 ```
 
-## Mintlify documentation
+## Mintlify Documentation
 
-You can check https://www.mintlify.com/docs for documentation on what our doc site supported.
+You can check https://www.mintlify.com/docs for documentation on what our doc site supports.
+
+## Working with Microagent Documentation
+
+When modifying microagent-related documentation files:
+
+1. **Location**: Microagent documentation is in `openhands/usage/microagents/`
+2. **Navigation**: Update `docs.json` if adding new pages to the microagents section
+3. **Consistency**: Follow the existing structure in microagent documentation files
+4. **Cross-references**: Link between related microagent pages using relative paths
+5. **Examples**: Include practical examples with proper code blocks (non-synced)
+
+### Key Microagent Documentation Files
+
+- `microagents-overview.mdx`: Introduction and types of microagents
+- `microagents-repo.mdx`: General microagents (always loaded)
+- `microagents-keyword.mdx`: Keyword-triggered microagents
+- `microagents-org.mdx`: Organization and user microagents
+- `microagents-public.mdx`: Global microagents (contributing guide)
+
+## CI/CD Workflows
+
+### Code Synchronization Workflow
+- **File**: `.github/workflows/sync-docs-code-blocks.yml`
+- **Triggers**: Push to any branch, daily at 2 AM UTC, manual dispatch
+- **Purpose**: Keeps code blocks in sync with agent-sdk examples
+- **Actions**: Checks out both repositories, runs sync script, commits changes if needed
+
+### OpenAPI Sync Workflow
+- **File**: `.github/workflows/sync-agent-sdk-openapi.yml`
+- **Purpose**: Syncs OpenAPI specifications for API documentation
+
+## Notes for Contributors
+
+- Microagents take up context window space - keep them focused and concise
+- Test keyword triggers to ensure they activate appropriately
+- For agent-sdk examples, ensure the file path in code blocks is correct
+- When adding new microagent types, update both the code and documentation
+- Remember: this repo.md file is itself a microagent example!
