@@ -267,8 +267,6 @@ You can check https://www.mintlify.com/docs for documentation on what our doc si
 
 ## Notes for Contributors
 
-- Microagents take up context window space - keep them focused and concise
-- Test keyword triggers to ensure they activate appropriately
 - For agent-sdk examples, ensure the file path in code blocks is correct
-- When adding new microagent types, update both the code and documentation
-- Remember: this repo.md file is itself a microagent example!
+- For short agent-sdk examples, you don't need `expandable` in example file
+- When you add new pages that need to refer to agent-sdk example script, you should create an empty block with correct block name (refer to the python example script correctly), then run `python .github/scripts/sync_code_blocks.py` to sync it
