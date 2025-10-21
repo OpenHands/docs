@@ -253,24 +253,6 @@ on: [push]
 
 You can check https://www.mintlify.com/docs for documentation on what our doc site supports.
 
-## Working with Microagent Documentation
-
-When modifying microagent-related documentation files:
-
-1. **Location**: Microagent documentation is in `openhands/usage/microagents/`
-2. **Navigation**: Update `docs.json` if adding new pages to the microagents section
-3. **Consistency**: Follow the existing structure in microagent documentation files
-4. **Cross-references**: Link between related microagent pages using relative paths
-5. **Examples**: Include practical examples with proper code blocks (non-synced)
-
-### Key Microagent Documentation Files
-
-- `microagents-overview.mdx`: Introduction and types of microagents
-- `microagents-repo.mdx`: General microagents (always loaded)
-- `microagents-keyword.mdx`: Keyword-triggered microagents
-- `microagents-org.mdx`: Organization and user microagents
-- `microagents-public.mdx`: Global microagents (contributing guide)
-
 ## CI/CD Workflows
 
 ### Code Synchronization Workflow
