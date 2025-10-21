@@ -6,7 +6,6 @@ This repository contains the official documentation for OpenHands, including gui
 
 - **OpenHands Docs**: User guides, tutorials, and reference documentation for OpenHands core application
 - **Agent SDK Docs**: Developer documentation for the OpenHands Agent SDK
-- **Microagents Documentation**: Guidelines for creating and using microagents (specialized prompts)
 
 ## Microagents in This Repository
 
