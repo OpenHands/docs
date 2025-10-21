@@ -1,0 +1,69 @@
+name: Sync Documentation Code Blocks
+
+on:
+  push:
+    branches:
+      - '**'   # run on every branch
+  schedule:
+    # Run daily at 2 AM UTC to catch any changes
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      agent_sdk_ref:
+        description: 'Agent SDK branch/tag/commit to sync from'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-code-blocks:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - name: Checkout docs repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout agent-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: All-Hands-AI/agent-sdk
+          path: agent-sdk
+          ref: ${{ github.event.inputs.agent_sdk_ref || 'main' }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Sync code blocks
+        id: detect_changes
+        env:
+          AGENT_SDK_PATH: ${{ github.workspace }}/agent-sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/sync_code_blocks.py
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push changes
+        if: steps.detect_changes.outputs.changes == 'true'  # <-- updated reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "docs: sync code blocks from agent-sdk examples
+
+          Synced from agent-sdk ref: ${{ github.event.inputs.agent_sdk_ref || 'main' }}"
+          git push
