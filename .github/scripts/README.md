@@ -42,7 +42,7 @@ To test locally:
 cd docs
 
 # Clone agent-sdk if not already present
-git clone https://github.com/All-Hands-AI/agent-sdk.git agent-sdk
+git clone https://github.com/OpenHands/agent-sdk.git agent-sdk
 
 # Run the script
 python .github/scripts/sync_code_blocks.py
