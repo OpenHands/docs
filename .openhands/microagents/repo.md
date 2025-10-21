@@ -1,6 +1,6 @@
 # OpenHands Documentation Repository
 
-This repository contains the official documentation for OpenHands, including guides for the core application and the Agent SDK. The documentation is deployed using Mintlify and features an automated code synchronization system.
+This repository contains the official documentation for OpenHands, including guides for the Agent SDK and the client OpenHands applications. The documentation is deployed using Mintlify and features an automated code synchronization system.
 
 ## Repository Purpose
 
