@@ -1,0 +1,237 @@
+---
+title: Browser with Docker
+description: Enable browser automation with Docker-sandboxed agents for secure web interaction.
+---
+
+Browser with Docker demonstrates how to enable browser automation capabilities in a Docker-sandboxed environment. This allows agents to browse websites, interact with web content, and perform web automation tasks while maintaining complete isolation from your host system.
+
+## Basic Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py)
+</Note>
+
+This example shows how to configure DockerWorkspace with browser capabilities and VNC access:
+
+```python icon="python" expandable examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py
+import os
+import platform
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation, get_logger
+from openhands.sdk.conversation.impl.remote_conversation import RemoteConversation
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import DockerWorkspace
+
+
+logger = get_logger(__name__)
+
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    usage_id="agent",
+    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    base_url="https://llm-proxy.eval.all-hands.dev",
+    api_key=SecretStr(api_key),
+)
+
+
+def detect_platform():
+    """Detects the correct Docker platform string."""
+    machine = platform.machine().lower()
+    if "arm" in machine or "aarch64" in machine:
+        return "linux/arm64"
+    return "linux/amd64"
+
+
+# Create a Docker-based remote workspace with extra ports for browser access
+with DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=8010,
+    # TODO: Change this to your platform if not linux/arm64
+    platform=detect_platform(),
+    extra_ports=True,  # Expose extra ports for VSCode and VNC
+    forward_env=["LLM_API_KEY"],  # Forward API key to container
+) as workspace:
+    """Extra ports allows you to check localhost:8012 for VNC"""
+
+    # Create agent with browser tools enabled
+    agent = get_default_agent(
+        llm=llm,
+        cli_mode=False,  # CLI mode = False will enable browser tools
+    )
+
+    # Set up callback collection
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        event_type = type(event).__name__
+        logger.info(f"🔔 Callback received event: {event_type}\n{event}")
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    # Create RemoteConversation using the workspace
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        callbacks=[event_callback],
+        visualize=True,
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    logger.info(f"\n📋 Conversation ID: {conversation.state.id}")
+    logger.info("📝 Sending first message...")
+    conversation.send_message(
+        "Could you go to https://all-hands.dev/ blog page and summarize main "
+        "points of the latest blog?"
+    )
+    conversation.run()
+
+    # Wait for user confirm to exit
+    y = None
+    while y != "y":
+        y = input(
+            "Because you've enabled extra_ports=True in DockerWorkspace, "
+            "you can open a browser tab to see the *actual* browser OpenHands "
+            "is interacting with via VNC.\n\n"
+            "Link: http://localhost:8012/vnc.html?autoconnect=1&resize=remote\n\n"
+            "Press 'y' and Enter to exit and terminate the workspace.\n"
+            ">> "
+        )
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py
+```
+
+## Key Concepts
+
+### Browser-Enabled DockerWorkspace
+
+The workspace is configured with extra ports for browser access:
+
+```python highlight={36-43}
+with DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=8010,
+    platform=detect_platform(),
+    extra_ports=True,  # Expose extra ports for VSCode and VNC
+    forward_env=["LLM_API_KEY"],  # Forward API key to container
+) as workspace:
+    """Extra ports allows you to check localhost:8012 for VNC"""
+```
+
+The `extra_ports=True` setting exposes additional ports for:
+- **Port 8011**: VS Code Web interface
+- **Port 8012**: VNC viewer for browser visualization
+
+### Enabling Browser Tools
+
+Browser tools are enabled by setting `cli_mode=False`:
+
+```python highlight={46-50}
+# Create agent with browser tools enabled
+agent = get_default_agent(
+    llm=llm,
+    cli_mode=False,  # CLI mode = False will enable browser tools
+)
+```
+
+When `cli_mode=False`, the agent gains access to browser automation tools for web interaction.
+
+### Sending Browser Tasks
+
+The agent can perform web automation tasks:
+
+```python highlight={72-76}
+logger.info("📝 Sending first message...")
+conversation.send_message(
+    "Could you go to https://all-hands.dev/ blog page and summarize main "
+    "points of the latest blog?"
+)
+```
+
+The agent will use browser tools to navigate to the URL, read the content, and provide a summary.
+
+### Visual Browser Access
+
+With `extra_ports=True`, you can watch the browser in real-time via VNC:
+
+```python highlight={80-89}
+y = None
+while y != "y":
+    y = input(
+        "Because you've enabled extra_ports=True in DockerWorkspace, "
+        "you can open a browser tab to see the *actual* browser OpenHands "
+        "is interacting with via VNC.\n\n"
+        "Link: http://localhost:8012/vnc.html?autoconnect=1&resize=remote\n\n"
+        "Press 'y' and Enter to exit and terminate the workspace.\n"
+        ">> "
+    )
+```
+
+This allows you to:
+- See exactly what the agent is doing in the browser
+- Debug browser automation issues
+- Understand agent behavior visually
+
+## When to Use Browser with Docker
+
+Use browser-enabled Docker workspaces when you need:
+
+- **Web Scraping**: Extract data from websites safely
+- **Web Automation**: Automate web-based workflows
+- **Testing**: Test web applications in isolated environments
+- **Visual Monitoring**: Watch agent interactions in real-time
+- **Security**: Isolate web browsing from your host system
+
+## Benefits
+
+### Isolation Benefits
+
+- **Secure**: Browser runs in container, not on your host
+- **Clean State**: Fresh browser for each run
+- **No Pollution**: No cookies, cache, or history on your machine
+
+### Development Benefits
+
+- **Visual Debugging**: Watch the browser via VNC
+- **Reproducible**: Same environment every time
+- **Easy Cleanup**: Container removal clears everything
+
+### Production Benefits
+
+- **Resource Control**: Limit CPU/memory for browser
+- **Concurrent Sessions**: Run multiple isolated browsers
+- **Monitoring**: Track browser resource usage
+
+## VNC Access
+
+The VNC interface provides real-time visual access to the browser:
+
+```
+http://localhost:8012/vnc.html?autoconnect=1&resize=remote
+```
+
+**URL Parameters:**
+- `autoconnect=1`: Automatically connect to VNC server
+- `resize=remote`: Automatically adjust resolution
+
+This is particularly useful for:
+- Debugging navigation issues
+- Verifying visual elements
+- Understanding agent decision-making
+- Demonstrating agent capabilities
+
+## Next Steps
+
+- **[VS Code with Docker](/sdk/guides/agent-server/vscode-with-docker)** - Enable VS Code integration
+- **[Docker Sandboxed Server](/sdk/guides/agent-server/docker-sandboxed-server)** - Base Docker setup
+- **[Browser Tool Architecture](/sdk/arch/tools/browser_use)** - Technical details

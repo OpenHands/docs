@@ -1,0 +1,222 @@
+---
+title: API Sandboxed Server
+description: Connect to hosted API-based agent server for fully managed infrastructure.
+---
+
+The API Sandboxed Server demonstrates how to use APIRemoteWorkspace to connect to a hosted runtime API service. This eliminates the need to manage your own infrastructure, providing automatic scaling, monitoring, and secure sandboxed execution.
+
+## Basic Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/04_convo_with_api_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/04_convo_with_api_sandboxed_server.py)
+</Note>
+
+This example shows how to connect to a hosted runtime API for fully managed agent execution:
+
+```python icon="python" expandable examples/02_remote_agent_server/04_convo_with_api_sandboxed_server.py
+"""Example: APIRemoteWorkspace with Dynamic Build.
+
+This example demonstrates building an agent-server image on-the-fly from the SDK
+codebase and launching it in a remote sandboxed environment via Runtime API.
+
+Usage:
+  uv run examples/24_remote_convo_with_api_sandboxed_server.py
+
+Requirements:
+  - LITELLM_API_KEY: API key for LLM access
+  - RUNTIME_API_KEY: API key for runtime API access
+"""
+
+import os
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Conversation,
+    RemoteConversation,
+    get_logger,
+)
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import APIRemoteWorkspace
+
+
+logger = get_logger(__name__)
+
+
+api_key = os.getenv("LITELLM_API_KEY")
+assert api_key, "LITELLM_API_KEY required"
+
+llm = LLM(
+    usage_id="agent",
+    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    base_url="https://llm-proxy.eval.all-hands.dev",
+    api_key=SecretStr(api_key),
+)
+
+runtime_api_key = os.getenv("RUNTIME_API_KEY")
+if not runtime_api_key:
+    logger.error("RUNTIME_API_KEY required")
+    exit(1)
+
+
+with APIRemoteWorkspace(
+    runtime_api_url="https://runtime.eval.all-hands.dev",
+    runtime_api_key=runtime_api_key,
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+) as workspace:
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    result = workspace.execute_command(
+        "echo 'Hello from sandboxed environment!' && pwd"
+    )
+    logger.info(f"Command completed: {result.exit_code}, {result.stdout}")
+
+    conversation = Conversation(
+        agent=agent, workspace=workspace, callbacks=[event_callback], visualize=True
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    try:
+        conversation.send_message(
+            "Read the current repo and write 3 facts about the project into FACTS.txt."
+        )
+        conversation.run()
+
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+
+        conversation.send_message("Great! Now delete that file.")
+        conversation.run()
+    finally:
+        conversation.close()
+```
+
+```bash Running the Example
+export LITELLM_API_KEY="your-api-key"
+export RUNTIME_API_KEY="your-runtime-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/04_convo_with_api_sandboxed_server.py
+```
+
+## Key Concepts
+
+### APIRemoteWorkspace
+
+The `APIRemoteWorkspace` connects to a hosted runtime API service:
+
+```python highlight={48-52}
+with APIRemoteWorkspace(
+    runtime_api_url="https://runtime.eval.all-hands.dev",
+    runtime_api_key=runtime_api_key,
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+) as workspace:
+```
+
+This workspace type:
+- Connects to a remote runtime API service
+- Automatically provisions sandboxed environments
+- Manages container lifecycle through the API
+- Handles all infrastructure concerns
+
+### Runtime API Authentication
+
+The example requires a runtime API key for authentication:
+
+```python highlight={42-45}
+runtime_api_key = os.getenv("RUNTIME_API_KEY")
+if not runtime_api_key:
+    logger.error("RUNTIME_API_KEY required")
+    exit(1)
+```
+
+This key authenticates your requests to the hosted runtime service.
+
+### Pre-built Image Selection
+
+You can specify which pre-built agent server image to use:
+
+```python highlight={51}
+APIRemoteWorkspace(
+    runtime_api_url="https://runtime.eval.all-hands.dev",
+    runtime_api_key=runtime_api_key,
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+)
+```
+
+The runtime API will pull and run the specified image in a sandboxed environment.
+
+### Workspace Testing
+
+Just like with DockerWorkspace, you can test the workspace before running the agent:
+
+```python highlight={61-64}
+result = workspace.execute_command(
+    "echo 'Hello from sandboxed environment!' && pwd"
+)
+logger.info(f"Command completed: {result.exit_code}, {result.stdout}")
+```
+
+This verifies connectivity to the remote runtime and ensures the environment is ready.
+
+### Automatic RemoteConversation
+
+The conversation automatically uses WebSocket communication with the remote server:
+
+```python highlight={66-68}
+conversation = Conversation(
+    agent=agent, workspace=workspace, callbacks=[event_callback], visualize=True
+)
+assert isinstance(conversation, RemoteConversation)
+```
+
+All agent execution happens on the remote runtime infrastructure.
+
+## When to Use API Sandboxed Server
+
+Use a hosted runtime API when you want:
+
+- **Zero Infrastructure**: No servers to manage or maintain
+- **Automatic Scaling**: Handle varying workloads without configuration
+- **Managed Security**: Professionally maintained sandboxed environments
+- **Quick Start**: Get running without Docker or server setup
+- **Production Ready**: Enterprise-grade reliability and monitoring
+
+## Benefits
+
+### Operational Advantages
+
+- **No DevOps**: Infrastructure is managed for you
+- **Always Updated**: Latest security patches and features
+- **Cost Efficient**: Pay only for usage
+- **Global Distribution**: Low latency from multiple regions
+
+### Security Advantages
+
+- **Isolation**: Each execution in a fresh sandboxed container
+- **Monitoring**: Built-in threat detection and logging
+- **Compliance**: Pre-configured security controls
+- **Auditing**: Full audit trails for all operations
+
+## Comparison with Other Workspace Types
+
+| Feature | APIRemoteWorkspace | DockerWorkspace | Local Workspace |
+|---------|-------------------|-----------------|-----------------|
+| **Setup** | API key only | Docker required | None |
+| **Infrastructure** | Fully managed | Self-managed | Local only |
+| **Isolation** | High | High | None |
+| **Scalability** | Automatic | Manual | N/A |
+| **Best For** | Production | Control | Development |
+
+## Next Steps
+
+- **[Docker Sandboxed Server](/sdk/guides/agent-server/docker-sandboxed-server)** - Self-hosted alternative
+- **[Local Agent Server](/sdk/guides/agent-server/local-agent-server)** - Development setup
+- **[Agent Server Architecture](/sdk/arch/agent_server/overview)** - Technical details
