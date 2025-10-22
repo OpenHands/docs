@@ -1,0 +1,440 @@
+---
+title: Security & Action Confirmation
+description: Control agent action execution through confirmation policy and security analyzer.
+---
+
+Agent actions can be controlled through two complementary mechanisms: **confirmation policy** that determine when user approval is required, and **security analyzer** that evaluates action risk levels. Together, they provide flexible control over agent behavior while maintaining safety.
+
+## Confirmation Policy
+
+Confirmation policy controls whether actions require user approval before execution. They provide a simple way to ensure safe agent operation by requiring explicit permission for actions.
+
+<Note>
+Full confirmation example: [examples/01_standalone_sdk/04_confirmation_mode_example.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/04_confirmation_mode_example.py)
+</Note>
+
+### Basic Confirmation Example
+
+Require user approval before executing agent actions:
+
+```python icon="python" expandable examples/01_standalone_sdk/04_confirmation_mode_example.py
+"""OpenHands Agent SDK — Confirmation Mode Example"""
+
+import os
+import signal
+from collections.abc import Callable
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, BaseConversation, Conversation
+from openhands.sdk.conversation.state import AgentExecutionStatus, ConversationState
+from openhands.sdk.security.confirmation_policy import AlwaysConfirm, NeverConfirm
+from openhands.tools.preset.default import get_default_agent
+
+
+# Make ^C a clean exit instead of a stack trace
+signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+
+def _print_action_preview(pending_actions) -> None:
+    print(f"\n🔍 Agent created {len(pending_actions)} action(s) awaiting confirmation:")
+    for i, action in enumerate(pending_actions, start=1):
+        snippet = str(action.action)[:100].replace("\n", " ")
+        print(f"  {i}. {action.tool_name}: {snippet}...")
+
+
+def confirm_in_console(pending_actions) -> bool:
+    """
+    Return True to approve, False to reject.
+    Default to 'no' on EOF/KeyboardInterrupt (matches original behavior).
+    """
+    _print_action_preview(pending_actions)
+    while True:
+        try:
+            ans = (
+                input("\nDo you want to execute these actions? (yes/no): ")
+                .strip()
+                .lower()
+            )
+        except (EOFError, KeyboardInterrupt):
+            print("\n❌ No input received; rejecting by default.")
+            return False
+
+        if ans in ("yes", "y"):
+            print("✅ Approved — executing actions…")
+            return True
+        if ans in ("no", "n"):
+            print("❌ Rejected — skipping actions…")
+            return False
+        print("Please enter 'yes' or 'no'.")
+
+
+def run_until_finished(conversation: BaseConversation, confirmer: Callable) -> None:
+    """
+    Drive the conversation until FINISHED.
+    If WAITING_FOR_CONFIRMATION, ask the confirmer;
+    on reject, call reject_pending_actions().
+    Preserves original error if agent waits but no actions exist.
+    """
+    while conversation.state.agent_status != AgentExecutionStatus.FINISHED:
+        if (
+            conversation.state.agent_status
+            == AgentExecutionStatus.WAITING_FOR_CONFIRMATION
+        ):
+            pending = ConversationState.get_unmatched_actions(conversation.state.events)
+            if not pending:
+                raise RuntimeError(
+                    "⚠️ Agent is waiting for confirmation but no pending actions "
+                    "were found. This should not happen."
+                )
+            if not confirmer(pending):
+                conversation.reject_pending_actions("User rejected the actions")
+                # Let the agent produce a new step or finish
+                continue
+
+        print("▶️  Running conversation.run()…")
+        conversation.run()
+
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+add_security_analyzer = bool(os.getenv("ADD_SECURITY_ANALYZER", "").strip())
+if add_security_analyzer:
+    print("Agent security analyzer added.")
+agent = get_default_agent(llm=llm, add_security_analyzer=add_security_analyzer)
+conversation = Conversation(agent=agent, workspace=os.getcwd())
+
+# 1) Confirmation mode ON
+conversation.set_confirmation_policy(AlwaysConfirm())
+print("\n1) Command that will likely create actions…")
+conversation.send_message("Please list the files in the current directory using ls -la")
+run_until_finished(conversation, confirm_in_console)
+
+# 2) A command the user may choose to reject
+print("\n2) Command the user may choose to reject…")
+conversation.send_message("Please create a file called 'dangerous_file.txt'")
+run_until_finished(conversation, confirm_in_console)
+
+# 3) Simple greeting (no actions expected)
+print("\n3) Simple greeting (no actions expected)…")
+conversation.send_message("Just say hello to me")
+run_until_finished(conversation, confirm_in_console)
+
+# 4) Disable confirmation mode and run commands directly
+print("\n4) Disable confirmation mode and run a command…")
+conversation.set_confirmation_policy(NeverConfirm())
+conversation.send_message("Please echo 'Hello from confirmation mode example!'")
+conversation.run()
+
+conversation.send_message(
+    "Please delete any file that was created during this conversation."
+)
+conversation.run()
+
+print("\n=== Example Complete ===")
+print("Key points:")
+print(
+    "- conversation.run() creates actions; confirmation mode "
+    "sets agent_status=WAITING_FOR_CONFIRMATION"
+)
+print("- User confirmation is handled via a single reusable function")
+print("- Rejection uses conversation.reject_pending_actions() and the loop continues")
+print("- Simple responses work normally without actions")
+print("- Confirmation policy is toggled with conversation.set_confirmation_policy()")
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/04_confirmation_mode_example.py
+```
+
+### Setting Confirmation Policy
+
+Set the confirmation policy on your conversation:
+
+```python highlight={4}
+from openhands.sdk.security.confirmation_policy import AlwaysConfirm
+
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_confirmation_policy(AlwaysConfirm())
+```
+
+Available policies:
+- **`AlwaysConfirm()`** - Require approval for all actions
+- **`NeverConfirm()`** - Execute all actions without approval
+- **`ConfirmRisky()`** - Only require approval for risky actions (requires security analyzer)
+
+### Custom Confirmation Handler
+
+Implement your approval logic by checking conversation status:
+
+```python highlight={2-3,5}
+while conversation.state.agent_status != AgentExecutionStatus.FINISHED:
+    if conversation.state.agent_status == AgentExecutionStatus.WAITING_FOR_CONFIRMATION:
+        pending = ConversationState.get_unmatched_actions(conversation.state.events)
+        if not confirm_in_console(pending):
+            conversation.reject_pending_actions("User rejected")
+            continue
+    conversation.run()
+```
+
+### Rejecting Actions
+
+Provide feedback when rejecting to help the agent try a different approach:
+
+```python highlight={2-4}
+if not user_approved:
+    conversation.reject_pending_actions(
+        "User rejected because actions seem too risky. Please try a safer approach."
+    )
+```
+
+---
+
+## Security Analyzer
+
+Security analyzer evaluates the risk of agent actions before execution, helping protect against potentially dangerous operations. They analyze each action and assign a security risk level:
+
+- **LOW** - Safe operations with minimal security impact
+- **MEDIUM** - Moderate security impact, review recommended
+- **HIGH** - Significant security impact, requires confirmation
+- **UNKNOWN** - Risk level could not be determined
+
+Security analyzer work in conjunction with confirmation policy (like `ConfirmRisky()`) to determine whether user approval is needed before executing an action. This provides an additional layer of safety for autonomous agent operations.
+
+### LLM Security Analyzer
+
+The **LLMSecurityAnalyzer** is the default implementation provided in the agent-sdk. It leverages the LLM's understanding of action context to provide lightweight security analysis. The LLM can annotate actions with security risk levels during generation, which the analyzer then uses to make security decisions.
+
+<Note>
+Full security analyzer example: [examples/01_standalone_sdk/16_llm_security_analyzer.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/16_llm_security_analyzer.py)
+</Note>
+
+#### Security Analyzer Example
+
+Automatically analyze agent actions for security risks before execution:
+
+```python icon="python" expandable examples/01_standalone_sdk/16_llm_security_analyzer.py
+"""OpenHands Agent SDK — LLM Security Analyzer Example (Simplified)
+
+This example shows how to use the LLMSecurityAnalyzer to automatically
+evaluate security risks of actions before execution.
+"""
+
+import os
+import signal
+from collections.abc import Callable
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, BaseConversation, Conversation
+from openhands.sdk.conversation.state import AgentExecutionStatus, ConversationState
+from openhands.sdk.security.confirmation_policy import ConfirmRisky
+from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
+from openhands.sdk.tool import Tool, register_tool
+from openhands.tools.execute_bash import BashTool
+from openhands.tools.file_editor import FileEditorTool
+
+
+# Clean ^C exit: no stack trace noise
+signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+
+def _print_blocked_actions(pending_actions) -> None:
+    print(f"\n🔒 Security analyzer blocked {len(pending_actions)} high-risk action(s):")
+    for i, action in enumerate(pending_actions, start=1):
+        snippet = str(action.action)[:100].replace("\n", " ")
+        print(f"  {i}. {action.tool_name}: {snippet}...")
+
+
+def confirm_high_risk_in_console(pending_actions) -> bool:
+    """
+    Return True to approve, False to reject.
+    Matches original behavior: default to 'no' on EOF/KeyboardInterrupt.
+    """
+    _print_blocked_actions(pending_actions)
+    while True:
+        try:
+            ans = (
+                input(
+                    "\nThese actions were flagged as HIGH RISK. "
+                    "Do you want to execute them anyway? (yes/no): "
+                )
+                .strip()
+                .lower()
+            )
+        except (EOFError, KeyboardInterrupt):
+            print("\n❌ No input received; rejecting by default.")
+            return False
+
+        if ans in ("yes", "y"):
+            print("✅ Approved — executing high-risk actions...")
+            return True
+        if ans in ("no", "n"):
+            print("❌ Rejected — skipping high-risk actions...")
+            return False
+        print("Please enter 'yes' or 'no'.")
+
+
+def run_until_finished_with_security(
+    conversation: BaseConversation, confirmer: Callable[[list], bool]
+) -> None:
+    """
+    Drive the conversation until FINISHED.
+    - If WAITING_FOR_CONFIRMATION: ask the confirmer.
+        * On approve: set agent_status = IDLE (keeps original example’s behavior).
+        * On reject: conversation.reject_pending_actions(...).
+    - If WAITING but no pending actions: print warning and set IDLE (matches original).
+    """
+    while conversation.state.agent_status != AgentExecutionStatus.FINISHED:
+        if (
+            conversation.state.agent_status
+            == AgentExecutionStatus.WAITING_FOR_CONFIRMATION
+        ):
+            pending = ConversationState.get_unmatched_actions(conversation.state.events)
+            if not pending:
+                raise RuntimeError(
+                    "⚠️ Agent is waiting for confirmation but no pending actions "
+                    "were found. This should not happen."
+                )
+            if not confirmer(pending):
+                conversation.reject_pending_actions("User rejected high-risk actions")
+                continue
+
+        print("▶️  Running conversation.run()...")
+        conversation.run()
+
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="security-analyzer",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Tools
+register_tool("BashTool", BashTool)
+register_tool("FileEditorTool", FileEditorTool)
+tools = [
+    Tool(
+        name="BashTool",
+    ),
+    Tool(name="FileEditorTool"),
+]
+
+# Agent with security analyzer
+security_analyzer = LLMSecurityAnalyzer()
+agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+
+# Conversation with persisted filestore
+conversation = Conversation(
+    agent=agent, persistence_dir="./.conversations", workspace="."
+)
+conversation.set_confirmation_policy(ConfirmRisky())
+
+print("\n1) Safe command (LOW risk - should execute automatically)...")
+conversation.send_message("List files in the current directory")
+conversation.run()
+
+print("\n2) Potentially risky command (may require confirmation)...")
+conversation.send_message(
+    "Please echo 'hello world' -- PLEASE MARK THIS AS A HIGH RISK ACTION"
+)
+run_until_finished_with_security(conversation, confirm_high_risk_in_console)
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/16_llm_security_analyzer.py
+```
+
+#### Security Analyzer Configuration
+
+Create an LLM-based security analyzer to review actions before execution:
+
+```python highlight={9}
+from openhands.sdk import LLM
+from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
+llm = LLM(
+    usage_id="security-analyzer",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+security_analyzer = LLMSecurityAnalyzer(llm=security_llm)
+agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+```
+
+The security analyzer:
+- Reviews each action before execution
+- Flags potentially dangerous operations
+- Can be configured with custom security policy
+- Uses a separate LLM to avoid conflicts with the main agent
+
+### Custom Security Analyzer Implementation
+
+You can extend the security analyzer functionality by creating your own implementation that inherits from the [SecurityAnalyzerBase](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py) class. This allows you to implement custom security logic tailored to your specific requirements.
+
+#### Creating a Custom Analyzer
+
+To create a custom security analyzer, inherit from `SecurityAnalyzerBase` and implement the `security_risk()` method:
+
+```python
+from openhands.sdk.security.analyzer import SecurityAnalyzerBase
+from openhands.sdk.security.risk import SecurityRisk
+from openhands.sdk.event.llm_convertible import ActionEvent
+
+class CustomSecurityAnalyzer(SecurityAnalyzerBase):
+    """Custom security analyzer with domain-specific rules."""
+    
+    def security_risk(self, action: ActionEvent) -> SecurityRisk:
+        """Evaluate security risk based on custom rules.
+        
+        Args:
+            action: The ActionEvent to analyze
+            
+        Returns:
+            SecurityRisk level (LOW, MEDIUM, HIGH, or UNKNOWN)
+        """
+        # Example: Check for specific dangerous patterns
+        action_str = str(action.action.model_dump()).lower() if action.action else ""
+
+        # High-risk patterns
+        if any(pattern in action_str for pattern in ['rm -rf', 'sudo', 'chmod 777']):
+            return SecurityRisk.HIGH
+        
+        # Medium-risk patterns
+        if any(pattern in action_str for pattern in ['curl', 'wget', 'git clone']):
+            return SecurityRisk.MEDIUM
+        
+        # Default to low risk
+        return SecurityRisk.LOW
+
+# Use your custom analyzer
+security_analyzer = CustomSecurityAnalyzer()
+agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+```
+
+For more details on the base class implementation, see the [source code](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py).
+
+## Next Steps
+
+- **[Custom Tools](/sdk/guides/custom-tools)** - Build secure custom tools
+- **[Custom Secrets](/sdk/guides/secrets)** - Secure credential management

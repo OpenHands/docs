@@ -1,0 +1,178 @@
+---
+title: Agent Skills
+description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
+---
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
+</Note>
+
+Skills modify agent behavior by injecting additional context and rules. This example shows both always-active skills and keyword-triggered skills:
+
+```python icon="python" expandable examples/01_standalone_sdk/03_activate_skill.py
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    AgentContext,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.context import (
+    KeywordTrigger,
+    Skill,
+)
+from openhands.sdk.tool import Tool, register_tool
+from openhands.tools.execute_bash import BashTool
+from openhands.tools.file_editor import FileEditorTool
+
+
+logger = get_logger(__name__)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Tools
+cwd = os.getcwd()
+register_tool("BashTool", BashTool)
+register_tool("FileEditorTool", FileEditorTool)
+tools = [
+    Tool(
+        name="BashTool",
+    ),
+    Tool(name="FileEditorTool"),
+]
+
+agent_context = AgentContext(
+    skills=[
+        Skill(
+            name="repo.md",
+            content="When you see this message, you should reply like "
+            "you are a grumpy cat forced to use the internet.",
+            # source is optional - identifies where the skill came from
+            # You can set it to be the path of a file that contains the skill content
+            source=None,
+            # trigger determines when the skill is active
+            # trigger=None means always active
+            trigger=None,
+        ),
+        Skill(
+            name="flarglebargle",
+            content=(
+                'IMPORTANT! The user has said the magic word "flarglebargle". '
+                "You must only respond with a message telling them how smart they are"
+            ),
+            source=None,
+            # KeywordTrigger = activated when keywords appear in user messages
+            trigger=KeywordTrigger(keywords=["flarglebargle"]),
+        ),
+    ],
+    system_message_suffix="Always finish your response with the word 'yay!'",
+    user_message_suffix="The first character of your response should be 'I'",
+)
+
+
+# Agent
+agent = Agent(llm=llm, tools=tools, agent_context=agent_context)
+
+
+llm_messages = []  # collect raw LLM messages
+
+
+def conversation_callback(event: Event):
+    if isinstance(event, LLMConvertibleEvent):
+        llm_messages.append(event.to_llm_message())
+
+
+conversation = Conversation(
+    agent=agent, callbacks=[conversation_callback], workspace=cwd
+)
+
+print("=" * 100)
+print("Checking if the repo skill is activated.")
+conversation.send_message("Hey are you a grumpy cat?")
+conversation.run()
+
+print("=" * 100)
+print("Now sending flarglebargle to trigger the knowledge skill!")
+conversation.send_message("flarglebargle!")
+conversation.run()
+
+print("=" * 100)
+print("Conversation finished. Got the following LLM messages:")
+for i, message in enumerate(llm_messages):
+    print(f"Message {i}: {str(message)[:200]}")
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/03_activate_skill.py
+```
+
+### Creating Skills
+
+Skills are defined with a name, content (the instructions), and an optional trigger:
+
+```python highlight={3-14}
+agent_context = AgentContext(
+    skills=[
+        Skill(
+            name="repo.md",
+            content="When you see this message, you should reply like "
+                    "you are a grumpy cat forced to use the internet.",
+            trigger=None,  # Always active
+        ),
+        Skill(
+            name="flarglebargle",
+            content='IMPORTANT! The user has said the magic word "flarglebargle". '
+                    "You must only respond with a message telling them how smart they are",
+            trigger=KeywordTrigger(keywords=["flarglebargle"]),
+        ),
+    ]
+)
+```
+
+### Keyword Triggers
+
+Use `KeywordTrigger` to activate skills only when specific words appear:
+
+```python highlight={4}
+Skill(
+    name="magic-word",
+    content="Special instructions when magic word is detected",
+    trigger=KeywordTrigger(keywords=["flarglebargle", "sesame"]),
+)
+```
+
+### Message Suffixes
+
+Add consistent prefixes or suffixes to system and user messages:
+
+```python highlight={3-4}
+agent_context = AgentContext(
+    skills=[...],
+    system_message_suffix="Always finish your response with the word 'yay!'",
+    user_message_suffix="The first character of your response should be 'I'",
+)
+```
+
+## Next Steps
+
+- **[Custom Tools](/sdk/guides/custom-tools)** - Create specialized tools
+- **[MCP Integration](/sdk/guides/mcp)** - Connect external tool servers
+- **[Confirmation Mode](/sdk/guides/security)** - Add execution approval
