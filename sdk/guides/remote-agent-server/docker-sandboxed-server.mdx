@@ -1,0 +1,184 @@
+---
+title: Docker Workspace & Sandboxed Server
+description: Run agents in isolated Docker containers for security and reproducibility.
+---
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py)
+</Note>
+
+Docker workspaces provide complete isolation by running agents in containers. Use for production deployments, testing, and untrusted code execution.
+
+## DockerWorkspace
+
+Execute in isolated Docker containers with security boundaries.
+
+### Direct Usage
+
+```python
+from openhands.workspace import DockerWorkspace
+from openhands.sdk import Conversation
+
+workspace = DockerWorkspace(
+    working_dir="/workspace",
+    base_image="python:3.12"
+)
+
+with workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+    conversation.send_message("Build a web server")
+    conversation.run()
+# Container automatically cleaned up
+```
+
+See [`01_docker_workspace.py`](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/02_remote_agent_server/01_docker_workspace.py)
+
+### When to Use
+
+- **Production** - Isolated execution environment
+- **Testing** - Clean, reproducible environments
+- **Untrusted code** - Run agent in sandbox
+- **Multi-user** - Each user gets isolated container
+
+### Configuration Options
+
+```python
+DockerWorkspace(
+    working_dir="/workspace",
+    base_image="ubuntu:22.04",      # Build from base image
+    # OR
+    server_image="ghcr.io/all-hands-ai/agent-server:latest",  # Pre-built image
+    host_port=None,                 # Auto-assign port
+    platform="linux/amd64"          # Platform override
+)
+```
+
+### Pre-built Images
+
+Use pre-built images for faster startup:
+
+```python
+workspace = DockerWorkspace(
+    working_dir="/workspace",
+    server_image="ghcr.io/all-hands-ai/agent-server:latest"
+)
+```
+
+No build time - container starts immediately.
+
+### File Transfer
+
+Copy files to/from container:
+
+```python
+# Upload file
+workspace.upload_file("/local/path/file.txt", "/workspace/file.txt")
+
+# Download file
+workspace.download_file("/workspace/output.txt", "/local/path/output.txt")
+```
+
+## Docker Sandboxed Server
+
+Run agent server in Docker and connect remotely.
+
+### How to Run
+
+```bash
+# Start server in Docker
+docker run -p 8000:8000 \
+  -e LLM_API_KEY="your-api-key" \
+  ghcr.io/all-hands-ai/runtime:latest
+
+# Run client
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py
+```
+
+### Client Connection
+
+```python
+from openhands.sdk import RemoteConversation
+
+conversation = RemoteConversation(
+    agent_server_url="http://localhost:8000",
+    api_key=api_key
+)
+conversation.send_message("Your task")
+conversation.run()
+```
+
+## Benefits
+
+**Security:**
+- Complete isolation from host system
+- Agent cannot access host files
+- Agent cannot affect host processes
+
+**Resources:**
+- Control CPU/memory limits
+- Monitor container resource usage
+- Kill containers if needed
+
+**Reproducibility:**
+- Consistent environment across deployments
+- Version-controlled container images
+- Easy rollback to previous versions
+
+## Docker vs Local Workspace
+
+| Feature | LocalWorkspace | DockerWorkspace |
+|---------|----------------|-----------------|
+| **Security** | Low (host access) | High (isolated) |
+| **Setup** | None | Docker required |
+| **Performance** | Fast | Slight overhead |
+| **Cleanup** | Manual | Automatic |
+| **Best for** | Development | Production |
+
+## Best Practices
+
+### 1. Use Pre-built Images
+
+```python
+# ✅ Good: Fast startup
+server_image="ghcr.io/all-hands-ai/agent-server:latest"
+
+# ❌ Slow: Builds on every run
+base_image="python:3.12"
+```
+
+### 2. Clean Up Containers
+
+Use context manager for automatic cleanup:
+
+```python
+with workspace:
+    # Work with workspace
+    pass
+# Container automatically removed
+```
+
+### 3. Resource Limits
+
+Set Docker resource limits:
+
+```bash
+docker run --memory="2g" --cpus="1.5" \
+  ghcr.io/all-hands-ai/runtime:latest
+```
+
+### 4. Volume Mounts
+
+Mount local directories for persistent data:
+
+```bash
+docker run -v /local/data:/workspace/data \
+  ghcr.io/all-hands-ai/runtime:latest
+```
+
+## Related Documentation
+
+- **[Browser with Docker](/sdk/guides/remote-agent-server/browser-with-docker)** - Browser in container
+- **[Workspace Architecture](/sdk/arch/sdk/workspace)** - Technical design
+- **[Agent Server Architecture](/sdk/arch/agent_server/overview)** - Server details
