@@ -3,302 +3,146 @@ title: Overview
 description: Run agents on remote servers with isolated workspaces for production deployments.
 ---
 
-The Agent SDK supports both standalone and client-server architectures. Remote Agent Servers enable you to run agents on dedicated infrastructure while keeping client code separate, providing isolation, scalability, and centralized management.
+Remote Agent Servers package the Agent SDK into containers you can deploy anywhere (Kubernetes, VMs, on‑prem, any cloud) with strong isolation. The remote path uses the exact same SDK API as local—switching is just changing the workspace argument; your Conversation code stays the same.
+
+
+For example, switching from a local workspace to a Docker‑based remote agent server:
+
+```python lines
+# Local → Docker
+conversation = Conversation(agent=agent, workspace=os.getcwd())  # [!code --]
+from openhands.workspace import DockerWorkspace  # [!code ++]
+with DockerWorkspace( # [!code ++]
+    server_image="ghcr.io/openhands/agent-server:latest-python", # [!code ++]
+) as workspace: # [!code ++]
+    conversation = Conversation(agent=agent, workspace=workspace)  # [!code ++]
+```
+
+Or switching to an API‑based remote workspace (via [OpenHands Runtime API](https://runtime.all-hands.dev/)):
+
+```python lines
+# Local → Remote API
+conversation = Conversation(agent=agent, workspace=os.getcwd())  # [!code --]
+from openhands.workspace import APIRemoteWorkspace  # [!code ++]
+with APIRemoteWorkspace( # [!code ++]
+    runtime_api_url="https://runtime.eval.all-hands.dev",  # [!code ++]
+    runtime_api_key="YOUR_API_KEY", # [!code ++]
+    server_image="ghcr.io/openhands/agent-server:latest-python", # [!code ++]
+) as workspace: # [!code ++]
+    conversation = Conversation(agent=agent, workspace=workspace)  # [!code ++]
+```
+
 
 ## What is a Remote Agent Server?
 
 A Remote Agent Server is an HTTP/WebSocket server that:
+- **Package the Agent SDK into containers** and deploy on your own infrastructure (Kubernetes, VMs, on-prem, or cloud)
 - **Runs agents** on dedicated infrastructure
-- **Manages workspaces** (Docker containers or remote VMs)
+- **Manages workspaces** (Docker containers or remote sandboxes)
 - **Streams events** to clients via WebSocket
-- **Handles file operations** (upload, download, editing)
+- **Handles command and file operations** (execute command, upload, download), check [base class](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/base.py) for more details
 - **Provides isolation** between different agent executions
 
 Think of it as the "backend" for your agent, while your Python code acts as the "frontend" client.
 
+{/* 
+Same interfaces as local: 
+[BaseConversation](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/base.py), 
+[ConversationStateProtocol](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/base.py), 
+[EventsListBase](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/events_list_base.py). Server-backed impl: 
+[RemoteConversation](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py).
+ */}
+
+
 ## Architecture Overview
+
+Remote Agent Servers follow a simple three-part architecture:
 
 ```mermaid
 graph TD
-    Client[Client Code] -->|HTTP/WebSocket| Server[Agent Server]
+    Client[Client Code] -->|HTTP / WebSocket| Server[Agent Server]
     Server --> Workspace[Workspace]
-    
+
     subgraph Workspace Types
-        Workspace --> Local[Local Workspace]
+        Workspace --> Local[Local Folder]
         Workspace --> Docker[Docker Container]
-        Workspace --> API[Remote API VM]
+        Workspace --> API[Remote Sandbox via API]
     end
-    
+
     Local --> Files[File System]
-    Docker --> Container[Isolated Container]
+    Docker --> Container[Isolated Runtime]
     API --> Cloud[Cloud Infrastructure]
-    
+
     style Client fill:#e1f5fe
     style Server fill:#fff3e0
     style Workspace fill:#e8f5e8
 ```
 
+1. **Client (Python SDK)** — Your application creates and controls conversations using the SDK.  
+2. **Agent Server** — A lightweight HTTP/WebSocket service that runs the agent and manages workspace execution.  
+3. **Workspace** — An isolated environment (local, Docker, or remote VM) where the agent code runs.
+
+The same SDK API works across all three workspace types—you just switch which workspace the conversation connects to.
+
 ## How Remote Conversations Work
 
-### 1. Workspace Connection
+Each step in the diagram maps directly to how the SDK and server interact:
 
-When you create a `Conversation` with a remote workspace, it automatically becomes a `RemoteConversation`:
+### 1. Workspace Connection → *(Client → Server)*
+
+When you create a conversation with a remote workspace (e.g., `DockerWorkspace` or `APIRemoteWorkspace`), the SDK automatically starts or connects to an agent server inside that workspace:
 
 ```python
-from openhands.sdk import Conversation
-from openhands.workspace import DockerWorkspace
-
 with DockerWorkspace(server_image="ghcr.io/openhands/agent-server:latest") as workspace:
-    # Conversation automatically detects remote workspace
     conversation = Conversation(agent=agent, workspace=workspace)
-    # conversation is now a RemoteConversation
 ```
 
-### 2. Agent Server Initialization
+This turns the local `Conversation` into a **[RemoteConversation](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py)** that speaks to the agent server over HTTP/WebSocket.
 
-The workspace (DockerWorkspace or APIRemoteWorkspace) automatically:
-- Starts an agent server in the workspace
-- Waits for the server to be ready
-- Provides the server URL to the conversation
 
-### 3. Event Streaming
+### 2. Server Initialization → *(Server → Workspace)*
 
-The RemoteConversation establishes a WebSocket connection to stream events:
+Once the workspace starts:
+- It launches the agent server process.
+- Waits for it to be ready.
+- Shares the server URL with the SDK client.
+
+You don’t need to manage this manually—the workspace context handles startup and teardown automatically.
+
+### 3. Event Streaming → *(Bidirectional WebSocket)*
+
+The client and agent server maintain a live WebSocket connection for streaming events:
 
 ```python
-def event_callback(event):
+def on_event(event):
     print(f"Received: {type(event).__name__}")
 
-conversation = Conversation(
-    agent=agent,
-    workspace=workspace,
-    callbacks=[event_callback]  # Callbacks receive real-time events
-)
+conversation = Conversation(agent=agent, workspace=workspace, callbacks=[on_event])
 ```
 
-Events flow:
-1. Client sends message via HTTP
-2. Agent server executes agent logic
-3. Events stream back via WebSocket
-4. Client callbacks receive events in real-time
+This allows you to see real-time updates from the running agent as it executes tasks inside the workspace.
 
-### 4. File Operations
+### 4. Workspace Supports File and Command Operations → *(Server ↔ Workspace)*
 
-File operations go through the agent server API:
+Workspace supports file and command operations via the agent server API ([base class](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/base.py)), ensuring isolation and consistent behavior:
 
 ```python
-# Upload files to workspace
-workspace.upload_file(local_path, remote_path)
-
-# Download files from workspace
-workspace.download_file(remote_path, local_path)
-
-# Execute commands
+workspace.file_upload(local_path, remote_path)
+workspace.file_download(remote_path, local_path)
 result = workspace.execute_command("ls -la")
 print(result.stdout)
 ```
 
-## Workspace Types
+These commands are proxied through the agent server, whether it’s a Docker container or a remote VM, keeping your client code environment-agnostic.
 
-The SDK provides three workspace types for different use cases:
+### Summary
 
-### Local Workspace (Development)
+The architecture makes remote execution seamless:
+- Your **client code** stays the same.
+- The **agent server** manages execution and streaming.
+- The **workspace** provides secure, isolated runtime environments.
 
-- **Description**: Direct execution on your machine
-- **Setup**: None (default)
-- **Use Case**: Quick development and testing
-- **Security**: ⚠️ Low - full host access
-
-```python
-from openhands.sdk import Conversation
-
-# Local workspace is implicit
-conversation = Conversation(agent=agent)
-# Runs directly on your machine
-```
-
-### Docker Workspace (Self-Hosted)
-
-- **Description**: Isolated Docker containers
-- **Setup**: Docker required
-- **Use Case**: Production, testing, multi-tenant
-- **Security**: ✅ High - complete isolation
-
-```python
-from openhands.workspace import DockerWorkspace
-
-with DockerWorkspace(
-    server_image="ghcr.io/openhands/agent-server:latest-python"
-) as workspace:
-    conversation = Conversation(agent=agent, workspace=workspace)
-    # Runs in isolated Docker container
-```
-
-### API Remote Workspace (Managed)
-
-- **Description**: Hosted runtime API service
-- **Setup**: API key only
-- **Use Case**: Zero-ops production
-- **Security**: ✅ High - managed isolation
-
-```python
-from openhands.workspace import APIRemoteWorkspace
-
-with APIRemoteWorkspace(
-    runtime_api_url="https://runtime.example.com",
-    runtime_api_key="your-key"
-) as workspace:
-    conversation = Conversation(agent=agent, workspace=workspace)
-    # Runs on managed infrastructure
-```
-
-## Comparison Table
-
-| Feature | Local | Docker | API Remote |
-|---------|-------|--------|------------|
-| **Setup** | None | Docker | API key |
-| **Isolation** | None | High | High |
-| **Infrastructure** | Local | Self-managed | Managed |
-| **Scalability** | N/A | Manual | Automatic |
-| **Cost** | Free | Infrastructure | Usage-based |
-| **Best For** | Development | Control & Testing | Production |
-
-## When to Use Remote Agent Servers
-
-### Use Remote Servers When You Need:
-
-**Isolation**
-- Protect host system from agent actions
-- Run untrusted or experimental code safely
-- Separate different agent workloads
-
-**Scalability**
-- Handle multiple concurrent users
-- Auto-scale based on demand
-- Distribute workload across servers
-
-**Production Deployment**
-- Centralized agent management
-- Monitoring and logging
-- Resource control and limits
-
-**Team Collaboration**
-- Multiple developers sharing infrastructure
-- Consistent development environments
-- Centralized configuration
-
-### Use Local Workspace When:
-
-- Rapid development iteration
-- Direct access to local files needed
-- No isolation requirements
-- Single-user development
-
-## Getting Started
-
-### Quick Start: Local Agent Server
-
-Test remote conversation features locally:
-
-```python
-from openhands.sdk import Workspace, Conversation
-
-# Start local agent server
-workspace = Workspace(host="http://localhost:8000")
-
-conversation = Conversation(agent=agent, workspace=workspace)
-conversation.send_message("Hello!")
-conversation.run()
-```
-
-See: [Local Agent Server](/sdk/guides/agent-server/local-agent-server)
-
-### Production: Docker Sandboxed Server
-
-Run agents in isolated Docker containers:
-
-```python
-from openhands.workspace import DockerWorkspace
-
-with DockerWorkspace(
-    server_image="ghcr.io/openhands/agent-server:latest-python"
-) as workspace:
-    conversation = Conversation(agent=agent, workspace=workspace)
-    conversation.send_message("Deploy my application")
-    conversation.run()
-```
-
-See: [Docker Sandboxed Server](/sdk/guides/agent-server/docker-sandboxed-server)
-
-### Zero-Ops: API Sandboxed Server
-
-Use managed infrastructure:
-
-```python
-from openhands.workspace import APIRemoteWorkspace
-
-with APIRemoteWorkspace(
-    runtime_api_url="https://runtime.example.com",
-    runtime_api_key="your-key"
-) as workspace:
-    conversation = Conversation(agent=agent, workspace=workspace)
-    conversation.send_message("Analyze this codebase")
-    conversation.run()
-```
-
-See: [API Sandboxed Server](/sdk/guides/agent-server/api-sandboxed-server)
-
-## Advanced Features
-
-### Browser Automation
-
-Enable browser tools in Docker:
-
-```python
-from openhands.workspace import DockerWorkspace
-
-with DockerWorkspace(
-    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
-    extra_ports=True  # Enables VNC access
-) as workspace:
-    agent = get_default_agent(llm=llm, cli_mode=False)  # Browser enabled
-    conversation = Conversation(agent=agent, workspace=workspace)
-```
-
-See: [Browser with Docker](/sdk/guides/agent-server/browser-with-docker)
-
-### VS Code Integration
-
-Access VS Code Web in container:
-
-```python
-with DockerWorkspace(
-    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
-    extra_ports=True  # Enables VS Code Web
-) as workspace:
-    # VS Code available at http://localhost:8011
-    conversation = Conversation(agent=agent, workspace=workspace)
-```
-
-See: [VS Code with Docker](/sdk/guides/agent-server/vscode-with-docker)
-
-## Security Considerations
-
-### Docker Isolation
-
-Docker workspaces provide:
-- **Process isolation**: Agent cannot affect host processes
-- **File system isolation**: Agent cannot access host files
-- **Network isolation**: Controlled network access
-- **Resource limits**: CPU/memory constraints
-
-### Best Practices
-
-1. **Use Pre-built Images**: Faster startup, verified content
-2. **Set Resource Limits**: Prevent resource exhaustion
-3. **Enable Authentication**: Protect server endpoints
-4. **Monitor Activity**: Log and audit agent actions
-5. **Update Regularly**: Keep server images current
+Switching from local to remote is just a matter of swapping the workspace class—no code rewrites needed.
 
 ## Next Steps
 
@@ -311,5 +155,5 @@ Explore different deployment options:
 - **[VS Code with Docker](/sdk/guides/agent-server/vscode-with-docker)** - Code editing
 
 For architectural details:
-- **[Agent Server Architecture](/sdk/arch/agent_server/overview)** - Technical deep dive
-- **[Workspace Architecture](/sdk/arch/sdk/workspace)** - Workspace internals
+- **[Agent Server Package Architecture](/sdk/arch/agent-server-package)** - Remote execution architecture and deployment
+- **[Workspace Package Architecture](/sdk/arch/workspace-package)** - Execution environments and isolation
