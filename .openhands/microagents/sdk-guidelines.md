@@ -123,7 +123,7 @@ Links to the GitHub source file:
 
 ```mdx
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/02_custom_tools.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/02_custom_tools.py)
+This example is available on GitHub: [examples/01_standalone_sdk/02_custom_tools.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/01_standalone_sdk/02_custom_tools.py)
 </Note>
 ```
 
