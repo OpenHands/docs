@@ -1,9 +1,6 @@
 name: Sync agent-sdk OpenAPI
 
 on:
-  push:
-    branches:
-      - '**'      # run on every branch
   schedule:
     - cron: '0 2 * * *'   # nightly catch-up
   workflow_dispatch:
@@ -15,12 +12,11 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync-openapi:
     runs-on: ubuntu-latest
-    # Avoid infinite loops on our own commits
-    if: github.actor != 'github-actions[bot]'
 
     env:
       # GITHUB_TOKEN is fine.
@@ -72,19 +68,21 @@ jobs:
             echo "changes=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Commit and push OpenAPI spec
+      - name: Create Pull Request with OpenAPI changes
         if: steps.detect_changes.outputs.changes == 'true'
-        run: |
-          set -euo pipefail
-          git add openapi/agent-sdk.json
-          # Re-check in case only unrelated files changed
-          if git diff --cached --quiet; then
-            echo "No OpenAPI changes to commit."
-            exit 0
-          fi
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: |
+            docs(sync-openapi): agent-sdk ${{ env.AGENT_SDK_REF }}
 
-          SHA_SHORT="$(git -C agent-sdk rev-parse --short=7 HEAD || echo manual)"
-          BRANCH="${AGENT_SDK_REF:-main}"
+            Generated from agent-sdk at `${{ env.AGENT_SDK_REF }}`.
+          title: "chore(docs): sync agent-sdk OpenAPI"
+          body: |
+            This PR was automatically created by the nightly sync workflow.
 
-          git commit -m "sync(openapi): agent-sdk/${BRANCH} ${SHA_SHORT}"
-          git push
+            It updates the OpenAPI spec to match OpenHands/agent-sdk at `${{ env.AGENT_SDK_REF }}`.
+          branch: chore/sync-openapi
+          delete-branch: true
+          signoff: false
+          add-paths: |
+            openapi/agent-sdk.json
