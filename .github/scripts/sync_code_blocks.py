@@ -37,8 +37,8 @@ def extract_code_blocks(content: str) -> list[tuple[str, str, int, int]]:
     <code content>
     ```
     """
-    # Captures examples/...*.py after the first line, then the body up to ```
-    pattern = r'```python[^\n]*\s+(examples/[^\s]+\.py)\n(.*?)```'
+    # Captures ...*.py after the first line, then the body up to ```
+    pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)```'
     matches: list[tuple[str, str, int, int]] = []
     for match in re.finditer(pattern, content, re.DOTALL):
         file_ref = match.group(1)

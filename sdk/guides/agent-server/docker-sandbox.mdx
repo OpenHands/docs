@@ -1,0 +1,580 @@
+---
+title: Docker Sandbox
+description: Run agent server in isolated Docker containers for security and reproducibility.
+---
+
+The docker sandboxed agent server demonstrates how to run agents in isolated Docker containers using DockerWorkspace. 
+
+This provides complete isolation from the host system, making it ideal for production deployments, testing, and executing untrusted code safely. 
+
+<Note>the Docker sandbox image ships with features configured in the [Dockerfile](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile) (e.g., secure defaults and services like VSCode and VNC exposed behind well-defined ports), which are not available in the local (non-Docker) agent server.</Note>
+
+## 1) Basic Docker Sandbox
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py)
+</Note>
+
+This example shows how to create a DockerWorkspace that automatically manages Docker containers for agent execution:
+
+```python icon="python" expandable examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py
+import os
+import platform
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Conversation,
+    RemoteConversation,
+    get_logger,
+)
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import DockerWorkspace
+
+
+logger = get_logger(__name__)
+
+
+# 1) Ensure we have LLM API key
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    usage_id="agent",
+    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    base_url="https://llm-proxy.eval.all-hands.dev",
+    api_key=SecretStr(api_key),
+)
+
+
+def detect_platform():
+    """Detects the correct Docker platform string."""
+    machine = platform.machine().lower()
+    if "arm" in machine or "aarch64" in machine:
+        return "linux/arm64"
+    return "linux/amd64"
+
+
+# 2) Create a Docker-based remote workspace that will set up and manage
+#    the Docker container automatically
+with DockerWorkspace(
+    # dynamically build agent-server image
+    # base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    # use pre-built image for faster startup
+    server_image="ghcr.io/openhands/agent-server:main-python",
+    host_port=8010,
+    platform=detect_platform(),
+) as workspace:
+    # 3) Create agent
+    agent = get_default_agent(
+        llm=llm,
+        cli_mode=True,
+    )
+
+    # 4) Set up callback collection
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        event_type = type(event).__name__
+        logger.info(f"🔔 Callback received event: {event_type}\n{event}")
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    # 5) Test the workspace with a simple command
+    result = workspace.execute_command(
+        "echo 'Hello from sandboxed environment!' && pwd"
+    )
+    logger.info(
+        f"Command '{result.command}' completed with exit code {result.exit_code}"
+    )
+    logger.info(f"Output: {result.stdout}")
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        callbacks=[event_callback],
+        visualize=True,
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    try:
+        logger.info(f"\n📋 Conversation ID: {conversation.state.id}")
+
+        logger.info("📝 Sending first message...")
+        conversation.send_message(
+            "Read the current repo and write 3 facts about the project into FACTS.txt."
+        )
+        logger.info("🚀 Running conversation...")
+        conversation.run()
+        logger.info("✅ First task completed!")
+        logger.info(f"Agent status: {conversation.state.agent_status}")
+
+        # Wait for events to settle (no events for 2 seconds)
+        logger.info("⏳ Waiting for events to stop...")
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+        logger.info("✅ Events have stopped")
+
+        logger.info("🚀 Running conversation again...")
+        conversation.send_message("Great! Now delete that file.")
+        conversation.run()
+        logger.info("✅ Second task completed!")
+    finally:
+        print("\n🧹 Cleaning up conversation...")
+        conversation.close()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py
+```
+
+### Key Concepts
+
+#### DockerWorkspace Context Manager
+
+The `DockerWorkspace` uses a context manager to automatically handle container lifecycle:
+
+```python highlight={42-50}
+with DockerWorkspace(
+    # dynamically build agent-server image
+    # base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    # use pre-built image for faster startup
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    host_port=8010,
+    platform=detect_platform(),
+) as workspace:
+    # Container is running here
+    # Work with the workspace
+    pass
+# Container is automatically stopped and cleaned up here
+```
+
+The workspace automatically:
+- Pulls or builds the Docker image
+- Starts the container with an agent server
+- Waits for the server to be ready
+- Cleans up the container when done
+
+#### Platform Detection
+
+The example includes platform detection to ensure the correct Docker image is built and used:
+
+```python highlight={32-37}
+def detect_platform():
+    """Detects the correct Docker platform string."""
+    machine = platform.machine().lower()
+    if "arm" in machine or "aarch64" in machine:
+        return "linux/arm64"
+    return "linux/amd64"
+```
+
+This ensures compatibility across different CPU architectures (Intel/AMD vs ARM/Apple Silicon).
+
+
+#### Testing the Workspace
+
+Before creating a conversation, the example tests the workspace connection:
+
+```python highlight={68-74}
+result = workspace.execute_command(
+    "echo 'Hello from sandboxed environment!' && pwd"
+)
+logger.info(
+    f"Command '{result.command}' completed with exit code {result.exit_code}"
+)
+logger.info(f"Output: {result.stdout}")
+```
+
+This verifies the workspace is properly initialized and can execute commands.
+
+#### Automatic RemoteConversation
+
+When you use a DockerWorkspace, the Conversation automatically becomes a RemoteConversation:
+
+```python highlight={75-81}
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    callbacks=[event_callback],
+    visualize=True,
+)
+assert isinstance(conversation, RemoteConversation)
+```
+
+The SDK detects the remote workspace and uses WebSocket communication for real-time event streaming.
+
+
+#### Pre-built vs Base Images
+
+```python
+# ✅ Fast: Use pre-built image (recommended)
+DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    host_port=8010,
+)
+
+# ⏱️ Slower: Build on the fly from base image (more control)
+DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=8010,
+)
+```
+
+Pre-built images start immediately, while base images need to build the agent server first.
+
+---
+
+## 2) VS Code in Docker Sandbox
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py)
+</Note>
+
+VS Code with Docker demonstrates how to enable VS Code Web integration in a Docker-sandboxed environment. This allows you to access a full VS Code editor running in the container, making it easy to inspect, edit, and manage files that the agent is working with.
+
+```python icon="python" expandable examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py
+import os
+import time
+
+import httpx
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation, get_logger
+from openhands.sdk.conversation.impl.remote_conversation import RemoteConversation
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import DockerWorkspace
+
+
+logger = get_logger(__name__)
+
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    usage_id="agent",
+    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    base_url="https://llm-proxy.eval.all-hands.dev",
+    api_key=SecretStr(api_key),
+)
+
+# Create a Docker-based remote workspace with extra ports for VSCode access
+with DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=18010,
+    # TODO: Change this to your platform if not linux/arm64
+    platform="linux/arm64",
+    extra_ports=True,  # Expose extra ports for VSCode and VNC
+) as workspace:
+    """Extra ports allows you to access VSCode at localhost:8011"""
+
+    # Create agent
+    agent = get_default_agent(
+        llm=llm,
+        cli_mode=True,
+    )
+
+    # Set up callback collection
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        event_type = type(event).__name__
+        logger.info(f"🔔 Callback received event: {event_type}\n{event}")
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    # Create RemoteConversation using the workspace
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        callbacks=[event_callback],
+        visualize=True,
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    logger.info(f"\n📋 Conversation ID: {conversation.state.id}")
+    logger.info("📝 Sending first message...")
+    conversation.send_message("Create a simple Python script that prints Hello World")
+    conversation.run()
+
+    # Get VSCode URL with token
+    vscode_port = (workspace.host_port or 8010) + 1
+    try:
+        response = httpx.get(
+            f"{workspace.host}/api/vscode/url",
+            params={"workspace_dir": workspace.working_dir},
+        )
+        vscode_data = response.json()
+        vscode_url = vscode_data.get("url", "").replace(
+            "localhost:8001", f"localhost:{vscode_port}"
+        )
+    except Exception:
+        # Fallback if server route not available
+        folder = (
+            f"/{workspace.working_dir}"
+            if not str(workspace.working_dir).startswith("/")
+            else str(workspace.working_dir)
+        )
+        vscode_url = f"http://localhost:{vscode_port}/?folder={folder}"
+
+    # Wait for user to explore VSCode
+    y = None
+    while y != "y":
+        y = input(
+            "\n"
+            "Because you've enabled extra_ports=True in DockerWorkspace, "
+            "you can open VSCode Web to see the workspace.\n\n"
+            f"VSCode URL: {vscode_url}\n\n"
+            "The VSCode should have the OpenHands settings extension installed:\n"
+            "  - Dark theme enabled\n"
+            "  - Auto-save enabled\n"
+            "  - Telemetry disabled\n"
+            "  - Auto-updates disabled\n\n"
+            "Press 'y' and Enter to exit and terminate the workspace.\n"
+            ">> "
+        )
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py
+```
+
+### Key Concepts
+
+#### VS Code-Enabled DockerWorkspace
+
+The workspace is configured with extra ports for VS Code access:
+
+```python highlight={27-34}
+with DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=18010,
+    platform="linux/arm64",
+    extra_ports=True,  # Expose extra ports for VSCode and VNC
+) as workspace:
+    """Extra ports allows you to access VSCode at localhost:8011"""
+```
+
+The `extra_ports=True` setting exposes:
+- Port `host_port+1`: VS Code Web interface (host_port + 1)
+- Port `host_port+2`: VNC viewer for visual access
+
+
+#### VS Code URL Generation
+
+The example retrieves the VS Code URL with authentication token:
+
+```python highlight={68-86}
+# Get VSCode URL with token
+vscode_port = (workspace.host_port or 8010) + 1
+try:
+    response = httpx.get(
+        f"{workspace.host}/api/vscode/url",
+        params={"workspace_dir": workspace.working_dir},
+    )
+    vscode_data = response.json()
+    vscode_url = vscode_data.get("url", "").replace(
+        "localhost:8001", f"localhost:{vscode_port}"
+    )
+except Exception:
+    # Fallback if server route not available
+    folder = (
+        f"/{workspace.working_dir}"
+        if not str(workspace.working_dir).startswith("/")
+        else str(workspace.working_dir)
+    )
+    vscode_url = f"http://localhost:{vscode_port}/?folder={folder}"
+```
+
+This generates a properly authenticated URL with the workspace directory pre-opened.
+
+Read the API Reference [here](/sdk/guides/agent-server/api-reference/vscode/get-vscode-url) for more information.
+
+#### VS Code URL Format
+
+```
+http://localhost:{vscode_port}/?tkn={token}&folder={workspace_dir}
+```
+
+- vscode_port: Usually host_port + 1 (e.g., 8011)
+- tkn: Authentication token for security
+- folder: Workspace directory to open
+
+---
+
+## 3) Browser in Docker Sandbox
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py)
+</Note>
+
+Browser with Docker demonstrates how to enable browser automation capabilities in a Docker-sandboxed environment. This allows agents to browse websites, interact with web content, and perform web automation tasks while maintaining complete isolation from your host system.
+
+This example shows how to configure DockerWorkspace with browser capabilities and VNC access:
+
+```python icon="python" expandable examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py
+import os
+import platform
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation, get_logger
+from openhands.sdk.conversation.impl.remote_conversation import RemoteConversation
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import DockerWorkspace
+
+
+logger = get_logger(__name__)
+
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    usage_id="agent",
+    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    base_url="https://llm-proxy.eval.all-hands.dev",
+    api_key=SecretStr(api_key),
+)
+
+
+def detect_platform():
+    """Detects the correct Docker platform string."""
+    machine = platform.machine().lower()
+    if "arm" in machine or "aarch64" in machine:
+        return "linux/arm64"
+    return "linux/amd64"
+
+
+# Create a Docker-based remote workspace with extra ports for browser access
+with DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=8010,
+    # TODO: Change this to your platform if not linux/arm64
+    platform=detect_platform(),
+    extra_ports=True,  # Expose extra ports for VSCode and VNC
+) as workspace:
+    """Extra ports allows you to check localhost:8012 for VNC"""
+
+    # Create agent with browser tools enabled
+    agent = get_default_agent(
+        llm=llm,
+        cli_mode=False,  # CLI mode = False will enable browser tools
+    )
+
+    # Set up callback collection
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        event_type = type(event).__name__
+        logger.info(f"🔔 Callback received event: {event_type}\n{event}")
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    # Create RemoteConversation using the workspace
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        callbacks=[event_callback],
+        visualize=True,
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    logger.info(f"\n📋 Conversation ID: {conversation.state.id}")
+    logger.info("📝 Sending first message...")
+    conversation.send_message(
+        "Could you go to https://all-hands.dev/ blog page and summarize main "
+        "points of the latest blog?"
+    )
+    conversation.run()
+
+    # Wait for user confirm to exit
+    y = None
+    while y != "y":
+        y = input(
+            "Because you've enabled extra_ports=True in DockerWorkspace, "
+            "you can open a browser tab to see the *actual* browser OpenHands "
+            "is interacting with via VNC.\n\n"
+            "Link: http://localhost:8012/vnc.html?autoconnect=1&resize=remote\n\n"
+            "Press 'y' and Enter to exit and terminate the workspace.\n"
+            ">> "
+        )
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py
+```
+
+### Key Concepts
+
+#### Browser-Enabled DockerWorkspace
+
+The workspace is configured with extra ports for browser access:
+
+```python highlight={36-43}
+with DockerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=8010,
+    platform=detect_platform(),
+    extra_ports=True,  # Expose extra ports for VSCode and VNC
+) as workspace:
+    """Extra ports allows you to check localhost:8012 for VNC"""
+```
+
+The `extra_ports=True` setting exposes additional ports for:
+- Port `host_port+1`: VS Code Web interface
+- Port `host_port+2`: VNC viewer for browser visualization
+
+#### Enabling Browser Tools
+
+Browser tools are enabled by setting `cli_mode=False`:
+
+```python highlight={46-50}
+# Create agent with browser tools enabled
+agent = get_default_agent(
+    llm=llm,
+    cli_mode=False,  # CLI mode = False will enable browser tools
+)
+```
+
+When `cli_mode=False`, the agent gains access to browser automation tools for web interaction.
+
+When VNC is available and `extra_ports=True`, the browser will be opened in the VNC desktop to visualize agent's work. You can watch the browser in real-time via VNC. Demo video: 
+<video
+  controls
+  className="w-full aspect-video rounded-xl"
+  src="https://github.com/user-attachments/assets/2cd5d08a-043e-4ce1-9d10-5ab1289faa12"
+></video>
+
+#### VNC Access
+
+The VNC interface provides real-time visual access to the browser:
+
+```
+http://localhost:8012/vnc.html?autoconnect=1&resize=remote
+```
+
+- autoconnect=1: Automatically connect to VNC server
+- resize=remote: Automatically adjust resolution
+
+Read the API Reference [here](/sdk/guides/agent-server/api-reference/desktop/get-desktop-url) for more information.
+
+---
+
+## Next Steps
+
+- **[Local Agent Server](/sdk/guides/agent-server/local-server)**
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)**
+- **[API Sandboxed Server](/sdk/guides/agent-server/api-sandbox)** - Connect to hosted API service
+- **[Agent Server Package Architecture](/sdk/arch/agent-server-package)** - Architecture and design decisions
