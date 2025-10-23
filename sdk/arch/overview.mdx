@@ -1,142 +1,153 @@
 ---
 title: Overview
-description: A modular framework for building AI agents, organized into four packages for clarity and extensibility.
+description: Understanding the OpenHands Agent SDK's design philosophy, package structure, and core principles.
 ---
 
-The OpenHands Agent SDK is organized into four packages, each serving a distinct purpose in the agent development lifecycle.
+The **OpenHands Agent SDK** provides a unified, type-safe framework for building and deploying AI agents—from local experiments to full production systems, focused on **statelessness**, **composability**, and **clear boundaries** between research and deployment.
 
-## Package Structure
 
-```mermaid
-graph TD
-    SDK[SDK Package<br/>Core Framework] --> Tools[Tools Package<br/>Built-in Tools]
-    SDK --> Workspace[Workspace Package<br/>Execution Environments]
-    SDK --> AgentServer[Agent Server Package<br/>Remote Execution]
-    
-    Tools -.->|Used by| SDK
-    Workspace -.->|Used by| SDK
-    AgentServer -.->|Hosts| SDK
-    
-    style SDK fill:#e1f5fe
-    style Tools fill:#e8f5e8
-    style Workspace fill:#fff3e0
-    style AgentServer fill:#f3e5f5
-```
-
-## 1. SDK Package
-
-Core framework for building agents locally.
-
-**Key Components:**
-- **[Tool System](/sdk/architecture/sdk/tool)** - Define custom capabilities
-- **[Microagents](/sdk/architecture/sdk/microagents)** - Specialized behavior modules
-- **[Condenser](/sdk/architecture/sdk/condenser)** - Memory management
-- **[Agent](/sdk/architecture/sdk/agent)** - Base agent interface
-- **[Workspace](/sdk/architecture/sdk/workspace)** - Execution abstraction
-- **[Conversation](/sdk/architecture/sdk/conversation)** - Lifecycle management
-- **[Event](/sdk/architecture/sdk/event)** - Event system
-- **[LLM](/sdk/architecture/sdk/llm)** - Language model integration
-- **[MCP](/sdk/architecture/sdk/mcp)** - Model Context Protocol
-- **[Security](/sdk/architecture/sdk/security)** - Security framework
-
-## 2. Tools Package
-
-Production-ready tool implementations.
-
-**Available Tools:**
-- **[BashTool](/sdk/architecture/tools/bash)** - Command execution
-- **[FileEditorTool](/sdk/architecture/tools/file_editor)** - File manipulation
-- **[GlobTool](/sdk/architecture/tools/glob)** - File discovery
-- **[GrepTool](/sdk/architecture/tools/grep)** - Content search
-- **[TaskTrackerTool](/sdk/architecture/tools/task_tracker)** - Task management
-- **[PlanningFileEditorTool](/sdk/architecture/tools/planning_file_editor)** - Multi-file workflows
-- **[BrowserUseTool](/sdk/architecture/tools/browser_use)** - Web interaction
-
-## 3. Workspace Package
-
-Advanced execution environments for production.
-
-**Workspace Types:**
-- **[DockerWorkspace](/sdk/architecture/workspace/docker)** - Container-based isolation
-- **[RemoteAPIWorkspace](/sdk/architecture/workspace/remote_api)** - Remote server execution
-
-See [Workspace Overview](/sdk/architecture/workspace/overview) for comparison.
-
-## 4. Agent Server Package
-
-HTTP server for centralized agent execution.
-
-**Capabilities:**
-- Remote agent execution via API
-- Multi-user isolation
-- Container management
-- Resource allocation
-
-See [Agent Server Documentation](/sdk/architecture/agent_server/overview).
-
-## Component Interaction
-
-```mermaid
-graph LR
-    User[User] -->|Message| Conv[Conversation]
-    Conv -->|Manages| Agent[Agent]
-    
-    Agent -->|Reasons with| LLM[LLM]
-    Agent -->|Executes| Tools[Tools]
-    Agent -->|Guided by| Micro[Microagents]
-    
-    Tools -->|Run in| Workspace[Workspace]
-    
-    style User fill:#e1f5fe
-    style Conv fill:#fff3e0
-    style Agent fill:#f3e5f5
-    style LLM fill:#e8f5e8
-    style Tools fill:#fce4ec
-    style Workspace fill:#e0f2f1
-```
+<Info>
+**Context:** The **OpenHands Agent SDK** is part of the [OpenHands V1](https://openhands.dev/blog/the-path-to-openhands-v1) effort — a complete architectural rework based on lessons from **OpenHands V0**, one of the most widely adopted open-source coding agents.
+[Over the last eighteen months](https://openhands.dev/blog/one-year-of-openhands-a-journey-of-open-source-ai-development), OpenHands V0 evolved from a scrappy prototype into a widely used open-source coding agent. The project grew to tens of thousands of GitHub stars, hundreds of contributors, and multiple production deployments. That growth exposed architectural tensions — tight coupling between research and production, mandatory sandboxing, mutable state, and configuration sprawl — which informed the design principles of agent-sdk in V1.
+</Info>
 
 ## Design Principles
 
-### Immutability & Serialization
-All core classes are:
-- **Immutable**: State changes create new instances
-- **Serializable**: Full conversation state can be saved/restored
-- **Type-safe**: Pydantic models ensure data integrity
+### Optional Isolation over Mandatory Sandboxing
 
-### Modularity
-- **Composable**: Mix and match components as needed
-- **Extensible**: Add custom tools, LLMs, or workspaces
-- **Testable**: Each component can be tested in isolation
+<Info>
+**V0 Challenge:**  
+Every tool call in V0 executed in a sandboxed Docker container by default. While this guaranteed reproducibility and security, it also created friction — the agent and sandbox ran as separate processes, states diverged easily, and multi-tenant workloads could crash each other.  
+Moreover, with the rise of the Model Context Protocol (MCP), which assumes local execution and direct access to user environments, V0’s rigid isolation model became incompatible.
+</Info>
 
-### Backward Compatibility
-- **Semantic versioning** indicates compatibility levels
-- **Migration guides** provided for major changes
+**V1 Principle:**  
+**Sandboxing should be opt-in, not universal.**  
+V1 unifies agent and tool execution within a single process by default, aligning with MCP’s local-execution model.  
+When isolation is needed, the same stack can be transparently containerized, maintaining flexibility without complexity.
 
-## Getting Started
+### Stateless by Default, One Source of Truth for State
 
-New to the SDK? Start with the guides:
+<Info>
+**V0 Challenge:**  
+V0 relied on mutable Python objects and dynamic typing, which led to silent inconsistencies — failed session restores, version drift, and non-deterministic behavior. Each subsystem tracked its own transient state, making debugging and recovery painful.
+</Info>
 
-- **[Getting Started](/sdk/guides/getting-started)** - Quick introduction
-- **[Streaming Mode](/sdk/guides/streaming-mode)** - Execution patterns
-- **[Tools & MCP](/sdk/guides/tools-and-mcp)** - Extending capabilities
-- **[Workspaces](/sdk/guides/workspaces)** - Execution environments
-- **[Sub-agents](/sdk/guides/subagents)** - Agent delegation
+**V1 Principle:**  
+**Keep everything stateless, with exactly one mutable state.**  
+All components (agents, tools, LLMs, and configurations) are immutable Pydantic models validated at construction.  
+The only mutable entity is the [conversation state](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/event/conversation_state.py), a single source of truth that enables deterministic replay and robust persistence across sessions or distributed systems.
 
-## Deep Dive
+### Clear Boundaries between Agent and Applications
 
-Explore individual components:
+<Info>
+**V0 Challenge:**  
+The same codebase powered the CLI, web interface, and integrations (e.g., Github, Gitlab, etc). Over time, application-specific conditionals and prompts polluted the agent core, making it brittle.  
+Heavy research dependencies and benchmark integrations further bloated production builds.
+</Info>
 
-- **SDK Package** - [Tool](/sdk/architecture/sdk/tool) | [Agent](/sdk/architecture/sdk/agent) | [LLM](/sdk/architecture/sdk/llm) | [Conversation](/sdk/architecture/sdk/conversation)
-- **Tools Package** - [BashTool](/sdk/architecture/tools/bash) | [FileEditorTool](/sdk/architecture/tools/file_editor)
-- **Workspace Package** - [DockerWorkspace](/sdk/architecture/workspace/docker) | [RemoteAPIWorkspace](/sdk/architecture/workspace/remote_api)
-- **Agent Server** - [Overview](/sdk/architecture/agent_server/overview)
+**V1 Principle:**  
+**Maintain strict separation of concerns.**  
+V1 divides the system into stable, isolated layers: the [SDK (agent core)](/sdk/arch/overview#1-sdk-%E2%80%93-openhands-sdk), [tools (set of tools)](/sdk/arch/overview#2-tools-%E2%80%93-openhands-tools), [workspace (sandbox)](/sdk/arch/overview#3-workspace-%E2%80%93-openhands-workspace), and [agent server (server that runs inside sandbox)](/sdk/arch/overview#4-agent-server-%E2%80%93-openhands-agent-server).  
+Applications communicate with the agent via APIs rather than embedding it directly, ensuring research and production can evolve independently.
 
-## Examples
 
-Browse the [`examples/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/examples) directory for practical implementations:
+### Composable Components for Extensibility
 
-- **Hello World** - Basic agent usage
-- **Custom Tools** - Creating new capabilities
-- **Docker Workspace** - Sandboxed execution
-- **MCP Integration** - External tool servers
-- **Planning Agent** - Multi-step workflows
+<Info>
+**V0 Challenge:**  
+Because agent logic was hard-coded into the core application, extending behavior (e.g., adding new tools or entry points) required branching logic for different entrypoints. This rigidity limited experimentation and discouraged contributions.
+</Info>
+
+**V1 Principle:**  
+**Everything should be composable and safe to extend.**  
+Agents are defined as graphs of interchangeable components—tools, prompts, LLMs, and contexts—each described declaratively with strong typing.  
+Developers can reconfigure capabilities (e.g., swap toolsets, override prompts, add delegation logic) without modifying core code, preserving stability while fostering rapid innovation.
+
+## Package Overview
+
+```mermaid
+graph TD
+    SDK[SDK<br/>openhands.sdk<br/><i>Core Framework</i>] 
+    Tools[Tools<br/>openhands.tools<br/><i>Built-in Capabilities</i>]
+    Workspace[Workspace<br/>openhands.workspace<br/><i>Execution Environments</i>]
+    Server[Agent Server<br/>openhands.agent_server<br/><i>Remote API Layer</i>]
+
+    SDK --> Tools
+    SDK --> Workspace
+    Server --> SDK
+    Server --> Workspace
+
+    style SDK fill:#e1f5fe
+    style Tools fill:#e8f5e8
+    style Workspace fill:#fff3e0
+    style Server fill:#f3e5f5
+```
+
+
+### SDK – `openhands.sdk`
+The core reasoning and execution framework.  
+Includes conversation management, LLM integration, tool system, workspace abstraction, and event streaming.
+
+**Use when:** Embedding agents directly in Python apps or building custom behaviors programmatically.
+
+### Tools – `openhands.tools`
+Production-ready, typed tools implementing the Action/Observation interface.
+
+Examples:  
+File editors, search utilities, task management, and web interaction tools.
+
+**Use when:** You need common capabilities out-of-the-box or want to define new tools declaratively.
+
+### Workspace – `openhands.workspace`
+Defines where code executes:
+- `LocalWorkspace` – No isolation  
+- `DockerWorkspace` – Sandboxed execution  
+- `RemoteAPIWorkspace` – Distributed via REST
+
+**Use when:** You need isolation, resource control, or remote environments.
+
+### Agent Server – `openhands.agent_server`
+A REST+WebSocket server for remote agent execution and workspace orchestration.
+
+**Use when:** Building multi-user, hosted, or SaaS-style agent platforms.
+
+## Execution Models
+
+### Local (Standalone)
+The SDK runs entirely in your process—ideal for development or embedding in apps.
+
+**Flow:**
+1. User message → Conversation  
+2. Agent → LLM → Tool → Workspace  
+3. Observation → Response
+
+### Remote (Agent Server)
+Agents run inside isolated containers managed by the Agent Server.  
+Clients interact via a `RemoteConversation` proxy using the same Python API.
+
+**Why:** Enables scalable, multi-tenant deployments without changing client code.
+
+---
+
+## Choosing the Right Mode
+
+| Use Case | Recommended Setup |
+|-----------|------------------|
+| Local dev, automation scripts | Standalone SDK |
+| Web apps, hosted agents, SaaS | Agent Server |
+| Hybrid (local control + remote exec) | SDK + `RemoteAPIWorkspace` |
+
+---
+
+## Next Steps
+- [Getting Started](/sdk/getting-started) – Build your first agent  
+- [Custom Tools](/sdk/guides/custom-tools) – Add new capabilities  
+- [MCP Integration](/sdk/guides/mcp) – Connect external tool servers  
+- [Remote Server](/sdk/guides/agent-server/overview) – Host agents remotely  
+
+For in-depth details, explore:
+- [`openhands/sdk/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/openhands/sdk)  
+- [`openhands/tools/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/openhands/tools)  
+- [`openhands/workspace/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/openhands/workspace)  
+- [`openhands/agent_server/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/openhands/agent_server)  
