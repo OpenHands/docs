@@ -1,0 +1,208 @@
+---
+title: Workspace
+description: High-level architecture of the execution environment abstraction
+---
+
+The **Workspace** component abstracts execution environments for agent operations. It provides a unified interface for command execution and file operations across local processes, containers, and remote servers.
+
+**Source:** [`openhands/sdk/workspace/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/openhands-sdk/openhands/sdk/workspace)
+
+## Core Responsibilities
+
+The Workspace system has four primary responsibilities:
+
+1. **Execution Abstraction** - Unified interface for command execution across environments
+2. **File Operations** - Upload, download, and manipulate files in workspace
+3. **Resource Management** - Context manager protocol for setup/teardown
+4. **Environment Isolation** - Separate agent execution from host system
+
+## Architecture
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 25, "rankSpacing": 60}} }%%
+flowchart TB
+    subgraph Interface["Abstract Interface"]
+        Base["BaseWorkspace<br><i>Abstract base class</i>"]
+    end
+    
+    subgraph Implementations["Concrete Implementations"]
+        Local["LocalWorkspace<br><i>Direct subprocess</i>"]
+        Remote["RemoteWorkspace<br><i>HTTP API calls</i>"]
+    end
+    
+    subgraph Operations["Core Operations"]
+        Command["execute_command()"]
+        Upload["file_upload()"]
+        Download["file_download()"]
+        Context["__enter__ / __exit__"]
+    end
+    
+    subgraph Targets["Execution Targets"]
+        Process["Local Process"]
+        Container["Docker Container"]
+        Server["Remote Server"]
+    end
+    
+    Base --> Local
+    Base --> Remote
+    
+    Base -.->|Defines| Operations
+    
+    Local --> Process
+    Remote --> Container
+    Remote --> Server
+    
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    
+    class Base primary
+    class Local,Remote secondary
+    class Command,Upload tertiary
+```
+
+### Key Components
+
+| Component | Purpose | Design |
+|-----------|---------|--------|
+| **[`BaseWorkspace`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/base.py)** | Abstract interface | Defines execution and file operation contracts |
+| **[`LocalWorkspace`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/local.py)** | Local execution | Subprocess-based command execution |
+| **[`RemoteWorkspace`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/remote/base.py)** | Remote execution | HTTP API-based execution via agent-server |
+| **[`CommandResult`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/models.py)** | Execution output | Structured result with stdout, stderr, exit_code |
+| **[`FileOperationResult`](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/models.py)** | File op outcome | Success status and metadata |
+
+## Workspace Types
+
+### Local vs Remote Execution
+
+
+| Aspect | LocalWorkspace | RemoteWorkspace |
+|--------|----------------|-----------------|
+| **Execution** | Direct subprocess | HTTP → agent-server |
+| **Isolation** | Process-level | Container/VM-level |
+| **Performance** | Fast (no network) | Network overhead |
+| **Security** | Host system access | Sandboxed |
+| **Use Case** | Development, CLI | Production, web apps |
+
+## Core Operations
+
+### Command Execution
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart LR
+    Tool["Tool invokes<br>execute_command()"]
+    
+    Decision{"Workspace<br>type?"}
+    
+    LocalExec["subprocess.run()<br><i>Direct execution</i>"]
+    RemoteExec["POST /command<br><i>HTTP API</i>"]
+    
+    Result["CommandResult<br>stdout, stderr, exit_code"]
+    
+    Tool --> Decision
+    Decision -->|Local| LocalExec
+    Decision -->|Remote| RemoteExec
+    
+    LocalExec --> Result
+    RemoteExec --> Result
+    
+    style Decision fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style LocalExec fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style RemoteExec fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Command Result Structure:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| **stdout** | str | Standard output stream |
+| **stderr** | str | Standard error stream |
+| **exit_code** | int | Process exit code (0 = success) |
+| **timeout** | bool | Whether command timed out |
+| **duration** | float | Execution time in seconds |
+
+### File Operations
+
+| Operation | Local Implementation | Remote Implementation |
+|-----------|---------------------|----------------------|
+| **Upload** | `shutil.copy()` | `POST /file/upload` with multipart |
+| **Download** | `shutil.copy()` | `GET /file/download` stream |
+| **Result** | `FileOperationResult` | `FileOperationResult` |
+
+## Resource Management
+
+Workspaces use **context manager** for safe resource handling:
+
+**Lifecycle Hooks:**
+
+| Phase | LocalWorkspace | RemoteWorkspace |
+|-------|----------------|-----------------|
+| **Enter** | Create working directory | Connect to agent-server, verify |
+| **Use** | Execute commands | Proxy commands via HTTP |
+| **Exit** | No cleanup (persistent) | Disconnect, optionally stop container |
+
+## Remote Workspace Extensions
+
+The SDK provides remote workspace implementations in `openhands-workspace` package:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 50}} }%%
+flowchart TB
+    Base["RemoteWorkspace<br><i>SDK base class</i>"]
+    
+    Docker["DockerWorkspace<br><i>Auto-spawn containers</i>"]
+    API["RemoteAPIWorkspace<br><i>Connect to existing server</i>"]
+    
+    Base -.->|Extended by| Docker
+    Base -.->|Extended by| API
+    
+    Docker -->|Creates| Container["Docker Container<br>with agent-server"]
+    API -->|Connects| Server["Remote Agent Server"]
+    
+    style Base fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Docker fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style API fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Implementation Comparison:**
+
+| Type | Setup | Isolation | Use Case |
+|------|-------|-----------|----------|
+| **LocalWorkspace** | Immediate | Process | Development, trusted code |
+| **DockerWorkspace** | Spawn container | Container | Multi-user, untrusted code |
+| **RemoteAPIWorkspace** | Connect to URL | Remote server | Distributed systems, cloud |
+
+**Source:** 
+- **DockerWorkspace**: [`openhands-workspace/openhands/workspace/docker`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-workspace/openhands/workspace/docker)
+- **RemoteAPIWorkspace**: [`openhands-workspace/openhands/workspace/remote_api`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-workspace/openhands/workspace/remote_api)
+
+## Component Relationships
+
+### How Workspace Integrates
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Workspace["Workspace"]
+    Conversation["Conversation"]
+    AgentServer["Agent Server"]
+    
+    Conversation -->|Configures| Workspace
+    Workspace -.->|Remote type| AgentServer
+    
+    style Workspace fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Conversation fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Relationship Characteristics:**
+- **Conversation → Workspace**: Conversation factory uses workspace type to select LocalConversation or RemoteConversation
+- **Workspace → Agent Server**: RemoteWorkspace delegates operations to agent-server API
+- **Tools Independence**: Tools run in the same environment as workspace (not "through" workspace)
+
+## See Also
+
+- **[Conversation Architecture](/sdk/arch/conversation)** - How workspace type determines conversation implementation
+- **[Agent Server](/sdk/arch/agent-server)** - Remote execution API
+- **[Tool System](/sdk/arch/tool-system)** - Tools that use workspace for execution
+- **[DockerWorkspace Guide](/sdk/guides/docker-workspace)** - Using container-based workspaces
