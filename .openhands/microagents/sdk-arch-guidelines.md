@@ -41,7 +41,7 @@ their lifecycle from initialization to completion.
 Link to GitHub source directory or primary file:
 
 ```markdown
-**Source:** [`path/to/component/`](https://github.com/All-Hands-AI/agent-sdk/tree/main/path)
+**Source:** [`path/to/component/`](https://github.com/OpenHands/agent-sdk/tree/main/path)
 ```
 
 ### 4. Core Responsibilities (Required)
