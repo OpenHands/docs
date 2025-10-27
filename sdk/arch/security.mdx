@@ -1,0 +1,310 @@
+---
+title: Security
+description: High-level architecture of action security analysis and validation
+---
+
+The **Security** system evaluates agent actions for potential risks before execution. It provides pluggable security analyzers that assess action risk levels and enforce confirmation policies based on security characteristics.
+
+**Source:** [`openhands-sdk/penhands/sdk/security/`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-sdk/openhands/sdk/security)
+
+## Core Responsibilities
+
+The Security system has four primary responsibilities:
+
+1. **Risk Assessment** - Capture and validate LLM-provided risk levels for actions
+2. **Confirmation Policy** - Determine when user approval is required based on risk
+3. **Action Validation** - Enforce security policies before execution
+4. **Audit Trail** - Record security decisions in event history
+
+## Architecture
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 25, "rankSpacing": 50}} }%%
+flowchart TB
+    subgraph Interface["Abstract Interface"]
+        Base["SecurityAnalyzerBase<br><i>Abstract analyzer</i>"]
+    end
+    
+    subgraph Implementations["Concrete Analyzers"]
+        LLM["LLMSecurityAnalyzer<br><i>Inline risk prediction</i>"]
+        NoOp["NoOpSecurityAnalyzer<br><i>No analysis</i>"]
+    end
+    
+    subgraph Risk["Risk Levels"]
+        Low["LOW<br><i>Safe operations</i>"]
+        Medium["MEDIUM<br><i>Moderate risk</i>"]
+        High["HIGH<br><i>Dangerous ops</i>"]
+        Unknown["UNKNOWN<br><i>Unanalyzed</i>"]
+    end
+    
+    subgraph Policy["Confirmation Policy"]
+        Check["should_require_confirmation()"]
+        Mode["Confirmation Mode"]
+        Decision["Require / Allow"]
+    end
+    
+    Base --> LLM
+    Base --> NoOp
+    
+    Implementations --> Low
+    Implementations --> Medium
+    Implementations --> High
+    Implementations --> Unknown
+    
+    Low --> Check
+    Medium --> Check
+    High --> Check
+    Unknown --> Check
+    
+    Check --> Mode
+    Mode --> Decision
+    
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    classDef danger fill:#ffe8e8,stroke:#dc2626,stroke-width:2px
+    
+    class Base primary
+    class LLM secondary
+    class High danger
+    class Check tertiary
+```
+
+### Key Components
+
+| Component | Purpose | Design |
+|-----------|---------|--------|
+| **[`SecurityAnalyzerBase`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py)** | Abstract interface | Defines `security_risk()` contract |
+| **[`LLMSecurityAnalyzer`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/llm_analyzer.py)** | Inline risk assessment | Returns LLM-provided risk from action arguments |
+| **[`NoOpSecurityAnalyzer`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py)** | Passthrough analyzer | Always returns UNKNOWN |
+| **[`SecurityRisk`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/risk.py)** | Risk enum | LOW, MEDIUM, HIGH, UNKNOWN |
+| **[`ConfirmationPolicy`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/confirmation_policy.py)** | Decision logic | Maps risk levels to confirmation requirements |
+
+## Risk Levels
+
+Security analyzers return one of four risk levels:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart TB
+    Action["ActionEvent"]
+    Analyze["Security Analyzer"]
+    
+    subgraph Levels["Risk Levels"]
+        Low["LOW<br><i>Read-only, safe</i>"]
+        Medium["MEDIUM<br><i>Modify files</i>"]
+        High["HIGH<br><i>Delete, execute</i>"]
+        Unknown["UNKNOWN<br><i>Not analyzed</i>"]
+    end
+    
+    Action --> Analyze
+    Analyze --> Low
+    Analyze --> Medium
+    Analyze --> High
+    Analyze --> Unknown
+    
+    style Low fill:#d1fae5,stroke:#10b981,stroke-width:2px
+    style Medium fill:#fef3c7,stroke:#f59e0b,stroke-width:2px
+    style High fill:#ffe8e8,stroke:#dc2626,stroke-width:2px
+    style Unknown fill:#f3f4f6,stroke:#6b7280,stroke-width:2px
+```
+
+### Risk Level Definitions
+
+| Level | Characteristics | Examples |
+|-------|----------------|----------|
+| **LOW** | Read-only, no state changes | File reading, directory listing, search |
+| **MEDIUM** | Modifies user data | File editing, creating files, API calls |
+| **HIGH** | Dangerous operations | File deletion, system commands, privilege escalation |
+| **UNKNOWN** | Not analyzed or indeterminate | Complex commands, ambiguous operations |
+
+## Security Analyzers
+
+### LLMSecurityAnalyzer
+
+Leverages the LLM's inline risk assessment during action generation:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    Schema["Tool Schema<br><i>+ security_risk param</i>"]
+    LLM["LLM generates action<br>with security_risk"]
+    ToolCall["Tool Call Arguments<br>{command: 'rm -rf', security_risk: 'HIGH'}"]
+    Extract["Extract security_risk<br>from arguments"]
+    ActionEvent["ActionEvent<br>with security_risk set"]
+    Analyzer["LLMSecurityAnalyzer<br>returns security_risk"]
+    
+    Schema --> LLM
+    LLM --> ToolCall
+    ToolCall --> Extract
+    Extract --> ActionEvent
+    ActionEvent --> Analyzer
+    
+    style Schema fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Extract fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Analyzer fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Analysis Process:**
+
+1. **Schema Enhancement:** A required `security_risk` parameter is added to each tool's schema
+2. **LLM Generation:** The LLM generates tool calls with `security_risk` as part of the arguments
+3. **Risk Extraction:** The agent extracts the `security_risk` value from the tool call arguments
+4. **ActionEvent Creation:** The security risk is stored on the `ActionEvent`
+5. **Analyzer Query:** `LLMSecurityAnalyzer.security_risk()` returns the pre-assigned risk level
+6. **No Additional LLM Calls:** Risk assessment happens inline—no separate analysis step
+
+**Example Tool Call:**
+```json
+{
+  "name": "execute_bash",
+  "arguments": {
+    "command": "rm -rf /tmp/cache",
+    "security_risk": "HIGH"
+  }
+}
+```
+
+The LLM reasons about risk in context when generating the action, eliminating the need for a separate security analysis call.
+
+**Configuration:**
+- **Enabled When:** A `LLMSecurityAnalyzer` is configured for the agent
+- **Schema Modification:** Automatically adds `security_risk` field to non-read-only tools
+- **Zero Overhead:** No additional LLM calls or latency beyond normal action generation
+
+### NoOpSecurityAnalyzer
+
+Passthrough analyzer that skips analysis:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Action["ActionEvent"]
+    NoOp["NoOpSecurityAnalyzer"]
+    Unknown["SecurityRisk.UNKNOWN"]
+    
+    Action --> NoOp --> Unknown
+    
+    style NoOp fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+```
+
+**Use Case:** Development, trusted environments, or when confirmation mode handles all actions
+
+## Confirmation Policy
+
+The confirmation policy determines when user approval is required. There are three policy implementations:
+
+**Source:** [`confirmation_policy.py`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/confirmation_policy.py)
+
+### Policy Types
+
+| Policy | Behavior | Use Case |
+|--------|----------|----------|
+| **[`AlwaysConfirm`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/confirmation_policy.py#L27-L32)** | Requires confirmation for **all** actions | Maximum safety, interactive workflows |
+| **[`NeverConfirm`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/confirmation_policy.py#L35-L40)** | Never requires confirmation | Fully autonomous agents, trusted environments |
+| **[`ConfirmRisky`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/confirmation_policy.py#L43-L62)** | Configurable risk-based policy | Balanced approach, production use |
+
+### ConfirmRisky (Default Policy)
+
+The most flexible policy with configurable thresholds:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    Risk["SecurityRisk"]
+    CheckUnknown{"Risk ==<br>UNKNOWN?"}
+    UseConfirmUnknown{"confirm_unknown<br>setting?"}
+    CheckThreshold{"risk.is_riskier<br>(threshold)?"}
+    
+    Confirm["Require Confirmation"]
+    Allow["Allow Execution"]
+    
+    Risk --> CheckUnknown
+    CheckUnknown -->|Yes| UseConfirmUnknown
+    CheckUnknown -->|No| CheckThreshold
+    
+    UseConfirmUnknown -->|True| Confirm
+    UseConfirmUnknown -->|False| Allow
+    
+    CheckThreshold -->|Yes| Confirm
+    CheckThreshold -->|No| Allow
+    
+    style CheckUnknown fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Confirm fill:#ffe8e8,stroke:#dc2626,stroke-width:2px
+    style Allow fill:#d1fae5,stroke:#10b981,stroke-width:2px
+```
+
+**Configuration:**
+- **`threshold`** (default: `HIGH`) - Risk level at or above which confirmation is required
+  - Cannot be set to `UNKNOWN`
+  - Uses reflexive comparison: `risk.is_riskier(threshold)` returns `True` if `risk >= threshold`
+- **`confirm_unknown`** (default: `True`) - Whether `UNKNOWN` risk requires confirmation
+
+### Confirmation Rules by Policy
+
+#### ConfirmRisky with threshold=HIGH (Default)
+
+| Risk Level | `confirm_unknown=True` (default) | `confirm_unknown=False` |
+|------------|----------------------------------|-------------------------|
+| **LOW** | ✅ Allow | ✅ Allow |
+| **MEDIUM** | ✅ Allow | ✅ Allow |
+| **HIGH** | 🔒 Require confirmation | 🔒 Require confirmation |
+| **UNKNOWN** | 🔒 Require confirmation | ✅ Allow |
+
+#### ConfirmRisky with threshold=MEDIUM
+
+| Risk Level | `confirm_unknown=True` | `confirm_unknown=False` |
+|------------|------------------------|-------------------------|
+| **LOW** | ✅ Allow | ✅ Allow |
+| **MEDIUM** | 🔒 Require confirmation | 🔒 Require confirmation |
+| **HIGH** | 🔒 Require confirmation | 🔒 Require confirmation |
+| **UNKNOWN** | 🔒 Require confirmation | ✅ Allow |
+
+#### ConfirmRisky with threshold=LOW
+
+| Risk Level | `confirm_unknown=True` | `confirm_unknown=False` |
+|------------|------------------------|-------------------------|
+| **LOW** | 🔒 Require confirmation | 🔒 Require confirmation |
+| **MEDIUM** | 🔒 Require confirmation | 🔒 Require confirmation |
+| **HIGH** | 🔒 Require confirmation | 🔒 Require confirmation |
+| **UNKNOWN** | 🔒 Require confirmation | ✅ Allow |
+
+**Key Rules:**
+- **Risk comparison** is **reflexive**: `HIGH.is_riskier(HIGH)` returns `True`
+- **UNKNOWN handling** is configurable via `confirm_unknown` flag
+- **Threshold cannot be UNKNOWN** - validated at policy creation time
+
+
+## Component Relationships
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Security["Security Analyzer"]
+    Agent["Agent"]
+    Conversation["Conversation"]
+    Tools["Tools"]
+    MCP["MCP Tools"]
+    
+    Agent -->|Validates actions| Security
+    Security -->|Checks| Tools
+    Security -->|Uses hints| MCP
+    Conversation -->|Pauses for confirmation| Agent
+    
+    style Security fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Agent fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Conversation fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Relationship Characteristics:**
+- **Agent → Security**: Validates actions before execution
+- **Security → Tools**: Examines tool characteristics (annotations)
+- **Security → MCP**: Uses MCP hints for risk assessment
+- **Conversation → Agent**: Pauses for user confirmation when required
+- **Optional Component**: Security analyzer can be disabled for trusted environments
+
+## See Also
+
+- **[Agent Architecture](/sdk/arch/agent)** - How agents use security analyzers
+- **[Tool System](/sdk/arch/tool-system)** - Tool annotations and metadata; includes MCP tool hints
+- **[Security Guide](/sdk/guides/security)** - Configuring security policies

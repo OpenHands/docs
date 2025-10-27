@@ -1,0 +1,230 @@
+---
+title: Conversation
+description: High-level architecture of the conversation orchestration system
+---
+
+The **Conversation** component orchestrates agent execution through structured message flows and state management. It serves as the primary interface for interacting with agents, managing their lifecycle from initialization to completion.
+
+**Source:** [`openhands-sdk/openhands/sdk/conversation/`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-sdk/openhands/sdk/conversation)
+
+## Core Responsibilities
+
+The Conversation system has four primary responsibilities:
+
+1. **Agent Lifecycle Management** - Initialize, run, pause, and terminate agents
+2. **State Orchestration** - Maintain conversation history, events, and execution status
+3. **Workspace Coordination** - Bridge agent operations with execution environments
+4. **Runtime Services** - Provide persistence, monitoring, security, and visualization
+
+## Architecture
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 25, "rankSpacing": 35}} }%%
+flowchart LR
+    User["User Code"]
+    
+    subgraph Factory[" "]
+        Entry["Conversation()"]
+    end
+
+    subgraph Implementations[" "]
+        Local["LocalConversation<br><i>Direct execution</i>"]
+        Remote["RemoteConversation<br><i>Via agent-server API</i>"]
+    end
+    
+    subgraph Core[" "]
+        State["ConversationState<br>• agent<br>workspace • stats • ..."]
+        EventLog["ConversationState.events<br><i>Event storage</i>"]
+    end
+    
+    User --> Entry
+    Entry -.->|LocalWorkspace| Local
+    Entry -.->|RemoteWorkspace| Remote
+    
+    Local --> State
+    Remote --> State
+    
+    State --> EventLog
+    
+    classDef factory fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef impl fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef core fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    classDef service fill:#e9f9ef,stroke:#2f855a,stroke-width:1.5px
+    
+    class Entry factory
+    class Local,Remote impl
+    class State,EventLog core
+    class Persist,Stuck,Viz,Secrets service
+```
+
+### Key Components
+
+| Component | Purpose | Design |
+|-----------|---------|--------|
+| **[`Conversation`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/conversation.py)** | Unified entrypoint | Returns correct implementation based on workspace type |
+| **[`LocalConversation`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/local_conversation.py)** | Local execution | Runs agent directly in process |
+| **[`RemoteConversation`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py)** | Remote execution | Delegates to agent-server via HTTP/WebSocket |
+| **[`ConversationState`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/state.py)** | State container | Pydantic model with validation and serialization |
+| **[`EventLog`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/event_store.py)** | Event storage | Immutable append-only store with efficient queries |
+
+## Factory Pattern
+
+The [`Conversation`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/conversation.py) class automatically selects the correct implementation based on workspace type:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Input["Conversation(agent, workspace)"]
+    Check{Workspace Type?}
+    Local["LocalConversation<br><i>Agent runs in-process</i>"]
+    Remote["RemoteConversation<br><i>Agent runs via API</i>"]
+    
+    Input --> Check
+    Check -->|str or LocalWorkspace| Local
+    Check -->|RemoteWorkspace| Remote
+    
+    style Input fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Local fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Remote fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Dispatch Logic:**
+- **Local:** String paths or `LocalWorkspace` → in-process execution
+- **Remote:** `RemoteWorkspace` → agent-server via HTTP/WebSocket
+
+This abstraction enables switching deployment modes without code changes—just swap the workspace type.
+
+## State Management
+
+State updates follow a **two-path pattern** depending on the type of change:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    Start["State Update Request"]
+    Lock["Acquire FIFO Lock"]
+    Decision{New Event?}
+    
+    StateOnly["Update State Fields<br><i>stats, status, metadata</i>"]
+    EventPath["Append to Event Log<br><i>messages, actions, observations</i>"]
+    
+    Callback["Trigger Callbacks"]
+    Release["Release Lock"]
+    
+    Start --> Lock
+    Lock --> Decision
+    Decision -->|No| StateOnly
+    Decision -->|Yes| EventPath
+    StateOnly --> Callback
+    EventPath --> Callback
+    Callback --> Release
+    
+    style Decision fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    style EventPath fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style StateOnly fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+```
+
+**Two Update Patterns:**
+
+1. **State-Only Updates** - Modify fields without appending events (e.g., status changes, stat increments)
+2. **Event-Based Updates** - Append to event log when new messages, actions, or observations occur
+
+**Thread Safety:**
+- FIFO Lock ensures ordered, atomic updates
+- Callbacks fire after successful commit
+- Read operations never block writes
+
+## Execution Models
+
+The conversation system supports two execution models with identical APIs:
+
+### Local vs Remote Execution
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    subgraph Local["LocalConversation"]
+        L1["User sends message"]
+        L2["Agent executes in-process"]
+        L3["Direct tool calls"]
+        L4["Events via callbacks"]
+        L1 --> L2 --> L3 --> L4
+    end
+    style Local fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    subgraph Remote["RemoteConversation"]
+        R1["User sends message"]
+        R2["HTTP → Agent Server"]
+        R3["Isolated container execution"]
+        R4["WebSocket event stream"]
+        R1 --> R2 --> R3 --> R4
+    end
+    style Remote fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+| Aspect | LocalConversation | RemoteConversation |
+|--------|-------------------|-------------------|
+| **Execution** | In-process | Remote container/server |
+| **Communication** | Direct function calls | HTTP + WebSocket |
+| **State Sync** | Immediate | Network serialized |
+| **Use Case** | Development, CLI tools | Production, web apps |
+| **Isolation** | Process-level | Container-level |
+
+**Key Insight:** Same API surface means switching between local and remote requires only changing workspace type—no code changes.
+
+## Auxiliary Services
+
+The conversation system provides pluggable services that operate independently on the event stream:
+
+| Service | Purpose | Architecture Pattern |
+|---------|---------|---------------------|
+| **[Event Log](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/event_store.py)** | Append-only immutable storage | Event sourcing with indexing |
+| **[Persistence](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/state.py)** | Auto-save & resume | Debounced writes, incremental events |
+| **[Stuck Detection](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/stuck_detector.py)** | Loop prevention | Sliding window pattern matching |
+| **[Visualization](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/visualizer.py)** | Execution diagrams | Event stream → visual representation |
+| **[Secrets Manager](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/secrets_manager.py)** | Secure value storage | Memory-only with masked logging |
+
+**Design Principle:** Services read from the event log but never mutate state directly. This enables:
+- Services can be enabled/disabled independently
+- Easy to add new services without changing core orchestration
+- Event stream acts as the integration point
+
+## Component Relationships
+
+### How Conversation Interacts
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Conv["Conversation"]
+    Agent["Agent"]
+    WS["Workspace"]
+    Tools["Tools"]
+    LLM["LLM"]
+    
+    Conv -->|Delegates to| Agent
+    Conv -->|Configures| WS
+    Agent -.->|Updates| Conv
+    Agent -->|Uses| Tools
+    Agent -->|Queries| LLM
+    
+    style Conv fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Agent fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style WS fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Relationship Characteristics:**
+- **Conversation → Agent**: One-way orchestration, agent reports back via state updates
+- **Conversation → Workspace**: Configuration only, workspace doesn't know about conversation
+- **Agent → Conversation**: Indirect via state events
+
+## See Also
+
+- **[Agent Architecture](/sdk/arch/agent)** - Agent reasoning loop design
+- **[Workspace Architecture](/sdk/arch/workspace)** - Execution environment design
+- **[Event System](/sdk/arch/events)** - Event types and flow
+- **[Conversation Usage Guide](/sdk/guides/convo-persistence)** - Practical examples

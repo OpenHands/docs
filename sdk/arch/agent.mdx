@@ -1,0 +1,279 @@
+---
+title: Agent
+description: High-level architecture of the reasoning-action loop
+---
+
+The **Agent** component implements the core reasoning-action loop that drives autonomous task execution. It orchestrates LLM queries, tool execution, and context management through a stateless, event-driven architecture.
+
+**Source:** [`openhands-sdk/openhands/sdk/agent/`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-sdk/openhands/sdk/agent)
+
+## Core Responsibilities
+
+The Agent system has four primary responsibilities:
+
+1. **Reasoning-Action Loop** - Query LLM to generate next actions based on conversation history
+2. **Tool Orchestration** - Select and execute tools, handle results and errors
+3. **Context Management** - Apply [skills](/sdk/guides/skill), manage conversation history via [condensers](/sdk/guides/context-condenser)
+4. **Security Validation** - Analyze proposed actions for safety before execution via [security analyzer](/sdk/guides/security)
+
+## Architecture
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 20, "rankSpacing": 50}} }%%
+flowchart TB
+    subgraph Input[" "]
+        Events["Event History"]
+        Context["Agent Context<br><i>Skills + Prompts</i>"]
+    end
+    
+    subgraph Core["Agent Core"]
+        Condense["Condenser<br><i>History compression</i>"]
+        Reason["LLM Query<br><i>Generate actions</i>"]
+        Security["Security Analyzer<br><i>Risk assessment</i>"]
+    end
+    
+    subgraph Execution[" "]
+        Tools["Tool Executor<br><i>Action → Observation</i>"]
+        Results["Observation Events"]
+    end
+    
+    Events --> Condense
+    Context -.->|Skills| Reason
+    Condense --> Reason
+    Reason --> Security
+    Security --> Tools
+    Tools --> Results
+    Results -.->|Feedback| Events
+    
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    
+    class Reason primary
+    class Condense,Security secondary
+    class Tools tertiary
+```
+
+### Key Components
+
+| Component | Purpose | Design |
+|-----------|---------|--------|
+| **[`Agent`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/agent/agent.py)** | Main implementation | Stateless reasoning-action loop executor |
+| **[`AgentBase`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/agent/base.py)** | Abstract base class | Defines agent interface and initialization |
+| **[`AgentContext`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/agent_context.py)** | Context container | Manages skills, prompts, and metadata |
+| **[`Condenser`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/condenser/)** | History compression | Reduces context when token limits approached |
+| **[`SecurityAnalyzer`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/)** | Safety validation | Evaluates action risk before execution |
+
+## Reasoning-Action Loop
+
+The agent operates through a **single-step execution model** where each `step()` call processes one reasoning cycle:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 10, "rankSpacing": 10}} }%%
+flowchart TB
+    Start["step() called"]
+    Pending{"Pending<br>actions?"}
+    ExecutePending["Execute pending actions"]
+    
+    HasCondenser{"Has<br>condenser?"}
+    Condense["Call condenser.condense()"]
+    CondenseResult{"Result<br>type?"}
+    EmitCondensation["Emit Condensation event"]
+    UseView["Use View events"]
+    UseRaw["Use raw events"]
+    
+    Query["Query LLM with messages"]
+    ContextExceeded{"Context<br>window<br>exceeded?"}
+    EmitRequest["Emit CondensationRequest"]
+    
+    Parse{"Response<br>type?"}
+    CreateActions["Create ActionEvents"]
+    CreateMessage["Create MessageEvent"]
+    
+    Confirmation{"Need<br>confirmation?"}
+    SetWaiting["Set WAITING_FOR_CONFIRMATION"]
+    
+    Execute["Execute actions"]
+    Observe["Create ObservationEvents"]
+    
+    Return["Return"]
+    
+    Start --> Pending
+    Pending -->|Yes| ExecutePending --> Return
+    Pending -->|No| HasCondenser
+    
+    HasCondenser -->|Yes| Condense
+    HasCondenser -->|No| UseRaw
+    Condense --> CondenseResult
+    CondenseResult -->|Condensation| EmitCondensation --> Return
+    CondenseResult -->|View| UseView --> Query
+    UseRaw --> Query
+    
+    Query --> ContextExceeded
+    ContextExceeded -->|Yes| EmitRequest --> Return
+    ContextExceeded -->|No| Parse
+    
+    Parse -->|Tool calls| CreateActions
+    Parse -->|Message| CreateMessage --> Return
+    
+    CreateActions --> Confirmation
+    Confirmation -->|Yes| SetWaiting --> Return
+    Confirmation -->|No| Execute
+    
+    Execute --> Observe
+    Observe --> Return
+    
+    style Query fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Condense fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Confirmation fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Step Execution Flow:**
+
+1. **Pending Actions:** If actions awaiting confirmation exist, execute them and return
+2. **Condensation:** If condenser exists:
+   - Call `condenser.condense()` with current event view
+   - If returns `View`: use condensed events for LLM query (continue in same step)
+   - If returns `Condensation`: emit event and return (will be processed next step)
+3. **LLM Query:** Query LLM with messages from event history
+   - If context window exceeded: emit `CondensationRequest` and return
+4. **Response Parsing:** Parse LLM response into events
+   - Tool calls → create `ActionEvent`(s)
+   - Text message → create `MessageEvent` and return
+5. **Confirmation Check:** If actions need user approval:
+   - Set conversation status to `WAITING_FOR_CONFIRMATION` and return
+6. **Action Execution:** Execute tools and create `ObservationEvent`(s)
+
+**Key Characteristics:**
+- **Stateless:** Agent holds no mutable state between steps
+- **Event-Driven:** Reads from event history, writes new events
+- **Interruptible:** Each step is atomic and can be paused/resumed
+
+## Agent Context
+
+The agent applies `AgentContext` which includes **skills** and **prompts** to shape LLM behavior:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Context["AgentContext"]
+    
+    subgraph Skills["Skills"]
+        Repo["repo<br><i>Always active</i>"]
+        Knowledge["knowledge<br><i>Trigger-based</i>"]
+    end
+    SystemAug["System prompt prefix/suffix<br><i>Per-conversation</i>"]
+    System["Prompt template<br><i>Per-conversation</i>"]
+    
+    subgraph Application["Applied to LLM"]
+        SysPrompt["System Prompt"]
+        UserMsg["User Messages"]
+    end
+    
+    Context --> Skills
+    Context --> SystemAug
+    Repo --> SysPrompt
+    Knowledge -.->|When triggered| UserMsg
+    System --> SysPrompt
+    SystemAug --> SysPrompt
+    
+    style Context fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Repo fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Knowledge fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+| Skill Type | Activation | Use Case |
+|------------|------------|----------|
+| **repo** | Always included | Project-specific context, conventions |
+| **knowledge** | Trigger words/patterns | Domain knowledge, special behaviors |
+
+Review [this guide](/sdk/guides/skill) for details on creating and applying agent context and skills.
+
+
+## Tool Execution
+
+Tools follow a **strict action-observation pattern**:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    LLM["LLM generates tool_call"]
+    Convert["Convert to ActionEvent"]
+    
+    Decision{"Confirmation<br>mode?"}
+    Defer["Store as pending"]
+    
+    Execute["Execute tool"]
+    Success{"Success?"}
+    
+    Obs["ObservationEvent<br><i>with result</i>"]
+    Error["ObservationEvent<br><i>with error</i>"]
+    
+    LLM --> Convert
+    Convert --> Decision
+    
+    Decision -->|Yes| Defer
+    Decision -->|No| Execute
+    
+    Execute --> Success
+    Success -->|Yes| Obs
+    Success -->|No| Error
+    
+    style Convert fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Execute fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Decision fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Execution Modes:**
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| **Direct** | Execute immediately | Development, trusted environments |
+| **Confirmation** | Store as pending, wait for user approval | High-risk actions, production |
+
+**Security Integration:**
+
+Before execution, the security analyzer evaluates each action:
+- **Low Risk:** Execute immediately
+- **Medium Risk:** Log warning, execute with monitoring
+- **High Risk:** Block execution, request user confirmation
+
+## Component Relationships
+
+### How Agent Interacts
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Agent["Agent"]
+    Conv["Conversation"]
+    LLM["LLM"]
+    Tools["Tools"]
+    Context["AgentContext"]
+    
+    Conv -->|.step calls| Agent
+    Agent -->|Reads events| Conv
+    Agent -->|Query| LLM
+    Agent -->|Execute| Tools
+    Context -.->|Skills and Context| Agent
+    Agent -.->|New events| Conv
+    
+    style Agent fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Conv fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style LLM fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Relationship Characteristics:**
+- **Conversation → Agent**: Orchestrates step execution, provides event history
+- **Agent → LLM**: Queries for next actions, receives tool calls or messages
+- **Agent → Tools**: Executes actions, receives observations
+- **AgentContext → Agent**: Injects skills and prompts into LLM queries
+
+
+## See Also
+
+- **[Conversation Architecture](/sdk/arch/conversation)** - Agent orchestration and lifecycle
+- **[Tool System](/sdk/arch/tool-system)** - Tool definition and execution patterns
+- **[Events](/sdk/arch/events)** - Event types and structures
+- **[Skills](/sdk/arch/skill)** - Prompt engineering and skill patterns
+- **[LLM](/sdk/arch/llm)** - Language model abstraction
