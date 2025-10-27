@@ -325,7 +325,7 @@ Before submitting architecture documentation, verify:
 
 ## Example: Conversation Component
 
-See `/workspace/project/docs/sdk/arch/conversation.mdx` as the reference implementation of this guide.
+See `sdk/arch/conversation.mdx` as the reference implementation of this guide.
 
 **What it does well:**
 - ✅ Clear architectural focus (no usage details)
@@ -430,7 +430,7 @@ flowchart TB
 
 ## Template Files
 
-See `/workspace/project/docs/sdk/arch/conversation.mdx` for the canonical example.
+See `sdk/arch/conversation.mdx` for the canonical example.
 
 For new components, copy this structure and fill in:
 - Component-specific responsibilities
