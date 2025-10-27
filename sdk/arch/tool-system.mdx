@@ -1,0 +1,517 @@
+---
+title: Tool System & MCP
+description: High-level architecture of the action-observation tool framework
+---
+
+The **Tool System** provides a type-safe, extensible framework for defining agent capabilities. It standardizes how agents interact with external systems through a structured Action-Observation pattern with automatic validation and schema generation.
+
+**Source:** [`openhands-sdk/openhands/sdk/tool/`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-sdk/openhands/sdk/tool)
+
+## Core Responsibilities
+
+The Tool System has four primary responsibilities:
+
+1. **Type Safety** - Enforce action/observation schemas via Pydantic models
+2. **Schema Generation** - Auto-generate LLM-compatible tool descriptions from Pydantic schemas
+3. **Execution Lifecycle** - Validate inputs, execute logic, wrap outputs
+4. **Tool Registry** - Discover and resolve tools by name or pattern
+
+## Tool System
+
+### Architecture Overview
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 25, "rankSpacing": 50}} }%%
+flowchart TB
+    subgraph Definition["Tool Definition"]
+        Action["Action<br><i>Input schema</i>"]
+        Observation["Observation<br><i>Output schema</i>"]
+        Executor["Executor<br><i>Business logic</i>"]
+    end
+    
+    subgraph Framework["Tool Framework"]
+        Base["ToolBase<br><i>Abstract base</i>"]
+        Impl["Tool Implementation<br><i>Concrete tool</i>"]
+        Registry["Tool Registry<br><i>Spec → Tool</i>"]
+    end
+
+    Agent["Agent"]
+    LLM["LLM"]
+    ToolSpec["Tool Spec<br><i>name + params</i>"]
+
+    Base -.->|Extends| Impl
+    
+    ToolSpec -->|resolve_tool| Registry
+    Registry -->|Create instances| Impl
+    Impl -->|Available in| Agent
+    Impl -->|Generate schema| LLM
+    LLM -->|Generate tool call| Agent
+    Agent -->|Parse & validate| Action
+    Agent -->|Execute via Tool.\_\_call\_\_| Executor
+    Executor -->|Return| Observation
+    
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    
+    class Base primary
+    class Action,Observation,Executor secondary
+    class Registry tertiary
+```
+
+### Key Components
+
+| Component | Purpose | Design |
+|-----------|---------|--------|
+| **[`ToolBase`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/tool.py)** | Abstract base class | Generic over Action and Observation types, defines abstract `create()` |
+| **[`ToolDefinition`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/tool.py)** | Concrete tool class | Can be instantiated directly or subclassed for factory pattern |
+| **[`Action`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/schema.py)** | Input model | Pydantic model with `visualize` property |
+| **[`Observation`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/schema.py)** | Output model | Pydantic model with `to_llm_content` property |
+| **[`ToolExecutor`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/tool.py)** | Execution interface | ABC with `__call__()` method, optional `close()` |
+| **[`ToolAnnotations`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/tool.py)** | Behavioral hints | MCP-spec hints (readOnly, destructive, idempotent, openWorld) |
+| **[`Tool` (spec)](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/spec.py)** | Tool specification | Configuration object with name and params |
+| **[`ToolRegistry`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/registry.py)** | Tool discovery | Resolves Tool specs to ToolDefinition instances |
+
+### Action-Observation Pattern
+
+The tool system follows a **strict input-output contract**: `Action → Observation`. The Agent layer wraps these in events for conversation management.
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    subgraph Agent["Agent Layer"]
+        ToolCall["MessageToolCall<br><i>from LLM</i>"]
+        ParseJSON["Parse JSON<br>arguments"]
+        CreateAction["tool.action_from_arguments()<br><i>Pydantic validation</i>"]
+        WrapAction["ActionEvent<br><i>wraps Action</i>"]
+        WrapObs["ObservationEvent<br><i>wraps Observation</i>"]
+        Error["AgentErrorEvent"]
+    end
+    
+    subgraph ToolSystem["Tool System"]
+        ActionType["Action<br><i>Pydantic model</i>"]
+        ToolCall2["tool.\_\_call\_\_(action)<br><i>type-safe execution</i>"]
+        Execute["ToolExecutor<br><i>business logic</i>"]
+        ObsType["Observation<br><i>Pydantic model</i>"]
+    end
+    
+    ToolCall --> ParseJSON
+    ParseJSON -->|Valid JSON| CreateAction
+    ParseJSON -->|Invalid JSON| Error
+    CreateAction -->|Valid| ActionType
+    CreateAction -->|Invalid| Error
+    ActionType --> WrapAction
+    ActionType --> ToolCall2
+    ToolCall2 --> Execute
+    Execute --> ObsType
+    ObsType --> WrapObs
+    
+    style ToolSystem fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Agent fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style ActionType fill:#ddd6fe,stroke:#7c3aed,stroke-width:2px
+    style ObsType fill:#ddd6fe,stroke:#7c3aed,stroke-width:2px
+```
+
+**Tool System Boundary:**
+- **Input**: `dict[str, Any]` (JSON arguments) → validated `Action` instance
+- **Output**: `Observation` instance with structured result
+- **No knowledge of**: Events, LLM messages, conversation state
+
+### Tool Definition
+
+Tools are defined using two patterns depending on complexity:
+
+#### Pattern 1: Direct Instantiation (Simple Tools)
+
+For stateless tools that don't need runtime configuration (e.g., `finish`, `think`):
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 20}} }%%
+flowchart LR
+    Action["Define Action<br><i>with visualize</i>"]
+    Obs["Define Observation<br><i>with to_llm_content</i>"]
+    Exec["Define Executor<br><i>stateless logic</i>"]
+    Tool["ToolDefinition(...,<br>executor=Executor())"]
+    
+    Action --> Tool
+    Obs --> Tool
+    Exec --> Tool
+    
+    style Tool fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+```
+
+**Components:**
+1. **Action** - Pydantic model with `visualize` property for display
+2. **Observation** - Pydantic model with `to_llm_content` property for LLM
+3. **ToolExecutor** - Stateless executor with `__call__(action) → observation`
+4. **ToolDefinition** - Direct instantiation with executor instance
+
+#### Pattern 2: Subclass with Factory (Stateful Tools)
+
+For tools requiring runtime configuration or persistent state (e.g., `execute_bash`, `file_editor`, `glob`):
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 20}} }%%
+flowchart LR
+    Action["Define Action<br><i>with visualize</i>"]
+    Obs["Define Observation<br><i>with to_llm_content</i>"]
+    Exec["Define Executor<br><i>with \_\_init\_\_ and state</i>"]
+    Subclass["class MyTool(ToolDefinition)<br><i>with create() method</i>"]
+    Instance["Return [MyTool(...,<br>executor=instance)]"]
+    
+    Action --> Subclass
+    Obs --> Subclass
+    Exec --> Subclass
+    Subclass --> Instance
+    
+    style Instance fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Components:**
+1. **Action/Observation** - Same as Pattern 1
+2. **ToolExecutor** - Stateful executor with `__init__()` for configuration and optional `close()` for cleanup
+3. **MyTool(ToolDefinition)** - Subclass with `@classmethod create(conv_state, ...)` factory method
+4. **Factory Method** - Returns sequence of configured tool instances
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart TB
+    subgraph Pattern1["Pattern 1: Direct Instantiation"]
+        P1A["Define Action/Observation<br>with visualize/to_llm_content"]
+        P1E["Define ToolExecutor<br>with \_\_call\_\_()"]
+        P1T["ToolDefinition(...,<br>executor=Executor())"]
+    end
+    
+    subgraph Pattern2["Pattern 2: Subclass with Factory"]
+        P2A["Define Action/Observation<br>with visualize/to_llm_content"]
+        P2E["Define Stateful ToolExecutor<br>with \_\_init\_\_() and \_\_call\_\_()"]
+        P2C["class MyTool(ToolDefinition)<br>@classmethod create()"]
+        P2I["Return [MyTool(...,<br>executor=instance)]"]
+    end
+    
+    P1A --> P1E
+    P1E --> P1T
+    
+    P2A --> P2E
+    P2E --> P2C
+    P2C --> P2I
+    
+    style P1T fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style P2I fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Key Design Elements:**
+
+| Component | Purpose | Requirements |
+|-----------|---------|--------------|
+| **Action** | Defines LLM-provided parameters | Extends `Action`, includes `visualize` property returning Rich Text |
+| **Observation** | Defines structured output | Extends `Observation`, includes `to_llm_content` property returning content list |
+| **ToolExecutor** | Implements business logic | Extends `ToolExecutor[ActionT, ObservationT]`, implements `__call__()` method |
+| **ToolDefinition** | Ties everything together | Either instantiate directly (Pattern 1) or subclass with `create()` method (Pattern 2) |
+
+**When to Use Each Pattern:**
+
+| Pattern | Use Case | Examples |
+|---------|----------|----------|
+| **Direct Instantiation** | Stateless tools with no configuration needs | `finish`, `think`, simple utilities |
+| **Subclass with Factory** | Tools requiring runtime state or configuration | `execute_bash`, `file_editor`, `glob`, `grep` |
+
+### Tool Annotations
+
+Tools include optional `ToolAnnotations` based on the [Model Context Protocol (MCP) spec](https://github.com/modelcontextprotocol/modelcontextprotocol) that provide behavioral hints to LLMs:
+
+| Field | Meaning | Examples |
+|-------|---------|----------|
+| `readOnlyHint` | Tool doesn't modify state | `glob` (True), `execute_bash` (False) |
+| `destructiveHint` | May delete/overwrite data | `file_editor` (True), `task_tracker` (False) |
+| `idempotentHint` | Repeated calls are safe | `glob` (True), `execute_bash` (False) |
+| `openWorldHint` | Interacts beyond closed domain | `execute_bash` (True), `task_tracker` (False) |
+
+**Key Behaviors:**
+- [LLM-based Security risk prediction](/llm/guides/security) automatically added for tools with `readOnlyHint=False`
+- Annotations help LLMs reason about tool safety and side effects
+
+### Tool Registry
+
+The registry enables **dynamic tool discovery** and instantiation from tool specifications:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    ToolSpec["Tool Spec<br><i>name + params</i>"]
+    
+    subgraph Registry["Tool Registry"]
+        Resolver["Resolver<br><i>name → factory</i>"]
+        Factory["Factory<br><i>create(params)</i>"]
+    end
+    
+    Instance["Tool Instance<br><i>with executor</i>"]
+    Agent["Agent"]
+    
+    ToolSpec -->|"resolve_tool(spec)"| Resolver
+    Resolver -->|Lookup factory| Factory
+    Factory -->|"create(**params)"| Instance
+    Instance -->|Used by| Agent
+    
+    style Registry fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Factory fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Resolution Workflow:**
+
+1. **[Tool (Spec)](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/spec.py)** - Configuration object with `name` (e.g., "BashTool") and `params` (e.g., `{"working_dir": "/workspace"}`)
+2. **Resolver Lookup** - Registry finds the registered resolver for the tool name
+3. **Factory Invocation** - Resolver calls the tool's `.create()` method with params and conversation state
+4. **Instance Creation** - Tool instance(s) are created with configured executors
+5. **Agent Usage** - Instances are added to the agent's tools_map for execution
+
+**Registration Types:**
+
+| Type | Registration | Resolver Behavior |
+|------|-------------|-------------------|
+| **Tool Instance** | `register_tool(name, instance)` | Returns the fixed instance (params not allowed) |
+| **Tool Subclass** | `register_tool(name, ToolClass)` | Calls `ToolClass.create(**params, conv_state=state)` |
+| **Factory Function** | `register_tool(name, factory)` | Calls `factory(**params, conv_state=state)` |
+
+### File Organization
+
+Tools follow a consistent file structure for maintainability:
+
+```
+openhands-tools/openhands/tools/my_tool/
+├── __init__.py           # Export MyTool
+├── definition.py         # Action, Observation, MyTool(ToolDefinition)
+├── impl.py              # MyExecutor(ToolExecutor)
+└── [other modules]      # Tool-specific utilities
+```
+
+**File Responsibilities:**
+
+| File | Contains | Purpose |
+|------|----------|---------|
+| `definition.py` | Action, Observation, ToolDefinition subclass | Public API, schema definitions, factory method |
+| `impl.py` | ToolExecutor implementation | Business logic, state management, execution |
+| `__init__.py` | Tool exports | Package interface |
+
+**Benefits:**
+- **Separation of Concerns** - Public API separate from implementation
+- **Avoid Circular Imports** - Import `impl` only inside `create()` method
+- **Consistency** - All tools follow same structure for discoverability
+
+**Example Reference:** See [`execute_bash/`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-tools/openhands/tools/execute_bash) for complete implementation
+
+
+## MCP Integration
+
+The tool system supports external tools via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). MCP tools are **configured separately from the tool registry** via the `mcp_config` field in `Agent` class and are automatically discovered from MCP servers during agent initialization.
+
+**Source:** [`openhands-sdk/openhands/sdk/mcp/`](https://github.com/OpenHands/agent-sdk/tree/main/openhands-sdk/openhands/sdk/mcp)
+
+### Architecture Overview
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 25, "rankSpacing": 50}} }%%
+flowchart TB
+    subgraph External["External MCP Server"]
+        Server["MCP Server<br><i>stdio/HTTP</i>"]
+        ExtTools["External Tools"]
+    end
+    
+    subgraph Bridge["MCP Integration Layer"]
+        MCPClient["MCPClient<br><i>Sync/Async bridge</i>"]
+        Convert["Schema Conversion<br><i>MCP → MCPToolDefinition</i>"]
+        MCPExec["MCPToolExecutor<br><i>Bridges to MCP calls</i>"]
+    end
+    
+    subgraph Agent["Agent System"]
+        ToolsMap["tools_map<br><i>str -> ToolDefinition</i>"]
+        AgentLogic["Agent Execution"]
+    end
+    
+    Server -.->|Spawns| ExtTools
+    MCPClient --> Server
+    Server --> Convert
+    Convert -->|create_mcp_tools| MCPExec
+    MCPExec -->|Added during<br>agent.initialize| ToolsMap
+    ToolsMap --> AgentLogic
+    AgentLogic -->|Tool call| MCPExec
+    MCPExec --> MCPClient
+    
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef external fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    
+    class MCPClient primary
+    class Convert,MCPExec secondary
+    class Server,ExtTools external
+```
+
+### Key Components
+
+| Component | Purpose | Design |
+|-----------|---------|--------|
+| **[`MCPClient`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/client.py)** | MCP server connection | Extends FastMCP with sync/async bridge |
+| **[`MCPToolDefinition`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/tool.py)** | Tool wrapper | Wraps MCP tools as SDK `ToolDefinition` with dynamic validation |
+| **[`MCPToolExecutor`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/tool.py)** | Execution handler | Bridges agent actions to MCP tool calls via MCPClient |
+| **[`MCPToolAction`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/definition.py)** | Generic action wrapper | Simple `dict[str, Any]` wrapper for MCP tool arguments |
+| **[`MCPToolObservation`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/definition.py)** | Result wrapper | Wraps MCP tool results as observations with content blocks |
+| **[`_create_mcp_action_type()`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/tool.py)** | Dynamic schema | Runtime Pydantic model generated from MCP `inputSchema` for validation |
+
+### Sync/Async Bridge
+
+MCP protocol is asynchronous, but SDK tools execute synchronously. The bridge pattern in [client.py](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/client.py) solves this:
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart LR
+    Sync["Sync Tool Execution"]
+    Bridge["call_async_from_sync()"]
+    Loop["Background Event Loop"]
+    Async["Async MCP Call"]
+    Result["Return Result"]
+    
+    Sync --> Bridge
+    Bridge --> Loop
+    Loop --> Async
+    Async --> Result
+    Result --> Sync
+    
+    style Bridge fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Loop fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Bridge Features:**
+- **Background Event Loop** - Executes async code from sync contexts
+- **Timeout Support** - Configurable timeouts for MCP operations
+- **Error Handling** - Wraps MCP errors in observations
+- **Connection Pooling** - Reuses connections across tool calls
+
+### Tool Discovery Flow
+
+**Source:** [`create_mcp_tools()`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/utils.py) | [`agent._initialize()`](https://github.com/OpenHands/agent-sdk/blob/main/openhands-sdk/openhands/sdk/agent/base.py)
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    Config["MCP Server Config<br><i>command + args</i>"]
+    Spawn["Spawn Server Process<br><i>MCPClient</i>"]
+    List["List Available Tools<br><i>client.list_tools()</i>"]
+    
+    subgraph Convert["For Each MCP Tool"]
+        Store["Store MCP metadata<br><i>name, description, inputSchema</i>"]
+        CreateExec["Create MCPToolExecutor<br><i>bound to tool + client</i>"]
+        Def["Create MCPToolDefinition<br><i>generic MCPToolAction type</i>"]
+    end
+    
+    Register["Add to Agent's tools_map<br><i>bypasses ToolRegistry</i>"]
+    Ready["Tools Available<br><i>Dynamic models created on-demand</i>"]
+    
+    Config --> Spawn
+    Spawn --> List
+    List --> Store
+    Store --> CreateExec
+    CreateExec --> Def
+    Def --> Register
+    Register --> Ready
+    
+    style Spawn fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Def fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Register fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Discovery Steps:**
+1. **Spawn Server** - Launch MCP server via stdio protocol (using `MCPClient`)
+2. **List Tools** - Call MCP `tools/list` endpoint to retrieve available tools
+3. **Parse Schemas** - Extract tool names, descriptions, and `inputSchema` from MCP response
+4. **Create Definitions** - For each tool, call `MCPToolDefinition.create()` which:
+   - Creates an `MCPToolExecutor` instance bound to the tool name and client
+   - Wraps the MCP tool metadata in `MCPToolDefinition`
+   - Uses generic `MCPToolAction` as the action type (NOT dynamic models yet)
+5. **Add to Agent** - All `MCPToolDefinition` instances are added to agent's `tools_map` during `initialize()` (bypasses ToolRegistry)
+6. **Lazy Validation** - Dynamic Pydantic models are generated lazily when:
+   - `action_from_arguments()` is called (argument validation)
+   - `to_openai_tool()` is called (schema export to LLM)
+
+**Schema Handling:**
+
+| MCP Schema | SDK Integration | When Used |
+|------------|----------------|-----------|
+| `name` | Tool name (stored in `MCPToolDefinition`) | Discovery, execution |
+| `description` | Tool description for LLM | Discovery, LLM prompt |
+| `inputSchema` | Stored in `mcp_tool.inputSchema` | Lazy model generation |
+| `inputSchema` fields | Converted to Pydantic fields via `Schema.from_mcp_schema()` | Validation, schema export |
+| `annotations` | Mapped to `ToolAnnotations` | Security analysis, LLM hints |
+
+### MCP Server Configuration
+
+MCP servers are configured via the `mcp_config` field on the `Agent` class. Configuration follows [FastMCP config format](https://gofastmcp.com/clients/client#configuration-format):
+
+```python
+from openhands.sdk import Agent
+
+agent = Agent(
+    mcp_config={
+        "mcpServers": {
+            "fetch": {
+                "command": "uvx",
+                "args": ["mcp-server-fetch"]
+            },
+            "filesystem": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+            }
+        }
+    }
+)
+```
+
+## Component Relationships
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
+flowchart TB
+    subgraph Sources["Tool Sources"]
+        Native["Native Tools"]
+        MCP["MCP Tools"]
+    end
+    
+    Registry["Tool Registry<br><i>resolve_tool</i>"]
+    ToolsMap["Agent.tools_map<br><i>Merged tool dict</i>"]
+    
+    subgraph AgentSystem["Agent System"]
+        Agent["Agent Logic"]
+        LLM["LLM"]
+    end
+    
+    Security["Security Analyzer"]
+    Conversation["Conversation State"]
+    
+    Native -->|register_tool| Registry
+    Registry --> ToolsMap
+    MCP -->|create_mcp_tools| ToolsMap
+    ToolsMap -->|Provide schemas| LLM
+    Agent -->|Execute tools| ToolsMap
+    ToolsMap -.->|Action risk| Security
+    ToolsMap -.->|Read state| Conversation
+    
+    style ToolsMap fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Agent fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Security fill:#fff4df,stroke:#b7791f,stroke-width:2px
+```
+
+**Relationship Characteristics:**
+- **Native → Registry → tools_map**: Native tools resolved via `ToolRegistry`
+- **MCP → tools_map**: MCP tools bypass registry, added directly during `initialize()`
+- **tools_map → LLM**: Generate schemas describing all available capabilities
+- **Agent → tools_map**: Execute actions, receive observations
+- **tools_map → Conversation**: Read state for context-aware execution
+- **tools_map → Security**: Tool annotations inform risk assessment
+
+## See Also
+
+- **[Agent Architecture](/sdk/arch/agent)** - How agents select and execute tools
+- **[Events](/sdk/arch/events)** - ActionEvent and ObservationEvent structures
+- **[Security Analyzer](/sdk/arch/security)** - Action risk assessment
+- **[Skill Architecture](/sdk/arch/skill)** - Embedding MCP configs in repository skills
+- **[Custom Tools Guide](/sdk/guides/custom-tools)** - Building your own tools
+- **[FastMCP Documentation](https://gofastmcp.com/)** - Underlying MCP client library

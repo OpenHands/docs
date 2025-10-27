@@ -70,7 +70,7 @@ pattern = r'```python[^\n]*\s+(examples/[^\s]+\.py)\n(.*?)```'
 ### Standard Structure
 
 Documentation is deployed with Mintlify from GitHub. The files follow this pattern 
-(see `docs/sdk/guides/custom-tools.mdx` and `docs/sdk/guides/mcp.mdx` as reference):
+(see `docs/sdk/guides/custom-tools.mdx` and `docs/sdk/arch/tool-system.mdx` as reference):
 
 1. **Frontmatter** - YAML metadata with title and description
 2. **Introduction** - Brief overview of the feature
