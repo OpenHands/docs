@@ -55,7 +55,7 @@ When adding a note or warning, use the built-in note and warning syntax.
 
 Example:
 <Note>
-This section is for advanced users only.
+  This section is for advanced users only.
 </Note>
 
 ### Referring to UI Elements
@@ -65,3 +65,24 @@ When referencing UI elements, use ``.
 Example:
 1. Toggle the `Advanced` option
 2. Enter your model in the `Custom Model` textbox.
+
+### Describing Multiple Approaches
+
+When multiple options exist, use the built-in tabs component.
+
+Example:
+<Tabs>
+  <Tab title="First Approach">
+    This explains the first option.
+  </Tab>
+  <Tab title="Second Approach">
+    This explains the second option.
+  </Tab>
+</Tabs>
+
+### Linking Other Pages
+
+When linking other pages in the docs, always use absolute paths.
+
+Example:
+This is link to [the quick start page](/openhands/usage/quick-start).
