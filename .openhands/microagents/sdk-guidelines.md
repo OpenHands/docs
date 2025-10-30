@@ -243,9 +243,9 @@ You can check https://www.mintlify.com/docs for documentation on what our doc si
 
 ### Code Synchronization Workflow
 - **File**: `.github/workflows/sync-docs-code-blocks.yml`
-- **Triggers**: Push to any branch, daily at 2 AM UTC, manual dispatch
+- **Triggers**: Nightly at 2 AM UTC and manual dispatch
 - **Purpose**: Keeps code blocks in sync with agent-sdk examples
-- **Actions**: Checks out both repositories, runs sync script, commits changes if needed
+- **Actions**: Checks out both repositories, runs sync script, and opens a dedicated PR if changes are found (does not modify unrelated PR branches)
 
 ### OpenAPI Sync Workflow
 - **File**: `.github/workflows/sync-agent-sdk-openapi.yml`
