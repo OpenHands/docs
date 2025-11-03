@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --help      Show this help message"
             echo ""
             echo "This script generates API reference documentation from the OpenHands SDK."
-            echo "Generated files will be placed in the api-reference/ directory."
+            echo "Generated files will be placed in the sdk/api-reference/ directory."
             exit 0
             ;;
         *)
@@ -68,10 +68,10 @@ python3 scripts/generate-api-docs.py $CLEAN $VERBOSE
 
 echo ""
 echo "✅ API documentation generation completed!"
-echo "📁 Generated files are in: api-reference/"
+echo "📁 Generated files are in: sdk/api-reference/"
 echo "⚙️  Mint.json config snippet: scripts/mint-config-snippet.json"
 echo ""
 echo "Next steps:"
-echo "1. Review the generated documentation in api-reference/"
+echo "1. Review the generated documentation in sdk/api-reference/"
 echo "2. Copy the configuration from scripts/mint-config-snippet.json"
 echo "3. Add it to your docs.json navigation structure"

@@ -33,7 +33,7 @@ class APIDocGenerator:
         self.scripts_dir = docs_root / "scripts"
         self.sphinx_dir = self.scripts_dir / "sphinx"
         self.sdk_repo_dir = docs_root / "agent-sdk"
-        self.api_docs_output = docs_root / "api-reference"
+        self.api_docs_output = docs_root / "sdk" / "api-reference"
         self.verbose = verbose
         
         # Setup logging
@@ -233,12 +233,12 @@ This section contains the complete API reference documentation for the OpenHands
         api_pages = []
         
         # Add index page
-        api_pages.append("api-reference/index")
+        api_pages.append("sdk/api-reference/index")
         
         # Add all module pages
         for md_file in sorted(self.api_docs_output.glob("*.md")):
             if md_file.name != "index.md":
-                page_path = f"api-reference/{md_file.stem}"
+                page_path = f"sdk/api-reference/{md_file.stem}"
                 api_pages.append(page_path)
         
         config_snippet = {

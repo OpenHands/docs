@@ -83,9 +83,9 @@ The script generates the following:
 
 ### Generated Documentation
 
-- **`api-reference/`**: Directory containing all generated API documentation
+- **`sdk/api-reference/`**: Directory containing all generated API documentation
   - `index.md`: Main API reference index page
-  - `openhands.*.md`: Individual module documentation files
+  - `sdk.*.md`: Individual module documentation files
 
 ### Configuration Files
 
@@ -101,9 +101,9 @@ The generated `mint-config-snippet.json` contains the navigation structure for t
 {
   "group": "API Reference",
   "pages": [
-    "api-reference/index",
-    "api-reference/openhands.agent",
-    "api-reference/openhands.conversation",
+    "sdk/api-reference/index",
+    "sdk/api-reference/sdk.agent",
+    "sdk/api-reference/sdk.conversation",
     ...
   ]
 }
