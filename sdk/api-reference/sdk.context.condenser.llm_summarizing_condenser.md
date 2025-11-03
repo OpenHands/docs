@@ -11,11 +11,11 @@ description: API reference for openhands.sdk.context.condenser.llm_summarizing_c
 
 Bases: [`RollingCondenser`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.RollingCondenser)
 
-#### llm *: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)*
+#### llm : [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)
 
-#### max_size *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### max_size : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### keep_first *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### keep_first : [int](https://docs.python.org/3/library/functions.html#int)
 
 #### validate_keep_first_vs_max_size()
 
@@ -28,7 +28,7 @@ CondensationRequest event is added to the history. If False, the condenser will
 only be triggered when the agent’s own logic decides to do so (e.g. context
 window exceeded).
 
-**Returns:**
+Returns:
   True if the condenser handles explicit condensation requests, False
   otherwise.
 - **Return type:**
@@ -46,4 +46,4 @@ Get the condensation from a view.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser']

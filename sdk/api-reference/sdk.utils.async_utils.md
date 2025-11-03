@@ -25,6 +25,6 @@ conversation contexts.
 
 #### \_\_init_\_(async_callback: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [Coroutine](https://docs.python.org/3/library/collections.abc.html#collections.abc.Coroutine)[[Any](https://docs.python.org/3/library/typing.html#typing.Any), [Any](https://docs.python.org/3/library/typing.html#typing.Any), [None](https://docs.python.org/3/library/constants.html#None)]], loop: AbstractEventLoop)
 
-#### async_callback *: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [Coroutine](https://docs.python.org/3/library/collections.abc.html#collections.abc.Coroutine)[[Any](https://docs.python.org/3/library/typing.html#typing.Any), [Any](https://docs.python.org/3/library/typing.html#typing.Any), [None](https://docs.python.org/3/library/constants.html#None)]]*
+#### async_callback : [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [Coroutine](https://docs.python.org/3/library/collections.abc.html#collections.abc.Coroutine)[[Any](https://docs.python.org/3/library/typing.html#typing.Any), [Any](https://docs.python.org/3/library/typing.html#typing.Any), [None](https://docs.python.org/3/library/constants.html#None)]]
 
-#### loop *: AbstractEventLoop*
+#### loop : AbstractEventLoop

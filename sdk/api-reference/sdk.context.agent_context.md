@@ -32,11 +32,11 @@ Together, these elements make AgentContext the primary container responsible
 for assembling, formatting, and injecting all prompt-relevant context into
 LLM interactions.
 
-#### skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill)]*
+#### skills : [list](https://docs.python.org/3/library/stdtypes.html#list)[[Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill)]
 
-#### system_message_suffix *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### system_message_suffix : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### user_message_suffix *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### user_message_suffix : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
 #### get_system_message_suffix() → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 

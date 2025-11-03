@@ -23,21 +23,21 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### to_llm_message() → [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this system prompt event.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### system_prompt *: [TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)*
+#### system_prompt : [TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)
 
-#### tools *: [list](https://docs.python.org/3/library/stdtypes.html#list)[ChatCompletionToolParam]*
+#### tools : [list](https://docs.python.org/3/library/stdtypes.html#list)[ChatCompletionToolParam]
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['SystemPromptEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['SystemPromptEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.event.llm_convertible.ActionEvent(\*, kind: typing.Literal['ActionEvent'] = 'ActionEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: typing.Literal['agent', 'user', 'environment'] = 'agent', thought: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent], reasoning_content: str | None = None, thinking_blocks: list[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None, action: openhands.sdk.tool.schema.Action | None = None, tool_name: str, tool_call_id: str, tool_call: openhands.sdk.llm.message.MessageToolCall, llm_response_id: str, security_risk: openhands.sdk.security.risk.SecurityRisk = SecurityRisk.UNKNOWN)
 
@@ -55,37 +55,37 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 Individual message - may be incomplete for multi-action batches
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this action event.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### thought *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]*
+#### thought : [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]
 
-#### reasoning_content *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### reasoning_content : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### thinking_blocks *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]*
+#### thinking_blocks : [list](https://docs.python.org/3/library/stdtypes.html#list)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]
 
-#### responses_reasoning_item *: [ReasoningItemModel](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ReasoningItemModel) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### responses_reasoning_item : [ReasoningItemModel](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ReasoningItemModel) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### action *: [Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### action : [Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### tool_call_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_call_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### tool_call *: [MessageToolCall](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.MessageToolCall)*
+#### tool_call : [MessageToolCall](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.MessageToolCall)
 
-#### llm_response_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### llm_response_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### security_risk *: [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk)*
+#### security_risk : [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ActionEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ActionEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.event.llm_convertible.ObservationEvent(\*, kind: ~typing.Literal['ObservationEvent'] = 'ObservationEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, observation: ~openhands.sdk.tool.schema.Observation, action_id: str)
 
@@ -101,25 +101,25 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### to_llm_message() → [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this observation event.
 
-#### observation *: [Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)*
+#### observation : [Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 
-#### action_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### action_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ObservationEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ObservationEvent']
 
-#### source *: SourceType*
+#### source : SourceType
 
-#### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### tool_call_id *: ToolCallID*
+#### tool_call_id : ToolCallID
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.event.llm_convertible.ObservationBaseEvent(\*, kind: ~typing.Literal['AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str)
 
@@ -133,17 +133,17 @@ Examples include tool execution, error, user reject.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### tool_call_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_call_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### kind : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.event.llm_convertible.MessageEvent(\*, kind: ~typing.Literal['MessageEvent'] = 'MessageEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'], llm_message: ~openhands.sdk.llm.message.Message, llm_response_id: str | None = None, activated_skills: list[str] = `<factory>`, extended_content: list[~openhands.sdk.llm.message.TextContent] = `<factory>`)
 
@@ -161,33 +161,33 @@ Plain text string representation for MessageEvent.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* reasoning_content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property reasoning_content : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### *property* thinking_blocks *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]*
+#### property thinking_blocks : [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]
 
 Return the Anthropic thinking blocks from the LLM message.
 
 #### to_llm_message() → [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this message event.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### llm_message *: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)*
+#### llm_message : [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### llm_response_id *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### llm_response_id : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### activated_skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### activated_skills : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
-#### extended_content *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]*
+#### extended_content : [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MessageEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MessageEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.event.llm_convertible.AgentErrorEvent(\*, kind: ~typing.Literal['AgentErrorEvent'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', tool_name: str, tool_call_id: str, error: str)
 
@@ -208,23 +208,23 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### to_llm_message() → [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this agent error event.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### error *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### error : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AgentErrorEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AgentErrorEvent']
 
-#### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### tool_call_id *: ToolCallID*
+#### tool_call_id : ToolCallID
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.event.llm_convertible.UserRejectObservation(\*, kind: ~typing.Literal['UserRejectObservation'] = 'UserRejectObservation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, rejection_reason: str = 'User rejected the action', action_id: str)
 
@@ -242,25 +242,25 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### to_llm_message() → [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this user rejection event.
 
-#### rejection_reason *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### rejection_reason : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### action_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### action_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['UserRejectObservation']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['UserRejectObservation']
 
-#### source *: SourceType*
+#### source : SourceType
 
-#### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### tool_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### tool_call_id *: ToolCallID*
+#### tool_call_id : ToolCallID
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ## Submodules
 

@@ -21,18 +21,18 @@ Base schema for input action / output observation.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *classmethod* to_mcp_schema() → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### classmethod to_mcp_schema() → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
 Convert to JSON schema format compatible with MCP.
 
-#### *classmethod* from_mcp_schema(model_name: [str](https://docs.python.org/3/library/stdtypes.html#str), schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]) → [type](https://docs.python.org/3/library/functions.html#type)[S]
+#### classmethod from_mcp_schema(model_name: [str](https://docs.python.org/3/library/stdtypes.html#str), schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]) → [type](https://docs.python.org/3/library/functions.html#type)[S]
 
 Create a Schema subclass from an MCP/JSON Schema object.
 
 For non-required fields, we annotate as T | None
 so explicit nulls are allowed.
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Schema']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Schema']
 
 ### *class* openhands.sdk.tool.schema.Action(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction', 'FinishAction', 'ThinkAction'] = 'MCPToolAction')
 
@@ -40,7 +40,7 @@ Bases: [`Schema`](#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.pytho
 
 Base schema for input action.
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this action.
 
@@ -51,7 +51,7 @@ The base implementation displays all action fields systematically.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### kind : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.tool.schema.Observation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation')
 
@@ -59,11 +59,11 @@ Bases: [`Schema`](#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.pytho
 
 Base schema for output observation.
 
-#### *abstract property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### abstract property to_llm_content : [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]
 
 Get the observation string to show to the agent.
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this action.
 
@@ -74,4 +74,4 @@ The base implementation displays all action fields systematically.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### kind : [str](https://docs.python.org/3/library/stdtypes.html#str)

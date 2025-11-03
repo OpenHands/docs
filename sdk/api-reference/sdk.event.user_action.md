@@ -13,9 +13,9 @@ Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.
 
 Event indicating that the agent execution was paused by user request.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this pause event.
 
@@ -27,8 +27,8 @@ Plain text string representation for PauseEvent.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PauseEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PauseEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)

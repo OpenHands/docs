@@ -20,11 +20,11 @@ Execute a bash command locally.
 Uses the shared shell execution utility to run commands with proper
 timeout handling, output streaming, and error management.
 
-**Parameters:**
-  - **command** – The bash command to execute
-  - **cwd** – Working directory (optional)
-  - **timeout** – Timeout in seconds
-**Returns:**
+Parameters:
+  * command – The bash command to execute
+  * cwd – Working directory (optional)
+  * timeout – Timeout in seconds
+Returns:
   Result with stdout, stderr, exit_code, command, and
   : timeout_occurred
 - **Return type:**
@@ -37,10 +37,10 @@ Upload (copy) a file locally.
 For local systems, file upload is implemented as a file copy operation
 using shutil.copy2 to preserve metadata.
 
-**Parameters:**
-  - **source_path** – Path to the source file
-  - **destination_path** – Path where the file should be copied
-**Returns:**
+Parameters:
+  * source_path – Path to the source file
+  * destination_path – Path where the file should be copied
+Returns:
   Result with success status and file information
 - **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
@@ -52,10 +52,10 @@ Download (copy) a file locally.
 For local systems, file download is implemented as a file copy operation
 using shutil.copy2 to preserve metadata.
 
-**Parameters:**
-  - **source_path** – Path to the source file
-  - **destination_path** – Path where the file should be copied
-**Returns:**
+Parameters:
+  * source_path – Path to the source file
+  * destination_path – Path where the file should be copied
+Returns:
   Result with success status and file information
 - **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
@@ -64,32 +64,32 @@ using shutil.copy2 to preserve metadata.
 
 Get the git changes for the repository at the path given.
 
-**Parameters:**
-  **path** – Path to the git repository
-**Returns:**
+Parameters:
+  path – Path to the git repository
+Returns:
   List of changes
 - **Return type:**
   [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
-**Raises:**
-  [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting changes failed
+Raises:
+  [Exception](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting changes failed
 
 #### git_diff(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → GitDiff
 
 Get the git diff for the file at the path given.
 
-**Parameters:**
-  **path** – Path to the file
-**Returns:**
+Parameters:
+  path – Path to the file
+Returns:
   Git diff
 - **Return type:**
   GitDiff
-**Raises:**
-  [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting diff failed
+Raises:
+  [Exception](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting diff failed
 
 #### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace']
 
-#### working_dir *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### working_dir : [str](https://docs.python.org/3/library/stdtypes.html#str)

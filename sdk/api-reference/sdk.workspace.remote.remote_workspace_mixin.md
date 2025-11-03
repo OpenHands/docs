@@ -14,11 +14,11 @@ Bases: `BaseModel`
 Mixin providing remote workspace operations.
 This allows the same code to be used for sync and async.
 
-#### host *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### host : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### api_key *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### api_key : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### working_dir *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### working_dir : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 #### model_post_init(context: [Any](https://docs.python.org/3/library/typing.html#typing.Any)) → [None](https://docs.python.org/3/library/constants.html#None)
 

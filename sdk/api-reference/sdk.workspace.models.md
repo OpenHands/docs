@@ -15,15 +15,15 @@ Bases: `BaseModel`
 
 Result of executing a command in the workspace.
 
-#### command *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### command : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### exit_code *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### exit_code : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### stdout *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### stdout : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### stderr *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### stderr : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### timeout_occurred *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### timeout_occurred : [bool](https://docs.python.org/3/library/functions.html#bool)
 
 #### model_config  : ClassVar[ConfigDict] = \{\}
 
@@ -35,15 +35,15 @@ Bases: `BaseModel`
 
 Result of a file upload or download operation.
 
-#### success *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### success : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### source_path *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### source_path : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### destination_path *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### destination_path : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### file_size *: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### file_size : [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### error *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### error : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
 #### model_config  : ClassVar[ConfigDict] = \{\}
 

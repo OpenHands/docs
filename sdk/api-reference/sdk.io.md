@@ -17,8 +17,8 @@ Bases: [`FileStore`](https://github.com/OpenHands/software-agent-sdk/sdk.io.base
 
 Delete the file or directory at the specified path.
 
-**Parameters:**
-  **path** – The file or directory path to delete.
+Parameters:
+  path – The file or directory path to delete.
 
 #### get_full_path(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
@@ -26,29 +26,29 @@ Delete the file or directory at the specified path.
 
 List all files and directories at the specified path.
 
-**Parameters:**
-  **path** – The directory path to list contents from.
-**Returns:**
+Parameters:
+  path – The directory path to list contents from.
+Returns:
   A list of file and directory names in the specified path.
 
 #### read(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Read and return the contents of a file as a string.
 
-**Parameters:**
-  **path** – The file path to read from.
-**Returns:**
+Parameters:
+  path – The file path to read from.
+Returns:
   The file contents as a string.
 
 #### write(path: [str](https://docs.python.org/3/library/stdtypes.html#str), contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Write contents to a file at the specified path.
 
-**Parameters:**
-  - **path** – The file path where contents should be written.
-  - **contents** – The data to write, either as string or bytes.
+Parameters:
+  * path – The file path where contents should be written.
+  * contents – The data to write, either as string or bytes.
 
-#### root *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### root : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *class* openhands.sdk.io.FileStore
 
@@ -59,38 +59,38 @@ Abstract base class for file storage operations.
 This class defines the interface for file storage backends that can
 handle basic file operations like reading, writing, listing, and deleting files.
 
-#### *abstractmethod* delete(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### abstractmethod delete(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Delete the file or directory at the specified path.
 
-**Parameters:**
-  **path** – The file or directory path to delete.
+Parameters:
+  path – The file or directory path to delete.
 
-#### *abstractmethod* list(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
+#### abstractmethod list(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 List all files and directories at the specified path.
 
-**Parameters:**
-  **path** – The directory path to list contents from.
-**Returns:**
+Parameters:
+  path – The directory path to list contents from.
+Returns:
   A list of file and directory names in the specified path.
 
-#### *abstractmethod* read(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
+#### abstractmethod read(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Read and return the contents of a file as a string.
 
-**Parameters:**
-  **path** – The file path to read from.
-**Returns:**
+Parameters:
+  path – The file path to read from.
+Returns:
   The file contents as a string.
 
-#### *abstractmethod* write(path: [str](https://docs.python.org/3/library/stdtypes.html#str), contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### abstractmethod write(path: [str](https://docs.python.org/3/library/stdtypes.html#str), contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Write contents to a file at the specified path.
 
-**Parameters:**
-  - **path** – The file path where contents should be written.
-  - **contents** – The data to write, either as string or bytes.
+Parameters:
+  * path – The file path where contents should be written.
+  * contents – The data to write, either as string or bytes.
 
 ### *class* openhands.sdk.io.InMemoryFileStore(files: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
@@ -102,36 +102,36 @@ Bases: [`FileStore`](https://github.com/OpenHands/software-agent-sdk/sdk.io.base
 
 Delete the file or directory at the specified path.
 
-**Parameters:**
-  **path** – The file or directory path to delete.
+Parameters:
+  path – The file or directory path to delete.
 
 #### list(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 List all files and directories at the specified path.
 
-**Parameters:**
-  **path** – The directory path to list contents from.
-**Returns:**
+Parameters:
+  path – The directory path to list contents from.
+Returns:
   A list of file and directory names in the specified path.
 
 #### read(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Read and return the contents of a file as a string.
 
-**Parameters:**
-  **path** – The file path to read from.
-**Returns:**
+Parameters:
+  path – The file path to read from.
+Returns:
   The file contents as a string.
 
 #### write(path: [str](https://docs.python.org/3/library/stdtypes.html#str), contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Write contents to a file at the specified path.
 
-**Parameters:**
-  - **path** – The file path where contents should be written.
-  - **contents** – The data to write, either as string or bytes.
+Parameters:
+  * path – The file path where contents should be written.
+  * contents – The data to write, either as string or bytes.
 
-#### files *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### files : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 ## Submodules
 

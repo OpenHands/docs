@@ -45,22 +45,22 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 Override this method to perform additional initialization after \_\_init_\_ and model_construct.
 This is useful if you want to do some validation that requires the entire model to be initialized.
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent']
 
-#### llm *: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.LLM)*
+#### llm : [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.LLM)
 
-#### tools *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Tool](https://github.com/OpenHands/software-agent-sdk/sdk.tool.md#openhands.sdk.tool.Tool)]*
+#### tools : [list](https://docs.python.org/3/library/stdtypes.html#list)[[Tool](https://github.com/OpenHands/software-agent-sdk/sdk.tool.md#openhands.sdk.tool.Tool)]
 
-#### mcp_config *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), Any]*
+#### mcp_config : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), Any]
 
-#### filter_tools_regex *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### filter_tools_regex : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### agent_context *: [AgentContext](https://github.com/OpenHands/software-agent-sdk/sdk.context.md#openhands.sdk.context.AgentContext) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### agent_context : [AgentContext](https://github.com/OpenHands/software-agent-sdk/sdk.context.md#openhands.sdk.context.AgentContext) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### system_prompt_filename *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### system_prompt_filename : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### system_prompt_kwargs *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [object](https://docs.python.org/3/library/functions.html#object)]*
+#### system_prompt_kwargs : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [object](https://docs.python.org/3/library/functions.html#object)]
 
-#### security_analyzer *: [analyzer.SecurityAnalyzerBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### security_analyzer : [analyzer.SecurityAnalyzerBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### condenser *: [CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.md#openhands.sdk.context.condenser.CondenserBase) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### condenser : [CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.md#openhands.sdk.context.condenser.CondenserBase) | [None](https://docs.python.org/3/library/constants.html#None)

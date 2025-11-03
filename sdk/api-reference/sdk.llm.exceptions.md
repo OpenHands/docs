@@ -13,7 +13,7 @@ Bases: [`Exception`](https://docs.python.org/3/library/exceptions.html#Exception
 
 #### \_\_init_\_(message: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [None](https://docs.python.org/3/library/constants.html#None)
 
-#### message *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### message : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 ### *exception* openhands.sdk.llm.exceptions.LLMMalformedActionError(message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Malformed response')
 

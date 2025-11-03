@@ -11,10 +11,10 @@ description: API reference for openhands.sdk.tool.registry
 
 A resolver produces ToolDefinition instances for given params.
 
-**Parameters:**
-  - **params** – Arbitrary parameters passed to the resolver. These are typically
+Parameters:
+  * params – Arbitrary parameters passed to the resolver. These are typically
     used to configure the ToolDefinition instances that are created.
-  - **conversation** – Optional conversation state to get directories from.
+  * conversation – Optional conversation state to get directories from.
 
 Returns: A sequence of ToolDefinition instances. Most of the time this will be a
 : single-item

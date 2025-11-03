@@ -13,13 +13,13 @@ Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/s
 
 System prompt added by the agent.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### system_prompt *: [TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)*
+#### system_prompt : [TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)
 
-#### tools *: [list](https://docs.python.org/3/library/stdtypes.html#list)[ChatCompletionToolParam]*
+#### tools : [list](https://docs.python.org/3/library/stdtypes.html#list)[ChatCompletionToolParam]
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this system prompt event.
 
@@ -33,8 +33,8 @@ Plain text string representation for SystemPromptEvent.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['SystemPromptEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['SystemPromptEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)

@@ -31,4 +31,4 @@ UNKNOWN if not explicitly set.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSecurityAnalyzer']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSecurityAnalyzer']

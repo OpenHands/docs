@@ -23,9 +23,9 @@ New condenser strategies should override this method to implement their own
 condensation logic. Call self.add_metadata in the implementation to record any
 relevant per-condensation diagnostic information.
 
-**Parameters:**
-  **view** – A view of the history containing all events that should be condensed.
-**Returns:**
+Parameters:
+  view – A view of the history containing all events that should be condensed.
+Returns:
   A condensed view of the events or an event indicating
   the history has been condensed.
 - **Return type:**
@@ -35,4 +35,4 @@ relevant per-condensation diagnostic information.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser']

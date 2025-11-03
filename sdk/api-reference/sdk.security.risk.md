@@ -24,7 +24,7 @@ Integer values allow for easy comparison and ordering.
 
 #### HIGH *= 'HIGH'*
 
-#### *property* description *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property description : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Get a human-readable description of the risk level.
 
@@ -32,7 +32,7 @@ Get a human-readable description of the risk level.
 
 Get the color for displaying this risk level in Rich text.
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this risk level.
 
@@ -56,8 +56,8 @@ risk levels to be riskier than themselves. That is:
 
 This can be disabled by setting the reflexive parameter to False.
 
-**Parameters:**
-  * **other** ([*SecurityRisk*](#openhands.sdk.security.risk.SecurityRisk)) – The other risk level to compare against.
-  * **reflexive** ([*bool*](https://docs.python.org/3/library/functions.html#bool)) – Whether the relationship is reflexive.
-**Raises:**
-  [**ValueError**](https://docs.python.org/3/library/exceptions.html#ValueError) – If either risk level is UNKNOWN.
+Parameters:
+  * other ([*SecurityRisk*](#openhands.sdk.security.risk.SecurityRisk)) – The other risk level to compare against.
+  * reflexive ([*bool*](https://docs.python.org/3/library/functions.html#bool)) – Whether the relationship is reflexive.
+Raises:
+  [ValueError](https://docs.python.org/3/library/exceptions.html#ValueError) – If either risk level is UNKNOWN.

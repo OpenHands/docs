@@ -22,7 +22,7 @@ This detector analyzes the conversation history to identify various stuck patter
 
 #### \_\_init_\_(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState))
 
-#### state *: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState)*
+#### state : [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState)
 
 #### is_stuck() → [bool](https://docs.python.org/3/library/functions.html#bool)
 

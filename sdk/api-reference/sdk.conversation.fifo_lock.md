@@ -34,20 +34,20 @@ Features:
 
 Acquire the lock.
 
-**Parameters:**
-  - **blocking** – If True, block until lock is acquired. If False, return
+Parameters:
+  * blocking – If True, block until lock is acquired. If False, return
     immediately.
-  - **timeout** – Maximum time to wait for lock (ignored if blocking=False).
+  * timeout – Maximum time to wait for lock (ignored if blocking=False).
     -1 means wait indefinitely.
-**Returns:**
+Returns:
   True if lock was acquired, False otherwise.
 
 #### release() → [None](https://docs.python.org/3/library/constants.html#None)
 
 Release the lock.
 
-**Raises:**
-  [**RuntimeError**](https://docs.python.org/3/library/exceptions.html#RuntimeError) – If the current thread doesn’t own the lock.
+Raises:
+  [RuntimeError](https://docs.python.org/3/library/exceptions.html#RuntimeError) – If the current thread doesn’t own the lock.
 
 #### \_\_enter_\_() → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
 

@@ -30,9 +30,9 @@ Trigger for keyword-based skills.
 
 These skills are activated when specific keywords appear in the user’s query.
 
-#### type *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword']*
+#### type : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword']
 
-#### keywords *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### keywords : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 #### model_config  : ClassVar[ConfigDict] = \{\}
 
@@ -46,9 +46,9 @@ Trigger for task-specific skills.
 
 These skills are activated for specific task types and can modify prompts.
 
-#### type *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task']*
+#### type : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task']
 
-#### triggers *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### triggers : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 #### model_config  : ClassVar[ConfigDict] = \{\}
 

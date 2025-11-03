@@ -15,35 +15,35 @@ Bases: [`BaseConversation`](https://github.com/OpenHands/software-agent-sdk/sdk.
 
 Initialize the conversation.
 
-**Parameters:**
-  - **agent** – The agent to use for the conversation
-  - **workspace** – Working directory for agent operations and tool execution
-  - **persistence_dir** – Directory for persisting conversation state and events
-  - **conversation_id** – Optional ID for the conversation. If provided, will
+Parameters:
+  * agent – The agent to use for the conversation
+  * workspace – Working directory for agent operations and tool execution
+  * persistence_dir – Directory for persisting conversation state and events
+  * conversation_id – Optional ID for the conversation. If provided, will
     be used to identify the conversation. The user might want to
     suffix their persistent filestore with this ID.
-  - **callbacks** – Optional list of callback functions to handle events
-  - **max_iteration_per_run** – Maximum number of iterations per run
-  - **visualize** – Whether to enable default visualization. If True, adds
+  * callbacks – Optional list of callback functions to handle events
+  * max_iteration_per_run – Maximum number of iterations per run
+  * visualize – Whether to enable default visualization. If True, adds
     a default visualizer callback. If False, relies on
     application to provide visualization through callbacks.
-  - **name_for_visualization** – Optional name to prefix in panel titles to identify
+  * name_for_visualization – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
-  - **stuck_detection** – Whether to enable stuck detection
+  * stuck_detection – Whether to enable stuck detection
 
-#### agent *: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)*
+#### agent : [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)
 
-#### workspace *: [LocalWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.local.md#openhands.sdk.workspace.local.LocalWorkspace)*
+#### workspace : [LocalWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.local.md#openhands.sdk.workspace.local.LocalWorkspace)
 
-#### max_iteration_per_run *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### max_iteration_per_run : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### llm_registry *: [LLMRegistry](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm_registry.md#openhands.sdk.llm.llm_registry.LLMRegistry)*
+#### llm_registry : [LLMRegistry](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm_registry.md#openhands.sdk.llm.llm_registry.LLMRegistry)
 
-#### *property* id *: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)*
+#### property id : [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)
 
 Get the unique ID of the conversation.
 
-#### *property* state *: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState)*
+#### property state : [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState)
 
 Get the conversation state.
 
@@ -52,9 +52,9 @@ and properties. We will have the ability to access the same properties
 of ConversationState on a remote conversation object.
 But we won’t be able to access methods that mutate the state.
 
-#### *property* conversation_stats
+#### property conversation_stats
 
-#### *property* stuck_detector *: [StuckDetector](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.stuck_detector.md#openhands.sdk.conversation.stuck_detector.StuckDetector) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### property stuck_detector : [StuckDetector](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.stuck_detector.md#openhands.sdk.conversation.stuck_detector.StuckDetector) | [None](https://docs.python.org/3/library/constants.html#None)
 
 Get the stuck detector instance if enabled.
 
@@ -62,8 +62,8 @@ Get the stuck detector instance if enabled.
 
 Send a message to the agent.
 
-**Parameters:**
-  **message** – Either a string (which will be converted to a user message)
+Parameters:
+  message – Either a string (which will be converted to a user message)
   or a Message object
 
 #### run() → [None](https://docs.python.org/3/library/constants.html#None)
@@ -105,8 +105,8 @@ effect until the current LLM call completes.
 
 Add secrets to the conversation.
 
-**Parameters:**
-  **secrets** – Dictionary mapping secret keys to values or no-arg callables.
+Parameters:
+  secrets – Dictionary mapping secret keys to values or no-arg callables.
   SecretValue = str | Callable[[], str]. Callables are invoked lazily
   when a command references the secret key.
 
@@ -118,14 +118,14 @@ Close the conversation and clean up all tool executors.
 
 Generate a title for the conversation based on the first user message.
 
-**Parameters:**
-  - **llm** – Optional LLM to use for title generation. If not provided,
+Parameters:
+  * llm – Optional LLM to use for title generation. If not provided,
     uses self.agent.llm.
-  - **max_length** – Maximum length of the generated title.
-**Returns:**
+  * max_length – Maximum length of the generated title.
+Returns:
   A generated title for the conversation.
-**Raises:**
-  [**ValueError**](https://docs.python.org/3/library/exceptions.html#ValueError) – If no user messages are found in the conversation.
+Raises:
+  [ValueError](https://docs.python.org/3/library/exceptions.html#ValueError) – If no user messages are found in the conversation.
 
 #### \_\_del_\_() → [None](https://docs.python.org/3/library/constants.html#None)
 

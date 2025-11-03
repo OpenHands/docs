@@ -19,23 +19,23 @@ This is originally the “MessageAction”, but it suppose not to be tool call.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### llm_message *: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)*
+#### llm_message : [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### llm_response_id *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### llm_response_id : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### activated_skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### activated_skills : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
-#### extended_content *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]*
+#### extended_content : [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]
 
-#### *property* reasoning_content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property reasoning_content : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### *property* thinking_blocks *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]*
+#### property thinking_blocks : [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]
 
 Return the Anthropic thinking blocks from the LLM message.
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this message event.
 
@@ -45,8 +45,8 @@ Return Rich Text representation of this message event.
 
 Plain text string representation for MessageEvent.
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MessageEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MessageEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)

@@ -21,34 +21,34 @@ allowing remote clients to stay in sync without making REST API calls.
 All fields are serialized versions of the corresponding ConversationState fields
 to ensure compatibility with websocket transmission.
 
-#### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
+#### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-#### key *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### key : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### value *: [Any](https://docs.python.org/3/library/typing.html#typing.Any)*
+#### value : [Any](https://docs.python.org/3/library/typing.html#typing.Any)
 
-#### *classmethod* validate_key(key)
+#### classmethod validate_key(key)
 
-#### *classmethod* validate_value(value, info)
+#### classmethod validate_value(value, info)
 
-#### *classmethod* from_conversation_state(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.ConversationState)) → [ConversationStateUpdateEvent](#openhands.sdk.event.conversation_state.ConversationStateUpdateEvent)
+#### classmethod from_conversation_state(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.ConversationState)) → [ConversationStateUpdateEvent](#openhands.sdk.event.conversation_state.ConversationStateUpdateEvent)
 
 Create a state update event from a ConversationState object.
 
 This creates an event containing a snapshot of important state fields.
 
-**Parameters:**
-  - **state** – The ConversationState to serialize
-  - **conversation_id** – The conversation ID for the event
-**Returns:**
+Parameters:
+  * state – The ConversationState to serialize
+  * conversation_id – The conversation ID for the event
+Returns:
   A ConversationStateUpdateEvent with serialized state data
 
 #### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ConversationStateUpdateEvent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ConversationStateUpdateEvent']
 
-#### id *: EventID*
+#### id : EventID
 
-#### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### timestamp : [str](https://docs.python.org/3/library/stdtypes.html#str)

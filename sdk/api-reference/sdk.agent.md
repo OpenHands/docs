@@ -45,7 +45,7 @@ Typically this involves:
 
 NOTE: state will be mutated in-place.
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent']
 
 ### *class* openhands.sdk.agent.AgentBase(\*, kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
 
@@ -86,11 +86,11 @@ Like model_dump, but excludes None fields by default.
 Override this method to perform additional initialization after \_\_init_\_ and model_construct.
 This is useful if you want to do some validation that requires the entire model to be initialized.
 
-#### *property* name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Returns the name of the Agent.
 
-#### *property* prompt_dir *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property prompt_dir : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Returns the directory where this class’s module file is located.
 
@@ -100,7 +100,7 @@ Return a new AgentBase instance equivalent to persisted but with
 explicitly whitelisted fields (e.g. api_key, security_analyzer) taken from
 self.
 
-#### *abstractmethod* step(conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation), on_event: ConversationCallbackType) → [None](https://docs.python.org/3/library/constants.html#None)
+#### abstractmethod step(conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation), on_event: ConversationCallbackType) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Taking a step in the conversation.
 
@@ -116,32 +116,32 @@ Typically this involves:
 
 NOTE: state will be mutated in-place.
 
-#### *property* system_message *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property system_message : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Compute system message on-demand to maintain statelessness.
 
-#### *property* tools_map *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [ToolDefinition](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#id0)]*
+#### property tools_map : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [ToolDefinition](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#id0)]
 
 Get the initialized tools map.
 :raises RuntimeError: If the agent has not been initialized.
 
-#### llm *: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)*
+#### llm : [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)
 
-#### tools *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Tool](https://github.com/OpenHands/software-agent-sdk/sdk.tool.spec.md#openhands.sdk.tool.spec.Tool)]*
+#### tools : [list](https://docs.python.org/3/library/stdtypes.html#list)[[Tool](https://github.com/OpenHands/software-agent-sdk/sdk.tool.spec.md#openhands.sdk.tool.spec.Tool)]
 
-#### mcp_config *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]*
+#### mcp_config : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
-#### filter_tools_regex *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### filter_tools_regex : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### agent_context *: [AgentContext](https://github.com/OpenHands/software-agent-sdk/sdk.context.agent_context.md#openhands.sdk.context.agent_context.AgentContext) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### agent_context : [AgentContext](https://github.com/OpenHands/software-agent-sdk/sdk.context.agent_context.md#openhands.sdk.context.agent_context.AgentContext) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### system_prompt_filename *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### system_prompt_filename : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### system_prompt_kwargs *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [object](https://docs.python.org/3/library/functions.html#object)]*
+#### system_prompt_kwargs : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [object](https://docs.python.org/3/library/functions.html#object)]
 
-#### security_analyzer *: [SecurityAnalyzerBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### security_analyzer : [SecurityAnalyzerBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### condenser *: [CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### condenser : [CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase) | [None](https://docs.python.org/3/library/constants.html#None)
 
 ## Submodules
 

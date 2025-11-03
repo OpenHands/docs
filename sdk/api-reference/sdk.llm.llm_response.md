@@ -45,17 +45,17 @@ ResponsesAPIResponse) for internal use
 - **Type:**
   litellm.types.utils.ModelResponse | litellm.types.llms.openai.ResponsesAPIResponse
 
-#### message *: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)*
+#### message : [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-#### metrics *: [MetricsSnapshot](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.MetricsSnapshot)*
+#### metrics : [MetricsSnapshot](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.MetricsSnapshot)
 
-#### raw_response *: ModelResponse | ResponsesAPIResponse*
+#### raw_response : ModelResponse | ResponsesAPIResponse
 
 #### model_config  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]*  = \{'arbitrary_types_allowed': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### property id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Get the response ID from the underlying LLM response.
 
@@ -63,5 +63,5 @@ This property provides a clean interface to access the response ID,
 supporting both completion mode (ModelResponse) and response API modes
 (ResponsesAPIResponse).
 
-**Returns:**
+Returns:
   The response ID from the LLM response

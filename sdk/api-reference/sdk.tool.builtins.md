@@ -21,13 +21,13 @@ Bases: [`Action`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schem
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation of this action.
 
-#### message *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### message : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['FinishAction']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['FinishAction']
 
 ### *class* openhands.sdk.tool.builtins.FinishObservation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['FinishObservation'] = 'FinishObservation', message: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
@@ -37,17 +37,17 @@ Bases: [`Observation`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### property to_llm_content : [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]
 
 Get the observation string to show to the agent.
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation - empty since action shows the message.
 
-#### message *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### message : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['FinishObservation']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['FinishObservation']
 
 ### *class* openhands.sdk.tool.builtins.FinishExecutor
 
@@ -63,13 +63,13 @@ Action for logging a thought without making any changes.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation with thinking styling.
 
-#### thought *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### thought : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction']
 
 ### *class* openhands.sdk.tool.builtins.ThinkObservation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation'] = 'ThinkObservation', content: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Your thought has been logged.')
 
@@ -81,17 +81,17 @@ Observation returned after logging a thought.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### property to_llm_content : [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]
 
 Get the observation string to show to the agent.
 
-#### *property* visualize *: Text*
+#### property visualize : Text
 
 Return Rich Text representation - empty since action shows the thought.
 
-#### content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### content : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation']
 
 ### *class* openhands.sdk.tool.builtins.ThinkExecutor
 

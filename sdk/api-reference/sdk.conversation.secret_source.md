@@ -13,9 +13,9 @@ Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-s
 
 Source for a named secret which may be obtained dynamically
 
-#### description *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### description : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### *abstractmethod* get_value() → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
+#### abstractmethod get_value() → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
 Get the value of a secret in plain text
 
@@ -29,7 +29,7 @@ Bases: [`SecretSource`](#openhands.sdk.conversation.secret_source.SecretSource)
 
 A secret stored locally
 
-#### value *: SecretStr*
+#### value : SecretStr
 
 #### get_value()
 
@@ -39,7 +39,7 @@ Get the value of a secret in plain text
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['StaticSecret']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['StaticSecret']
 
 ### *class* openhands.sdk.conversation.secret_source.LookupSecret(\*, kind: ~typing.Literal['LookupSecret'] = 'LookupSecret', description: str | None = None, url: str, headers: dict[str, str] = `<factory>`)
 
@@ -47,9 +47,9 @@ Bases: [`SecretSource`](#openhands.sdk.conversation.secret_source.SecretSource)
 
 A secret looked up from some external url
 
-#### url *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### url : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### headers *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### headers : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 #### get_value()
 
@@ -59,4 +59,4 @@ Get the value of a secret in plain text
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LookupSecret']*
+#### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LookupSecret']

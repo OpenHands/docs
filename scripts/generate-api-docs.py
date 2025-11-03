@@ -305,16 +305,41 @@ description: API reference for {title}
                 # This is a property/attribute definition with unbalanced asterisks
                 line = line.replace('*:', ' :')
             
-            # Fix Sphinx-generated parameter lists that cause acorn parsing errors
-            # Pattern: "* **Parameters:**" creates unbalanced asterisks
+            # Fix HTML-like tags that confuse parsers (e.g., <response clipped>)
+            if '<response clipped>' in line:
+                line = line.replace('<response clipped>', '`<response clipped>`')
+            
+            # Simplify by removing problematic emphasis/bolding that causes parsing issues
+            # Remove *property*, *method*, *classmethod*, *staticmethod*, *abstract* etc.
+            if line.startswith('####'):
+                # Remove emphasis around method/property types
+                line = re.sub(r'\*([a-zA-Z\s]+)\*', r'\1', line)
+                # Also fix patterns like "*: type*" at the end of lines
+                line = re.sub(r'\*:\s*([^*]+)\*$', r': \1', line)
+            
+            # Remove emphasis around parameter names in documentation
+            # Pattern: **parameter_name** -> parameter_name
+            if '**' in line and '–' in line:
+                # This is likely a parameter description, remove the emphasis
+                line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)
+            
+            # Simplify parameter section headers by removing emphasis
             if line.strip() == '* **Parameters:**':
-                line = line.replace('* **Parameters:**', '**Parameters:**')
+                line = line.replace('* **Parameters:**', 'Parameters:')
             elif line.strip() == '* **Returns:**':
-                line = line.replace('* **Returns:**', '**Returns:**')
+                line = line.replace('* **Returns:**', 'Returns:')
             elif line.strip() == '* **Raises:**':
-                line = line.replace('* **Raises:**', '**Raises:**')
+                line = line.replace('* **Raises:**', 'Raises:')
             elif line.strip() == '* **Yields:**':
-                line = line.replace('* **Yields:**', '**Yields:**')
+                line = line.replace('* **Yields:**', 'Yields:')
+            elif line.strip() == '**Parameters:**':
+                line = line.replace('**Parameters:**', 'Parameters:')
+            elif line.strip() == '**Returns:**':
+                line = line.replace('**Returns:**', 'Returns:')
+            elif line.strip() == '**Raises:**':
+                line = line.replace('**Raises:**', 'Raises:')
+            elif line.strip() == '**Yields:**':
+                line = line.replace('**Yields:**', 'Yields:')
             
             # Fix nested emphasis in parameter lists: "  * **param_name**" 
             # This creates unbalanced asterisks that confuse JavaScript parsers

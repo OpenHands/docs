@@ -15,13 +15,13 @@ Minimal WS client: connects, forwards events, retries on error.
 
 #### \_\_init_\_(host: [str](https://docs.python.org/3/library/stdtypes.html#str), conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str), callback: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)], api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
-#### host *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### host : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### conversation_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### conversation_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### callback *: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]*
+#### callback : [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]
 
-#### api_key *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### api_key : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
 #### start() → [None](https://docs.python.org/3/library/constants.html#None)
 
@@ -66,35 +66,35 @@ Update cached state from a ConversationStateUpdateEvent.
 
 Create a callback that updates state from ConversationStateUpdateEvent.
 
-#### *property* events *: [RemoteEventsList](#openhands.sdk.conversation.impl.remote_conversation.RemoteEventsList)*
+#### property events : [RemoteEventsList](#openhands.sdk.conversation.impl.remote_conversation.RemoteEventsList)
 
 Access to the events list.
 
-#### *property* id *: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)*
+#### property id : [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)
 
 The conversation ID.
 
-#### *property* agent_status *: [AgentExecutionStatus](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.AgentExecutionStatus)*
+#### property agent_status : [AgentExecutionStatus](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.AgentExecutionStatus)
 
 The current agent execution status.
 
-#### *property* confirmation_policy *: [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)*
+#### property confirmation_policy : [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)
 
 The confirmation policy.
 
-#### *property* activated_knowledge_skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
+#### property activated_knowledge_skills : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 List of activated knowledge skills.
 
-#### *property* agent
+#### property agent
 
 The agent configuration (fetched from remote).
 
-#### *property* workspace
+#### property workspace
 
 The working directory (fetched from remote).
 
-#### *property* persistence_dir
+#### property persistence_dir
 
 The persistence directory (fetched from remote).
 
@@ -114,35 +114,35 @@ Bases: [`BaseConversation`](https://github.com/OpenHands/software-agent-sdk/sdk.
 
 Remote conversation proxy that talks to an agent server.
 
-**Parameters:**
-  - **agent** – Agent configuration (will be sent to the server)
-  - **workspace** – The working directory for agent operations and tool execution.
-  - **conversation_id** – Optional existing conversation id to attach to
-  - **callbacks** – Optional callbacks to receive events (not yet streamed)
-  - **max_iteration_per_run** – Max iterations configured on server
-  - **stuck_detection** – Whether to enable stuck detection on server
-  - **visualize** – Whether to enable the default visualizer callback
-  - **name_for_visualization** – Optional name to prefix in panel titles to identify
+Parameters:
+  * agent – Agent configuration (will be sent to the server)
+  * workspace – The working directory for agent operations and tool execution.
+  * conversation_id – Optional existing conversation id to attach to
+  * callbacks – Optional callbacks to receive events (not yet streamed)
+  * max_iteration_per_run – Max iterations configured on server
+  * stuck_detection – Whether to enable stuck detection on server
+  * visualize – Whether to enable the default visualizer callback
+  * name_for_visualization – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
-  - **secrets** – Optional secrets to initialize the conversation with
+  * secrets – Optional secrets to initialize the conversation with
 
-#### agent *: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)*
+#### agent : [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)
 
-#### max_iteration_per_run *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### max_iteration_per_run : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### workspace *: [RemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.base.md#openhands.sdk.workspace.remote.base.RemoteWorkspace)*
+#### workspace : [RemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.base.md#openhands.sdk.workspace.remote.base.RemoteWorkspace)
 
-#### *property* id *: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)*
+#### property id : [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)
 
-#### *property* state *: [RemoteState](#openhands.sdk.conversation.impl.remote_conversation.RemoteState)*
+#### property state : [RemoteState](#openhands.sdk.conversation.impl.remote_conversation.RemoteState)
 
 Access to remote conversation state.
 
-#### *property* conversation_stats *: [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats)*
+#### property conversation_stats : [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats)
 
 Get conversation stats from remote server.
 
-#### *property* stuck_detector
+#### property stuck_detector
 
 Stuck detector for compatibility.
 Not implemented for remote conversations.
@@ -163,11 +163,11 @@ Not implemented for remote conversations.
 
 Generate a title for the conversation based on the first user message.
 
-**Parameters:**
-  - **llm** – Optional LLM to use for title generation. If provided, its usage_id
+Parameters:
+  * llm – Optional LLM to use for title generation. If provided, its usage_id
     will be sent to the server. If not provided, uses the agent’s LLM.
-  - **max_length** – Maximum length of the generated title.
-**Returns:**
+  * max_length – Maximum length of the generated title.
+Returns:
   A generated title for the conversation.
 
 #### close() → [None](https://docs.python.org/3/library/constants.html#None)

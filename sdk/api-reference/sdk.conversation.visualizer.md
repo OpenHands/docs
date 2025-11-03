@@ -19,15 +19,15 @@ Provides Rich-formatted output with panels and complete content display.
 
 Initialize the visualizer.
 
-**Parameters:**
-  - **highlight_regex** – Dictionary mapping regex patterns to Rich color styles
+Parameters:
+  * highlight_regex – Dictionary mapping regex patterns to Rich color styles
     for highlighting keywords in the visualizer.
     For example: {“Reasoning:”: “bold blue”,
     “Thought:”: “bold green”}
-  - **skip_user_messages** – If True, skip displaying user messages. Useful for
+  * skip_user_messages – If True, skip displaying user messages. Useful for
     scenarios where user input is not relevant to show.
-  - **conversation_stats** – ConversationStats object to display metrics information.
-  - **name_for_visualization** – Optional name to prefix in panel titles to identify
+  * conversation_stats – ConversationStats object to display metrics information.
+  * name_for_visualization – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
 
 #### on_event(event: [Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)) → [None](https://docs.python.org/3/library/constants.html#None)
@@ -38,11 +38,11 @@ Main event handler that displays events with Rich formatting.
 
 Create a default conversation visualizer instance.
 
-**Parameters:**
-  - **highlight_regex** – Dictionary mapping regex patterns to Rich color styles
+Parameters:
+  * highlight_regex – Dictionary mapping regex patterns to Rich color styles
     for highlighting keywords in the visualizer.
     For example: {“Reasoning:”: “bold blue”,
     “Thought:”: “bold green”}
-  - **conversation_stats** – ConversationStats object to display metrics information.
-  - **name_for_visualization** – Optional name to prefix in panel titles to identify
+  * conversation_stats – ConversationStats object to display metrics information.
+  * name_for_visualization – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.

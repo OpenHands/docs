@@ -17,7 +17,7 @@ An agent can end a conversation in two ways:
 1. By calling the finish tool
 2. By returning a text message with no tool calls
 
-**Parameters:**
-  **events** – List of conversation events to search through.
-**Returns:**
+Parameters:
+  events – List of conversation events to search through.
+Returns:
   The final response message from the agent, or empty string if not found.

@@ -20,20 +20,20 @@ Key features:
 - Delegates all other operations/properties to the selected LLM
 - Provides routing interface through select_llm() method
 
-#### router_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### router_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### llms_for_routing *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)]*
+#### llms_for_routing : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)]
 
-#### active_llm *: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### active_llm : [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### *classmethod* validate_llms_not_empty(v)
+#### classmethod validate_llms_not_empty(v)
 
 #### completion(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)], tools: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ToolBase](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolBase)] | [None](https://docs.python.org/3/library/constants.html#None) = None, return_metrics: [bool](https://docs.python.org/3/library/functions.html#bool) = False, add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, \*\*kwargs) → [LLMResponse](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm_response.md#openhands.sdk.llm.llm_response.LLMResponse)
 
 This method intercepts completion calls and routes them to the appropriate
 underlying LLM based on the routing logic implemented in select_llm().
 
-#### *abstractmethod* select_llm(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]) → [str](https://docs.python.org/3/library/stdtypes.html#str)
+#### abstractmethod select_llm(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 Select which LLM to use based on messages and events.
 
@@ -41,10 +41,10 @@ This method implements the core routing logic for the RouterLLM.
 Subclasses should analyze the provided messages to determine which
 LLM from llms_for_routing is most appropriate for handling the request.
 
-**Parameters:**
-  **messages** – List of messages in the conversation that can be used
+Parameters:
+  messages – List of messages in the conversation that can be used
   to inform the routing decision.
-**Returns:**
+Returns:
   The key/name of the LLM to use from llms_for_routing dictionary.
 
 #### \_\_getattr_\_(name)
@@ -55,7 +55,7 @@ Delegate other attributes/methods to the active LLM.
 
 String representation of the router.
 
-#### *classmethod* set_placeholder_model(data)
+#### classmethod set_placeholder_model(data)
 
 Guarantee model exists before LLM base validation runs.
 
@@ -69,90 +69,90 @@ This function is meant to behave like a BaseModel method to initialise private a
 
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
-**Parameters:**
-  - **self** – The BaseModel instance.
-  - **context** – The context.
+Parameters:
+  * self – The BaseModel instance.
+  * context – The context.
 
-#### model *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### model : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### api_key *: SecretStr | [None](https://docs.python.org/3/library/constants.html#None)*
+#### api_key : SecretStr | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### base_url *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### base_url : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### api_version *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### api_version : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### aws_access_key_id *: SecretStr | [None](https://docs.python.org/3/library/constants.html#None)*
+#### aws_access_key_id : SecretStr | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### aws_secret_access_key *: SecretStr | [None](https://docs.python.org/3/library/constants.html#None)*
+#### aws_secret_access_key : SecretStr | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### aws_region_name *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### aws_region_name : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### openrouter_site_url *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### openrouter_site_url : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### openrouter_app_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### openrouter_app_name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### num_retries *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### num_retries : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### retry_multiplier *: [float](https://docs.python.org/3/library/functions.html#float)*
+#### retry_multiplier : [float](https://docs.python.org/3/library/functions.html#float)
 
-#### retry_min_wait *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### retry_min_wait : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### retry_max_wait *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### retry_max_wait : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### timeout *: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### timeout : [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### max_message_chars *: [int](https://docs.python.org/3/library/functions.html#int)*
+#### max_message_chars : [int](https://docs.python.org/3/library/functions.html#int)
 
-#### temperature *: [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### temperature : [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### top_p *: [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### top_p : [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### top_k *: [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### top_k : [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### custom_llm_provider *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### custom_llm_provider : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### max_input_tokens *: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### max_input_tokens : [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### max_output_tokens *: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### max_output_tokens : [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### input_cost_per_token *: [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### input_cost_per_token : [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### output_cost_per_token *: [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### output_cost_per_token : [float](https://docs.python.org/3/library/functions.html#float) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### ollama_base_url *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### ollama_base_url : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### drop_params *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### drop_params : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### modify_params *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### modify_params : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### disable_vision *: [bool](https://docs.python.org/3/library/functions.html#bool) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### disable_vision : [bool](https://docs.python.org/3/library/functions.html#bool) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### disable_stop_word *: [bool](https://docs.python.org/3/library/functions.html#bool) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### disable_stop_word : [bool](https://docs.python.org/3/library/functions.html#bool) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### caching_prompt *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### caching_prompt : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### log_completions *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### log_completions : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### log_completions_folder *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### log_completions_folder : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### custom_tokenizer *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### custom_tokenizer : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### native_tool_calling *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### native_tool_calling : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### reasoning_effort *: Literal['low', 'medium', 'high', 'none'] | [None](https://docs.python.org/3/library/constants.html#None)*
+#### reasoning_effort : Literal['low', 'medium', 'high', 'none'] | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### enable_encrypted_reasoning *: [bool](https://docs.python.org/3/library/functions.html#bool)*
+#### enable_encrypted_reasoning : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-#### extended_thinking_budget *: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### extended_thinking_budget : [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### seed *: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### seed : [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### safety_settings *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]] | [None](https://docs.python.org/3/library/constants.html#None)*
+#### safety_settings : [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]] | [None](https://docs.python.org/3/library/constants.html#None)
 
-#### usage_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
+#### usage_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### metadata *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), Any]*
+#### metadata : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), Any]
 
-#### retry_listener *: SkipJsonSchema[Callable[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None)]*
+#### retry_listener : SkipJsonSchema[Callable[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None)]
 
-#### OVERRIDE_ON_SERIALIZE *: [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[str](https://docs.python.org/3/library/stdtypes.html#str), ...]*
+#### OVERRIDE_ON_SERIALIZE : [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[str](https://docs.python.org/3/library/stdtypes.html#str), ...]
