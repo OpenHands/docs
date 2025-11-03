@@ -15,7 +15,7 @@ Base schema for input action.
 
 #### kind : str
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -49,7 +49,7 @@ Base schema for output observation.
 
 #### kind : str
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -101,7 +101,7 @@ Based on Model Context Protocol (MCP) spec:
 
 #### idempotentHint : bool
 
-#### model_config : ClassVar[ConfigDict] = {'frozen': True, 'title': 'openhands.sdk.tool.tool.ToolAnnotations'}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -186,7 +186,7 @@ This can be overridden in subclasses to provide custom initialization logic
 
 #### meta : dict[str, Any] | None
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -266,7 +266,7 @@ method, and then this should be made abstract with @abstractmethod.
 
 #### meta : dict[str, Any] | None
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

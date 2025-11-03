@@ -45,7 +45,7 @@ NOTE: state will be mutated in-place.
 
 #### mcp_config : dict[str, Any]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -119,7 +119,7 @@ NOTE: state will be mutated in-place.
 
 #### mcp_config : dict[str, Any]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

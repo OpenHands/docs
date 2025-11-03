@@ -305,6 +305,15 @@ description: API reference for {module_name}
         line = line.replace('\\*', '*')
         line = line.replace('\\', '')
         
+        # Fix dictionary/object literals that cause parsing issues
+        # Pattern: = {'key': 'value', 'key2': 'value2'}
+        if ' = {' in line and '}' in line:
+            # Replace with a simple description
+            line = re.sub(r' = \{[^}]+\}', ' = (configuration object)', line)
+        
+        # Fix ClassVar patterns
+        line = re.sub(r'ClassVar\[([^\]]+)\]', r'ClassVar[\1]', line)
+        
         return line
         
     def update_navigation(self):

@@ -158,7 +158,7 @@ Get usage metrics for this LLM instance.
 
 #### model : str
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'extra': 'forbid'}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -369,7 +369,7 @@ supporting both completion mode (ModelResponse) and response API modes
 
 #### metrics *: [MetricsSnapshot]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -621,7 +621,7 @@ Bases: `BaseModel`
 
 #### llm *: [LLM]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -647,7 +647,7 @@ underlying LLM based on the routing logic implemented in select_llm().
 
 #### llms_for_routing *: dict[str, [LLM]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'extra': 'forbid'}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -689,7 +689,7 @@ Bases: `BaseContent`
 
 #### cache_prompt : bool
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'populate_by_name': True, 'validate_by_alias': True, 'validate_by_name': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

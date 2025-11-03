@@ -11,7 +11,7 @@ Bases: `Schema`, `ABC`
 
 Base schema for input action.
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -52,7 +52,7 @@ NOTE: state will be mutated in-place.
 
 #### kind : Literal['Agent']
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -116,7 +116,7 @@ NOTE: state will be mutated in-place.
 
 #### mcp_config : dict[str, Any]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -372,7 +372,7 @@ Base class for all events.
 
 #### id : str
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -580,7 +580,7 @@ Get usage metrics for this LLM instance.
 
 #### model : str
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'extra': 'forbid'}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -684,7 +684,7 @@ Base class for events that can be converted to LLM messages.
 
 Convert event stream to LLM message stream, handling multi-action batches
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1150,7 +1150,7 @@ method, and then this should be made abstract with @abstractmethod.
 
 #### mcp_tool : Tool
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1195,7 +1195,7 @@ Create an MCPToolObservation from a CallToolResult.
 
 #### kind : Literal['MCPToolObservation']
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1304,7 +1304,7 @@ This is originally the “MessageAction”, but it suppose not to be tool call.
 
 #### llm_response_id : str | None
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1328,7 +1328,7 @@ Bases: `Schema`, `ABC`
 
 Base schema for output observation.
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1366,7 +1366,7 @@ Bases: `BaseModel`
 
 #### llm *: [LLM]
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1554,7 +1554,7 @@ This is useful if you want to do some validation that requires the entire model 
 
 Bases: `BaseContent`
 
-#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'populate_by_name': True, 'validate_by_alias': True, 'validate_by_name': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1683,7 +1683,7 @@ This can be overridden in subclasses to provide custom initialization logic
 
 #### meta : dict[str, Any] | None
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -1753,7 +1753,7 @@ method, and then this should be made abstract with @abstractmethod.
 
 #### kind : Literal['ToolDefinition']
 
-#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+#### model_config : ClassVar[ConfigDict] = (configuration object)
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
