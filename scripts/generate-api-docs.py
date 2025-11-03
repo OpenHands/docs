@@ -268,7 +268,11 @@ This section contains the complete API reference documentation for the OpenHands
         if source_dir.exists():
             # Keep conf.py and index.rst, remove generated files
             for file in source_dir.glob("*.rst"):
-                if file.name not in ["index.rst"]:
+                if file.name not in ["index.rst", "conf.py"]:
+                    file.unlink()
+            # Also remove any Python cache files
+            for file in source_dir.glob("*.py"):
+                if file.name not in ["conf.py"]:
                     file.unlink()
     
     def generate(self, clean: bool = False) -> None:

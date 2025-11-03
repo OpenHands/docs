@@ -1,16 +1,13 @@
 OpenHands SDK API Reference
 ============================
 
-Welcome to the OpenHands SDK API Reference documentation. This documentation is automatically generated from the source code docstrings.
-
-The OpenHands SDK provides a comprehensive set of tools and components for building AI agents and managing conversations with language models.
+Welcome to the OpenHands SDK API reference documentation.
 
 .. toctree::
    :maxdepth: 2
-   :caption: API Reference:
-   :glob:
+   :caption: Contents:
 
-   sdk*
+   modules
 
 Indices and tables
 ==================
