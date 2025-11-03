@@ -7,12 +7,7 @@ description: API reference for openhands.sdk.context.condenser
 
 <a id="module-openhands.sdk.context.condenser"></a>
 
-### *class* openhands.sdk.context.condenser.CondenserBase
-
-**Parameters:**
-
-- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser'] = 'LLMSummarizingCondenser'`
-
+### *class* openhands.sdk.context.condenser.CondenserBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser'] = 'LLMSummarizingCondenser')
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -30,12 +25,7 @@ If the condenser returns a Condensation instead of a View, the agent should
 return Condensation.action instead of producing its own action. On the next agent
 step the condenser will use that condensation event to produce a new View.
 
-#### *abstractmethod* condense
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
-
+#### *abstractmethod* condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
 
 Condense a sequence of events into a potentially smaller list.
 
@@ -43,9 +33,9 @@ New condenser strategies should override this method to implement their own
 condensation logic. Call self.add_metadata in the implementation to record any
 relevant per-condensation diagnostic information.
 
-* **Parameters:**
+**Parameters:**
   **view** – A view of the history containing all events that should be condensed.
-* **Returns:**
+**Returns:**
   A condensed view of the events or an event indicating
   the history has been condensed.
 * **Return type:**
@@ -60,7 +50,7 @@ CondensationRequest event is added to the history. If False, the condenser will
 only be triggered when the agent’s own logic decides to do so (e.g. context
 window exceeded).
 
-* **Returns:**
+**Returns:**
   True if the condenser handles explicit condensation requests, False
   otherwise.
 * **Return type:**
@@ -85,12 +75,7 @@ Condensation object from the View object. This will be added to the event
 history which should – when given to get_view – produce the condensed View to
 be passed to the LLM.
 
-#### condense
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
-
+#### condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
 
 Condense a sequence of events into a potentially smaller list.
 
@@ -98,20 +83,15 @@ New condenser strategies should override this method to implement their own
 condensation logic. Call self.add_metadata in the implementation to record any
 relevant per-condensation diagnostic information.
 
-* **Parameters:**
+**Parameters:**
   **view** – A view of the history containing all events that should be condensed.
-* **Returns:**
+**Returns:**
   A condensed view of the events or an event indicating
   the history has been condensed.
 * **Return type:**
   [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.md#openhands.sdk.event.Condensation)
 
-#### *abstractmethod* get_condensation
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
-
+#### *abstractmethod* get_condensation(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
 
 Get the condensation from a view.
 
@@ -119,12 +99,7 @@ Get the condensation from a view.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *abstractmethod* should_condense
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [bool](https://docs.python.org/3/library/functions.html#bool`
-
+#### *abstractmethod* should_condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [bool](https://docs.python.org/3/library/functions.html#bool)
 
 Determine if a view should be condensed.
 
@@ -136,12 +111,7 @@ Simple condenser that returns a view un-manipulated.
 
 Primarily intended for testing purposes.
 
-#### condense
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
-
+#### condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
 
 Condense a sequence of events into a potentially smaller list.
 
@@ -149,9 +119,9 @@ New condenser strategies should override this method to implement their own
 condensation logic. Call self.add_metadata in the implementation to record any
 relevant per-condensation diagnostic information.
 
-* **Parameters:**
+**Parameters:**
   **view** – A view of the history containing all events that should be condensed.
-* **Returns:**
+**Returns:**
   A condensed view of the events or an event indicating
   the history has been condensed.
 * **Return type:**
@@ -163,13 +133,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser']*
 
-### *class* openhands.sdk.context.condenser.PipelineCondenser
-
-**Parameters:**
-
-- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser'`
-- `condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)]`
-
+### *class* openhands.sdk.context.condenser.PipelineCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser', condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)])
 
 Bases: [`CondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)
 
@@ -208,12 +172,7 @@ For example:
 
 > assert result == other_result
 
-#### condense
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
-
+#### condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
 
 Condense a sequence of events into a potentially smaller list.
 
@@ -221,9 +180,9 @@ New condenser strategies should override this method to implement their own
 condensation logic. Call self.add_metadata in the implementation to record any
 relevant per-condensation diagnostic information.
 
-* **Parameters:**
+**Parameters:**
   **view** – A view of the history containing all events that should be condensed.
-* **Returns:**
+**Returns:**
   A condensed view of the events or an event indicating
   the history has been condensed.
 * **Return type:**
@@ -238,7 +197,7 @@ CondensationRequest event is added to the history. If False, the condenser will
 only be triggered when the agent’s own logic decides to do so (e.g. context
 window exceeded).
 
-* **Returns:**
+**Returns:**
   True if the condenser handles explicit condensation requests, False
   otherwise.
 * **Return type:**
@@ -248,35 +207,17 @@ window exceeded).
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### condensers *: [list]
-
-**Parameters:**
-
-- `https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase`
-
+#### condensers *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)]*
 
 The list of condensers to apply in order.
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser']*
 
-### *class* openhands.sdk.context.condenser.LLMSummarizingCondenser
-
-**Parameters:**
-
-- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser'`
-- `llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)`
-- `max_size: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Gt(gt=0)] = 120`
-- `keep_first: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Ge(ge=0)] = 4`
-
+### *class* openhands.sdk.context.condenser.LLMSummarizingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser', llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM), max_size: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Gt(gt=0)] = 120, keep_first: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Ge(ge=0)] = 4)
 
 Bases: [`RollingCondenser`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.RollingCondenser)
 
-#### get_condensation
-
-**Parameters:**
-
-- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
-
+#### get_condensation(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
 
 Get the condensation from a view.
 
@@ -289,7 +230,7 @@ CondensationRequest event is added to the history. If False, the condenser will
 only be triggered when the agent’s own logic decides to do so (e.g. context
 window exceeded).
 
-* **Returns:**
+**Returns:**
   True if the condenser handles explicit condensation requests, False
   otherwise.
 * **Return type:**

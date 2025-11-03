@@ -13,14 +13,7 @@ This module provides the LLMResponse type that wraps LLM completion responses
 with OpenHands-native types, eliminating the need for consumers to work directly
 with LiteLLM types.
 
-### *class* openhands.sdk.llm.llm_response.LLMResponse
-
-**Parameters:**
-
-- `message: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)`
-- `metrics: [MetricsSnapshot](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.MetricsSnapshot)`
-- `raw_response: ModelResponse | ResponsesAPIResponse`
-
+### *class* openhands.sdk.llm.llm_response.LLMResponse(, message: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message), metrics: [MetricsSnapshot](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.MetricsSnapshot), raw_response: ModelResponse | ResponsesAPIResponse)
 
 Bases: `BaseModel`
 
@@ -70,5 +63,5 @@ This property provides a clean interface to access the response ID,
 supporting both completion mode (ModelResponse) and response API modes
 (ResponsesAPIResponse).
 
-* **Returns:**
+**Returns:**
   The response ID from the LLM response

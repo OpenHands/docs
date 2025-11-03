@@ -7,14 +7,7 @@ description: API reference for openhands.sdk.workspace.remote.remote_workspace_m
 
 <a id="module-openhands.sdk.workspace.remote.remote_workspace_mixin"></a>
 
-### *class* openhands.sdk.workspace.remote.remote_workspace_mixin.RemoteWorkspaceMixin
-
-**Parameters:**
-
-- `host: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None`
-- `working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-
+### *class* openhands.sdk.workspace.remote.remote_workspace_mixin.RemoteWorkspaceMixin(, host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: `BaseModel`
 

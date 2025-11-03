@@ -19,12 +19,7 @@ when generating actions, similar to OpenHands’ LLMRiskAnalyzer.
 It provides a lightweight security analysis approach that leverages the LLM’s
 understanding of action context and potential risks.
 
-#### security_risk
-
-**Parameters:**
-
-- `action: [ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent)) → [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk`
-
+#### security_risk(action: [ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent)) → [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk)
 
 Evaluate security risk based on LLM-provided assessment.
 

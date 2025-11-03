@@ -21,23 +21,11 @@ Base schema for input action / output observation.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *classmethod* to_mcp_schema
-
-**Parameters:**
-
-- `) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
-
+#### *classmethod* to_mcp_schema() → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
 Convert to JSON schema format compatible with MCP.
 
-#### *classmethod* from_mcp_schema
-
-**Parameters:**
-
-- `model_name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]) → [type](https://docs.python.org/3/library/functions.html#type`
-
+#### *classmethod* from_mcp_schema(model_name: [str](https://docs.python.org/3/library/stdtypes.html#str), schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]) → [type](https://docs.python.org/3/library/functions.html#type)[S]
 
 Create a Schema subclass from an MCP/JSON Schema object.
 
@@ -65,23 +53,13 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.tool.schema.Observation
-
-**Parameters:**
-
-- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation'`
-
+### *class* openhands.sdk.tool.schema.Observation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation')
 
 Bases: [`Schema`](#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
 Base schema for output observation.
 
-#### *abstract property* to_llm_content *: [Sequence]
-
-**Parameters:**
-
-- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent`
-
+#### *abstract property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
 
 Get the observation string to show to the agent.
 

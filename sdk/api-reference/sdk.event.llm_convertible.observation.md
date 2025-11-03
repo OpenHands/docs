@@ -7,18 +7,7 @@ description: API reference for openhands.sdk.event.llm_convertible.observation
 
 <a id="module-openhands.sdk.event.llm_convertible.observation"></a>
 
-### *class* openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent
-
-**Parameters:**
-
-- `\*`
-- `kind: ~typing.Literal['AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation'] = 'AgentErrorEvent'`
-- `id: str = `<factory>``
-- `timestamp: str = `<factory>``
-- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
-- `tool_name: str`
-- `tool_call_id: str`
-
+### *class* openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent(\*, kind: ~typing.Literal['AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str)
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -42,20 +31,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.event.llm_convertible.observation.ObservationEvent
-
-**Parameters:**
-
-- `\*`
-- `kind: ~typing.Literal['ObservationEvent'] = 'ObservationEvent'`
-- `id: str = `<factory>``
-- `timestamp: str = `<factory>``
-- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
-- `tool_name: str`
-- `tool_call_id: str`
-- `observation: ~openhands.sdk.tool.schema.Observation`
-- `action_id: str`
-
+### *class* openhands.sdk.event.llm_convertible.observation.ObservationEvent(\*, kind: ~typing.Literal['ObservationEvent'] = 'ObservationEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, observation: ~openhands.sdk.tool.schema.Observation, action_id: str)
 
 Bases: [`ObservationBaseEvent`](#openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent)
 
@@ -89,20 +65,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.event.llm_convertible.observation.UserRejectObservation
-
-**Parameters:**
-
-- `\*`
-- `kind: ~typing.Literal['UserRejectObservation'] = 'UserRejectObservation'`
-- `id: str = `<factory>``
-- `timestamp: str = `<factory>``
-- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
-- `tool_name: str`
-- `tool_call_id: str`
-- `rejection_reason: str = 'User rejected the action'`
-- `action_id: str`
-
+### *class* openhands.sdk.event.llm_convertible.observation.UserRejectObservation(\*, kind: ~typing.Literal['UserRejectObservation'] = 'UserRejectObservation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, rejection_reason: str = 'User rejected the action', action_id: str)
 
 Bases: [`ObservationBaseEvent`](#openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent)
 
@@ -138,19 +101,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.event.llm_convertible.observation.AgentErrorEvent
-
-**Parameters:**
-
-- `\*`
-- `kind: ~typing.Literal['AgentErrorEvent'] = 'AgentErrorEvent'`
-- `id: str = `<factory>``
-- `timestamp: str = `<factory>``
-- `source: ~typing.Literal['agent', 'user', 'environment'] = 'agent'`
-- `tool_name: str`
-- `tool_call_id: str`
-- `error: str`
-
+### *class* openhands.sdk.event.llm_convertible.observation.AgentErrorEvent(\*, kind: ~typing.Literal['AgentErrorEvent'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', tool_name: str, tool_call_id: str, error: str)
 
 Bases: [`ObservationBaseEvent`](#openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent)
 

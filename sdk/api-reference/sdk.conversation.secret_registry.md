@@ -29,54 +29,32 @@ Otherwise secrets are redacted.
 Additionally, it tracks the latest exported values to enable consistent masking
 even when callable secrets fail on subsequent calls.
 
-#### secret_sources *: [dict]
+#### secret_sources *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)]*
 
-**Parameters:**
-
-- `https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `[SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource`
-
-
-#### update_secrets
-
-**Parameters:**
-
-- `secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)]) → [None](https://docs.python.org/3/library/constants.html#None`
-
+#### update_secrets(secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)]) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Add or update secrets in the manager.
 
-* **Parameters:**
+**Parameters:**
   **secrets** – Dictionary mapping secret keys to either string values
   or callable functions that return string values
 
-#### find_secrets_in_text
-
-**Parameters:**
-
-- `text: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [set](https://docs.python.org/3/library/stdtypes.html#set)[[str](https://docs.python.org/3/library/stdtypes.html#str`
-
+#### find_secrets_in_text(text: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [set](https://docs.python.org/3/library/stdtypes.html#set)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 Find all secret keys mentioned in the given text.
 
-* **Parameters:**
+**Parameters:**
   **text** – The text to search for secret keys
-* **Returns:**
+**Returns:**
   Set of secret keys found in the text
 
-#### get_secrets_as_env_vars
-
-**Parameters:**
-
-- `command: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `[str](https://docs.python.org/3/library/stdtypes.html#str`
-
+#### get_secrets_as_env_vars(command: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]
 
 Get secrets that should be exported as environment variables for a command.
 
-* **Parameters:**
+**Parameters:**
   **command** – The bash command to check for secret references
-* **Returns:**
+**Returns:**
   Dictionary of environment variables to export (key -> value)
 
 #### mask_secrets_in_output(text: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
@@ -86,9 +64,9 @@ Mask secret values in the given text.
 This method uses both the current exported values and attempts to get
 fresh values from callables to ensure comprehensive masking.
 
-* **Parameters:**
+**Parameters:**
   **text** – The text to mask secrets in
-* **Returns:**
+**Returns:**
   Text with secret values replaced by ``<secret-hidden>``
 
 #### model_config  : ClassVar[ConfigDict]*  = \{\}*

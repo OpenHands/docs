@@ -305,8 +305,20 @@ description: API reference for {title}
                 # This is a property/attribute definition with unbalanced asterisks
                 line = line.replace('*:', ' :')
             
+            # Fix Sphinx-generated parameter lists that cause acorn parsing errors
+            # Pattern: "* **Parameters:**" creates unbalanced asterisks
+            if line.strip() == '* **Parameters:**':
+                line = line.replace('* **Parameters:**', '**Parameters:**')
+            elif line.strip() == '* **Returns:**':
+                line = line.replace('* **Returns:**', '**Returns:**')
+            elif line.strip() == '* **Raises:**':
+                line = line.replace('* **Raises:**', '**Raises:**')
+            elif line.strip() == '* **Yields:**':
+                line = line.replace('* **Yields:**', '**Yields:**')
+            
             # Format long class/function signatures for better readability
-            line = self.format_long_signatures(line)
+            # Disabled custom formatting to rely on Sphinx's native output
+            # line = self.format_long_signatures(line)
             
             cleaned_lines.append(line)
         

@@ -7,13 +7,7 @@ description: API reference for openhands.sdk.workspace.base
 
 <a id="module-openhands.sdk.workspace.base"></a>
 
-### *class* openhands.sdk.workspace.base.BaseWorkspace
-
-**Parameters:**
-
-- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace'`
-- `working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-
+### *class* openhands.sdk.workspace.base.BaseWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -31,120 +25,89 @@ allowing safe resource management:
 
 Enter the workspace context.
 
-* **Returns:**
+**Returns:**
   Self for use in with statements
 
-#### \_\_exit_\_
-
-**Parameters:**
-
-- `exc_type: [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
-- `exc_val: [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
-- `exc_tb: [Any](https://docs.python.org/3/library/typing.html#typing.Any)) → [None](https://docs.python.org/3/library/constants.html#None`
-
+#### \_\_exit_\_(exc_type: [Any](https://docs.python.org/3/library/typing.html#typing.Any), exc_val: [Any](https://docs.python.org/3/library/typing.html#typing.Any), exc_tb: [Any](https://docs.python.org/3/library/typing.html#typing.Any)) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Exit the workspace context and cleanup resources.
 
 Default implementation performs no cleanup. Subclasses should override
 to add cleanup logic (e.g., stopping containers, closing connections).
 
-* **Parameters:**
+**Parameters:**
   * **exc_type** – Exception type if an exception occurred
   * **exc_val** – Exception value if an exception occurred
   * **exc_tb** – Exception traceback if an exception occurred
 
-#### *abstractmethod* execute_command
-
-**Parameters:**
-
-- `command: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None`
-- `timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult`
-
+#### *abstractmethod* execute_command(command: [str](https://docs.python.org/3/library/stdtypes.html#str), cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult)
 
 Execute a bash command on the system.
 
-* **Parameters:**
+**Parameters:**
   * **command** – The bash command to execute
   * **cwd** – Working directory for the command (optional)
   * **timeout** – Timeout in seconds (defaults to 30.0)
-* **Returns:**
+**Returns:**
   Result containing stdout, stderr, exit_code, and other
   : metadata
 * **Return type:**
   [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.CommandResult)
-* **Raises:**
+**Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If command execution fails
 
-#### *abstractmethod* file_upload
-
-**Parameters:**
-
-- `source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)`
-- `destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult`
-
+#### *abstractmethod* file_upload(source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult)
 
 Upload a file to the system.
 
-* **Parameters:**
+**Parameters:**
   * **source_path** – Path to the source file
   * **destination_path** – Path where the file should be uploaded
-* **Returns:**
+**Returns:**
   Result containing success status and metadata
 * **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
-* **Raises:**
+**Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If file upload fails
 
-#### *abstractmethod* file_download
-
-**Parameters:**
-
-- `source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)`
-- `destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult`
-
+#### *abstractmethod* file_download(source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult)
 
 Download a file from the system.
 
-* **Parameters:**
+**Parameters:**
   * **source_path** – Path to the source file on the system
   * **destination_path** – Path where the file should be downloaded
-* **Returns:**
+**Returns:**
   Result containing success status and metadata
 * **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
-* **Raises:**
+**Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If file download fails
 
-#### *abstractmethod* git_changes
-
-**Parameters:**
-
-- `path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [list](https://docs.python.org/3/library/stdtypes.html#list`
-
+#### *abstractmethod* git_changes(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
 
 Get the git changes for the repository at the path given.
 
-* **Parameters:**
+**Parameters:**
   **path** – Path to the git repository
-* **Returns:**
+**Returns:**
   List of changes
 * **Return type:**
   [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
-* **Raises:**
+**Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting changes failed
 
 #### *abstractmethod* git_diff(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → GitDiff
 
 Get the git diff for the file at the path given.
 
-* **Parameters:**
+**Parameters:**
   **path** – Path to the file
-* **Returns:**
+**Returns:**
   Git diff
 * **Return type:**
   GitDiff
-* **Raises:**
+**Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting diff failed
 
 #### model_config  : ClassVar[ConfigDict]*  = \{\}*

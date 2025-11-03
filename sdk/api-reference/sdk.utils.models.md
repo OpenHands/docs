@@ -38,7 +38,7 @@ This is useful if you want to do some validation that requires the entire model 
 
 Validate a pydantic model instance.
 
-* **Parameters:**
+**Parameters:**
   * **obj** – The object to validate.
   * **strict** – Whether to enforce types strictly.
   * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
@@ -47,9 +47,9 @@ Validate a pydantic model instance.
   * **context** – Additional context to pass to the validator.
   * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
   * **by_name** – Whether to use the field’s name when validating against the provided input data.
-* **Raises:**
+**Raises:**
   **ValidationError** – If the object could not be validated.
-* **Returns:**
+**Returns:**
   The validated model instance.
 
 #### *classmethod* model_validate_json(\*args, \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
@@ -59,7 +59,7 @@ Validate a pydantic model instance.
 
 Validate the given JSON data against the Pydantic model.
 
-* **Parameters:**
+**Parameters:**
   * **json_data** – The JSON data to validate.
   * **strict** – Whether to enforce types strictly.
   * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
@@ -67,23 +67,16 @@ Validate the given JSON data against the Pydantic model.
   * **context** – Extra variables to pass to the validator.
   * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
   * **by_name** – Whether to use the field’s name when validating against the provided input data.
-* **Returns:**
+**Returns:**
   The validated Pydantic model.
-* **Raises:**
+**Raises:**
   **ValidationError** – If json_data is not a JSON string or the object could not be validated.
 
-#### *classmethod* model_json_schema
-
-**Parameters:**
-
-- `\*args`
-- `\*\*kwargs) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
-
+#### *classmethod* model_json_schema(\*args, \*\*kwargs) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
 Generates a JSON schema for a model class.
 
-* **Parameters:**
+**Parameters:**
   * **by_alias** – Whether to use attribute aliases or not.
   * **ref_template** – The reference template.
   * **union_format** – 
@@ -99,7 +92,7 @@ Generates a JSON schema for a model class.
   * **schema_generator** – To override the logic used to generate the JSON schema, as a subclass of
     GenerateJsonSchema with your desired modifications
   * **mode** – The mode in which to generate the schema.
-* **Returns:**
+**Returns:**
   The JSON schema for the given model class.
 
 #### model_dump_json(\*\*kwargs)
@@ -109,7 +102,7 @@ Generates a JSON schema for a model class.
 
 Generates a JSON representation of the model using Pydantic’s to_json method.
 
-* **Parameters:**
+**Parameters:**
   * **indent** – Indentation to use in the JSON output. If None is passed, the output will be compact.
   * **ensure_ascii** – If True, the output is guaranteed to have all incoming non-ASCII characters escaped.
     If False (the default), these characters will be output as-is.
@@ -129,7 +122,7 @@ Generates a JSON representation of the model using Pydantic’s to_json method.
   * **fallback** – A function to call when an unknown value is encountered. If not provided,
     a [PydanticSerializationError][pydantic_core.PydanticSerializationError] error is raised.
   * **serialize_as_any** – Whether to serialize fields with duck-typing serialization behavior.
-* **Returns:**
+**Returns:**
   A JSON string representation of the model.
 
 #### *classmethod* \_\_init_subclass_\_(\*\*kwargs)
@@ -141,12 +134,7 @@ to rebuild everything
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.utils.models.DiscriminatedUnionMixin
-
-**Parameters:**
-
-- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent', 'LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser', 'LookupSecret', 'StaticSecret', 'Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent', 'MCPToolAction', 'MCPToolObservation', 'MCPToolDefinition', 'AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm', 'LLMSecurityAnalyzer', 'FinishAction', 'FinishObservation', 'ThinkAction', 'ThinkObservation', 'Schema', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]', 'LocalWorkspace', 'RemoteWorkspace'] = 'Agent'`
-
+### *class* openhands.sdk.utils.models.DiscriminatedUnionMixin(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent', 'LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser', 'LookupSecret', 'StaticSecret', 'Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent', 'MCPToolAction', 'MCPToolObservation', 'MCPToolDefinition', 'AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm', 'LLMSecurityAnalyzer', 'FinishAction', 'FinishObservation', 'ThinkAction', 'ThinkObservation', 'Schema', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]', 'LocalWorkspace', 'RemoteWorkspace'] = 'Agent')
 
 Bases: [`OpenHandsModel`](#openhands.sdk.utils.models.OpenHandsModel), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -178,12 +166,12 @@ Try to rebuild the pydantic-core schema for the model.
 This may be necessary when one of the annotations is a ForwardRef which could not be resolved during
 the initial attempt to build the schema, and automatic rebuilding fails.
 
-* **Parameters:**
+**Parameters:**
   * **force** – Whether to force the rebuilding of the model schema, defaults to False.
   * **raise_errors** – Whether to raise errors, defaults to True.
   * **\_parent_namespace_depth** – The depth level of the parent namespace, defaults to 2.
   * **\_types_namespace** – The types namespace, defaults to None.
-* **Returns:**
+**Returns:**
   Returns None if the schema is already “complete” and rebuilding was not required.
   If rebuilding \_was_ required, returns True if rebuilding was successful, otherwise False.
 
@@ -196,7 +184,7 @@ non absract subclasses
 
 Validate a pydantic model instance.
 
-* **Parameters:**
+**Parameters:**
   * **obj** – The object to validate.
   * **strict** – Whether to enforce types strictly.
   * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
@@ -205,25 +193,19 @@ Validate a pydantic model instance.
   * **context** – Additional context to pass to the validator.
   * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
   * **by_name** – Whether to use the field’s name when validating against the provided input data.
-* **Raises:**
+**Raises:**
   **ValidationError** – If the object could not be validated.
-* **Returns:**
+**Returns:**
   The validated model instance.
 
-#### *classmethod* model_validate_json
-
-**Parameters:**
-
-- `json_data: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes) | [bytearray](https://docs.python.org/3/library/stdtypes.html#bytearray)`
-- `\*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self`
-
+#### *classmethod* model_validate_json(json_data: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes) | [bytearray](https://docs.python.org/3/library/stdtypes.html#bytearray), \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
 
 !!! abstract “Usage Documentation”
 : [JSON Parsing](../concepts/json.md#json-parsing)
 
 Validate the given JSON data against the Pydantic model.
 
-* **Parameters:**
+**Parameters:**
   * **json_data** – The JSON data to validate.
   * **strict** – Whether to enforce types strictly.
   * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
@@ -231,9 +213,9 @@ Validate the given JSON data against the Pydantic model.
   * **context** – Extra variables to pass to the validator.
   * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
   * **by_name** – Whether to use the field’s name when validating against the provided input data.
-* **Returns:**
+**Returns:**
   The validated Pydantic model.
-* **Raises:**
+**Raises:**
   **ValidationError** – If json_data is not a JSON string or the object could not be validated.
 
 #### model_config  : ClassVar[ConfigDict]*  = \{\}*

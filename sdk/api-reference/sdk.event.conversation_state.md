@@ -9,18 +9,7 @@ description: API reference for openhands.sdk.event.conversation_state
 
 Events related to conversation state updates.
 
-### *class* openhands.sdk.event.conversation_state.ConversationStateUpdateEvent
-
-**Parameters:**
-
-- `\*`
-- `kind: ~typing.Literal['ConversationStateUpdateEvent'] = 'ConversationStateUpdateEvent'`
-- `id: str = `<factory>``
-- `timestamp: str = `<factory>``
-- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
-- `key: str = `<factory>``
-- `value: ~typing.Any = `<factory>``
-
+### *class* openhands.sdk.event.conversation_state.ConversationStateUpdateEvent(\*, kind: ~typing.Literal['ConversationStateUpdateEvent'] = 'ConversationStateUpdateEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', key: str = `<factory>`, value: ~typing.Any = `<factory>`)
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 
@@ -42,21 +31,16 @@ to ensure compatibility with websocket transmission.
 
 #### *classmethod* validate_value(value, info)
 
-#### *classmethod* from_conversation_state
-
-**Parameters:**
-
-- `state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.ConversationState)) → [ConversationStateUpdateEvent](#openhands.sdk.event.conversation_state.ConversationStateUpdateEvent`
-
+#### *classmethod* from_conversation_state(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.ConversationState)) → [ConversationStateUpdateEvent](#openhands.sdk.event.conversation_state.ConversationStateUpdateEvent)
 
 Create a state update event from a ConversationState object.
 
 This creates an event containing a snapshot of important state fields.
 
-* **Parameters:**
+**Parameters:**
   * **state** – The ConversationState to serialize
   * **conversation_id** – The conversation ID for the event
-* **Returns:**
+**Returns:**
   A ConversationStateUpdateEvent with serialized state data
 
 #### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*

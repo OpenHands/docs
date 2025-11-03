@@ -7,20 +7,7 @@ description: API reference for openhands.sdk.event.llm_convertible.message
 
 <a id="module-openhands.sdk.event.llm_convertible.message"></a>
 
-### *class* openhands.sdk.event.llm_convertible.message.MessageEvent
-
-**Parameters:**
-
-- `\*`
-- `kind: ~typing.Literal['MessageEvent'] = 'MessageEvent'`
-- `id: str = `<factory>``
-- `timestamp: str = `<factory>``
-- `source: ~typing.Literal['agent', 'user', 'environment']`
-- `llm_message: ~openhands.sdk.llm.message.Message`
-- `llm_response_id: str | None = None`
-- `activated_skills: list[str] = `<factory>``
-- `extended_content: list[~openhands.sdk.llm.message.TextContent] = `<factory>``
-
+### *class* openhands.sdk.event.llm_convertible.message.MessageEvent(\*, kind: ~typing.Literal['MessageEvent'] = 'MessageEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'], llm_message: ~openhands.sdk.llm.message.Message, llm_response_id: str | None = None, activated_skills: list[str] = `<factory>`, extended_content: list[~openhands.sdk.llm.message.TextContent] = `<factory>`)
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -40,21 +27,11 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### activated_skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-#### extended_content *: [list]
-
-**Parameters:**
-
-- `https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent`
-
+#### extended_content *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)]*
 
 #### *property* reasoning_content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### *property* thinking_blocks *: [Sequence]
-
-**Parameters:**
-
-- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock`
-
+#### *property* thinking_blocks *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.RedactedThinkingBlock)]*
 
 Return the Anthropic thinking blocks from the LLM message.
 

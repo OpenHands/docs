@@ -7,13 +7,7 @@ description: API reference for openhands.sdk.context.skills.types
 
 <a id="module-openhands.sdk.context.skills.types"></a>
 
-### *class* openhands.sdk.context.skills.types.InputMetadata
-
-**Parameters:**
-
-- `name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `description: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-
+### *class* openhands.sdk.context.skills.types.InputMetadata(, name: [str](https://docs.python.org/3/library/stdtypes.html#str), description: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: `BaseModel`
 
@@ -27,14 +21,7 @@ Metadata for task skill inputs.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.skills.types.SkillKnowledge
-
-**Parameters:**
-
-- `name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `trigger: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `content: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-
+### *class* openhands.sdk.context.skills.types.SkillKnowledge(, name: [str](https://docs.python.org/3/library/stdtypes.html#str), trigger: [str](https://docs.python.org/3/library/stdtypes.html#str), content: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: `BaseModel`
 
@@ -70,15 +57,7 @@ to get detailed skill information.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.skills.types.SkillContentResponse
-
-**Parameters:**
-
-- `content: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `path: [str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]`
-- `git_provider: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None`
-
+### *class* openhands.sdk.context.skills.types.SkillContentResponse(, content: [str](https://docs.python.org/3/library/stdtypes.html#str), path: [str](https://docs.python.org/3/library/stdtypes.html#str), triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)], git_provider: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: `BaseModel`
 

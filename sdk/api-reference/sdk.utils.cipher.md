@@ -22,19 +22,9 @@ Simple encryption utility for preventing accidental secret disclosure.
 
 #### \_\_init_\_(secret_key: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
-#### encrypt
+#### encrypt(secret: SecretStr | [None](https://docs.python.org/3/library/constants.html#None)) → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-**Parameters:**
-
-- `secret: SecretStr | [None](https://docs.python.org/3/library/constants.html#None)) → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None`
-
-
-#### decrypt
-
-**Parameters:**
-
-- `secret: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)) → SecretStr | [None](https://docs.python.org/3/library/constants.html#None`
-
+#### decrypt(secret: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)) → SecretStr | [None](https://docs.python.org/3/library/constants.html#None)
 
 Decrypt a secret value, returning None if decryption fails.
 

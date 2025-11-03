@@ -20,26 +20,18 @@ timeout support, and thread safety.
 
 #### \_\_init_\_()
 
-#### run_async
-
-**Parameters:**
-
-- `awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
-- `\*args`
-- `timeout: [float](https://docs.python.org/3/library/functions.html#float) = 300.0`
-- `\*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any`
-
+#### run_async(awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any), \*args, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 300.0, \*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any)
 
 Run a coroutine or async function on the background loop from sync code.
 
-* **Parameters:**
+**Parameters:**
   * **awaitable_or_fn** – Coroutine or async function to execute
   * **\*args** – Arguments to pass to the function
   * **timeout** – Timeout in seconds (default: 300)
   * **\*\*kwargs** – Keyword arguments to pass to the function
-* **Returns:**
+**Returns:**
   The result of the async operation
-* **Raises:**
+**Raises:**
   * [**TypeError**](https://docs.python.org/3/library/exceptions.html#TypeError) – If awaitable_or_fn is not a coroutine or async function
   * [**asyncio.TimeoutError**](https://docs.python.org/3/library/asyncio-exceptions.html#asyncio.TimeoutError) – If the operation times out
 

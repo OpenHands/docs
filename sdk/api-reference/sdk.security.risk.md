@@ -36,13 +36,7 @@ Get the color for displaying this risk level in Rich text.
 
 Return Rich Text representation of this risk level.
 
-#### is_riskier
-
-**Parameters:**
-
-- `other: [SecurityRisk](#openhands.sdk.security.risk.SecurityRisk)`
-- `reflexive: [bool](https://docs.python.org/3/library/functions.html#bool) = True) → [bool](https://docs.python.org/3/library/functions.html#bool`
-
+#### is_riskier(other: [SecurityRisk](#openhands.sdk.security.risk.SecurityRisk), reflexive: [bool](https://docs.python.org/3/library/functions.html#bool) = True) → [bool](https://docs.python.org/3/library/functions.html#bool)
 
 Check if this risk level is riskier than another.
 
@@ -62,8 +56,8 @@ risk levels to be riskier than themselves. That is:
 
 This can be disabled by setting the reflexive parameter to False.
 
-* **Parameters:**
+**Parameters:**
   * **other** ([*SecurityRisk*](#openhands.sdk.security.risk.SecurityRisk)) – The other risk level to compare against.
   * **reflexive** ([*bool*](https://docs.python.org/3/library/functions.html#bool)) – Whether the relationship is reflexive.
-* **Raises:**
+**Raises:**
   [**ValueError**](https://docs.python.org/3/library/exceptions.html#ValueError) – If either risk level is UNKNOWN.

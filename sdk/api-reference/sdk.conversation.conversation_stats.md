@@ -13,21 +13,9 @@ Bases: `BaseModel`
 
 Track per-LLM usage metrics observed during conversations.
 
-#### usage_to_metrics *: [dict]
+#### usage_to_metrics *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics)]*
 
-**Parameters:**
-
-- `https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `[Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics`
-
-
-#### *property* service_to_metrics *: [dict]
-
-**Parameters:**
-
-- `https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
-- `[Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics`
-
+#### *property* service_to_metrics *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics)]*
 
 #### get_combined_metrics() → [Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics)
 
@@ -45,7 +33,7 @@ This function is meant to behave like a BaseModel method to initialise private a
 
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
-* **Parameters:**
+**Parameters:**
   * **self** – The BaseModel instance.
   * **context** – The context.
 

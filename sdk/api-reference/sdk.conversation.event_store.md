@@ -7,23 +7,11 @@ description: API reference for openhands.sdk.conversation.event_store
 
 <a id="module-openhands.sdk.conversation.event_store"></a>
 
-### *class* openhands.sdk.conversation.event_store.EventLog
-
-**Parameters:**
-
-- `fs: [FileStore](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore)`
-- `dir_path: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'events'`
-
+### *class* openhands.sdk.conversation.event_store.EventLog(fs: [FileStore](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore), dir_path: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'events')
 
 Bases: [`EventsListBase`](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.events_list_base.md#openhands.sdk.conversation.events_list_base.EventsListBase)
 
-#### \_\_init_\_
-
-**Parameters:**
-
-- `fs: [FileStore](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore)`
-- `dir_path: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'events') → [None](https://docs.python.org/3/library/constants.html#None`
-
+#### \_\_init_\_(fs: [FileStore](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore), dir_path: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'events') → [None](https://docs.python.org/3/library/constants.html#None)
 
 #### get_index(event_id: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [int](https://docs.python.org/3/library/functions.html#int)
 
