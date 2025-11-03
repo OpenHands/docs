@@ -11,7 +11,7 @@ description: API reference for openhands.sdk.tool.schema
 
 Map JSON schema types to Python types.
 
-### *class* openhands.sdk.tool.schema.Schema(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Schema'] = 'Schema')
+### class openhands.sdk.tool.schema.Schema(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Schema'] = 'Schema')
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin)
 
@@ -34,7 +34,7 @@ so explicit nulls are allowed.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Schema']
 
-### *class* openhands.sdk.tool.schema.Action(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction', 'FinishAction', 'ThinkAction'] = 'MCPToolAction')
+### class openhands.sdk.tool.schema.Action(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction', 'FinishAction', 'ThinkAction'] = 'MCPToolAction')
 
 Bases: [`Schema`](#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -53,7 +53,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-### *class* openhands.sdk.tool.schema.Observation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation')
+### class openhands.sdk.tool.schema.Observation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation')
 
 Bases: [`Schema`](#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 

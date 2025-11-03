@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.condenser
 
 <a id="module-openhands.sdk.context.condenser"></a>
 
-### *class* openhands.sdk.context.condenser.CondenserBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser'] = 'LLMSummarizingCondenser')
+### class openhands.sdk.context.condenser.CondenserBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser'] = 'LLMSummarizingCondenser')
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -60,7 +60,7 @@ Returns:
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.condenser.RollingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser')
+### class openhands.sdk.context.condenser.RollingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser')
 
 Bases: [`PipelinableCondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.PipelinableCondenserBase), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -103,7 +103,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 Determine if a view should be condensed.
 
-### *class* openhands.sdk.context.condenser.NoOpCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser'] = 'NoOpCondenser')
+### class openhands.sdk.context.condenser.NoOpCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser'] = 'NoOpCondenser')
 
 Bases: [`CondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)
 
@@ -133,7 +133,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser']
 
-### *class* openhands.sdk.context.condenser.PipelineCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser', condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)])
+### class openhands.sdk.context.condenser.PipelineCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser', condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)])
 
 Bases: [`CondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)
 
@@ -213,7 +213,7 @@ The list of condensers to apply in order.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser']
 
-### *class* openhands.sdk.context.condenser.LLMSummarizingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser', llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM), max_size: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Gt(gt=0)] = 120, keep_first: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Ge(ge=0)] = 4)
+### class openhands.sdk.context.condenser.LLMSummarizingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser', llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM), max_size: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Gt(gt=0)] = 120, keep_first: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Ge(ge=0)] = 4)
 
 Bases: [`RollingCondenser`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.RollingCondenser)
 

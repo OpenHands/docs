@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.skills.skill
 
 <a id="module-openhands.sdk.context.skills.skill"></a>
 
-### *class* openhands.sdk.context.skills.skill.Skill(\*, name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>`)
+### class openhands.sdk.context.skills.skill.Skill(name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>`)
 
 Bases: `BaseModel`
 

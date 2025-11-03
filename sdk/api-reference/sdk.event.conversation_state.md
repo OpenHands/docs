@@ -9,7 +9,7 @@ description: API reference for openhands.sdk.event.conversation_state
 
 Events related to conversation state updates.
 
-### *class* openhands.sdk.event.conversation_state.ConversationStateUpdateEvent(\*, kind: ~typing.Literal['ConversationStateUpdateEvent'] = 'ConversationStateUpdateEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', key: str = `<factory>`, value: ~typing.Any = `<factory>`)
+### class openhands.sdk.event.conversation_state.ConversationStateUpdateEvent(kind: ~typing.Literal['ConversationStateUpdateEvent'] = 'ConversationStateUpdateEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', key: str = `<factory>`, value: ~typing.Any = `<factory>`)
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 

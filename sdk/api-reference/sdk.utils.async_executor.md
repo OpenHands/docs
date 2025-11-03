@@ -9,7 +9,7 @@ description: API reference for openhands.sdk.utils.async_executor
 
 Reusable async-to-sync execution utility.
 
-### *class* openhands.sdk.utils.async_executor.AsyncExecutor
+### class openhands.sdk.utils.async_executor.AsyncExecutor
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 
@@ -20,15 +20,15 @@ timeout support, and thread safety.
 
 #### \_\_init_\_()
 
-#### run_async(awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any), \*args, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 300.0, \*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any)
+#### run_async(awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any), *args, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 300.0, **kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any)
 
 Run a coroutine or async function on the background loop from sync code.
 
 Parameters:
   * awaitable_or_fn – Coroutine or async function to execute
-  - **\*args** – Arguments to pass to the function
+  * *args – Arguments to pass to the function
   * timeout – Timeout in seconds (default: 300)
-  - **\*\*kwargs** – Keyword arguments to pass to the function
+  * **kwargs – Keyword arguments to pass to the function
 Returns:
   The result of the async operation
 Raises:

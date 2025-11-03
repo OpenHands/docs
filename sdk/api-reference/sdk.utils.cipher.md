@@ -14,7 +14,7 @@ SECURITY WARNINGS:
 
 > bits of entropy
 
-### *class* openhands.sdk.utils.cipher.Cipher(secret_key: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.utils.cipher.Cipher(secret_key: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 

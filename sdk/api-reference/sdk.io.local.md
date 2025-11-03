@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.io.local
 
 <a id="module-openhands.sdk.io.local"></a>
 
-### *class* openhands.sdk.io.local.LocalFileStore(root: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.io.local.LocalFileStore(root: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`FileStore`](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore)
 

@@ -7,11 +7,29 @@ description: API reference for openhands.sdk.llm.llm
 
 <a id="module-openhands.sdk.llm.llm"></a>
 
-### *class* openhands.sdk.llm.llm.LLM(\*, model: str = 'claude-sonnet-4-20250514', api_key: ~pydantic.types.SecretStr | None = None, base_url: str | None = None, api_version: str | None = None, aws_access_key_id: ~pydantic.types.SecretStr | None = None, aws_secret_access_key: ~pydantic.types.SecretStr | None = None, aws_region_name: str | None = None, openrouter_site_url: str = 'https://docs.all-hands.dev/', openrouter_app_name: str = 'OpenHands', num_retries: typing.Annotated[int, annotated_types.Ge(ge=0)] = 5, retry_multiplier: typing.Annotated[float, annotated_types.Ge(ge=0)] = 8.0, retry_min_wait: typing.Annotated[int, annotated_types.Ge(ge=0)] = 8, retry_max_wait: typing.Annotated[int, annotated_types.Ge(ge=0)] = 64, timeout: typing.Annotated[int | None, annotated_types.Ge(ge=0)] = None, max_message_chars: typing.Annotated[int, annotated_types.Ge(ge=1)] = 30000, temperature: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = 0.0, top_p: typing.Annotated[float | None, annotated_types.Ge(ge=0), annotated_types.Le(le=1)] = 1.0, top_k: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = None, custom_llm_provider: str | None = None, max_input_tokens: typing.Annotated[int | None, annotated_types.Ge(ge=1)] = None, max_output_tokens: typing.Annotated[int | None, annotated_types.Ge(ge=1)] = None, input_cost_per_token: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = None, output_cost_per_token: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = None, ollama_base_url: str | None = None, drop_params: bool = True, modify_params: bool = True, disable_vision: bool | None = None, disable_stop_word: bool | None = False, caching_prompt: bool = True, log_completions: bool = False, log_completions_folder: str = 'logs/completions', custom_tokenizer: str | None = None, native_tool_calling: bool = True, reasoning_effort: typing.Literal['low', 'medium', 'high', 'none'] | None = None, enable_encrypted_reasoning: bool = False, extended_thinking_budget: int | None = 200000, seed: int | None = None, safety_settings: list[dict[str, str]] | None = None, usage_id: str = 'default', metadata: dict[str, typing.Any] = `<factory>`, retry_listener: typing.Annotated[~collections.abc.Callable[[int, int], None] | None, ~pydantic.json_schema.SkipJsonSchema()] = None, OVERRIDE_ON_SERIALIZE: tuple[str, ...] = ('api_key', 'aws_access_key_id', 'aws_secret_access_key'))
+### class openhands.sdk.llm.llm.LLM(model: str = 'claude-sonnet-4-20250514', api_key: ~pydantic.types.SecretStr | None = None, base_url: str | None = None, api_version: str | None = None, aws_access_key_id: ~pydantic.types.SecretStr | None = None, aws_secret_access_key: ~pydantic.types.SecretStr | None = None, aws_region_name: str | None = None, openrouter_site_url: str = 'https://docs.all-hands.dev/', openrouter_app_name: str = 'OpenHands', num_retries: typing.Annotated[int, annotated_types.Ge(ge=0)] = 5, retry_multiplier: typing.Annotated[float, annotated_types.Ge(ge=0)] = 8.0, retry_min_wait: typing.Annotated[int, annotated_types.Ge(ge=0)] = 8, retry_max_wait: typing.Annotated[int, annotated_types.Ge(ge=0)] = 64, timeout: typing.Annotated[int | None, annotated_types.Ge(ge=0)] = None, max_message_chars: typing.Annotated[int, annotated_types.Ge(ge=1)] = 30000, temperature: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = 0.0, top_p: typing.Annotated[float | None, annotated_types.Ge(ge=0), annotated_types.Le(le=1)] = 1.0, top_k: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = None, custom_llm_provider: str | None = None, max_input_tokens: typing.Annotated[int | None, annotated_types.Ge(ge=1)] = None, max_output_tokens: typing.Annotated[int | None, annotated_types.Ge(ge=1)] = None, input_cost_per_token: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = None, output_cost_per_token: typing.Annotated[float | None, annotated_types.Ge(ge=0)] = None, ollama_base_url: str | None = None, drop_params: bool = True, modify_params: bool = True, disable_vision: bool | None = None, disable_stop_word: bool | None = False, caching_prompt: bool = True, log_completions: bool = False, log_completions_folder: str = 'logs/completions', custom_tokenizer: str | None = None, native_tool_calling: bool = True, reasoning_effort: typing.Literal['low', 'medium', 'high', 'none'] | None = None, enable_encrypted_reasoning: bool = False, extended_thinking_budget: int | None = 200000, seed: int | None = None, safety_settings: list[dict[str, str]] | None = None, usage_id: str = 'default', metadata: dict[str, typing.Any] = `<factory>`, retry_listener: typing.Annotated[~collections.abc.Callable[[int, int], None] | None, ~pydantic.json_schema.SkipJsonSchema()] = None, OVERRIDE_ON_SERIALIZE: tuple[str, ...] = ('api_key', 'aws_access_key_id', 'aws_secret_access_key'))
 
 Bases: `BaseModel`, `RetryMixin`, `NonNativeToolCallingMixin`
 
-Refactored LLM: simple completion(), centralized Telemetry, tiny helpers.
+Language model interface for OpenHands agents.
+
+The LLM class provides a unified interface for interacting with various
+language models through the litellm library. It handles model configuration,
+API authentication,
+retry logic, and tool calling capabilities.
+
+### Example
+
+```pycon
+>>> from openhands.sdk import LLM
+>>> from pydantic import SecretStr
+>>> llm = LLM(
+...     model="claude-sonnet-4-20250514",
+...     api_key=SecretStr("your-api-key"),
+...     usage_id="my-agent"
+... )
+>>> # Use with agent or conversation
+```
 
 #### model : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
@@ -105,15 +123,42 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### property metrics : [Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics)
 
+Get usage metrics for this LLM instance.
+
+Returns:
+  Metrics object containing token usage, costs, and other statistics.
+
+### Example
+
+```pycon
+>>> cost = llm.metrics.accumulated_cost
+>>> print(f"Total cost: ${cost}")
+```
+
 #### restore_metrics(metrics: [Metrics](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Metrics)) → [None](https://docs.python.org/3/library/constants.html#None)
 
-#### completion(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Message)], tools: Sequence[[ToolBase](https://github.com/OpenHands/software-agent-sdk/sdk.tool.md#openhands.sdk.tool.ToolBase)] | [None](https://docs.python.org/3/library/constants.html#None) = None, \_return_metrics: [bool](https://docs.python.org/3/library/functions.html#bool) = False, add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, \*\*kwargs) → [LLMResponse](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.LLMResponse)
+#### completion(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Message)], tools: Sequence[[ToolBase](https://github.com/OpenHands/software-agent-sdk/sdk.tool.md#openhands.sdk.tool.ToolBase)] | [None](https://docs.python.org/3/library/constants.html#None) = None, \_return_metrics: [bool](https://docs.python.org/3/library/functions.html#bool) = False, add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, **kwargs) → [LLMResponse](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.LLMResponse)
 
-Single entry point for LLM completion.
+Generate a completion from the language model.
 
-Normalize → (maybe) mock tools → transport → postprocess.
+This is the method for getting responses from the model via Completion API.
+It handles message formatting, tool calling, and response processing.
 
-#### responses(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Message)], tools: Sequence[[ToolBase](https://github.com/OpenHands/software-agent-sdk/sdk.tool.md#openhands.sdk.tool.ToolBase)] | [None](https://docs.python.org/3/library/constants.html#None) = None, include: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None, store: [bool](https://docs.python.org/3/library/functions.html#bool) | [None](https://docs.python.org/3/library/constants.html#None) = None, \_return_metrics: [bool](https://docs.python.org/3/library/functions.html#bool) = False, add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, \*\*kwargs) → [LLMResponse](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.LLMResponse)
+Returns:
+  LLMResponse containing the model’s response and metadata.
+Raises:
+  [ValueError](https://docs.python.org/3/library/exceptions.html#ValueError) – If streaming is requested (not supported).
+
+### Example
+
+```pycon
+>>> from openhands.sdk.llm import Message, TextContent
+>>> messages = [Message(role="user", content=[TextContent(text="Hello")])]
+>>> response = llm.completion(messages)
+>>> print(response.content)
+```
+
+#### responses(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.Message)], tools: Sequence[[ToolBase](https://github.com/OpenHands/software-agent-sdk/sdk.tool.md#openhands.sdk.tool.ToolBase)] | [None](https://docs.python.org/3/library/constants.html#None) = None, include: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None, store: [bool](https://docs.python.org/3/library/functions.html#bool) | [None](https://docs.python.org/3/library/constants.html#None) = None, \_return_metrics: [bool](https://docs.python.org/3/library/functions.html#bool) = False, add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, **kwargs) → [LLMResponse](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.LLMResponse)
 
 Alternative invocation path using OpenAI Responses API via LiteLLM.
 

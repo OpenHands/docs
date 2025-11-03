@@ -7,9 +7,24 @@ description: API reference for openhands.sdk.agent.agent
 
 <a id="module-openhands.sdk.agent.agent"></a>
 
-### *class* openhands.sdk.agent.agent.Agent(\*, kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
+### class openhands.sdk.agent.agent.Agent(kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
 
 Bases: [`AgentBase`](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)
+
+Main agent implementation for OpenHands.
+
+The Agent class provides the core functionality for running AI agents that can
+interact with tools, process messages, and execute actions. It inherits from
+AgentBase and implements the agent execution logic.
+
+### Example
+
+```pycon
+>>> from openhands.sdk import LLM, Agent, Tool
+>>> llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("key"))
+>>> tools = [Tool(name="BashTool"), Tool(name="FileEditorTool")]
+>>> agent = Agent(llm=llm, tools=tools)
+```
 
 #### init_state(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState), on_event: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None)
 

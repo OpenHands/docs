@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.utils.json
 
 <a id="module-openhands.sdk.utils.json"></a>
 
-### *class* openhands.sdk.utils.json.OpenHandsJSONEncoder(, skipkeys=False, ensure_ascii=True, check_circular=True, allow_nan=True, sort_keys=False, indent=None, separators=None, default=None)
+### class openhands.sdk.utils.json.OpenHandsJSONEncoder(, skipkeys=False, ensure_ascii=True, check_circular=True, allow_nan=True, sort_keys=False, indent=None, separators=None, default=None)
 
 Bases: [`JSONEncoder`](https://docs.python.org/3/library/json.html#json.JSONEncoder)
 
@@ -34,10 +34,10 @@ def default(self, o):
     return super().default(o)
 ```
 
-### openhands.sdk.utils.json.dumps(obj, \*\*kwargs)
+### openhands.sdk.utils.json.dumps(obj, **kwargs)
 
 Serialize an object to str format
 
-### openhands.sdk.utils.json.loads(json_str, \*\*kwargs)
+### openhands.sdk.utils.json.loads(json_str, **kwargs)
 
 Create a JSON object from str

@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.view
 
 <a id="module-openhands.sdk.context.view"></a>
 
-### *class* openhands.sdk.context.view.View(, events: [list](https://docs.python.org/3/library/stdtypes.html#list)[[LLMConvertibleEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)], unhandled_condensation_request: [bool](https://docs.python.org/3/library/functions.html#bool) = False, condensations: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)] = [])
+### class openhands.sdk.context.view.View(, events: [list](https://docs.python.org/3/library/stdtypes.html#list)[[LLMConvertibleEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)], unhandled_condensation_request: [bool](https://docs.python.org/3/library/functions.html#bool) = False, condensations: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)] = [])
 
 Bases: `BaseModel`
 

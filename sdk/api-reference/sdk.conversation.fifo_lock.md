@@ -12,7 +12,7 @@ FIFO Lock implementation that guarantees first-in-first-out access ordering.
 This provides fair lock access where threads acquire the lock in the exact order
 they requested it, preventing starvation that can occur with standard RLock.
 
-### *class* openhands.sdk.conversation.fifo_lock.FIFOLock
+### class openhands.sdk.conversation.fifo_lock.FIFOLock
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 

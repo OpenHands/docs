@@ -7,11 +7,27 @@ description: API reference for openhands.sdk.workspace.remote.base
 
 <a id="module-openhands.sdk.workspace.remote.base"></a>
 
-### *class* openhands.sdk.workspace.remote.base.RemoteWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['RemoteWorkspace'] = 'RemoteWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str), host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.workspace.remote.base.RemoteWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['RemoteWorkspace'] = 'RemoteWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str), host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: [`RemoteWorkspaceMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.remote_workspace_mixin.md#openhands.sdk.workspace.remote.remote_workspace_mixin.RemoteWorkspaceMixin), [`BaseWorkspace`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.base.md#openhands.sdk.workspace.base.BaseWorkspace)
 
-Remote Workspace Implementation.
+Remote workspace implementation that connects to an OpenHands agent server.
+
+RemoteWorkspace provides access to a sandboxed environment running on a remote
+OpenHands agent server. This is the recommended approach for production deployments
+as it provides better isolation and security.
+
+### Example
+
+```pycon
+>>> workspace = RemoteWorkspace(
+...     host="https://agent-server.example.com",
+...     working_dir="/workspace"
+... )
+>>> with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
 
 #### property client : Client
 

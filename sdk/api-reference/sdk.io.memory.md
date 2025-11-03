@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.io.memory
 
 <a id="module-openhands.sdk.io.memory"></a>
 
-### *class* openhands.sdk.io.memory.InMemoryFileStore(files: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.io.memory.InMemoryFileStore(files: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: [`FileStore`](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore)
 

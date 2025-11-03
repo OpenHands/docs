@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.conversation.event_store
 
 <a id="module-openhands.sdk.conversation.event_store"></a>
 
-### *class* openhands.sdk.conversation.event_store.EventLog(fs: [FileStore](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore), dir_path: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'events')
+### class openhands.sdk.conversation.event_store.EventLog(fs: [FileStore](https://github.com/OpenHands/software-agent-sdk/sdk.io.base.md#openhands.sdk.io.base.FileStore), dir_path: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'events')
 
 Bases: [`EventsListBase`](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.events_list_base.md#openhands.sdk.conversation.events_list_base.EventsListBase)
 

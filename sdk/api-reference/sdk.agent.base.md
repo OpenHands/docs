@@ -7,12 +7,15 @@ description: API reference for openhands.sdk.agent.base
 
 <a id="module-openhands.sdk.agent.base"></a>
 
-### *class* openhands.sdk.agent.base.AgentBase(\*, kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
+### class openhands.sdk.agent.base.AgentBase(kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
-Abstract base class for agents.
+Abstract base class for OpenHands agents.
+
 Agents are stateless and should be fully defined by their configuration.
+This base class provides the common interface and functionality that all
+agent implementations must follow.
 
 #### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
@@ -79,7 +82,7 @@ Return a new AgentBase instance equivalent to persisted but with
 explicitly whitelisted fields (e.g. api_key, security_analyzer) taken from
 self.
 
-#### model_dump_succint(\*\*kwargs)
+#### model_dump_succint(**kwargs)
 
 Like model_dump, but excludes None fields by default.
 

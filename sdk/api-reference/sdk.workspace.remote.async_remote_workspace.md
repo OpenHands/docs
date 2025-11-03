@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.workspace.remote.async_remote_works
 
 <a id="module-openhands.sdk.workspace.remote.async_remote_workspace"></a>
 
-### *class* openhands.sdk.workspace.remote.async_remote_workspace.AsyncRemoteWorkspace(, host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.workspace.remote.async_remote_workspace.AsyncRemoteWorkspace(, host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`RemoteWorkspaceMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.remote_workspace_mixin.md#openhands.sdk.workspace.remote.remote_workspace_mixin.RemoteWorkspaceMixin)
 

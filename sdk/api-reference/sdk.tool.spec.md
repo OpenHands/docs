@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.tool.spec
 
 <a id="module-openhands.sdk.tool.spec"></a>
 
-### *class* openhands.sdk.tool.spec.Tool(\*, name: str, params: dict[str, ~typing.Any] = `<factory>`)
+### class openhands.sdk.tool.spec.Tool(name: str, params: dict[str, ~typing.Any] = `<factory>`)
 
 Bases: `BaseModel`
 

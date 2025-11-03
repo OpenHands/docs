@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.tool.builtins.think
 
 <a id="module-openhands.sdk.tool.builtins.think"></a>
 
-### *class* openhands.sdk.tool.builtins.think.ThinkAction(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction'] = 'ThinkAction', thought: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.tool.builtins.think.ThinkAction(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction'] = 'ThinkAction', thought: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`Action`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)
 
@@ -25,7 +25,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction']
 
-### *class* openhands.sdk.tool.builtins.think.ThinkObservation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation'] = 'ThinkObservation', content: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Your thought has been logged.')
+### class openhands.sdk.tool.builtins.think.ThinkObservation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation'] = 'ThinkObservation', content: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Your thought has been logged.')
 
 Bases: [`Observation`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 
@@ -47,6 +47,6 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation']
 
-### *class* openhands.sdk.tool.builtins.think.ThinkExecutor
+### class openhands.sdk.tool.builtins.think.ThinkExecutor
 
 Bases: [`ToolExecutor`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor)

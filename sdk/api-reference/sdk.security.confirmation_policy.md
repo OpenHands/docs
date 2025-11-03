@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.security.confirmation_policy
 
 <a id="module-openhands.sdk.security.confirmation_policy"></a>
 
-### *class* openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm'] = 'AlwaysConfirm')
+### class openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm'] = 'AlwaysConfirm')
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -29,7 +29,7 @@ Returns:
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.security.confirmation_policy.AlwaysConfirm(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AlwaysConfirm'] = 'AlwaysConfirm')
+### class openhands.sdk.security.confirmation_policy.AlwaysConfirm(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AlwaysConfirm'] = 'AlwaysConfirm')
 
 Bases: [`ConfirmationPolicyBase`](#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)
 
@@ -53,7 +53,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AlwaysConfirm']
 
-### *class* openhands.sdk.security.confirmation_policy.NeverConfirm(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NeverConfirm'] = 'NeverConfirm')
+### class openhands.sdk.security.confirmation_policy.NeverConfirm(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NeverConfirm'] = 'NeverConfirm')
 
 Bases: [`ConfirmationPolicyBase`](#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)
 
@@ -77,7 +77,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NeverConfirm']
 
-### *class* openhands.sdk.security.confirmation_policy.ConfirmRisky(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ConfirmRisky'] = 'ConfirmRisky', threshold: [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk) = SecurityRisk.HIGH, confirm_unknown: [bool](https://docs.python.org/3/library/functions.html#bool) = True)
+### class openhands.sdk.security.confirmation_policy.ConfirmRisky(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ConfirmRisky'] = 'ConfirmRisky', threshold: [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk) = SecurityRisk.HIGH, confirm_unknown: [bool](https://docs.python.org/3/library/functions.html#bool) = True)
 
 Bases: [`ConfirmationPolicyBase`](#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)
 

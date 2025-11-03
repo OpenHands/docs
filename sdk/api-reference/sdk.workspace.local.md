@@ -7,11 +7,24 @@ description: API reference for openhands.sdk.workspace.local
 
 <a id="module-openhands.sdk.workspace.local"></a>
 
-### *class* openhands.sdk.workspace.local.LocalWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.workspace.local.LocalWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`BaseWorkspace`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.base.md#openhands.sdk.workspace.base.BaseWorkspace)
 
-Mixin providing local workspace operations.
+Local workspace implementation that operates on the host filesystem.
+
+LocalWorkspace provides direct access to the local filesystem and command execution
+environment. It’s suitable for development and testing scenarios where the agent
+should operate directly on the host system.
+
+### Example
+
+```pycon
+>>> workspace = LocalWorkspace(working_dir="/path/to/project")
+>>> with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
 
 #### execute_command(command: [str](https://docs.python.org/3/library/stdtypes.html#str), cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult)
 

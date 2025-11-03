@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.security.risk
 
 <a id="module-openhands.sdk.security.risk"></a>
 
-### *class* openhands.sdk.security.risk.SecurityRisk(\*values)
+### class openhands.sdk.security.risk.SecurityRisk(*values)
 
 Bases: [`str`](https://docs.python.org/3/library/stdtypes.html#str), [`Enum`](https://docs.python.org/3/library/enum.html#enum.Enum)
 

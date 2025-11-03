@@ -25,4 +25,22 @@ Configure the root logger. All child loggers inherit this setup.
 
 ### openhands.sdk.logger.logger.get_logger(name: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [Logger](https://docs.python.org/3/library/logging.html#logging.Logger)
 
-Return a logger for the given module name.
+Get a logger instance for the specified module.
+
+This function returns a configured logger that inherits from the root logger
+setup. The logger supports both Rich formatting for human-readable output
+and JSON formatting for machine processing, depending on environment configuration.
+
+Parameters:
+  name – The name of the module, typically \_\_name_\_.
+Returns:
+  A configured Logger instance.
+
+### Example
+
+```pycon
+>>> from openhands.sdk.logger import get_logger
+>>> logger = get_logger(__name__)
+>>> logger.info("This is an info message")
+>>> logger.error("This is an error message")
+```

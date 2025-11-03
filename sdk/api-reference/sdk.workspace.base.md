@@ -7,17 +7,23 @@ description: API reference for openhands.sdk.workspace.base
 
 <a id="module-openhands.sdk.workspace.base"></a>
 
-### *class* openhands.sdk.workspace.base.BaseWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.workspace.base.BaseWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
-Abstract base mixin for workspace.
+Abstract base class for workspace implementations.
 
-All workspace implementations support the context manager protocol,
-allowing safe resource management:
+Workspaces provide a sandboxed environment where agents can execute commands,
+read/write files, and perform other operations. All workspace implementations
+support the context manager protocol for safe resource management.
 
-> with workspace:
-> : workspace.execute_command(“echo ‘hello’”)
+### Example
+
+```pycon
+>>> with workspace:
+...     result = workspace.execute_command("echo 'hello'")
+...     content = workspace.read_file("example.txt")
+```
 
 #### working_dir : [str](https://docs.python.org/3/library/stdtypes.html#str)
 

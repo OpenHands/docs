@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.condenser.llm_summarizing_c
 
 <a id="module-openhands.sdk.context.condenser.llm_summarizing_condenser"></a>
 
-### *class* openhands.sdk.context.condenser.llm_summarizing_condenser.LLMSummarizingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser', llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM), max_size: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Gt(gt=0)] = 120, keep_first: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Ge(ge=0)] = 4)
+### class openhands.sdk.context.condenser.llm_summarizing_condenser.LLMSummarizingCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSummarizingCondenser'] = 'LLMSummarizingCondenser', llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM), max_size: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Gt(gt=0)] = 120, keep_first: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[int](https://docs.python.org/3/library/functions.html#int), Ge(ge=0)] = 4)
 
 Bases: [`RollingCondenser`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.RollingCondenser)
 

@@ -9,7 +9,7 @@ description: API reference for openhands.sdk.conversation.secret_registry
 
 Secrets manager for handling sensitive data in conversations.
 
-### *class* openhands.sdk.conversation.secret_registry.SecretRegistry(\*, secret_sources: dict[str, ~openhands.sdk.conversation.secret_source.SecretSource] = `<factory>`)
+### class openhands.sdk.conversation.secret_registry.SecretRegistry(secret_sources: dict[str, ~openhands.sdk.conversation.secret_source.SecretSource] = `<factory>`)
 
 Bases: [`OpenHandsModel`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.OpenHandsModel)
 

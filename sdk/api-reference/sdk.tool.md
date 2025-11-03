@@ -9,7 +9,7 @@ description: API reference for openhands.sdk.tool
 
 OpenHands runtime package.
 
-### *class* openhands.sdk.tool.Tool(\*, name: str, params: dict[str, ~typing.Any] = `<factory>`)
+### class openhands.sdk.tool.Tool(name: str, params: dict[str, ~typing.Any] = `<factory>`)
 
 Bases: `BaseModel`
 
@@ -33,7 +33,7 @@ Convert None params to empty dict.
 
 #### params : [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
-### *class* openhands.sdk.tool.ToolDefinition(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ToolDefinition'] = 'ToolDefinition', name: [str](https://docs.python.org/3/library/stdtypes.html#str), description: [str](https://docs.python.org/3/library/stdtypes.html#str), action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)], observation_type: [type](https://docs.python.org/3/library/functions.html#type)[[Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)] | [None](https://docs.python.org/3/library/constants.html#None) = None, annotations: [ToolAnnotations](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolAnnotations) | [None](https://docs.python.org/3/library/constants.html#None) = None, meta: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None, executor: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()] = None)
+### class openhands.sdk.tool.ToolDefinition(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ToolDefinition'] = 'ToolDefinition', name: [str](https://docs.python.org/3/library/stdtypes.html#str), description: [str](https://docs.python.org/3/library/stdtypes.html#str), action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)], observation_type: [type](https://docs.python.org/3/library/functions.html#type)[[Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)] | [None](https://docs.python.org/3/library/constants.html#None) = None, annotations: [ToolAnnotations](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolAnnotations) | [None](https://docs.python.org/3/library/constants.html#None) = None, meta: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None, executor: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()] = None)
 
 Bases: `ToolBase[TypeVar, TypeVar]`, [`Generic`](https://docs.python.org/3/library/typing.html#typing.Generic)
 
@@ -46,7 +46,7 @@ directly from this class, while more complex tools (like BashTool,
 FileEditorTool) inherit from this class and provide their own create()
 method implementations.
 
-#### classmethod create(\*args, \*\*kwargs) → [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[Self](https://docs.python.org/3/library/typing.html#typing.Self)]
+#### classmethod create(*args, **kwargs) → [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[Self](https://docs.python.org/3/library/typing.html#typing.Self)]
 
 Create a sequence of ToolDefinition instances.
 
@@ -61,16 +61,33 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ToolDefinition']
 
-### *class* openhands.sdk.tool.ToolBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolDefinition', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]'] = 'MCPToolDefinition', name: [str](https://docs.python.org/3/library/stdtypes.html#str), description: [str](https://docs.python.org/3/library/stdtypes.html#str), action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)], observation_type: [type](https://docs.python.org/3/library/functions.html#type)[[Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)] | [None](https://docs.python.org/3/library/constants.html#None) = None, annotations: [ToolAnnotations](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolAnnotations) | [None](https://docs.python.org/3/library/constants.html#None) = None, meta: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None, executor: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()] = None)
+### class openhands.sdk.tool.ToolBase(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolDefinition', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]'] = 'MCPToolDefinition', name: [str](https://docs.python.org/3/library/stdtypes.html#str), description: [str](https://docs.python.org/3/library/stdtypes.html#str), action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)], observation_type: [type](https://docs.python.org/3/library/functions.html#type)[[Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)] | [None](https://docs.python.org/3/library/constants.html#None) = None, annotations: [ToolAnnotations](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolAnnotations) | [None](https://docs.python.org/3/library/constants.html#None) = None, meta: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None, executor: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()] = None)
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC), [`Generic`](https://docs.python.org/3/library/typing.html#typing.Generic)
 
-Tool that wraps an executor function with input/output validation and schema.
+Base class for tools that agents can use to perform actions.
 
-- Normalize input/output schemas (class or dict) into both model+schema.
-- Validate inputs before execute.
-- Coerce outputs only if an output model is defined; else return vanilla JSON.
-- Export MCP tool description.
+Tools wrap executor functions with input/output validation and schema definition.
+They provide a standardized interface for agents to interact with external systems,
+APIs, or perform specific operations.
+
+Features:
+- Normalize input/output schemas (class or dict) into both model+schema
+- Validate inputs before execution
+- Coerce outputs only if an output model is defined; else return vanilla JSON
+- Export MCP (Model Context Protocol) tool descriptions
+
+### Example
+
+```pycon
+>>> from openhands.sdk.tool import ToolDefinition
+>>> tool = ToolDefinition(
+...     name="echo",
+...     description="Echo the input message",
+...     action_type=EchoAction,
+...     executor=echo_executor
+... )
+```
 
 #### \_\_call_\_(action: ActionT, conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 
@@ -103,7 +120,7 @@ Returns:
 Raises:
   [NotImplementedError](https://docs.python.org/3/library/exceptions.html#NotImplementedError) – If the tool has no executor.
 
-#### abstractmethod classmethod create(\*args, \*\*kwargs) → [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[Self](https://docs.python.org/3/library/typing.html#typing.Self)]
+#### abstractmethod classmethod create(*args, **kwargs) → [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[Self](https://docs.python.org/3/library/typing.html#typing.Self)]
 
 Create a sequence of Tool instances. Placeholder for subclasses.
 
@@ -170,7 +187,7 @@ For Responses API, function tools expect top-level keys:
 
 #### executor : [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()]
 
-### *class* openhands.sdk.tool.ToolAnnotations(, title: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, readOnlyHint: [bool](https://docs.python.org/3/library/functions.html#bool) = False, destructiveHint: [bool](https://docs.python.org/3/library/functions.html#bool) = True, idempotentHint: [bool](https://docs.python.org/3/library/functions.html#bool) = False, openWorldHint: [bool](https://docs.python.org/3/library/functions.html#bool) = True)
+### class openhands.sdk.tool.ToolAnnotations(, title: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, readOnlyHint: [bool](https://docs.python.org/3/library/functions.html#bool) = False, destructiveHint: [bool](https://docs.python.org/3/library/functions.html#bool) = True, idempotentHint: [bool](https://docs.python.org/3/library/functions.html#bool) = False, openWorldHint: [bool](https://docs.python.org/3/library/functions.html#bool) = True)
 
 Bases: `BaseModel`
 
@@ -193,7 +210,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### openWorldHint : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-### *class* openhands.sdk.tool.ToolExecutor
+### class openhands.sdk.tool.ToolExecutor
 
 Bases: [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC), [`Generic`](https://docs.python.org/3/library/typing.html#typing.Generic)
 
@@ -225,7 +242,7 @@ Default implementation does nothing. Subclasses should override
 this method to perform cleanup (e.g., closing connections,
 terminating processes, etc.).
 
-### *class* openhands.sdk.tool.ExecutableTool(\*args, \*\*kwargs)
+### class openhands.sdk.tool.ExecutableTool(*args, **kwargs)
 
 Bases: [`Protocol`](https://docs.python.org/3/library/typing.html#typing.Protocol)
 
@@ -238,13 +255,13 @@ when working with tools that are known to be executable.
 
 Execute the tool with the given action.
 
-#### \_\_init_\_(\*args, \*\*kwargs)
+#### \_\_init_\_(*args, **kwargs)
 
 #### name : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 #### executor : [ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor)[[Any](https://docs.python.org/3/library/typing.html#typing.Any), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
-### *class* openhands.sdk.tool.Action(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction', 'FinishAction', 'ThinkAction'] = 'MCPToolAction')
+### class openhands.sdk.tool.Action(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction', 'FinishAction', 'ThinkAction'] = 'MCPToolAction')
 
 Bases: [`Schema`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -261,7 +278,7 @@ Return Rich Text representation of this action.
 This method can be overridden by subclasses to customize visualization.
 The base implementation displays all action fields systematically.
 
-### *class* openhands.sdk.tool.Observation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation')
+### class openhands.sdk.tool.Observation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation', 'FinishObservation', 'ThinkObservation'] = 'MCPToolObservation')
 
 Bases: [`Schema`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Schema), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 

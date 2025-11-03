@@ -20,7 +20,7 @@ Get the string value for the kind tag
 Recursively returns all concrete subclasses in a stable order,
 without deduping classes that share the same (module, name).
 
-### *class* openhands.sdk.utils.models.OpenHandsModel
+### class openhands.sdk.utils.models.OpenHandsModel
 
 Bases: `BaseModel`
 
@@ -34,7 +34,7 @@ regenerate all the polymorphic mappings.
 Override this method to perform additional initialization after \_\_init_\_ and model_construct.
 This is useful if you want to do some validation that requires the entire model to be initialized.
 
-#### classmethod model_validate(\*args, \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
+#### classmethod model_validate(*args, **kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
 
 Validate a pydantic model instance.
 
@@ -52,7 +52,7 @@ Raises:
 Returns:
   The validated model instance.
 
-#### classmethod model_validate_json(\*args, \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
+#### classmethod model_validate_json(*args, **kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
 
 !!! abstract “Usage Documentation”
 : [JSON Parsing](../concepts/json.md#json-parsing)
@@ -72,7 +72,7 @@ Returns:
 Raises:
   ValidationError – If json_data is not a JSON string or the object could not be validated.
 
-#### classmethod model_json_schema(\*args, \*\*kwargs) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### classmethod model_json_schema(*args, **kwargs) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
 
 Generates a JSON schema for a model class.
 
@@ -95,7 +95,7 @@ Parameters:
 Returns:
   The JSON schema for the given model class.
 
-#### model_dump_json(\*\*kwargs)
+#### model_dump_json(**kwargs)
 
 !!! abstract “Usage Documentation”
 : [model_dump_json](../concepts/serialization.md#json-mode)
@@ -125,7 +125,7 @@ Parameters:
 Returns:
   A JSON string representation of the model.
 
-#### classmethod \_\_init_subclass_\_(\*\*kwargs)
+#### classmethod \_\_init_subclass_\_(**kwargs)
 
 When a new subclass is defined, mark that we will need
 to rebuild everything
@@ -134,7 +134,7 @@ to rebuild everything
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.utils.models.DiscriminatedUnionMixin(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent', 'LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser', 'LookupSecret', 'StaticSecret', 'Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent', 'MCPToolAction', 'MCPToolObservation', 'MCPToolDefinition', 'AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm', 'LLMSecurityAnalyzer', 'FinishAction', 'FinishObservation', 'ThinkAction', 'ThinkObservation', 'Schema', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]', 'LocalWorkspace', 'RemoteWorkspace'] = 'Agent')
+### class openhands.sdk.utils.models.DiscriminatedUnionMixin(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent', 'LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser', 'LookupSecret', 'StaticSecret', 'Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent', 'MCPToolAction', 'MCPToolObservation', 'MCPToolDefinition', 'AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm', 'LLMSecurityAnalyzer', 'FinishAction', 'FinishObservation', 'ThinkAction', 'ThinkObservation', 'Schema', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]', 'LocalWorkspace', 'RemoteWorkspace'] = 'Agent')
 
 Bases: [`OpenHandsModel`](#openhands.sdk.utils.models.OpenHandsModel), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -180,7 +180,7 @@ Returns:
 Custom method to get the union of all currently loaded
 non absract subclasses
 
-#### classmethod model_validate(obj: [Any](https://docs.python.org/3/library/typing.html#typing.Any), \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
+#### classmethod model_validate(obj: [Any](https://docs.python.org/3/library/typing.html#typing.Any), **kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
 
 Validate a pydantic model instance.
 
@@ -198,7 +198,7 @@ Raises:
 Returns:
   The validated model instance.
 
-#### classmethod model_validate_json(json_data: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes) | [bytearray](https://docs.python.org/3/library/stdtypes.html#bytearray), \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
+#### classmethod model_validate_json(json_data: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes) | [bytearray](https://docs.python.org/3/library/stdtypes.html#bytearray), **kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
 
 !!! abstract “Usage Documentation”
 : [JSON Parsing](../concepts/json.md#json-parsing)

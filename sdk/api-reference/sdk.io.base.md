@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.io.base
 
 <a id="module-openhands.sdk.io.base"></a>
 
-### *class* openhands.sdk.io.base.FileStore
+### class openhands.sdk.io.base.FileStore
 
 Bases: [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 

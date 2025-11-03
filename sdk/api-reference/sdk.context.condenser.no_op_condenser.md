@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.condenser.no_op_condenser
 
 <a id="module-openhands.sdk.context.condenser.no_op_condenser"></a>
 
-### *class* openhands.sdk.context.condenser.no_op_condenser.NoOpCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser'] = 'NoOpCondenser')
+### class openhands.sdk.context.condenser.no_op_condenser.NoOpCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['NoOpCondenser'] = 'NoOpCondenser')
 
 Bases: [`CondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)
 

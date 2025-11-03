@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.event
 
 <a id="module-openhands.sdk.event"></a>
 
-### *class* openhands.sdk.event.Event(\*, kind: ~typing.Literal['Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
+### class openhands.sdk.event.Event(kind: ~typing.Literal['Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -38,7 +38,7 @@ Subclasses should override this method to provide specific visualization.
 
 #### source : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']
 
-### *class* openhands.sdk.event.LLMConvertibleEvent(\*, kind: ~typing.Literal['CondensationSummaryEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
+### class openhands.sdk.event.LLMConvertibleEvent(kind: ~typing.Literal['CondensationSummaryEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -58,7 +58,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### abstractmethod to_llm_message() → [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
-### *class* openhands.sdk.event.SystemPromptEvent(\*, kind: ~typing.Literal['SystemPromptEvent'] = 'SystemPromptEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', system_prompt: ~openhands.sdk.llm.message.TextContent, tools: list[~litellm.types.llms.openai.ChatCompletionToolParam])
+### class openhands.sdk.event.SystemPromptEvent(kind: ~typing.Literal['SystemPromptEvent'] = 'SystemPromptEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', system_prompt: ~openhands.sdk.llm.message.TextContent, tools: list[~litellm.types.llms.openai.ChatCompletionToolParam])
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -86,7 +86,7 @@ Return Rich Text representation of this system prompt event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['SystemPromptEvent']
 
-### *class* openhands.sdk.event.ActionEvent(\*, kind: typing.Literal['ActionEvent'] = 'ActionEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: typing.Literal['agent', 'user', 'environment'] = 'agent', thought: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent], reasoning_content: str | None = None, thinking_blocks: list[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None, action: openhands.sdk.tool.schema.Action | None = None, tool_name: str, tool_call_id: str, tool_call: openhands.sdk.llm.message.MessageToolCall, llm_response_id: str, security_risk: openhands.sdk.security.risk.SecurityRisk = SecurityRisk.UNKNOWN)
+### class openhands.sdk.event.ActionEvent(kind: typing.Literal['ActionEvent'] = 'ActionEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: typing.Literal['agent', 'user', 'environment'] = 'agent', thought: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent], reasoning_content: str | None = None, thinking_blocks: list[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None, action: openhands.sdk.tool.schema.Action | None = None, tool_name: str, tool_call_id: str, tool_call: openhands.sdk.llm.message.MessageToolCall, llm_response_id: str, security_risk: openhands.sdk.security.risk.SecurityRisk = SecurityRisk.UNKNOWN)
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -130,7 +130,7 @@ Return Rich Text representation of this action event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ActionEvent']
 
-### *class* openhands.sdk.event.ObservationEvent(\*, kind: ~typing.Literal['ObservationEvent'] = 'ObservationEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, observation: ~openhands.sdk.tool.schema.Observation, action_id: str)
+### class openhands.sdk.event.ObservationEvent(kind: ~typing.Literal['ObservationEvent'] = 'ObservationEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, observation: ~openhands.sdk.tool.schema.Observation, action_id: str)
 
 Bases: [`ObservationBaseEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.observation.md#openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent)
 
@@ -154,7 +154,7 @@ Return Rich Text representation of this observation event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ObservationEvent']
 
-### *class* openhands.sdk.event.ObservationBaseEvent(\*, kind: ~typing.Literal['AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str)
+### class openhands.sdk.event.ObservationBaseEvent(kind: ~typing.Literal['AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str)
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -172,7 +172,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### tool_call_id : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-### *class* openhands.sdk.event.MessageEvent(\*, kind: ~typing.Literal['MessageEvent'] = 'MessageEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'], llm_message: ~openhands.sdk.llm.message.Message, llm_response_id: str | None = None, activated_skills: list[str] = `<factory>`, extended_content: list[~openhands.sdk.llm.message.TextContent] = `<factory>`)
+### class openhands.sdk.event.MessageEvent(kind: ~typing.Literal['MessageEvent'] = 'MessageEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'], llm_message: ~openhands.sdk.llm.message.Message, llm_response_id: str | None = None, activated_skills: list[str] = `<factory>`, extended_content: list[~openhands.sdk.llm.message.TextContent] = `<factory>`)
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -212,7 +212,7 @@ Return Rich Text representation of this message event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MessageEvent']
 
-### *class* openhands.sdk.event.AgentErrorEvent(\*, kind: ~typing.Literal['AgentErrorEvent'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', tool_name: str, tool_call_id: str, error: str)
+### class openhands.sdk.event.AgentErrorEvent(kind: ~typing.Literal['AgentErrorEvent'] = 'AgentErrorEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', tool_name: str, tool_call_id: str, error: str)
 
 Bases: [`ObservationBaseEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.observation.md#openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent)
 
@@ -241,7 +241,7 @@ Return Rich Text representation of this agent error event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['AgentErrorEvent']
 
-### *class* openhands.sdk.event.UserRejectObservation(\*, kind: ~typing.Literal['UserRejectObservation'] = 'UserRejectObservation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, rejection_reason: str = 'User rejected the action', action_id: str)
+### class openhands.sdk.event.UserRejectObservation(kind: ~typing.Literal['UserRejectObservation'] = 'UserRejectObservation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', tool_name: str, tool_call_id: str, rejection_reason: str = 'User rejected the action', action_id: str)
 
 Bases: [`ObservationBaseEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.observation.md#openhands.sdk.event.llm_convertible.observation.ObservationBaseEvent)
 
@@ -267,7 +267,7 @@ Return Rich Text representation of this user rejection event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['UserRejectObservation']
 
-### *class* openhands.sdk.event.PauseEvent(\*, kind: ~typing.Literal['PauseEvent'] = 'PauseEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'user')
+### class openhands.sdk.event.PauseEvent(kind: ~typing.Literal['PauseEvent'] = 'PauseEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'user')
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 
@@ -289,7 +289,7 @@ Return Rich Text representation of this pause event.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PauseEvent']
 
-### *class* openhands.sdk.event.Condensation(\*, kind: ~typing.Literal['Condensation'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', forgotten_event_ids: list[str] = `<factory>`, summary: str | None = None, summary_offset: ~typing.Annotated[int | None, ~annotated_types.Ge(ge=0)] = None, llm_response_id: str)
+### class openhands.sdk.event.Condensation(kind: ~typing.Literal['Condensation'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', forgotten_event_ids: list[str] = `<factory>`, summary: str | None = None, summary_offset: ~typing.Annotated[int | None, ~annotated_types.Ge(ge=0)] = None, llm_response_id: str)
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 
@@ -318,7 +318,7 @@ Subclasses should override this method to provide specific visualization.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Condensation']
 
-### *class* openhands.sdk.event.CondensationRequest(\*, kind: ~typing.Literal['CondensationRequest'] = 'CondensationRequest', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment')
+### class openhands.sdk.event.CondensationRequest(kind: ~typing.Literal['CondensationRequest'] = 'CondensationRequest', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment')
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 
@@ -339,7 +339,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['CondensationRequest']
 
-### *class* openhands.sdk.event.CondensationSummaryEvent(\*, kind: ~typing.Literal['CondensationSummaryEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', summary: str)
+### class openhands.sdk.event.CondensationSummaryEvent(kind: ~typing.Literal['CondensationSummaryEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', summary: str)
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 
@@ -359,7 +359,7 @@ The summary text.
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['CondensationSummaryEvent']
 
-### *class* openhands.sdk.event.ConversationStateUpdateEvent(\*, kind: ~typing.Literal['ConversationStateUpdateEvent'] = 'ConversationStateUpdateEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', key: str = `<factory>`, value: ~typing.Any = `<factory>`)
+### class openhands.sdk.event.ConversationStateUpdateEvent(kind: ~typing.Literal['ConversationStateUpdateEvent'] = 'ConversationStateUpdateEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', key: str = `<factory>`, value: ~typing.Any = `<factory>`)
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 

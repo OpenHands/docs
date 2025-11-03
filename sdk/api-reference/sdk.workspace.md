@@ -7,17 +7,23 @@ description: API reference for openhands.sdk.workspace
 
 <a id="module-openhands.sdk.workspace"></a>
 
-### *class* openhands.sdk.workspace.BaseWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.workspace.BaseWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
-Abstract base mixin for workspace.
+Abstract base class for workspace implementations.
 
-All workspace implementations support the context manager protocol,
-allowing safe resource management:
+Workspaces provide a sandboxed environment where agents can execute commands,
+read/write files, and perform other operations. All workspace implementations
+support the context manager protocol for safe resource management.
 
-> with workspace:
-> : workspace.execute_command(“echo ‘hello’”)
+### Example
+
+```pycon
+>>> with workspace:
+...     result = workspace.execute_command("echo 'hello'")
+...     content = workspace.read_file("example.txt")
+```
 
 #### \_\_enter_\_() → [BaseWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.base.md#openhands.sdk.workspace.base.BaseWorkspace)
 
@@ -114,7 +120,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### working_dir : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-### *class* openhands.sdk.workspace.CommandResult(, command: [str](https://docs.python.org/3/library/stdtypes.html#str), exit_code: [int](https://docs.python.org/3/library/functions.html#int), stdout: [str](https://docs.python.org/3/library/stdtypes.html#str), stderr: [str](https://docs.python.org/3/library/stdtypes.html#str), timeout_occurred: [bool](https://docs.python.org/3/library/functions.html#bool))
+### class openhands.sdk.workspace.CommandResult(, command: [str](https://docs.python.org/3/library/stdtypes.html#str), exit_code: [int](https://docs.python.org/3/library/functions.html#int), stdout: [str](https://docs.python.org/3/library/stdtypes.html#str), stderr: [str](https://docs.python.org/3/library/stdtypes.html#str), timeout_occurred: [bool](https://docs.python.org/3/library/functions.html#bool))
 
 Bases: `BaseModel`
 
@@ -134,7 +140,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### timeout_occurred : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-### *class* openhands.sdk.workspace.FileOperationResult(, success: [bool](https://docs.python.org/3/library/functions.html#bool), source_path: [str](https://docs.python.org/3/library/stdtypes.html#str), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str), file_size: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None) = None, error: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.workspace.FileOperationResult(, success: [bool](https://docs.python.org/3/library/functions.html#bool), source_path: [str](https://docs.python.org/3/library/stdtypes.html#str), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str), file_size: [int](https://docs.python.org/3/library/functions.html#int) | [None](https://docs.python.org/3/library/constants.html#None) = None, error: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: `BaseModel`
 
@@ -154,11 +160,24 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### error : [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
 
-### *class* openhands.sdk.workspace.LocalWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.workspace.LocalWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`BaseWorkspace`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.base.md#openhands.sdk.workspace.base.BaseWorkspace)
 
-Mixin providing local workspace operations.
+Local workspace implementation that operates on the host filesystem.
+
+LocalWorkspace provides direct access to the local filesystem and command execution
+environment. It’s suitable for development and testing scenarios where the agent
+should operate directly on the host system.
+
+### Example
+
+```pycon
+>>> workspace = LocalWorkspace(working_dir="/path/to/project")
+>>> with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
 
 #### execute_command(command: [str](https://docs.python.org/3/library/stdtypes.html#str), cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult)
 
@@ -239,11 +258,27 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace']
 
-### *class* openhands.sdk.workspace.RemoteWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['RemoteWorkspace'] = 'RemoteWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str), host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.workspace.RemoteWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['RemoteWorkspace'] = 'RemoteWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str), host: [str](https://docs.python.org/3/library/stdtypes.html#str), api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: [`RemoteWorkspaceMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.remote_workspace_mixin.md#openhands.sdk.workspace.remote.remote_workspace_mixin.RemoteWorkspaceMixin), [`BaseWorkspace`](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.base.md#openhands.sdk.workspace.base.BaseWorkspace)
 
-Remote Workspace Implementation.
+Remote workspace implementation that connects to an OpenHands agent server.
+
+RemoteWorkspace provides access to a sandboxed environment running on a remote
+OpenHands agent server. This is the recommended approach for production deployments
+as it provides better isolation and security.
+
+### Example
+
+```pycon
+>>> workspace = RemoteWorkspace(
+...     host="https://agent-server.example.com",
+...     working_dir="/workspace"
+... )
+>>> with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
 
 #### property client : Client
 
@@ -328,9 +363,9 @@ This is useful if you want to do some validation that requires the entire model 
 
 #### kind : [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['RemoteWorkspace']
 
-### *class* openhands.sdk.workspace.Workspace(, working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'workspace/project')
+### class openhands.sdk.workspace.Workspace(, working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'workspace/project')
 
-### *class* openhands.sdk.workspace.Workspace(, host: [str](https://docs.python.org/3/library/stdtypes.html#str), working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'workspace/project', api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.workspace.Workspace(, host: [str](https://docs.python.org/3/library/stdtypes.html#str), working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'workspace/project', api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 

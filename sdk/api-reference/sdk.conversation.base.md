@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.conversation.base
 
 <a id="module-openhands.sdk.conversation.base"></a>
 
-### *class* openhands.sdk.conversation.base.ConversationStateProtocol(\*args, \*\*kwargs)
+### class openhands.sdk.conversation.base.ConversationStateProtocol(*args, **kwargs)
 
 Bases: [`Protocol`](https://docs.python.org/3/library/typing.html#typing.Protocol)
 
@@ -47,11 +47,17 @@ If None, it means the conversation is not being persisted.
 
 The agent running in the conversation.
 
-#### \_\_init_\_(\*args, \*\*kwargs)
+#### \_\_init_\_(*args, **kwargs)
 
-### *class* openhands.sdk.conversation.base.BaseConversation
+### class openhands.sdk.conversation.base.BaseConversation
 
 Bases: [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
+
+Abstract base class for conversation implementations.
+
+This class defines the interface that all conversation implementations must follow.
+Conversations manage the interaction between users and agents, handling message
+exchange, execution control, and state management.
 
 #### abstract property id : [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)
 
@@ -61,9 +67,18 @@ Bases: [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
 #### abstractmethod send_message(message: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)) → [None](https://docs.python.org/3/library/constants.html#None)
 
+Send a message to the agent.
+
 #### abstractmethod run() → [None](https://docs.python.org/3/library/constants.html#None)
 
+Execute the agent to process messages and perform actions.
+
+This method runs the agent until it finishes processing the current
+message or reaches the maximum iteration limit.
+
 #### abstractmethod set_confirmation_policy(policy: [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)) → [None](https://docs.python.org/3/library/constants.html#None)
+
+Set the confirmation policy for the conversation.
 
 #### property confirmation_policy_active : [bool](https://docs.python.org/3/library/functions.html#bool)
 

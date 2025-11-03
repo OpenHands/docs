@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.security.llm_analyzer
 
 <a id="module-openhands.sdk.security.llm_analyzer"></a>
 
-### *class* openhands.sdk.security.llm_analyzer.LLMSecurityAnalyzer(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSecurityAnalyzer'] = 'LLMSecurityAnalyzer')
+### class openhands.sdk.security.llm_analyzer.LLMSecurityAnalyzer(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LLMSecurityAnalyzer'] = 'LLMSecurityAnalyzer')
 
 Bases: [`SecurityAnalyzerBase`](https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase)
 

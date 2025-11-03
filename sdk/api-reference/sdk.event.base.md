@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.event.base
 
 <a id="module-openhands.sdk.event.base"></a>
 
-### *class* openhands.sdk.event.base.Event(\*, kind: ~typing.Literal['Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
+### class openhands.sdk.event.base.Event(kind: ~typing.Literal['Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -40,7 +40,7 @@ Developer-friendly representation.
 
 #### kind : [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-### *class* openhands.sdk.event.base.LLMConvertibleEvent(\*, kind: ~typing.Literal['CondensationSummaryEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
+### class openhands.sdk.event.base.LLMConvertibleEvent(kind: ~typing.Literal['CondensationSummaryEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
 
 Bases: [`Event`](#openhands.sdk.event.base.Event), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 

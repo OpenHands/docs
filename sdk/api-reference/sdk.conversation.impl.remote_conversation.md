@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.conversation.impl.remote_conversati
 
 <a id="module-openhands.sdk.conversation.impl.remote_conversation"></a>
 
-### *class* openhands.sdk.conversation.impl.remote_conversation.WebSocketCallbackClient(host: [str](https://docs.python.org/3/library/stdtypes.html#str), conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str), callback: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)], api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.conversation.impl.remote_conversation.WebSocketCallbackClient(host: [str](https://docs.python.org/3/library/stdtypes.html#str), conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str), callback: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)], api_key: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 
@@ -27,7 +27,7 @@ Minimal WS client: connects, forwards events, retries on error.
 
 #### stop() → [None](https://docs.python.org/3/library/constants.html#None)
 
-### *class* openhands.sdk.conversation.impl.remote_conversation.RemoteEventsList(client: Client, conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.conversation.impl.remote_conversation.RemoteEventsList(client: Client, conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`EventsListBase`](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.events_list_base.md#openhands.sdk.conversation.events_list_base.EventsListBase)
 
@@ -50,7 +50,7 @@ Add a new event to the list (for compatibility with EventLog interface).
 
 Create a default callback that adds events to this list.
 
-### *class* openhands.sdk.conversation.impl.remote_conversation.RemoteState(client: Client, conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.conversation.impl.remote_conversation.RemoteState(client: Client, conversation_id: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`ConversationStateProtocol`](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.base.md#openhands.sdk.conversation.base.ConversationStateProtocol)
 
@@ -98,19 +98,19 @@ The working directory (fetched from remote).
 
 The persistence directory (fetched from remote).
 
-#### model_dump(\*\*\_kwargs)
+#### model_dump(**\_kwargs)
 
 Get a dictionary representation of the remote state.
 
-#### model_dump_json(\*\*kwargs)
+#### model_dump_json(**kwargs)
 
 Get a JSON representation of the remote state.
 
-### *class* openhands.sdk.conversation.impl.remote_conversation.RemoteConversation(agent: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase), workspace: [RemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.base.md#openhands.sdk.workspace.remote.base.RemoteWorkspace), conversation_id: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID) | [None](https://docs.python.org/3/library/constants.html#None) = None, callbacks: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]] | [None](https://docs.python.org/3/library/constants.html#None) = None, max_iteration_per_run: [int](https://docs.python.org/3/library/functions.html#int) = 500, stuck_detection: [bool](https://docs.python.org/3/library/functions.html#bool) = True, visualize: [bool](https://docs.python.org/3/library/functions.html#bool) = False, name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)] | [None](https://docs.python.org/3/library/constants.html#None) = None, \*\*\_: [object](https://docs.python.org/3/library/functions.html#object))
+### class openhands.sdk.conversation.impl.remote_conversation.RemoteConversation(agent: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase), workspace: [RemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.base.md#openhands.sdk.workspace.remote.base.RemoteWorkspace), conversation_id: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID) | [None](https://docs.python.org/3/library/constants.html#None) = None, callbacks: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]] | [None](https://docs.python.org/3/library/constants.html#None) = None, max_iteration_per_run: [int](https://docs.python.org/3/library/functions.html#int) = 500, stuck_detection: [bool](https://docs.python.org/3/library/functions.html#bool) = True, visualize: [bool](https://docs.python.org/3/library/functions.html#bool) = False, name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)] | [None](https://docs.python.org/3/library/constants.html#None) = None, **\_: [object](https://docs.python.org/3/library/functions.html#object))
 
 Bases: [`BaseConversation`](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.base.md#openhands.sdk.conversation.base.BaseConversation)
 
-#### \_\_init_\_(agent: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase), workspace: [RemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.base.md#openhands.sdk.workspace.remote.base.RemoteWorkspace), conversation_id: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID) | [None](https://docs.python.org/3/library/constants.html#None) = None, callbacks: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]] | [None](https://docs.python.org/3/library/constants.html#None) = None, max_iteration_per_run: [int](https://docs.python.org/3/library/functions.html#int) = 500, stuck_detection: [bool](https://docs.python.org/3/library/functions.html#bool) = True, visualize: [bool](https://docs.python.org/3/library/functions.html#bool) = False, name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)] | [None](https://docs.python.org/3/library/constants.html#None) = None, \*\*\_: [object](https://docs.python.org/3/library/functions.html#object)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### \_\_init_\_(agent: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase), workspace: [RemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.remote.base.md#openhands.sdk.workspace.remote.base.RemoteWorkspace), conversation_id: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID) | [None](https://docs.python.org/3/library/constants.html#None) = None, callbacks: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]] | [None](https://docs.python.org/3/library/constants.html#None) = None, max_iteration_per_run: [int](https://docs.python.org/3/library/functions.html#int) = 500, stuck_detection: [bool](https://docs.python.org/3/library/functions.html#bool) = True, visualize: [bool](https://docs.python.org/3/library/functions.html#bool) = False, name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)] | [None](https://docs.python.org/3/library/constants.html#None) = None, **\_: [object](https://docs.python.org/3/library/functions.html#object)) → [None](https://docs.python.org/3/library/constants.html#None)
 
 Remote conversation proxy that talks to an agent server.
 
@@ -149,9 +149,18 @@ Not implemented for remote conversations.
 
 #### send_message(message: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)) → [None](https://docs.python.org/3/library/constants.html#None)
 
+Send a message to the agent.
+
 #### run() → [None](https://docs.python.org/3/library/constants.html#None)
 
+Execute the agent to process messages and perform actions.
+
+This method runs the agent until it finishes processing the current
+message or reaches the maximum iteration limit.
+
 #### set_confirmation_policy(policy: [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)) → [None](https://docs.python.org/3/library/constants.html#None)
+
+Set the confirmation policy for the conversation.
 
 #### reject_pending_actions(reason: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'User rejected the action') → [None](https://docs.python.org/3/library/constants.html#None)
 

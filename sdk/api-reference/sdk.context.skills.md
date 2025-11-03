@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.skills
 
 <a id="module-openhands.sdk.context.skills"></a>
 
-### *class* openhands.sdk.context.skills.Skill(\*, name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>`)
+### class openhands.sdk.context.skills.Skill(name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>`)
 
 Bases: `BaseModel`
 
@@ -61,7 +61,7 @@ Returns True if the content contains variables in the format ${variable_name}.
 
 #### inputs : [list](https://docs.python.org/3/library/stdtypes.html#list)[[InputMetadata](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.types.md#openhands.sdk.context.skills.types.InputMetadata)]
 
-### *class* openhands.sdk.context.skills.BaseTrigger
+### class openhands.sdk.context.skills.BaseTrigger
 
 Bases: `BaseModel`, [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -71,7 +71,7 @@ Base class for all trigger types.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.skills.KeywordTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword'] = 'keyword', keywords: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### class openhands.sdk.context.skills.KeywordTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword'] = 'keyword', keywords: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
 
 Bases: [`BaseTrigger`](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.BaseTrigger)
 
@@ -87,7 +87,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### keywords : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
-### *class* openhands.sdk.context.skills.TaskTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task'] = 'task', triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### class openhands.sdk.context.skills.TaskTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task'] = 'task', triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
 
 Bases: [`BaseTrigger`](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.BaseTrigger)
 
@@ -103,7 +103,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### triggers : [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
 
-### *class* openhands.sdk.context.skills.SkillKnowledge(, name: [str](https://docs.python.org/3/library/stdtypes.html#str), trigger: [str](https://docs.python.org/3/library/stdtypes.html#str), content: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.context.skills.SkillKnowledge(, name: [str](https://docs.python.org/3/library/stdtypes.html#str), trigger: [str](https://docs.python.org/3/library/stdtypes.html#str), content: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: `BaseModel`
 

@@ -317,6 +317,20 @@ description: API reference for {title}
                 # Also fix patterns like "*: type*" at the end of lines
                 line = re.sub(r'\*:\s*([^*]+)\*$', r': \1', line)
             
+            # Fix class signatures with *class* emphasis
+            if line.startswith('###') and '*class*' in line:
+                line = line.replace('*class*', 'class')
+            
+            # Fix parameter patterns like "*, id:" and "\*\*_:"
+            if '\\*' in line or '*, ' in line:
+                # Replace "(\*, " with "(" (keyword-only parameter indicator)
+                line = re.sub(r'\(\\\*,\s*', '(', line)
+                line = re.sub(r'\(\*,\s*', '(', line)
+                # Replace "\*\*_:" with "**_:" (escaped kwargs)
+                line = line.replace('\\*\\*', '**')
+                # Replace any remaining escaped asterisks
+                line = line.replace('\\*', '*')
+            
             # Remove emphasis around parameter names in documentation
             # Pattern: **parameter_name** -> parameter_name
             if '**' in line and '–' in line:

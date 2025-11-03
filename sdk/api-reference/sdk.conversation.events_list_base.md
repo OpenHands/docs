@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.conversation.events_list_base
 
 <a id="module-openhands.sdk.conversation.events_list_base"></a>
 
-### *class* openhands.sdk.conversation.events_list_base.EventsListBase
+### class openhands.sdk.conversation.events_list_base.EventsListBase
 
 Bases: [`Sequence`](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 

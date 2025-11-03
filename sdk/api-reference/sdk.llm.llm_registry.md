@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.llm.llm_registry
 
 <a id="module-openhands.sdk.llm.llm_registry"></a>
 
-### *class* openhands.sdk.llm.llm_registry.RegistryEvent(, llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM))
+### class openhands.sdk.llm.llm_registry.RegistryEvent(, llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM))
 
 Bases: `BaseModel`
 
@@ -17,7 +17,7 @@ Bases: `BaseModel`
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.llm_registry.LLMRegistry(retry_listener: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### class openhands.sdk.llm.llm_registry.LLMRegistry(retry_listener: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 

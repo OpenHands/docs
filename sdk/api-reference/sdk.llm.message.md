@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.llm.message
 
 <a id="module-openhands.sdk.llm.message"></a>
 
-### *class* openhands.sdk.llm.message.MessageToolCall(, id: [str](https://docs.python.org/3/library/stdtypes.html#str), name: [str](https://docs.python.org/3/library/stdtypes.html#str), arguments: [str](https://docs.python.org/3/library/stdtypes.html#str), origin: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['completion', 'responses'])
+### class openhands.sdk.llm.message.MessageToolCall(, id: [str](https://docs.python.org/3/library/stdtypes.html#str), name: [str](https://docs.python.org/3/library/stdtypes.html#str), arguments: [str](https://docs.python.org/3/library/stdtypes.html#str), origin: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['completion', 'responses'])
 
 Bases: `BaseModel`
 
@@ -46,7 +46,7 @@ Serialize to OpenAI Responses ‘function_call’ input item format.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.ThinkingBlock(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['thinking'] = 'thinking', thinking: [str](https://docs.python.org/3/library/stdtypes.html#str), signature: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.llm.message.ThinkingBlock(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['thinking'] = 'thinking', thinking: [str](https://docs.python.org/3/library/stdtypes.html#str), signature: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: `BaseModel`
 
@@ -66,7 +66,7 @@ and passed back to the API for tool use scenarios.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.RedactedThinkingBlock(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['redacted_thinking'] = 'redacted_thinking', data: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.llm.message.RedactedThinkingBlock(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['redacted_thinking'] = 'redacted_thinking', data: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: `BaseModel`
 
@@ -83,7 +83,7 @@ before extended thinking was enabled.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.ReasoningItemModel(\*, id: str | None = None, summary: list[str] = `<factory>`, content: list[str] | None = None, encrypted_content: str | None = None, status: str | None = None)
+### class openhands.sdk.llm.message.ReasoningItemModel(id: str | None = None, summary: list[str] = `<factory>`, content: list[str] | None = None, encrypted_content: str | None = None, status: str | None = None)
 
 Bases: `BaseModel`
 
@@ -105,7 +105,7 @@ Do not log or render encrypted_content.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.BaseContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False)
+### class openhands.sdk.llm.message.BaseContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False)
 
 Bases: `BaseModel`
 
@@ -122,7 +122,7 @@ even if they only have a single item.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.TextContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['text'] = 'text', text: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### class openhands.sdk.llm.message.TextContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['text'] = 'text', text: [str](https://docs.python.org/3/library/stdtypes.html#str))
 
 Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
@@ -140,7 +140,7 @@ Convert to LLM API format.
 
 #### cache_prompt : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-### *class* openhands.sdk.llm.message.ImageContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['image'] = 'image', image_urls: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### class openhands.sdk.llm.message.ImageContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['image'] = 'image', image_urls: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
 
 Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
@@ -158,7 +158,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### cache_prompt : [bool](https://docs.python.org/3/library/functions.html#bool)
 
-### *class* openhands.sdk.llm.message.Message(\*, role: typing.Literal['user', 'system', 'assistant', 'tool'], content: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent | openhands.sdk.llm.message.ImageContent] = `<factory>`, cache_enabled: bool = False, vision_enabled: bool = False, function_calling_enabled: bool = False, tool_calls: list[openhands.sdk.llm.message.MessageToolCall] | None = None, tool_call_id: str | None = None, name: str | None = None, force_string_serializer: bool = False, reasoning_content: str | None = None, thinking_blocks: ~collections.abc.Sequence[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None)
+### class openhands.sdk.llm.message.Message(role: typing.Literal['user', 'system', 'assistant', 'tool'], content: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent | openhands.sdk.llm.message.ImageContent] = `<factory>`, cache_enabled: bool = False, vision_enabled: bool = False, function_calling_enabled: bool = False, tool_calls: list[openhands.sdk.llm.message.MessageToolCall] | None = None, tool_call_id: str | None = None, name: str | None = None, force_string_serializer: bool = False, reasoning_content: str | None = None, thinking_blocks: ~collections.abc.Sequence[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None)
 
 Bases: `BaseModel`
 

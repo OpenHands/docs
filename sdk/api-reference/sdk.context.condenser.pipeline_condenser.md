@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.condenser.pipeline_condense
 
 <a id="module-openhands.sdk.context.condenser.pipeline_condenser"></a>
 
-### *class* openhands.sdk.context.condenser.pipeline_condenser.PipelineCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser', condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)])
+### class openhands.sdk.context.condenser.pipeline_condenser.PipelineCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser', condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)])
 
 Bases: [`CondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)
 
