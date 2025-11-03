@@ -324,6 +324,9 @@ description: API reference for {module_name}
         # Fix template string patterns like ${variable}
         line = re.sub(r'\$\{[^}]+\}', '(variable)', line)
         
+        # Fix asterisk in type annotations like "property name *: Type"
+        line = re.sub(r' \*:', ':', line)
+        
         return line
         
     def update_navigation(self):
