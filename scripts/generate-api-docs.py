@@ -224,8 +224,9 @@ openhands.sdk.{module} module
             # Clean the content
             cleaned_content = self.clean_markdown_content(content, md_file.name)
             
-            # Write to output directory
-            output_file = self.output_dir / md_file.name
+            # Write to output directory with .mdx extension
+            output_filename = md_file.name.replace('.md', '.mdx')
+            output_file = self.output_dir / output_filename
             output_file.write_text(cleaned_content)
             
     def clean_markdown_content(self, content: str, filename: str) -> str:
@@ -321,7 +322,7 @@ description: API reference for {module_name}
         logger.info("Updating navigation configuration...")
         
         # Generate navigation entries for all API files
-        api_files = list(self.output_dir.glob("*.md"))
+        api_files = list(self.output_dir.glob("*.mdx"))
         nav_entries = []
         
         for api_file in sorted(api_files):
