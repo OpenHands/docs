@@ -33,16 +33,19 @@ class SimpleAPIDocGenerator:
         # Step 1: Setup agent-sdk repository
         self.setup_agent_sdk()
         
-        # Step 2: Install the SDK
+        # Step 2: Fix MDX syntax issues in agent-sdk files
+        self.fix_agent_sdk_mdx_syntax()
+        
+        # Step 3: Install the SDK
         self.install_sdk()
         
-        # Step 3: Generate documentation using Sphinx
+        # Step 4: Generate documentation using Sphinx
         self.generate_sphinx_docs()
         
-        # Step 4: Clean and simplify the generated markdown
+        # Step 5: Clean and simplify the generated markdown
         self.clean_generated_docs()
         
-        # Step 5: Update navigation
+        # Step 6: Update navigation
         self.update_navigation()
         
         logger.info("API documentation generation completed successfully!")
@@ -68,6 +71,28 @@ class SimpleAPIDocGenerator:
         self.run_command([
             "python", "-m", "pip", "install", "-e", str(sdk_path)
         ])
+        
+    def fix_agent_sdk_mdx_syntax(self):
+        """Fix MDX syntax issues in agent-sdk files to prevent Mintlify parsing errors."""
+        logger.info("Fixing MDX syntax issues in agent-sdk files...")
+        
+        # Fix email addresses in repo.md
+        repo_md = self.agent_sdk_dir / ".openhands" / "microagents" / "repo.md"
+        if repo_md.exists():
+            content = repo_md.read_text()
+            # Fix unescaped @ symbols in email addresses
+            content = re.sub(r'<([^<>]*@[^<>]*)>', r'&lt;\1&gt;', content)
+            repo_md.write_text(content)
+            
+        # Fix README.md
+        readme_md = self.agent_sdk_dir / "README.md"
+        if readme_md.exists():
+            content = readme_md.read_text()
+            # Convert HTML comments to JSX format
+            content = re.sub(r'<!--\s*(.*?)\s*-->', r'{/* \1 */}', content, flags=re.DOTALL)
+            # Fix self-closing tags
+            content = re.sub(r'<(img|br|hr)([^>]*?)(?<!/)>', r'<\1\2 />', content)
+            readme_md.write_text(content)
         
     def generate_sphinx_docs(self):
         """Generate documentation using Sphinx."""
