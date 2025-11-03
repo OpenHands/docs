@@ -664,8 +664,45 @@ description: API reference for {module_name}
         # Save navigation snippet
         nav_file = self.docs_dir / "scripts" / "mint-config-snippet.json"
         nav_file.write_text(json.dumps(nav_config, indent=2))
+
+        # Also update the main docs.json file
+        self.update_main_docs_json([entry.strip('"') for entry in nav_entries])
         
         logger.info(f"Generated navigation for {len(nav_entries)} API reference files")
+
+    def update_main_docs_json(self, nav_entries):
+        """Update the main docs.json file with the new API reference navigation."""
+        docs_json_path = self.docs_dir / "docs.json"
+        
+        if not docs_json_path.exists():
+            logger.warning("docs.json not found, skipping main navigation update")
+            return
+        
+        try:
+            with open(docs_json_path, 'r') as f:
+                docs_config = json.load(f)
+            
+            # Find and update the API Reference section
+            updated = False
+            for tab in docs_config.get("navigation", {}).get("tabs", []):
+                if tab.get("tab") == "SDK":
+                    for page in tab.get("pages", []):
+                        if isinstance(page, dict) and page.get("group") == "API Reference":
+                            page["pages"] = nav_entries
+                            updated = True
+                            logger.info("Updated API Reference navigation in docs.json")
+                            break
+                    if updated:
+                        break
+            
+            if updated:
+                with open(docs_json_path, 'w') as f:
+                    json.dump(docs_config, f, indent=2)
+            else:
+                logger.warning("Could not find API Reference section in docs.json to update")
+                
+        except Exception as e:
+            logger.error(f"Error updating docs.json: {e}")
         
     def run_command(self, cmd: List[str], cwd: Path = None):
         """Run a shell command with error handling."""
