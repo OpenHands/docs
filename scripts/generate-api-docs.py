@@ -377,6 +377,9 @@ description: API reference for {module_name}
         # Fix invalid http:// links
         line = re.sub(r'\[http://\]\(http://\)', 'http://', line)
         
+        # Remove Python console prompt prefixes from examples
+        line = re.sub(r'^>`>`>` ', '', line)
+        
         return line
         
     def update_navigation(self):
