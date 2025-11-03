@@ -217,6 +217,11 @@ openhands.sdk.{module} module
         for md_file in build_dir.glob("*.md"):
             if md_file.name == "index.md":
                 continue
+            
+            # Skip the top-level openhands.sdk.md file as it duplicates content
+            if md_file.name == "openhands.sdk.md":
+                logger.info(f"Skipping {md_file.name} (top-level duplicate)")
+                continue
                 
             logger.info(f"Processing {md_file.name}")
             content = md_file.read_text()
@@ -248,10 +253,146 @@ openhands.sdk.{module} module
         
         return content
 
+    def reorganize_class_content(self, content: str) -> str:
+        """Reorganize class content to separate properties from methods."""
+        import re
+        
+        lines = content.split('\n')
+        result_lines = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this is a class header
+            if re.match(r'^### \*class\*', line):
+                # Process this class
+                class_lines, i = self.process_class_section(lines, i)
+                result_lines.extend(class_lines)
+            else:
+                result_lines.append(line)
+                i += 1
+        
+        return '\n'.join(result_lines)
+    
+    def process_class_section(self, lines: list[str], start_idx: int) -> tuple[list[str], int]:
+        """Process a single class section, separating properties from methods."""
+        import re
+        
+        result = []
+        i = start_idx
+        
+        # Add the class header and description (including any ### Example sections)
+        while i < len(lines):
+            line = lines[i]
+            # Stop when we hit the first #### (class member) or another class
+            if line.startswith('####') or (line.startswith('### *class*') and i > start_idx):
+                break
+            result.append(line)
+            i += 1
+        
+        # Collect all class members
+        properties = []
+        methods = []
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Stop if we hit another class or module (but not ### Example sections)
+            if line.startswith('### *class*'):
+                break
+                
+            if line.startswith('####'):
+                # Determine if this is a property or method
+                member_lines, i = self.extract_member_section(lines, i)
+                
+                if self.is_property(member_lines[0]):
+                    properties.extend(member_lines)
+                else:
+                    methods.extend(member_lines)
+            else:
+                i += 1
+        
+        # Add properties section if we have any
+        if properties:
+            result.append('')
+            result.append('#### Properties')
+            result.append('')
+            
+            # Convert property headers to list items
+            for prop_line in properties:
+                if prop_line.startswith('####'):
+                    # Extract property name and type
+                    prop_match = re.match(r'^####\s*([^*:]+)\s*\*?:?\s*(.*)$', prop_line)
+                    if prop_match:
+                        prop_name = prop_match.group(1).strip()
+                        prop_type = prop_match.group(2).strip()
+                        # Clean up the type annotation
+                        prop_type = re.sub(r'^\*\s*', '', prop_type)  # Remove leading *
+                        prop_type = re.sub(r'\s*\*$', '', prop_type)  # Remove trailing *
+                        if prop_type:
+                            result.append(f'- `{prop_name}`: {prop_type}')
+                        else:
+                            result.append(f'- `{prop_name}`')
+                elif prop_line.strip() and not prop_line.startswith('####'):
+                    # Add description lines indented
+                    result.append(f'  {prop_line}')
+        
+        # Add methods section if we have any
+        if methods:
+            if properties:  # Add spacing if we had properties
+                result.append('')
+            result.append('#### Methods')
+            result.append('')
+            result.extend(methods)
+        
+        return result, i
+    
+    def extract_member_section(self, lines: list[str], start_idx: int) -> tuple[list[str], int]:
+        """Extract all lines belonging to a single class member."""
+        result = []
+        i = start_idx
+        
+        # Add the header line
+        result.append(lines[i])
+        i += 1
+        
+        # Add all following lines until we hit another header or class
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith('####') or line.startswith('###'):
+                break
+            result.append(line)
+            i += 1
+        
+        return result, i
+    
+    def is_property(self, header_line: str) -> bool:
+        """Determine if a class member is a property or method."""
+        import re
+        
+        # Properties typically have type annotations with *: type* pattern
+        if re.search(r'\*:\s*[^*]+\*', header_line):
+            return True
+        
+        # Methods have parentheses
+        if '(' in header_line and ')' in header_line:
+            return False
+        
+        # Properties often have : followed by type info
+        if ':' in header_line and not '(' in header_line:
+            return True
+        
+        # Default to method if unclear
+        return False
+
     def clean_markdown_content(self, content: str, filename: str) -> str:
         """Clean markdown content to be parser-friendly."""
         # First handle multi-line dictionary patterns
         content = self.clean_multiline_dictionaries(content)
+        
+        # Reorganize class content to separate properties from methods
+        content = self.reorganize_class_content(content)
         
         lines = content.split('\n')
         cleaned_lines = []
@@ -302,7 +443,7 @@ description: API reference for {module_name}
             method_name = method_name.strip().split('.')[-1]  # Get just the method name
             # Remove any decorators or prefixes
             method_name = re.sub(r'^(static|class|abstract|property)\s+', '', method_name)
-            return f"{level} {method_name}"
+            return f"{level} {method_name}()"
             
         # Pattern for property headers: "#### property property_name"
         prop_match = re.match(r'^(#+)\s*property\s+([^:]+)', line)
