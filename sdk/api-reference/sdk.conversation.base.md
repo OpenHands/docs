@@ -88,9 +88,9 @@ Returns True if BOTH conditions are met:
 Generate a title for the conversation based on the first user message.
 
 **Parameters:**
-  * **llm** – Optional LLM to use for title generation. If not provided,
+  - **llm** – Optional LLM to use for title generation. If not provided,
     uses the agent’s LLM.
-  * **max_length** – Maximum length of the generated title.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 **Raises:**

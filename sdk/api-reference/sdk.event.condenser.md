@@ -50,7 +50,7 @@ This action is used to request a condensation of the conversation history.
 
 The action type, namely ActionType.CONDENSATION_REQUEST.
 
-* **Type:**
+- **Type:**
   [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 #### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*

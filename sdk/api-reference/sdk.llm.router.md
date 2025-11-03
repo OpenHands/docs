@@ -44,8 +44,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### *abstractmethod* select_llm(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
@@ -175,8 +175,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### select_llm(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
@@ -221,8 +221,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### select_llm(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 

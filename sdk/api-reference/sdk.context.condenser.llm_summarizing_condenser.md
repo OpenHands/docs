@@ -31,7 +31,7 @@ window exceeded).
 **Returns:**
   True if the condenser handles explicit condensation requests, False
   otherwise.
-* **Return type:**
+- **Return type:**
   [bool](https://docs.python.org/3/library/functions.html#bool)
 
 #### should_condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [bool](https://docs.python.org/3/library/functions.html#bool)

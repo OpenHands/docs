@@ -45,8 +45,8 @@ Read and return the contents of a file as a string.
 Write contents to a file at the specified path.
 
 **Parameters:**
-  * **path** – The file path where contents should be written.
-  * **contents** – The data to write, either as string or bytes.
+  - **path** – The file path where contents should be written.
+  - **contents** – The data to write, either as string or bytes.
 
 #### root *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
@@ -89,8 +89,8 @@ Read and return the contents of a file as a string.
 Write contents to a file at the specified path.
 
 **Parameters:**
-  * **path** – The file path where contents should be written.
-  * **contents** – The data to write, either as string or bytes.
+  - **path** – The file path where contents should be written.
+  - **contents** – The data to write, either as string or bytes.
 
 ### *class* openhands.sdk.io.InMemoryFileStore(files: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
 
@@ -128,8 +128,8 @@ Read and return the contents of a file as a string.
 Write contents to a file at the specified path.
 
 **Parameters:**
-  * **path** – The file path where contents should be written.
-  * **contents** – The data to write, either as string or bytes.
+  - **path** – The file path where contents should be written.
+  - **contents** – The data to write, either as string or bytes.
 
 #### files *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]*
 

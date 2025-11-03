@@ -23,9 +23,9 @@ Extract the first user message from conversation events.
 Generate a conversation title using LLM.
 
 **Parameters:**
-  * **message** – The first user message to generate title from.
-  * **llm** – The LLM to use for title generation.
-  * **max_length** – Maximum length of the generated title.
+  - **message** – The first user message to generate title from.
+  - **llm** – The LLM to use for title generation.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   Generated title, or None if LLM fails or returns empty response.
 
@@ -34,8 +34,8 @@ Generate a conversation title using LLM.
 Generate a fallback title by truncating the first user message.
 
 **Parameters:**
-  * **message** – The first user message.
-  * **max_length** – Maximum length of the title.
+  - **message** – The first user message.
+  - **max_length** – Maximum length of the title.
 **Returns:**
   A truncated title.
 
@@ -49,9 +49,9 @@ This is the main utility function that orchestrates the title generation process
 3. Fall back to simple truncation if LLM fails
 
 **Parameters:**
-  * **events** – List of conversation events.
-  * **llm** – Optional LLM to use for title generation.
-  * **max_length** – Maximum length of the generated title.
+  - **events** – List of conversation events.
+  - **llm** – Optional LLM to use for title generation.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 **Raises:**

@@ -36,22 +36,22 @@ Default implementation performs no cleanup. Subclasses should override
 to add cleanup logic (e.g., stopping containers, closing connections).
 
 **Parameters:**
-  * **exc_type** – Exception type if an exception occurred
-  * **exc_val** – Exception value if an exception occurred
-  * **exc_tb** – Exception traceback if an exception occurred
+  - **exc_type** – Exception type if an exception occurred
+  - **exc_val** – Exception value if an exception occurred
+  - **exc_tb** – Exception traceback if an exception occurred
 
 #### *abstractmethod* execute_command(command: [str](https://docs.python.org/3/library/stdtypes.html#str), cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult)
 
 Execute a bash command on the system.
 
 **Parameters:**
-  * **command** – The bash command to execute
-  * **cwd** – Working directory for the command (optional)
-  * **timeout** – Timeout in seconds (defaults to 30.0)
+  - **command** – The bash command to execute
+  - **cwd** – Working directory for the command (optional)
+  - **timeout** – Timeout in seconds (defaults to 30.0)
 **Returns:**
   Result containing stdout, stderr, exit_code, and other
   : metadata
-* **Return type:**
+- **Return type:**
   [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.CommandResult)
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If command execution fails
@@ -61,11 +61,11 @@ Execute a bash command on the system.
 Upload a file to the system.
 
 **Parameters:**
-  * **source_path** – Path to the source file
-  * **destination_path** – Path where the file should be uploaded
+  - **source_path** – Path to the source file
+  - **destination_path** – Path where the file should be uploaded
 **Returns:**
   Result containing success status and metadata
-* **Return type:**
+- **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If file upload fails
@@ -75,11 +75,11 @@ Upload a file to the system.
 Download a file from the system.
 
 **Parameters:**
-  * **source_path** – Path to the source file on the system
-  * **destination_path** – Path where the file should be downloaded
+  - **source_path** – Path to the source file on the system
+  - **destination_path** – Path where the file should be downloaded
 **Returns:**
   Result containing success status and metadata
-* **Return type:**
+- **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If file download fails
@@ -92,7 +92,7 @@ Get the git changes for the repository at the path given.
   **path** – Path to the git repository
 **Returns:**
   List of changes
-* **Return type:**
+- **Return type:**
   [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting changes failed
@@ -105,7 +105,7 @@ Get the git diff for the file at the path given.
   **path** – Path to the file
 **Returns:**
   Git diff
-* **Return type:**
+- **Return type:**
   GitDiff
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting diff failed

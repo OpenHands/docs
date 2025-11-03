@@ -12,11 +12,11 @@ description: API reference for openhands.sdk.context.prompts
 Render a Jinja2 template.
 
 **Parameters:**
-  * **prompt_dir** – The base directory for relative template paths.
-  * **template_name** – The template filename. Can be either:
+  - **prompt_dir** – The base directory for relative template paths.
+  - **template_name** – The template filename. Can be either:
     - A relative filename (e.g., “system_prompt.j2”) loaded from prompt_dir
     - An absolute path (e.g., “/path/to/custom_prompt.j2”)
-  * **\*\*ctx** – Template context variables.
+  - **\*\*ctx** – Template context variables.
 **Returns:**
   Rendered template string.
 **Raises:**

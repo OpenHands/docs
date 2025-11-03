@@ -133,19 +133,19 @@ Convert a Tool to an MCP tool definition.
 Allow overriding input/output schemas (usually by subclasses).
 
 **Parameters:**
-  * **input_schema** – Optionally override the input schema.
-  * **output_schema** – Optionally override the output schema.
+  - **input_schema** – Optionally override the input schema.
+  - **output_schema** – Optionally override the output schema.
 
 #### to_openai_tool(add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Schema](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Schema)] | [None](https://docs.python.org/3/library/constants.html#None) = None) → ChatCompletionToolParam
 
 Convert a Tool to an OpenAI tool.
 
 **Parameters:**
-  * **add_security_risk_prediction** – Whether to add a security_risk field
+  - **add_security_risk_prediction** – Whether to add a security_risk field
     to the action schema for LLM to predict. This is useful for
     tools that may have safety risks, so the LLM can reason about
     the risk level before calling the tool.
-  * **action_type** – Optionally override the action_type to use for the schema.
+  - **action_type** – Optionally override the action_type to use for the schema.
     This is useful for MCPTool to use a dynamically created action type
     based on the tool’s input schema.
 
@@ -204,9 +204,9 @@ Executor function type for a Tool.
 Execute the tool with the given action and return an observation.
 
 **Parameters:**
-  * **action** – The action to execute, containing the parameters and context
+  - **action** – The action to execute, containing the parameters and context
     needed for the tool operation.
-  * **conversation** – The conversation context for the tool execution.
+  - **conversation** – The conversation context for the tool execution.
     Note: This is typed as LocalConversation (not
     BaseConversation) because all tool executions happen
     within a LocalConversation context. Even when tools are

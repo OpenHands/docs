@@ -21,13 +21,13 @@ Uses the shared shell execution utility to run commands with proper
 timeout handling, output streaming, and error management.
 
 **Parameters:**
-  * **command** – The bash command to execute
-  * **cwd** – Working directory (optional)
-  * **timeout** – Timeout in seconds
+  - **command** – The bash command to execute
+  - **cwd** – Working directory (optional)
+  - **timeout** – Timeout in seconds
 **Returns:**
   Result with stdout, stderr, exit_code, command, and
   : timeout_occurred
-* **Return type:**
+- **Return type:**
   [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.CommandResult)
 
 #### file_upload(source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult)
@@ -38,11 +38,11 @@ For local systems, file upload is implemented as a file copy operation
 using shutil.copy2 to preserve metadata.
 
 **Parameters:**
-  * **source_path** – Path to the source file
-  * **destination_path** – Path where the file should be copied
+  - **source_path** – Path to the source file
+  - **destination_path** – Path where the file should be copied
 **Returns:**
   Result with success status and file information
-* **Return type:**
+- **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
 
 #### file_download(source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult)
@@ -53,11 +53,11 @@ For local systems, file download is implemented as a file copy operation
 using shutil.copy2 to preserve metadata.
 
 **Parameters:**
-  * **source_path** – Path to the source file
-  * **destination_path** – Path where the file should be copied
+  - **source_path** – Path to the source file
+  - **destination_path** – Path where the file should be copied
 **Returns:**
   Result with success status and file information
-* **Return type:**
+- **Return type:**
   [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
 
 #### git_changes(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
@@ -68,7 +68,7 @@ Get the git changes for the repository at the path given.
   **path** – Path to the git repository
 **Returns:**
   List of changes
-* **Return type:**
+- **Return type:**
   [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting changes failed
@@ -81,7 +81,7 @@ Get the git diff for the file at the path given.
   **path** – Path to the file
 **Returns:**
   Git diff
-* **Return type:**
+- **Return type:**
   GitDiff
 **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If path is not a git repository or getting diff failed

@@ -114,8 +114,8 @@ Convert a Tool to an MCP tool definition.
 Allow overriding input/output schemas (usually by subclasses).
 
 **Parameters:**
-  * **input_schema** – Optionally override the input schema.
-  * **output_schema** – Optionally override the output schema.
+  - **input_schema** – Optionally override the input schema.
+  - **output_schema** – Optionally override the output schema.
 
 #### to_openai_tool(add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Schema](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Schema)] | [None](https://docs.python.org/3/library/constants.html#None) = None) → ChatCompletionToolParam
 

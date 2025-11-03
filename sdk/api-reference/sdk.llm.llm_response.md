@@ -27,14 +27,14 @@ raw LiteLLM response for internal use.
 
 The completion message converted to OpenHands Message type
 
-* **Type:**
+- **Type:**
   [openhands.sdk.llm.message.Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
 #### metrics
 
 Snapshot of metrics from the completion request
 
-* **Type:**
+- **Type:**
   [openhands.sdk.llm.utils.metrics.MetricsSnapshot](https://github.com/OpenHands/software-agent-sdk/sdk.llm.md#openhands.sdk.llm.MetricsSnapshot)
 
 #### raw_response
@@ -42,7 +42,7 @@ Snapshot of metrics from the completion request
 The original LiteLLM response (ModelResponse or
 ResponsesAPIResponse) for internal use
 
-* **Type:**
+- **Type:**
   litellm.types.utils.ModelResponse | litellm.types.llms.openai.ResponsesAPIResponse
 
 #### message *: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)*

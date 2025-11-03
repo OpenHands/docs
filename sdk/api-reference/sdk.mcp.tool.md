@@ -85,8 +85,8 @@ Convert a Tool to an MCP tool definition.
 Allow overriding input/output schemas (usually by subclasses).
 
 **Parameters:**
-  * **input_schema** – Optionally override the input schema.
-  * **output_schema** – Optionally override the output schema.
+  - **input_schema** – Optionally override the input schema.
+  - **output_schema** – Optionally override the output schema.
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolDefinition']*
 

@@ -129,7 +129,7 @@ Check if prompt caching is supported and enabled for current model.
 **Returns:**
   True if prompt caching is supported and enabled for the given
   : model.
-* **Return type:**
+- **Return type:**
   boolean
 
 #### uses_responses_api() → [bool](https://docs.python.org/3/library/functions.html#bool)
@@ -167,8 +167,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### resolve_diff_from_deserialized(persisted: [LLM](#openhands.sdk.llm.llm.LLM)) → [LLM](#openhands.sdk.llm.llm.LLM)
 

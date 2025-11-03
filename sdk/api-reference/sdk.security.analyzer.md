@@ -52,8 +52,8 @@ This implements the default confirmation logic based on risk level
 and confirmation mode settings.
 
 **Parameters:**
-  * **risk** – The security risk level of the action
-  * **confirmation_mode** – Whether confirmation mode is enabled
+  - **risk** – The security risk level of the action
+  - **confirmation_mode** – Whether confirmation mode is enabled
 **Returns:**
   True if confirmation is required, False otherwise
 

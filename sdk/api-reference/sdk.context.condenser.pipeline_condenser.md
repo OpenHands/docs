@@ -63,7 +63,7 @@ relevant per-condensation diagnostic information.
 **Returns:**
   A condensed view of the events or an event indicating
   the history has been condensed.
-* **Return type:**
+- **Return type:**
   [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.md#openhands.sdk.event.Condensation)
 
 #### handles_condensation_requests() → [bool](https://docs.python.org/3/library/functions.html#bool)
@@ -78,7 +78,7 @@ window exceeded).
 **Returns:**
   True if the condenser handles explicit condensation requests, False
   otherwise.
-* **Return type:**
+- **Return type:**
   [bool](https://docs.python.org/3/library/functions.html#bool)
 
 #### model_config  : ClassVar[ConfigDict] = \{\}

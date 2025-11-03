@@ -21,8 +21,8 @@ handle basic file operations like reading, writing, listing, and deleting files.
 Write contents to a file at the specified path.
 
 **Parameters:**
-  * **path** – The file path where contents should be written.
-  * **contents** – The data to write, either as string or bytes.
+  - **path** – The file path where contents should be written.
+  - **contents** – The data to write, either as string or bytes.
 
 #### *abstractmethod* read(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 

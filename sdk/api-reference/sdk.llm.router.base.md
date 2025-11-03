@@ -70,8 +70,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### model *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 

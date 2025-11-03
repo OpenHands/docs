@@ -16,20 +16,20 @@ Bases: [`BaseConversation`](https://github.com/OpenHands/software-agent-sdk/sdk.
 Initialize the conversation.
 
 **Parameters:**
-  * **agent** – The agent to use for the conversation
-  * **workspace** – Working directory for agent operations and tool execution
-  * **persistence_dir** – Directory for persisting conversation state and events
-  * **conversation_id** – Optional ID for the conversation. If provided, will
+  - **agent** – The agent to use for the conversation
+  - **workspace** – Working directory for agent operations and tool execution
+  - **persistence_dir** – Directory for persisting conversation state and events
+  - **conversation_id** – Optional ID for the conversation. If provided, will
     be used to identify the conversation. The user might want to
     suffix their persistent filestore with this ID.
-  * **callbacks** – Optional list of callback functions to handle events
-  * **max_iteration_per_run** – Maximum number of iterations per run
-  * **visualize** – Whether to enable default visualization. If True, adds
+  - **callbacks** – Optional list of callback functions to handle events
+  - **max_iteration_per_run** – Maximum number of iterations per run
+  - **visualize** – Whether to enable default visualization. If True, adds
     a default visualizer callback. If False, relies on
     application to provide visualization through callbacks.
-  * **name_for_visualization** – Optional name to prefix in panel titles to identify
+  - **name_for_visualization** – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
-  * **stuck_detection** – Whether to enable stuck detection
+  - **stuck_detection** – Whether to enable stuck detection
 
 #### agent *: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)*
 
@@ -119,9 +119,9 @@ Close the conversation and clean up all tool executors.
 Generate a title for the conversation based on the first user message.
 
 **Parameters:**
-  * **llm** – Optional LLM to use for title generation. If not provided,
+  - **llm** – Optional LLM to use for title generation. If not provided,
     uses self.agent.llm.
-  * **max_length** – Maximum length of the generated title.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 **Raises:**

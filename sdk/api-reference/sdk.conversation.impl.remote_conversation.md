@@ -115,16 +115,16 @@ Bases: [`BaseConversation`](https://github.com/OpenHands/software-agent-sdk/sdk.
 Remote conversation proxy that talks to an agent server.
 
 **Parameters:**
-  * **agent** – Agent configuration (will be sent to the server)
-  * **workspace** – The working directory for agent operations and tool execution.
-  * **conversation_id** – Optional existing conversation id to attach to
-  * **callbacks** – Optional callbacks to receive events (not yet streamed)
-  * **max_iteration_per_run** – Max iterations configured on server
-  * **stuck_detection** – Whether to enable stuck detection on server
-  * **visualize** – Whether to enable the default visualizer callback
-  * **name_for_visualization** – Optional name to prefix in panel titles to identify
+  - **agent** – Agent configuration (will be sent to the server)
+  - **workspace** – The working directory for agent operations and tool execution.
+  - **conversation_id** – Optional existing conversation id to attach to
+  - **callbacks** – Optional callbacks to receive events (not yet streamed)
+  - **max_iteration_per_run** – Max iterations configured on server
+  - **stuck_detection** – Whether to enable stuck detection on server
+  - **visualize** – Whether to enable the default visualizer callback
+  - **name_for_visualization** – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
-  * **secrets** – Optional secrets to initialize the conversation with
+  - **secrets** – Optional secrets to initialize the conversation with
 
 #### agent *: [AgentBase](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)*
 
@@ -164,9 +164,9 @@ Not implemented for remote conversations.
 Generate a title for the conversation based on the first user message.
 
 **Parameters:**
-  * **llm** – Optional LLM to use for title generation. If provided, its usage_id
+  - **llm** – Optional LLM to use for title generation. If provided, its usage_id
     will be sent to the server. If not provided, uses the agent’s LLM.
-  * **max_length** – Maximum length of the generated title.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 

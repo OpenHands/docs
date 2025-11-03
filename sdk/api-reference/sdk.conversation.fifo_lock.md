@@ -35,9 +35,9 @@ Features:
 Acquire the lock.
 
 **Parameters:**
-  * **blocking** – If True, block until lock is acquired. If False, return
+  - **blocking** – If True, block until lock is acquired. If False, return
     immediately.
-  * **timeout** – Maximum time to wait for lock (ignored if blocking=False).
+  - **timeout** – Maximum time to wait for lock (ignored if blocking=False).
     -1 means wait indefinitely.
 **Returns:**
   True if lock was acquired, False otherwise.

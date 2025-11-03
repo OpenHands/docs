@@ -328,7 +328,7 @@ This action is used to request a condensation of the conversation history.
 
 The action type, namely ActionType.CONDENSATION_REQUEST.
 
-* **Type:**
+- **Type:**
   [str](https://docs.python.org/3/library/stdtypes.html#str)
 
 #### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
@@ -378,8 +378,8 @@ Create a state update event from a ConversationState object.
 This creates an event containing a snapshot of important state fields.
 
 **Parameters:**
-  * **state** – The ConversationState to serialize
-  * **conversation_id** – The conversation ID for the event
+  - **state** – The ConversationState to serialize
+  - **conversation_id** – The conversation ID for the event
 **Returns:**
   A ConversationStateUpdateEvent with serialized state data
 

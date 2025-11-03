@@ -34,7 +34,7 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### register_llm(event: [RegistryEvent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm_registry.md#openhands.sdk.llm.llm_registry.RegistryEvent))

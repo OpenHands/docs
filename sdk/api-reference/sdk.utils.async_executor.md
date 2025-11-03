@@ -25,10 +25,10 @@ timeout support, and thread safety.
 Run a coroutine or async function on the background loop from sync code.
 
 **Parameters:**
-  * **awaitable_or_fn** – Coroutine or async function to execute
-  * **\*args** – Arguments to pass to the function
-  * **timeout** – Timeout in seconds (default: 300)
-  * **\*\*kwargs** – Keyword arguments to pass to the function
+  - **awaitable_or_fn** – Coroutine or async function to execute
+  - **\*args** – Arguments to pass to the function
+  - **timeout** – Timeout in seconds (default: 300)
+  - **\*\*kwargs** – Keyword arguments to pass to the function
 **Returns:**
   The result of the async operation
 **Raises:**

@@ -39,14 +39,14 @@ This is useful if you want to do some validation that requires the entire model 
 Validate a pydantic model instance.
 
 **Parameters:**
-  * **obj** – The object to validate.
-  * **strict** – Whether to enforce types strictly.
-  * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
+  - **obj** – The object to validate.
+  - **strict** – Whether to enforce types strictly.
+  - **extra** – Whether to ignore, allow, or forbid extra data during model validation.
     See the [extra configuration value][pydantic.ConfigDict.extra] for details.
-  * **from_attributes** – Whether to extract data from object attributes.
-  * **context** – Additional context to pass to the validator.
-  * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
-  * **by_name** – Whether to use the field’s name when validating against the provided input data.
+  - **from_attributes** – Whether to extract data from object attributes.
+  - **context** – Additional context to pass to the validator.
+  - **by_alias** – Whether to use the field’s alias when validating against the provided input data.
+  - **by_name** – Whether to use the field’s name when validating against the provided input data.
 **Raises:**
   **ValidationError** – If the object could not be validated.
 **Returns:**
@@ -60,13 +60,13 @@ Validate a pydantic model instance.
 Validate the given JSON data against the Pydantic model.
 
 **Parameters:**
-  * **json_data** – The JSON data to validate.
-  * **strict** – Whether to enforce types strictly.
-  * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
+  - **json_data** – The JSON data to validate.
+  - **strict** – Whether to enforce types strictly.
+  - **extra** – Whether to ignore, allow, or forbid extra data during model validation.
     See the [extra configuration value][pydantic.ConfigDict.extra] for details.
-  * **context** – Extra variables to pass to the validator.
-  * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
-  * **by_name** – Whether to use the field’s name when validating against the provided input data.
+  - **context** – Extra variables to pass to the validator.
+  - **by_alias** – Whether to use the field’s alias when validating against the provided input data.
+  - **by_name** – Whether to use the field’s name when validating against the provided input data.
 **Returns:**
   The validated Pydantic model.
 **Raises:**
@@ -77,9 +77,9 @@ Validate the given JSON data against the Pydantic model.
 Generates a JSON schema for a model class.
 
 **Parameters:**
-  * **by_alias** – Whether to use attribute aliases or not.
-  * **ref_template** – The reference template.
-  * **union_format** – 
+  - **by_alias** – Whether to use attribute aliases or not.
+  - **ref_template** – The reference template.
+  - **union_format** – 
 
     The format to use when combining schemas from unions together. Can be one of:
     - ’any_of’: Use the [anyOf]([https://json-schema.org/understanding-json-schema/reference/combining#anyOf](https://json-schema.org/understanding-json-schema/reference/combining#anyOf))
@@ -89,9 +89,9 @@ Generates a JSON schema for a model class.
     keyword as an array of strings, containing each type of the combination. If any of the schemas is not a primitive
     type (string, boolean, null, integer or number) or contains constraints/metadata, falls back to
     any_of.
-  * **schema_generator** – To override the logic used to generate the JSON schema, as a subclass of
+  - **schema_generator** – To override the logic used to generate the JSON schema, as a subclass of
     GenerateJsonSchema with your desired modifications
-  * **mode** – The mode in which to generate the schema.
+  - **mode** – The mode in which to generate the schema.
 **Returns:**
   The JSON schema for the given model class.
 
@@ -103,25 +103,25 @@ Generates a JSON schema for a model class.
 Generates a JSON representation of the model using Pydantic’s to_json method.
 
 **Parameters:**
-  * **indent** – Indentation to use in the JSON output. If None is passed, the output will be compact.
-  * **ensure_ascii** – If True, the output is guaranteed to have all incoming non-ASCII characters escaped.
+  - **indent** – Indentation to use in the JSON output. If None is passed, the output will be compact.
+  - **ensure_ascii** – If True, the output is guaranteed to have all incoming non-ASCII characters escaped.
     If False (the default), these characters will be output as-is.
-  * **include** – Field(s) to include in the JSON output.
-  * **exclude** – Field(s) to exclude from the JSON output.
-  * **context** – Additional context to pass to the serializer.
-  * **by_alias** – Whether to serialize using field aliases.
-  * **exclude_unset** – Whether to exclude fields that have not been explicitly set.
-  * **exclude_defaults** – Whether to exclude fields that are set to their default value.
-  * **exclude_none** – Whether to exclude fields that have a value of None.
-  * **exclude_computed_fields** – Whether to exclude computed fields.
+  - **include** – Field(s) to include in the JSON output.
+  - **exclude** – Field(s) to exclude from the JSON output.
+  - **context** – Additional context to pass to the serializer.
+  - **by_alias** – Whether to serialize using field aliases.
+  - **exclude_unset** – Whether to exclude fields that have not been explicitly set.
+  - **exclude_defaults** – Whether to exclude fields that are set to their default value.
+  - **exclude_none** – Whether to exclude fields that have a value of None.
+  - **exclude_computed_fields** – Whether to exclude computed fields.
     While this can be useful for round-tripping, it is usually recommended to use the dedicated
     round_trip parameter instead.
-  * **round_trip** – If True, dumped values should be valid as input for non-idempotent types such as Json[T].
-  * **warnings** – How to handle serialization errors. False/”none” ignores them, True/”warn” logs errors,
+  - **round_trip** – If True, dumped values should be valid as input for non-idempotent types such as Json[T].
+  - **warnings** – How to handle serialization errors. False/”none” ignores them, True/”warn” logs errors,
     “error” raises a [PydanticSerializationError][pydantic_core.PydanticSerializationError].
-  * **fallback** – A function to call when an unknown value is encountered. If not provided,
+  - **fallback** – A function to call when an unknown value is encountered. If not provided,
     a [PydanticSerializationError][pydantic_core.PydanticSerializationError] error is raised.
-  * **serialize_as_any** – Whether to serialize fields with duck-typing serialization behavior.
+  - **serialize_as_any** – Whether to serialize fields with duck-typing serialization behavior.
 **Returns:**
   A JSON string representation of the model.
 
@@ -167,10 +167,10 @@ This may be necessary when one of the annotations is a ForwardRef which could no
 the initial attempt to build the schema, and automatic rebuilding fails.
 
 **Parameters:**
-  * **force** – Whether to force the rebuilding of the model schema, defaults to False.
-  * **raise_errors** – Whether to raise errors, defaults to True.
-  * **\_parent_namespace_depth** – The depth level of the parent namespace, defaults to 2.
-  * **\_types_namespace** – The types namespace, defaults to None.
+  - **force** – Whether to force the rebuilding of the model schema, defaults to False.
+  - **raise_errors** – Whether to raise errors, defaults to True.
+  - **\_parent_namespace_depth** – The depth level of the parent namespace, defaults to 2.
+  - **\_types_namespace** – The types namespace, defaults to None.
 **Returns:**
   Returns None if the schema is already “complete” and rebuilding was not required.
   If rebuilding \_was_ required, returns True if rebuilding was successful, otherwise False.
@@ -185,14 +185,14 @@ non absract subclasses
 Validate a pydantic model instance.
 
 **Parameters:**
-  * **obj** – The object to validate.
-  * **strict** – Whether to enforce types strictly.
-  * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
+  - **obj** – The object to validate.
+  - **strict** – Whether to enforce types strictly.
+  - **extra** – Whether to ignore, allow, or forbid extra data during model validation.
     See the [extra configuration value][pydantic.ConfigDict.extra] for details.
-  * **from_attributes** – Whether to extract data from object attributes.
-  * **context** – Additional context to pass to the validator.
-  * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
-  * **by_name** – Whether to use the field’s name when validating against the provided input data.
+  - **from_attributes** – Whether to extract data from object attributes.
+  - **context** – Additional context to pass to the validator.
+  - **by_alias** – Whether to use the field’s alias when validating against the provided input data.
+  - **by_name** – Whether to use the field’s name when validating against the provided input data.
 **Raises:**
   **ValidationError** – If the object could not be validated.
 **Returns:**
@@ -206,13 +206,13 @@ Validate a pydantic model instance.
 Validate the given JSON data against the Pydantic model.
 
 **Parameters:**
-  * **json_data** – The JSON data to validate.
-  * **strict** – Whether to enforce types strictly.
-  * **extra** – Whether to ignore, allow, or forbid extra data during model validation.
+  - **json_data** – The JSON data to validate.
+  - **strict** – Whether to enforce types strictly.
+  - **extra** – Whether to ignore, allow, or forbid extra data during model validation.
     See the [extra configuration value][pydantic.ConfigDict.extra] for details.
-  * **context** – Extra variables to pass to the validator.
-  * **by_alias** – Whether to use the field’s alias when validating against the provided input data.
-  * **by_name** – Whether to use the field’s name when validating against the provided input data.
+  - **context** – Extra variables to pass to the validator.
+  - **by_alias** – Whether to use the field’s alias when validating against the provided input data.
+  - **by_name** – Whether to use the field’s name when validating against the provided input data.
 **Returns:**
   The validated Pydantic model.
 **Raises:**

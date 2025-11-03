@@ -43,9 +43,9 @@ Compose multiple callbacks into a single callback function.
 Generate a title for the conversation based on the first user message.
 
 **Parameters:**
-  * **llm** – Optional LLM to use for title generation. If not provided,
+  - **llm** – Optional LLM to use for title generation. If not provided,
     uses the agent’s LLM.
-  * **max_length** – Maximum length of the generated title.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 **Raises:**
@@ -96,9 +96,9 @@ Context manager exit.
 Acquire the lock.
 
 **Parameters:**
-  * **blocking** – If True, block until lock is acquired. If False, return
+  - **blocking** – If True, block until lock is acquired. If False, return
     immediately.
-  * **timeout** – Maximum time to wait for lock (ignored if blocking=False).
+  - **timeout** – Maximum time to wait for lock (ignored if blocking=False).
     -1 means wait indefinitely.
 **Returns:**
   True if lock was acquired, False otherwise.
@@ -193,14 +193,14 @@ Provides Rich-formatted output with panels and complete content display.
 Initialize the visualizer.
 
 **Parameters:**
-  * **highlight_regex** – Dictionary mapping regex patterns to Rich color styles
+  - **highlight_regex** – Dictionary mapping regex patterns to Rich color styles
     for highlighting keywords in the visualizer.
     For example: {“Reasoning:”: “bold blue”,
     “Thought:”: “bold green”}
-  * **skip_user_messages** – If True, skip displaying user messages. Useful for
+  - **skip_user_messages** – If True, skip displaying user messages. Useful for
     scenarios where user input is not relevant to show.
-  * **conversation_stats** – ConversationStats object to display metrics information.
-  * **name_for_visualization** – Optional name to prefix in panel titles to identify
+  - **conversation_stats** – ConversationStats object to display metrics information.
+  - **name_for_visualization** – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
 
 #### on_event(event: [Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)) → [None](https://docs.python.org/3/library/constants.html#None)
@@ -328,20 +328,20 @@ Ensure cleanup happens when conversation is destroyed.
 Initialize the conversation.
 
 **Parameters:**
-  * **agent** – The agent to use for the conversation
-  * **workspace** – Working directory for agent operations and tool execution
-  * **persistence_dir** – Directory for persisting conversation state and events
-  * **conversation_id** – Optional ID for the conversation. If provided, will
+  - **agent** – The agent to use for the conversation
+  - **workspace** – Working directory for agent operations and tool execution
+  - **persistence_dir** – Directory for persisting conversation state and events
+  - **conversation_id** – Optional ID for the conversation. If provided, will
     be used to identify the conversation. The user might want to
     suffix their persistent filestore with this ID.
-  * **callbacks** – Optional list of callback functions to handle events
-  * **max_iteration_per_run** – Maximum number of iterations per run
-  * **visualize** – Whether to enable default visualization. If True, adds
+  - **callbacks** – Optional list of callback functions to handle events
+  - **max_iteration_per_run** – Maximum number of iterations per run
+  - **visualize** – Whether to enable default visualization. If True, adds
     a default visualizer callback. If False, relies on
     application to provide visualization through callbacks.
-  * **name_for_visualization** – Optional name to prefix in panel titles to identify
+  - **name_for_visualization** – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
-  * **stuck_detection** – Whether to enable stuck detection
+  - **stuck_detection** – Whether to enable stuck detection
 
 #### close() → [None](https://docs.python.org/3/library/constants.html#None)
 
@@ -354,9 +354,9 @@ Close the conversation and clean up all tool executors.
 Generate a title for the conversation based on the first user message.
 
 **Parameters:**
-  * **llm** – Optional LLM to use for title generation. If not provided,
+  - **llm** – Optional LLM to use for title generation. If not provided,
     uses self.agent.llm.
-  * **max_length** – Maximum length of the generated title.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 **Raises:**
@@ -448,16 +448,16 @@ Bases: [`BaseConversation`](https://github.com/OpenHands/software-agent-sdk/sdk.
 Remote conversation proxy that talks to an agent server.
 
 **Parameters:**
-  * **agent** – Agent configuration (will be sent to the server)
-  * **workspace** – The working directory for agent operations and tool execution.
-  * **conversation_id** – Optional existing conversation id to attach to
-  * **callbacks** – Optional callbacks to receive events (not yet streamed)
-  * **max_iteration_per_run** – Max iterations configured on server
-  * **stuck_detection** – Whether to enable stuck detection on server
-  * **visualize** – Whether to enable the default visualizer callback
-  * **name_for_visualization** – Optional name to prefix in panel titles to identify
+  - **agent** – Agent configuration (will be sent to the server)
+  - **workspace** – The working directory for agent operations and tool execution.
+  - **conversation_id** – Optional existing conversation id to attach to
+  - **callbacks** – Optional callbacks to receive events (not yet streamed)
+  - **max_iteration_per_run** – Max iterations configured on server
+  - **stuck_detection** – Whether to enable stuck detection on server
+  - **visualize** – Whether to enable the default visualizer callback
+  - **name_for_visualization** – Optional name to prefix in panel titles to identify
     which agent/conversation is speaking.
-  * **secrets** – Optional secrets to initialize the conversation with
+  - **secrets** – Optional secrets to initialize the conversation with
 
 #### close() → [None](https://docs.python.org/3/library/constants.html#None)
 
@@ -470,9 +470,9 @@ Get conversation stats from remote server.
 Generate a title for the conversation based on the first user message.
 
 **Parameters:**
-  * **llm** – Optional LLM to use for title generation. If provided, its usage_id
+  - **llm** – Optional LLM to use for title generation. If provided, its usage_id
     will be sent to the server. If not provided, uses the agent’s LLM.
-  * **max_length** – Maximum length of the generated title.
+  - **max_length** – Maximum length of the generated title.
 **Returns:**
   A generated title for the conversation.
 

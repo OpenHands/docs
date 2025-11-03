@@ -316,6 +316,16 @@ description: API reference for {title}
             elif line.strip() == '* **Yields:**':
                 line = line.replace('* **Yields:**', '**Yields:**')
             
+            # Fix nested emphasis in parameter lists: "  * **param_name**" 
+            # This creates unbalanced asterisks that confuse JavaScript parsers
+            if line.strip().startswith('* **') and line.strip().endswith('**'):
+                # This is a parameter item like "  * **param_name** – description"
+                # Convert to "- **param_name** – description" to avoid nested emphasis
+                line = line.replace('* **', '- **', 1)
+            elif '  * **' in line and '** –' in line:
+                # Handle parameter descriptions like "  * **param_name** – description"
+                line = line.replace('  * **', '  - **')
+            
             # Fix problematic patterns that cause acorn parsing errors
             # Pattern: "ClassVar[ConfigDict]*  = \{\}*" - unbalanced asterisks
             if 'ClassVar[ConfigDict]*' in line and '= \\{\\}*' in line:

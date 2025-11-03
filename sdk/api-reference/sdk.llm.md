@@ -21,14 +21,14 @@ raw LiteLLM response for internal use.
 
 The completion message converted to OpenHands Message type
 
-* **Type:**
+- **Type:**
   [openhands.sdk.llm.message.Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)
 
 #### metrics
 
 Snapshot of metrics from the completion request
 
-* **Type:**
+- **Type:**
   [openhands.sdk.llm.utils.metrics.MetricsSnapshot](#openhands.sdk.llm.MetricsSnapshot)
 
 #### raw_response
@@ -36,7 +36,7 @@ Snapshot of metrics from the completion request
 The original LiteLLM response (ModelResponse or
 ResponsesAPIResponse) for internal use
 
-* **Type:**
+- **Type:**
   litellm.types.utils.ModelResponse | litellm.types.llms.openai.ResponsesAPIResponse
 
 #### *property* id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
@@ -95,7 +95,7 @@ Check if prompt caching is supported and enabled for current model.
 **Returns:**
   True if prompt caching is supported and enabled for the given
   : model.
-* **Return type:**
+- **Return type:**
   boolean
 
 #### *classmethod* load_from_env(prefix: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'LLM_') → [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)
@@ -119,8 +119,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### resolve_diff_from_deserialized(persisted: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)) → [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)
 
@@ -349,8 +349,8 @@ This function is meant to behave like a BaseModel method to initialise private a
 It takes context as an argument since that’s what pydantic-core passes when calling it.
 
 **Parameters:**
-  * **self** – The BaseModel instance.
-  * **context** – The context.
+  - **self** – The BaseModel instance.
+  - **context** – The context.
 
 #### *abstractmethod* select_llm(messages: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
