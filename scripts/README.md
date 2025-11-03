@@ -4,7 +4,14 @@ This directory contains the automated pipeline for generating API reference docu
 
 ## Overview
 
-The pipeline uses Sphinx with the `sphinx-markdown-builder` extension to generate clean Markdown files from Python docstrings, which are then integrated into the Mintlify documentation site.
+The pipeline uses Sphinx with the `sphinx-markdown-builder` extension to generate clean, parser-friendly Markdown files from Python docstrings. The output is specifically designed to avoid JavaScript parsing errors in Mintlify by using simple headers and clean formatting.
+
+### Key Features
+
+- **Simple headers**: Just class names (`### ClassName`) and method names (`#### method_name`)
+- **No complex signatures**: Parameters documented as readable text, not in headers
+- **Parser-friendly**: Eliminates asterisks, emphasis, and patterns that cause acorn parsing errors
+- **Organized structure**: 9 module-level pages instead of 100+ individual files
 
 ## Files Structure
 
@@ -84,8 +91,15 @@ The script generates the following:
 ### Generated Documentation
 
 - **`sdk/api-reference/`**: Directory containing all generated API documentation
-  - `index.md`: Main API reference index page
-  - `sdk.*.md`: Individual module documentation files
+  - `openhands.sdk.md`: Main SDK module documentation
+  - `openhands.sdk.agent.md`: Agent system documentation
+  - `openhands.sdk.conversation.md`: Conversation management documentation
+  - `openhands.sdk.event.md`: Event system documentation
+  - `openhands.sdk.llm.md`: LLM integration documentation
+  - `openhands.sdk.security.md`: Security features documentation
+  - `openhands.sdk.tool.md`: Tool system documentation
+  - `openhands.sdk.utils.md`: Utilities documentation
+  - `openhands.sdk.workspace.md`: Workspace management documentation
 
 ### Configuration Files
 
