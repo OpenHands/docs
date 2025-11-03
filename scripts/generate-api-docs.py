@@ -286,12 +286,12 @@ description: API reference for {module_name}
         """Clean header lines to contain only class/method names."""
         # Extract just the class or method name from complex signatures
         
-        # Pattern for class headers: "### class ClassName(...)"
-        class_match = re.match(r'^(#+)\s*class\s+([^(]+)', line)
+        # Pattern for class headers: "### *class* ClassName(...)" or "### class ClassName(...)"
+        class_match = re.match(r'^(#+)\s*\*?class\*?\s+([^(]+)', line)
         if class_match:
             level, class_name = class_match.groups()
-            # Clean up the class name
-            class_name = class_name.strip().split('.')[-1]  # Get just the class name
+            # Keep the full class name for proper anchor linking
+            class_name = class_name.strip()  # Keep full module path
             return f"{level} {class_name}"
             
         # Pattern for method headers: "#### method_name(...)"
@@ -360,6 +360,8 @@ description: API reference for {module_name}
         
         # Fix internal links from .md to .mdx extensions
         line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1.mdx)', line)
+        
+        # Fix anchor links - just convert .md# to .mdx# but keep the full anchor path
         line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#', r'openhands.sdk.\1.mdx#', line)
         
         # Fix invalid http:// links
