@@ -240,7 +240,7 @@ description: API reference for {title}
             if line.strip().startswith('.. currentmodule::'):
                 continue
             
-            # Fix problematic syntax that breaks link checkers
+            # Fix problematic syntax that breaks link checkers and Mintlify
             # Handle complex type annotations with asterisks and curly braces
             if '*:' in line and '*=' in line and '{' in line and '}' in line:
                 # This is likely a model_config line that's causing parsing issues
@@ -248,6 +248,10 @@ description: API reference for {title}
                 line = line.replace('*:', ' :').replace('*=', ' =')
                 # Escape curly braces that might be interpreted as template syntax
                 line = line.replace('{', '\\{').replace('}', '\\}')
+            
+            # Fix <factory> tags that Mintlify interprets as unclosed HTML
+            if '<factory>' in line:
+                line = line.replace('<factory>', '`<factory>`')
             
             # Fix other problematic patterns
             # Escape asterisks that might be interpreted as emphasis when they're part of type annotations

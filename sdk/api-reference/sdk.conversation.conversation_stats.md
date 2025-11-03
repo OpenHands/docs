@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.conversation.conversation_stats
 
 <a id="module-openhands.sdk.conversation.conversation_stats"></a>
 
-### *class* openhands.sdk.conversation.conversation_stats.ConversationStats(\*, usage_to_metrics: dict[str, ~openhands.sdk.llm.utils.metrics.Metrics] = <factory>)
+### *class* openhands.sdk.conversation.conversation_stats.ConversationStats(\*, usage_to_metrics: dict[str, ~openhands.sdk.llm.utils.metrics.Metrics] = `<factory>`)
 
 Bases: `BaseModel`
 

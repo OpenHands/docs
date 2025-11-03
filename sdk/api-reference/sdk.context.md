@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context
 
 <a id="module-openhands.sdk.context"></a>
 
-### *class* openhands.sdk.context.AgentContext(\*, skills: list[~openhands.sdk.context.skills.skill.Skill] = <factory>, system_message_suffix: str | None = None, user_message_suffix: str | None = None)
+### *class* openhands.sdk.context.AgentContext(\*, skills: list[~openhands.sdk.context.skills.skill.Skill] = `<factory>`, system_message_suffix: str | None = None, user_message_suffix: str | None = None)
 
 Bases: `BaseModel`
 
@@ -61,7 +61,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### user_message_suffix *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-### *class* openhands.sdk.context.Skill(\*, name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = <factory>)
+### *class* openhands.sdk.context.Skill(\*, name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>`)
 
 Bases: `BaseModel`
 

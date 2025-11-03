@@ -37,7 +37,7 @@ Represents knowledge from a triggered skill.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.skills.types.SkillResponse(\*, name: str, path: str, created_at: ~datetime.datetime = <factory>)
+### *class* openhands.sdk.context.skills.types.SkillResponse(\*, name: str, path: str, created_at: ~datetime.datetime = `<factory>`)
 
 Bases: `BaseModel`
 

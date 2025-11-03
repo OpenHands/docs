@@ -41,7 +41,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['StaticSecret']*
 
-### *class* openhands.sdk.conversation.secret_source.LookupSecret(\*, kind: ~typing.Literal['LookupSecret'] = 'LookupSecret', description: str | None = None, url: str, headers: dict[str, str] = <factory>)
+### *class* openhands.sdk.conversation.secret_source.LookupSecret(\*, kind: ~typing.Literal['LookupSecret'] = 'LookupSecret', description: str | None = None, url: str, headers: dict[str, str] = `<factory>`)
 
 Bases: [`SecretSource`](#openhands.sdk.conversation.secret_source.SecretSource)
 

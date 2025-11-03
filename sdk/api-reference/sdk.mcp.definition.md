@@ -9,7 +9,7 @@ description: API reference for openhands.sdk.mcp.definition
 
 MCPTool definition and implementation.
 
-### *class* openhands.sdk.mcp.definition.MCPToolAction(\*, kind: ~typing.Literal['MCPToolAction'] = 'MCPToolAction', data: dict[str, ~typing.Any] = <factory>)
+### *class* openhands.sdk.mcp.definition.MCPToolAction(\*, kind: ~typing.Literal['MCPToolAction'] = 'MCPToolAction', data: dict[str, ~typing.Any] = `<factory>`)
 
 Bases: [`Action`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)
 
@@ -37,7 +37,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction']*
 
-### *class* openhands.sdk.mcp.definition.MCPToolObservation(\*, kind: ~typing.Literal['MCPToolObservation'] = 'MCPToolObservation', content: list[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = <factory>, is_error: bool = False, tool_name: str)
+### *class* openhands.sdk.mcp.definition.MCPToolObservation(\*, kind: ~typing.Literal['MCPToolObservation'] = 'MCPToolObservation', content: list[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = `<factory>`, is_error: bool = False, tool_name: str)
 
 Bases: [`Observation`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 

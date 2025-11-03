@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.event.llm_convertible.system
 
 <a id="module-openhands.sdk.event.llm_convertible.system"></a>
 
-### *class* openhands.sdk.event.llm_convertible.system.SystemPromptEvent(\*, kind: ~typing.Literal['SystemPromptEvent'] = 'SystemPromptEvent', id: str = <factory>, timestamp: str = <factory>, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', system_prompt: ~openhands.sdk.llm.message.TextContent, tools: list[~litellm.types.llms.openai.ChatCompletionToolParam])
+### *class* openhands.sdk.event.llm_convertible.system.SystemPromptEvent(\*, kind: ~typing.Literal['SystemPromptEvent'] = 'SystemPromptEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'agent', system_prompt: ~openhands.sdk.llm.message.TextContent, tools: list[~litellm.types.llms.openai.ChatCompletionToolParam])
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 

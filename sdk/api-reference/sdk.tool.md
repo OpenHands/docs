@@ -9,7 +9,7 @@ description: API reference for openhands.sdk.tool
 
 OpenHands runtime package.
 
-### *class* openhands.sdk.tool.Tool(\*, name: str, params: dict[str, ~typing.Any] = <factory>)
+### *class* openhands.sdk.tool.Tool(\*, name: str, params: dict[str, ~typing.Any] = `<factory>`)
 
 Bases: `BaseModel`
 

@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.context.agent_context
 
 <a id="module-openhands.sdk.context.agent_context"></a>
 
-### *class* openhands.sdk.context.agent_context.AgentContext(\*, skills: list[~openhands.sdk.context.skills.skill.Skill] = <factory>, system_message_suffix: str | None = None, user_message_suffix: str | None = None)
+### *class* openhands.sdk.context.agent_context.AgentContext(\*, skills: list[~openhands.sdk.context.skills.skill.Skill] = `<factory>`, system_message_suffix: str | None = None, user_message_suffix: str | None = None)
 
 Bases: `BaseModel`
 
