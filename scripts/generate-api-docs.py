@@ -290,9 +290,9 @@ description: API reference for {module_name}
         class_match = re.match(r'^(#+)\s*\*?class\*?\s+([^(]+)', line)
         if class_match:
             level, class_name = class_match.groups()
-            # Keep the full class name for proper anchor linking
-            class_name = class_name.strip()  # Keep full module path
-            return f"{level} {class_name}"
+            # Extract just the class name (last part after the last dot) for readability
+            simple_class_name = class_name.strip().split('.')[-1]
+            return f"{level} class {simple_class_name}"
             
         # Pattern for method headers: "#### method_name(...)"
         method_match = re.match(r'^(#+)\s*([^(]+)\(', line)
@@ -361,8 +361,18 @@ description: API reference for {module_name}
         # Fix internal links from .md to .mdx extensions
         line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1.mdx)', line)
         
-        # Fix anchor links - just convert .md# to .mdx# but keep the full anchor path
-        line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#', r'openhands.sdk.\1.mdx#', line)
+        # Fix anchor links - convert full module path anchors to simple class format
+        # Pattern: openhands.sdk.module.mdx#openhands.sdk.module.ClassName -> openhands.sdk.module.mdx#class-classname
+        def convert_anchor(match):
+            module_path = match.group(1)
+            full_class_path = match.group(2)
+            class_name = full_class_path.split('.')[-1].lower()
+            return f'openhands.sdk.{module_path}.mdx#class-{class_name}'
+        
+        line = re.sub(r'openhands\.sdk\.([^)#]+)\.mdx#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
+        
+        # Also handle the .md# pattern before converting to .mdx
+        line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
         
         # Fix invalid http:// links
         line = re.sub(r'\[http://\]\(http://\)', 'http://', line)
