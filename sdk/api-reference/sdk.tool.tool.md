@@ -16,7 +16,7 @@ Annotations to provide hints about the tool’s behavior.
 Based on Model Context Protocol (MCP) spec:
 [https://github.com/modelcontextprotocol/modelcontextprotocol/blob/caf3424488b10b4a7b1f8cb634244a450a1f4400/schema/2025-06-18/schema.ts#L838](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/caf3424488b10b4a7b1f8cb634244a450a1f4400/schema/2025-06-18/schema.ts#L838)
 
-#### model_config *: [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]* *= {'frozen': True, 'title': 'openhands.sdk.tool.tool.ToolAnnotations'}*
+#### model_config  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]*  = \{'frozen': True, 'title': 'openhands.sdk.tool.tool.ToolAnnotations'\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -92,7 +92,7 @@ Tool that wraps an executor function with input/output validation and schema.
 - Coerce outputs only if an output model is defined; else return vanilla JSON.
 - Export MCP tool description.
 
-#### model_config *: [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -214,7 +214,7 @@ Refactor this - the ToolDefinition class should not have a concrete create()
 implementation. Built-in tools should be refactored to not rely on this
 method, and then this should be made abstract with @abstractmethod.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -256,7 +256,7 @@ Refactor this - the ToolDefinition class should not have a concrete create()
 implementation. Built-in tools should be refactored to not rely on this
 method, and then this should be made abstract with @abstractmethod.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

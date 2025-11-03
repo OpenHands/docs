@@ -30,7 +30,7 @@ Return Rich Text representation of this event.
 This is a fallback implementation for unknown event types.
 Subclasses should override this method to provide specific visualization.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -55,7 +55,7 @@ The action type, namely ActionType.CONDENSATION_REQUEST.
 
 #### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -77,7 +77,7 @@ The summary text.
 
 #### source *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['agent', 'user', 'environment']*
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

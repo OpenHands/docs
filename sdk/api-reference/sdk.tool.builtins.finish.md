@@ -17,7 +17,7 @@ Bases: [`Action`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schem
 
 Return Rich Text representation of this action.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -37,7 +37,7 @@ Get the observation string to show to the agent.
 
 Return Rich Text representation - empty since action shows the message.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

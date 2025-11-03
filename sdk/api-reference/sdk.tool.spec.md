@@ -27,6 +27,6 @@ Validate that name is not empty.
 
 Convert None params to empty dict.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].

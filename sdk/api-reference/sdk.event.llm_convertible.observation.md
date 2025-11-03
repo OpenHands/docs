@@ -21,7 +21,7 @@ Examples include tool execution, error, user reject.
 
 #### tool_call_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -49,7 +49,7 @@ Return Rich Text representation of this observation event.
 
 Plain text string representation for ObservationEvent.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -85,7 +85,7 @@ Return Rich Text representation of this user rejection event.
 
 Plain text string representation for UserRejectObservation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -124,7 +124,7 @@ Return Rich Text representation of this agent error event.
 
 Plain text string representation for AgentErrorEvent.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

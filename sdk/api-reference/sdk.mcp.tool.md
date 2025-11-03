@@ -74,7 +74,7 @@ Refactor this - the ToolDefinition class should not have a concrete create()
 implementation. Built-in tools should be refactored to not rely on this
 method, and then this should be made abstract with @abstractmethod.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

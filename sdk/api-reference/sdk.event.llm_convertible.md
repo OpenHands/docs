@@ -17,7 +17,7 @@ System prompt added by the agent.
 
 Plain text string representation for SystemPromptEvent.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -47,7 +47,7 @@ Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/s
 
 Plain text string representation for ActionEvent.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -95,7 +95,7 @@ Bases: [`ObservationBaseEvent`](https://github.com/OpenHands/software-agent-sdk/
 
 Plain text string representation for ObservationEvent.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -129,7 +129,7 @@ Base class for anything as a response to a tool call.
 
 Examples include tool execution, error, user reject.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -157,7 +157,7 @@ This is originally the “MessageAction”, but it suppose not to be tool call.
 
 Plain text string representation for MessageEvent.
 
-#### model_config *: [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -202,7 +202,7 @@ represents an error produced by the agent/scaffold, not model output.
 
 Plain text string representation for AgentErrorEvent.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -236,7 +236,7 @@ Observation when user rejects an action in confirmation mode.
 
 Plain text string representation for UserRejectObservation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

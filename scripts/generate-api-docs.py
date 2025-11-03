@@ -240,6 +240,21 @@ description: API reference for {title}
             if line.strip().startswith('.. currentmodule::'):
                 continue
             
+            # Fix problematic syntax that breaks link checkers
+            # Handle complex type annotations with asterisks and curly braces
+            if '*:' in line and '*=' in line and '{' in line and '}' in line:
+                # This is likely a model_config line that's causing parsing issues
+                # Simplify it by escaping or reformatting
+                line = line.replace('*:', ' :').replace('*=', ' =')
+                # Escape curly braces that might be interpreted as template syntax
+                line = line.replace('{', '\\{').replace('}', '\\}')
+            
+            # Fix other problematic patterns
+            # Escape asterisks that might be interpreted as emphasis when they're part of type annotations
+            if line.startswith('####') and '*:' in line and not line.count('*') % 2 == 0:
+                # This is a property/attribute definition with unbalanced asterisks
+                line = line.replace('*:', ' :')
+            
             cleaned_lines.append(line)
         
         cleaned_content = frontmatter + '\n'.join(cleaned_lines)

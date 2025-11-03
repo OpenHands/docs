@@ -20,7 +20,7 @@ Typically this involves adding system message
 
 NOTE: state will be mutated in-place.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -73,7 +73,7 @@ Typically this involves adding system message
 
 NOTE: state will be mutated in-place.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

@@ -19,7 +19,7 @@ Source for a named secret which may be obtained dynamically
 
 Get the value of a secret in plain text
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -35,7 +35,7 @@ A secret stored locally
 
 Get the value of a secret in plain text
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -55,7 +55,7 @@ A secret looked up from some external url
 
 Get the value of a secret in plain text
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

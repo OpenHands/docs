@@ -17,7 +17,7 @@ Metadata for task skill inputs.
 
 #### description *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -33,7 +33,7 @@ Represents knowledge from a triggered skill.
 
 #### content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -53,7 +53,7 @@ to get detailed skill information.
 
 #### created_at *: [datetime](https://docs.python.org/3/library/datetime.html#datetime.datetime)*
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -71,6 +71,6 @@ Response model for individual skill content endpoint.
 
 #### git_provider *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].

@@ -31,7 +31,7 @@ Return the data field as MCP tool call arguments.
 This is used to convert this action to MCP tool call arguments.
 The data field contains the dynamic fields from the tool call.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -61,7 +61,7 @@ Format the observation for agent display.
 
 Return Rich Text representation of this observation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

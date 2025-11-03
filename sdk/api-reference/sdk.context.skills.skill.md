@@ -30,7 +30,7 @@ Skills use triggers to determine when they should be activated:
 
 #### inputs *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[InputMetadata](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.types.md#openhands.sdk.context.skills.types.InputMetadata)]*
 
-#### PATH_TO_THIRD_PARTY_SKILL_NAME *: [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]]* *= {'.cursorrules': 'cursorrules', 'agent.md': 'agents', 'agents.md': 'agents'}*
+#### PATH_TO_THIRD_PARTY_SKILL_NAME  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]]*  = \{'.cursorrules': 'cursorrules', 'agent.md': 'agents', 'agents.md': 'agents'\}*
 
 #### *classmethod* load(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), skill_dir: [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, file_content: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [Skill](#openhands.sdk.context.skills.skill.Skill)
 
@@ -57,7 +57,7 @@ Check if this skill requires user input.
 
 Returns True if the content contains variables in the format ${variable_name}.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

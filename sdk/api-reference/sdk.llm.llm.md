@@ -97,7 +97,7 @@ Refactored LLM: simple completion(), centralized Telemetry, tiny helpers.
 
 #### OVERRIDE_ON_SERIALIZE *: [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[str](https://docs.python.org/3/library/stdtypes.html#str), ...]*
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'extra': 'forbid'}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'extra': 'forbid'\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

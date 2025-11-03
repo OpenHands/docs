@@ -46,7 +46,7 @@ Filter out unmatched tool call events.
 Removes ActionEvents and ObservationEvents that have tool_call_ids
 but don’t have matching pairs.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

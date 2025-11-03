@@ -59,7 +59,7 @@ String representation of the router.
 
 Guarantee model exists before LLM base validation runs.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'extra': 'forbid'}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'extra': 'forbid'\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

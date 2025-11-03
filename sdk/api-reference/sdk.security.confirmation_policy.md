@@ -25,7 +25,7 @@ is required before executing an action based on its security risk level.
   True if the action requires user confirmation before execution,
   False if the action can proceed without confirmation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -47,7 +47,7 @@ is required before executing an action based on its security risk level.
   True if the action requires user confirmation before execution,
   False if the action can proceed without confirmation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -71,7 +71,7 @@ is required before executing an action based on its security risk level.
   True if the action requires user confirmation before execution,
   False if the action can proceed without confirmation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -101,7 +101,7 @@ is required before executing an action based on its security risk level.
   True if the action requires user confirmation before execution,
   False if the action can proceed without confirmation.
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

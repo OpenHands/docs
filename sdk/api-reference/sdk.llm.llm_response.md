@@ -51,7 +51,7 @@ ResponsesAPIResponse) for internal use
 
 #### raw_response *: ModelResponse | ResponsesAPIResponse*
 
-#### model_config *: [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]* *= {'arbitrary_types_allowed': True}*
+#### model_config  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]*  = \{'arbitrary_types_allowed': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

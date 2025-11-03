@@ -57,6 +57,6 @@ This works by:
 - Matching skill triggers against the query
 - Returning formatted knowledge and triggered skill names if relevant skills were triggered
 
-#### model_config *: ClassVar[ConfigDict]* *= {}*
+#### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].

@@ -33,7 +33,7 @@ String representation of the router.
 This method intercepts completion calls and routes them to the appropriate
 underlying LLM based on the routing logic implemented in select_llm().
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'extra': 'forbid'}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'extra': 'forbid'\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -164,7 +164,7 @@ Bases: [`RouterLLM`](https://github.com/OpenHands/software-agent-sdk/sdk.llm.rou
 A simple implementation of RouterLLM that randomly selects an LLM from
 llms_for_routing for each completion request.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'extra': 'forbid'}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'extra': 'forbid'\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -210,7 +210,7 @@ the secondary model is typically a text-only model with a lower context window.
 
 #### SECONDARY_MODEL_KEY *: [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[[str](https://docs.python.org/3/library/stdtypes.html#str)]* *= 'secondary'*
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'extra': 'forbid'}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'extra': 'forbid'\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

@@ -14,7 +14,7 @@ Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-s
 Abstract base class for agents.
 Agents are stateless and should be fully defined by their configuration.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

@@ -111,7 +111,7 @@ Refactor this - the ToolDefinition class should not have a concrete create()
 implementation. Built-in tools should be refactored to not rely on this
 method, and then this should be made abstract with @abstractmethod.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'arbitrary_types_allowed': True, 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'arbitrary_types_allowed': True, 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -157,7 +157,7 @@ Validation will be performed by MCPTool._\_call_\_
 by constructing dynamically created Pydantic model
 from the MCP tool input schema.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -182,7 +182,7 @@ Observation from MCP tool execution.
 
 Create an MCPToolObservation from a CallToolResult.
 
-#### model_config *: ClassVar[ConfigDict]* *= {'extra': 'forbid', 'frozen': True}*
+#### model_config  : ClassVar[ConfigDict]*  = \{'extra': 'forbid', 'frozen': True\}*
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
