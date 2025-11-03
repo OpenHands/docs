@@ -110,9 +110,10 @@ class APIDocGenerator:
         source_dir = self.sphinx_dir / "source"
         
         # Find Python packages in the SDK
-        openhands_sdk_dir = self.sdk_repo_dir / "openhands-sdk" / "openhands"
+        # Point directly to the sdk directory since that's where the actual modules are
+        openhands_sdk_dir = self.sdk_repo_dir / "openhands-sdk" / "openhands" / "sdk"
         if not openhands_sdk_dir.exists():
-            self.logger.error(f"openhands directory not found in {self.sdk_repo_dir}")
+            self.logger.error(f"SDK directory not found: {openhands_sdk_dir}")
             sys.exit(1)
         
         # Generate module documentation
@@ -172,14 +173,16 @@ class APIDocGenerator:
         # Remove Sphinx-specific syntax that might not work well with Mintlify
         # Add frontmatter for Mintlify
         module_name = input_file.stem
+        
+        # Fix title formatting - keep it as code-like instead of title case
         if module_name.startswith("openhands"):
-            title = module_name.replace("openhands.", "").replace("_", " ").title()
+            title = module_name  # Keep the full module path
         else:
-            title = module_name.replace("_", " ").title()
+            title = f"openhands.{module_name}"  # Add the openhands prefix if missing
         
         frontmatter = f"""---
 title: {title}
-description: API reference for {module_name}
+description: API reference for {title}
 ---
 
 """
@@ -256,6 +259,129 @@ This section contains the complete API reference documentation for the OpenHands
         
         self.logger.info(f"Mint.json configuration snippet saved to {config_file}")
     
+    def setup_sphinx_structure(self) -> None:
+        """Ensure Sphinx directories and configuration files exist."""
+        source_dir = self.sphinx_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Ensure conf.py exists
+        conf_py = source_dir / "conf.py"
+        if not conf_py.exists():
+            conf_content = '''# Configuration file for the Sphinx documentation builder.
+#
+# For the full list of built-in configuration values, see the documentation:
+# https://www.sphinx-doc.org/en/master/usage/configuration.html
+
+# -- Project information -----------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+
+project = 'OpenHands SDK'
+copyright = '2024, OpenHands'
+author = 'OpenHands'
+
+# -- General configuration ---------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
+
+extensions = [
+    'sphinx.ext.autodoc',
+    'sphinx.ext.autosummary',
+    'sphinx.ext.napoleon',
+    'sphinx.ext.viewcode',
+    'sphinx.ext.intersphinx',
+    'myst_parser',
+]
+
+templates_path = ['_templates']
+exclude_patterns = []
+
+# -- Options for HTML output -------------------------------------------------
+# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
+
+html_theme = 'alabaster'
+html_static_path = ['_static']
+
+# -- Extension configuration -------------------------------------------------
+
+# Napoleon settings
+napoleon_google_docstring = True
+napoleon_numpy_docstring = True
+napoleon_include_init_with_doc = False
+napoleon_include_private_with_doc = False
+napoleon_include_special_with_doc = True
+napoleon_use_admonition_for_examples = False
+napoleon_use_admonition_for_notes = False
+napoleon_use_admonition_for_references = False
+napoleon_use_ivar = False
+napoleon_use_param = True
+napoleon_use_rtype = True
+napoleon_preprocess_types = False
+napoleon_type_aliases = None
+napoleon_attr_annotations = True
+
+# Autodoc settings
+autodoc_default_options = {
+    'members': True,
+    'member-order': 'bysource',
+    'special-members': '__init__',
+    'undoc-members': True,
+    'exclude-members': '__weakref__'
+}
+
+# Autosummary settings
+autosummary_generate = True
+
+# Intersphinx mapping
+intersphinx_mapping = {
+    'python': ('https://docs.python.org/3/', None),
+    'numpy': ('https://numpy.org/doc/stable/', None),
+    'pandas': ('https://pandas.pydata.org/docs/', None),
+}
+
+# MyST settings
+myst_enable_extensions = [
+    "deflist",
+    "tasklist",
+    "colon_fence",
+]
+
+# Markdown builder settings
+markdown_http_base = "https://github.com/OpenHands/software-agent-sdk"
+markdown_uri_doc_suffix = ".md"
+
+# Custom settings for cleaner markdown output
+suppress_warnings = ['myst.header']
+
+# Add the SDK source path to Python path
+import sys
+import os
+sys.path.insert(0, os.path.abspath('../../../agent-sdk/openhands-sdk'))
+sys.path.insert(0, os.path.abspath('../../../agent-sdk/openhands-sdk/openhands'))
+'''
+            conf_py.write_text(conf_content)
+        
+        # Ensure index.rst exists
+        index_rst = source_dir / "index.rst"
+        if not index_rst.exists():
+            index_content = '''OpenHands SDK API Reference
+============================
+
+Welcome to the OpenHands SDK API reference documentation.
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   modules
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
+'''
+            index_rst.write_text(index_content)
+
     def clean_build_artifacts(self) -> None:
         """Clean up build artifacts but keep generated docs."""
         self.logger.info("Cleaning build artifacts...")
@@ -283,13 +409,15 @@ This section contains the complete API reference documentation for the OpenHands
             # Clean previous build if requested
             if clean:
                 self.logger.info("Cleaning previous build...")
-                if self.sphinx_dir.exists():
-                    shutil.rmtree(self.sphinx_dir)
+                self.clean_build_artifacts()
                 if self.api_docs_output.exists():
                     shutil.rmtree(self.api_docs_output)
             
             # Check dependencies
             self.check_dependencies()
+            
+            # Set up Sphinx structure
+            self.setup_sphinx_structure()
             
             # Clone or update SDK repository
             self.clone_or_update_sdk_repo()

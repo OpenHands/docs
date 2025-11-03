@@ -1,9 +1,9 @@
 ---
-title: Modules
-description: API reference for modules
+title: openhands.modules
+description: API reference for openhands.modules
 ---
 
-# openhands
+# sdk
 
 * [sdk package](https://github.com/OpenHands/software-agent-sdk/sdk.md)
   * [Subpackages](https://github.com/OpenHands/software-agent-sdk/sdk.md#subpackages)

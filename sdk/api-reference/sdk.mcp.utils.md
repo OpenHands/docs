@@ -1,6 +1,6 @@
 ---
-title: Sdk.Mcp.Utils
-description: API reference for sdk.mcp.utils
+title: openhands.sdk.mcp.utils
+description: API reference for openhands.sdk.mcp.utils
 ---
 
 # sdk.mcp.utils module

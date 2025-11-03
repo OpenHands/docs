@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context
-description: API reference for sdk.context
+title: openhands.sdk.context
+description: API reference for openhands.sdk.context
 ---
 
 # sdk.context package

@@ -1,6 +1,6 @@
 ---
-title: Sdk.Llm.Llm
-description: API reference for sdk.llm.llm
+title: openhands.sdk.llm.llm
+description: API reference for openhands.sdk.llm.llm
 ---
 
 # sdk.llm.llm module

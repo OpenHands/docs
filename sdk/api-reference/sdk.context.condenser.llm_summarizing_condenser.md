@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context.Condenser.Llm Summarizing Condenser
-description: API reference for sdk.context.condenser.llm_summarizing_condenser
+title: openhands.sdk.context.condenser.llm_summarizing_condenser
+description: API reference for openhands.sdk.context.condenser.llm_summarizing_condenser
 ---
 
 # sdk.context.condenser.llm_summarizing_condenser module

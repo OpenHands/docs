@@ -1,6 +1,6 @@
 ---
-title: Sdk.Llm.Options
-description: API reference for sdk.llm.options
+title: openhands.sdk.llm.options
+description: API reference for openhands.sdk.llm.options
 ---
 
 # sdk.llm.options package

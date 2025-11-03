@@ -1,6 +1,6 @@
 ---
-title: Sdk.Workspace.Remote.Async Remote Workspace
-description: API reference for sdk.workspace.remote.async_remote_workspace
+title: openhands.sdk.workspace.remote.async_remote_workspace
+description: API reference for openhands.sdk.workspace.remote.async_remote_workspace
 ---
 
 # sdk.workspace.remote.async_remote_workspace module

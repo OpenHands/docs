@@ -1,6 +1,6 @@
 ---
-title: Sdk.Security.Analyzer
-description: API reference for sdk.security.analyzer
+title: openhands.sdk.security.analyzer
+description: API reference for openhands.sdk.security.analyzer
 ---
 
 # sdk.security.analyzer module

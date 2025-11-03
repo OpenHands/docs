@@ -1,6 +1,6 @@
 ---
-title: Sdk.Conversation.Secret Registry
-description: API reference for sdk.conversation.secret_registry
+title: openhands.sdk.conversation.secret_registry
+description: API reference for openhands.sdk.conversation.secret_registry
 ---
 
 # sdk.conversation.secret_registry module

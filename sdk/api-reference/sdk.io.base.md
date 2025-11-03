@@ -1,6 +1,6 @@
 ---
-title: Sdk.Io.Base
-description: API reference for sdk.io.base
+title: openhands.sdk.io.base
+description: API reference for openhands.sdk.io.base
 ---
 
 # sdk.io.base module

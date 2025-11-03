@@ -1,6 +1,6 @@
 ---
-title: Sdk.Tool.Builtins.Think
-description: API reference for sdk.tool.builtins.think
+title: openhands.sdk.tool.builtins.think
+description: API reference for openhands.sdk.tool.builtins.think
 ---
 
 # sdk.tool.builtins.think module

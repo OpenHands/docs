@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context.Skills
-description: API reference for sdk.context.skills
+title: openhands.sdk.context.skills
+description: API reference for openhands.sdk.context.skills
 ---
 
 # sdk.context.skills package

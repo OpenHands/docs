@@ -1,6 +1,6 @@
 ---
-title: Sdk.Llm.Router
-description: API reference for sdk.llm.router
+title: openhands.sdk.llm.router
+description: API reference for openhands.sdk.llm.router
 ---
 
 # sdk.llm.router package

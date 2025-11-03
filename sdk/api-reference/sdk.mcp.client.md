@@ -1,6 +1,6 @@
 ---
-title: Sdk.Mcp.Client
-description: API reference for sdk.mcp.client
+title: openhands.sdk.mcp.client
+description: API reference for openhands.sdk.mcp.client
 ---
 
 # sdk.mcp.client module

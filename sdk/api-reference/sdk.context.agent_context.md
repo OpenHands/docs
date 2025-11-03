@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context.Agent Context
-description: API reference for sdk.context.agent_context
+title: openhands.sdk.context.agent_context
+description: API reference for openhands.sdk.context.agent_context
 ---
 
 # sdk.context.agent_context module

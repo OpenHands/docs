@@ -1,6 +1,6 @@
 ---
-title: Sdk.Utils.Cipher
-description: API reference for sdk.utils.cipher
+title: openhands.sdk.utils.cipher
+description: API reference for openhands.sdk.utils.cipher
 ---
 
 # sdk.utils.cipher module

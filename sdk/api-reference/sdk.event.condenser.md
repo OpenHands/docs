@@ -1,6 +1,6 @@
 ---
-title: Sdk.Event.Condenser
-description: API reference for sdk.event.condenser
+title: openhands.sdk.event.condenser
+description: API reference for openhands.sdk.event.condenser
 ---
 
 # sdk.event.condenser module

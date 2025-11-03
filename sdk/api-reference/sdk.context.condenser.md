@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context.Condenser
-description: API reference for sdk.context.condenser
+title: openhands.sdk.context.condenser
+description: API reference for openhands.sdk.context.condenser
 ---
 
 # sdk.context.condenser package

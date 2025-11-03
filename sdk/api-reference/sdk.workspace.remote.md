@@ -1,6 +1,6 @@
 ---
-title: Sdk.Workspace.Remote
-description: API reference for sdk.workspace.remote
+title: openhands.sdk.workspace.remote
+description: API reference for openhands.sdk.workspace.remote
 ---
 
 # sdk.workspace.remote package

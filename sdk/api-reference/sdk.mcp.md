@@ -1,6 +1,6 @@
 ---
-title: Sdk.Mcp
-description: API reference for sdk.mcp
+title: openhands.sdk.mcp
+description: API reference for openhands.sdk.mcp
 ---
 
 # sdk.mcp package

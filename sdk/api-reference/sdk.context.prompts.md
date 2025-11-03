@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context.Prompts
-description: API reference for sdk.context.prompts
+title: openhands.sdk.context.prompts
+description: API reference for openhands.sdk.context.prompts
 ---
 
 # sdk.context.prompts package

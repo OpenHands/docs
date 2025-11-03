@@ -1,6 +1,6 @@
 ---
-title: Sdk.Tool.Builtins
-description: API reference for sdk.tool.builtins
+title: openhands.sdk.tool.builtins
+description: API reference for openhands.sdk.tool.builtins
 ---
 
 # sdk.tool.builtins package

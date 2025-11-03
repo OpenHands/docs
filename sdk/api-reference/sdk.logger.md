@@ -1,6 +1,6 @@
 ---
-title: Sdk.Logger
-description: API reference for sdk.logger
+title: openhands.sdk.logger
+description: API reference for openhands.sdk.logger
 ---
 
 # sdk.logger package

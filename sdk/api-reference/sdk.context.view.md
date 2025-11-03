@@ -1,6 +1,6 @@
 ---
-title: Sdk.Context.View
-description: API reference for sdk.context.view
+title: openhands.sdk.context.view
+description: API reference for openhands.sdk.context.view
 ---
 
 # sdk.context.view module

@@ -1,6 +1,6 @@
 ---
-title: Sdk.Event
-description: API reference for sdk.event
+title: openhands.sdk.event
+description: API reference for openhands.sdk.event
 ---
 
 # sdk.event package

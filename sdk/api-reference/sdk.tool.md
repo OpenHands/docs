@@ -1,6 +1,6 @@
 ---
-title: Sdk.Tool
-description: API reference for sdk.tool
+title: openhands.sdk.tool
+description: API reference for openhands.sdk.tool
 ---
 
 # sdk.tool package

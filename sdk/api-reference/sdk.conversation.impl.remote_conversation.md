@@ -1,6 +1,6 @@
 ---
-title: Sdk.Conversation.Impl.Remote Conversation
-description: API reference for sdk.conversation.impl.remote_conversation
+title: openhands.sdk.conversation.impl.remote_conversation
+description: API reference for openhands.sdk.conversation.impl.remote_conversation
 ---
 
 # sdk.conversation.impl.remote_conversation module

@@ -1,6 +1,6 @@
 ---
-title: Sdk.Utils
-description: API reference for sdk.utils
+title: openhands.sdk.utils
+description: API reference for openhands.sdk.utils
 ---
 
 # sdk.utils package

@@ -1,6 +1,6 @@
 ---
-title: Sdk.Conversation.Conversation
-description: API reference for sdk.conversation.conversation
+title: openhands.sdk.conversation.conversation
+description: API reference for openhands.sdk.conversation.conversation
 ---
 
 # sdk.conversation.conversation module

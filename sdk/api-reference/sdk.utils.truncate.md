@@ -1,6 +1,6 @@
 ---
-title: Sdk.Utils.Truncate
-description: API reference for sdk.utils.truncate
+title: openhands.sdk.utils.truncate
+description: API reference for openhands.sdk.utils.truncate
 ---
 
 # sdk.utils.truncate module

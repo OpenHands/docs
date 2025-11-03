@@ -1,6 +1,6 @@
 ---
-title: Sdk.Conversation.Event Store
-description: API reference for sdk.conversation.event_store
+title: openhands.sdk.conversation.event_store
+description: API reference for openhands.sdk.conversation.event_store
 ---
 
 # sdk.conversation.event_store module

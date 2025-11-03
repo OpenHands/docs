@@ -1,6 +1,6 @@
 ---
-title: Sdk.Event.Types
-description: API reference for sdk.event.types
+title: openhands.sdk.event.types
+description: API reference for openhands.sdk.event.types
 ---
 
 # sdk.event.types module

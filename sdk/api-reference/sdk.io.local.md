@@ -1,6 +1,6 @@
 ---
-title: Sdk.Io.Local
-description: API reference for sdk.io.local
+title: openhands.sdk.io.local
+description: API reference for openhands.sdk.io.local
 ---
 
 # sdk.io.local module

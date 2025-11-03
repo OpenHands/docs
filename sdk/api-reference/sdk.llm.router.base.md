@@ -1,6 +1,6 @@
 ---
-title: Sdk.Llm.Router.Base
-description: API reference for sdk.llm.router.base
+title: openhands.sdk.llm.router.base
+description: API reference for openhands.sdk.llm.router.base
 ---
 
 # sdk.llm.router.base module

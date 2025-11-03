@@ -1,6 +1,6 @@
 ---
-title: Sdk.Workspace.Workspace
-description: API reference for sdk.workspace.workspace
+title: openhands.sdk.workspace.workspace
+description: API reference for openhands.sdk.workspace.workspace
 ---
 
 # sdk.workspace.workspace module

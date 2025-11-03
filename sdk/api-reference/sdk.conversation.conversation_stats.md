@@ -1,6 +1,6 @@
 ---
-title: Sdk.Conversation.Conversation Stats
-description: API reference for sdk.conversation.conversation_stats
+title: openhands.sdk.conversation.conversation_stats
+description: API reference for openhands.sdk.conversation.conversation_stats
 ---
 
 # sdk.conversation.conversation_stats module

@@ -1,6 +1,6 @@
 ---
-title: Sdk.Security
-description: API reference for sdk.security
+title: openhands.sdk.security
+description: API reference for openhands.sdk.security
 ---
 
 # sdk.security package

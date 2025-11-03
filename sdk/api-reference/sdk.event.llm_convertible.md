@@ -1,6 +1,6 @@
 ---
-title: Sdk.Event.Llm Convertible
-description: API reference for sdk.event.llm_convertible
+title: openhands.sdk.event.llm_convertible
+description: API reference for openhands.sdk.event.llm_convertible
 ---
 
 # sdk.event.llm_convertible package

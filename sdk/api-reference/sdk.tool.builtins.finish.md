@@ -1,6 +1,6 @@
 ---
-title: Sdk.Tool.Builtins.Finish
-description: API reference for sdk.tool.builtins.finish
+title: openhands.sdk.tool.builtins.finish
+description: API reference for openhands.sdk.tool.builtins.finish
 ---
 
 # sdk.tool.builtins.finish module

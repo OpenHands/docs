@@ -1,6 +1,6 @@
 ---
-title: Sdk.Utils.Pydantic Secrets
-description: API reference for sdk.utils.pydantic_secrets
+title: openhands.sdk.utils.pydantic_secrets
+description: API reference for openhands.sdk.utils.pydantic_secrets
 ---
 
 # sdk.utils.pydantic_secrets module

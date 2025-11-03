@@ -1,6 +1,6 @@
 ---
-title: Sdk.Agent.Base
-description: API reference for sdk.agent.base
+title: openhands.sdk.agent.base
+description: API reference for openhands.sdk.agent.base
 ---
 
 # sdk.agent.base module

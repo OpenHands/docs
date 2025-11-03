@@ -1,6 +1,6 @@
 ---
-title: Sdk.Io.Memory
-description: API reference for sdk.io.memory
+title: openhands.sdk.io.memory
+description: API reference for openhands.sdk.io.memory
 ---
 
 # sdk.io.memory module

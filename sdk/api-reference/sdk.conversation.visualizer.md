@@ -1,6 +1,6 @@
 ---
-title: Sdk.Conversation.Visualizer
-description: API reference for sdk.conversation.visualizer
+title: openhands.sdk.conversation.visualizer
+description: API reference for openhands.sdk.conversation.visualizer
 ---
 
 # sdk.conversation.visualizer module
