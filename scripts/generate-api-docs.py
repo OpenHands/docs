@@ -233,14 +233,18 @@ openhands.sdk.{module} module
         """Clean multi-line dictionary patterns that cause parsing issues."""
         import re
         
-        # Use regex with DOTALL flag to handle multi-line dictionary patterns
-        # Pattern: {"key": "value",\n    "key2": "value2"}
-        pattern = r'\{"[^"]*":\s*"[^"]*",\s*\n\s*"[^"]*":\s*"[^"]*"\}'
-        content = re.sub(pattern, '(configuration dictionary)', content, flags=re.DOTALL)
+        # Handle the specific problematic pattern that keeps appearing
+        # Pattern: For example: {"Reasoning:": "bold blue",\n    "Thought:": "bold green"}
+        pattern1 = r'For example: \{"[^"]*":\s*"[^"]*",\s*\n\s*"[^"]*":\s*"[^"]*"\}'
+        content = re.sub(pattern1, 'For example: (configuration dictionary)', content, flags=re.DOTALL)
         
-        # Also handle simpler multi-line patterns
-        pattern2 = r'\{[^{}]*"[^"]*":[^{}]*\n[^{}]*\}'
+        # More general multi-line dictionary patterns
+        pattern2 = r'\{"[^"]*":\s*"[^"]*",\s*\n\s*"[^"]*":\s*"[^"]*"\}'
         content = re.sub(pattern2, '(configuration dictionary)', content, flags=re.DOTALL)
+        
+        # Handle any remaining multi-line patterns with curly braces
+        pattern3 = r'\{[^{}]*\n[^{}]*\}'
+        content = re.sub(pattern3, '(configuration object)', content, flags=re.DOTALL)
         
         return content
 
