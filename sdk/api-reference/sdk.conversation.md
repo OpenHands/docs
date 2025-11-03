@@ -79,7 +79,7 @@ Returns True if BOTH conditions are met:
 
 #### *abstractmethod* update_secrets(secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)]) → [None](https://docs.python.org/3/library/constants.html#None)
 
-### *class* openhands.sdk.conversation.ConversationState(\*, id: ~uuid.UUID, agent: ~openhands.sdk.agent.base.AgentBase, workspace: ~openhands.sdk.workspace.base.BaseWorkspace, persistence_dir: str | None = 'workspace/conversations', max_iterations: ~typing.Annotated[int, ~annotated_types.Gt(gt=0)] = 500, stuck_detection: bool = True, agent_status: ~openhands.sdk.conversation.state.AgentExecutionStatus = AgentExecutionStatus.IDLE, confirmation_policy: ~openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase = NeverConfirm(kind='NeverConfirm'), activated_knowledge_skills: list[str] = `<factory>`, stats: ~openhands.sdk.conversation.conversation_stats.ConversationStats = `<factory>`, secret_registry: ~openhands.sdk.conversation.secret_registry.SecretRegistry = `<factory>`)
+### *class* openhands.sdk.conversation.ConversationState(\*, id: uuid.UUID, agent: openhands.sdk.agent.base.AgentBase, workspace: openhands.sdk.workspace.base.BaseWorkspace, persistence_dir: str | None = 'workspace/conversations', max_iterations: typing.Annotated[int, annotated_types.Gt(gt=0)] = 500, stuck_detection: bool = True, agent_status: openhands.sdk.conversation.state.AgentExecutionStatus = AgentExecutionStatus.IDLE, confirmation_policy: openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase = NeverConfirm(kind='NeverConfirm'), activated_knowledge_skills: list[str] = `<factory>`, stats: openhands.sdk.conversation.conversation_stats.ConversationStats = `<factory>`, secret_registry: openhands.sdk.conversation.secret_registry.SecretRegistry = `<factory>`)
 
 Bases: [`OpenHandsModel`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.OpenHandsModel)
 
@@ -255,7 +255,7 @@ fresh values from callables to ensure comprehensive masking.
 * **Parameters:**
   **text** – The text to mask secrets in
 * **Returns:**
-  Text with secret values replaced by <secret-hidden>
+  Text with secret values replaced by ``<secret-hidden>``
 
 #### model_config  : ClassVar[ConfigDict]*  = \{\}*
 

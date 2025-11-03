@@ -158,7 +158,7 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### cache_prompt *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
-### *class* openhands.sdk.llm.message.Message(\*, role: ~typing.Literal['user', 'system', 'assistant', 'tool'], content: ~collections.abc.Sequence[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = `<factory>`, cache_enabled: bool = False, vision_enabled: bool = False, function_calling_enabled: bool = False, tool_calls: list[~openhands.sdk.llm.message.MessageToolCall] | None = None, tool_call_id: str | None = None, name: str | None = None, force_string_serializer: bool = False, reasoning_content: str | None = None, thinking_blocks: ~collections.abc.Sequence[~openhands.sdk.llm.message.ThinkingBlock | ~openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: ~openhands.sdk.llm.message.ReasoningItemModel | None = None)
+### *class* openhands.sdk.llm.message.Message(\*, role: typing.Literal['user', 'system', 'assistant', 'tool'], content: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent | openhands.sdk.llm.message.ImageContent] = `<factory>`, cache_enabled: bool = False, vision_enabled: bool = False, function_calling_enabled: bool = False, tool_calls: list[openhands.sdk.llm.message.MessageToolCall] | None = None, tool_call_id: str | None = None, name: str | None = None, force_string_serializer: bool = False, reasoning_content: str | None = None, thinking_blocks: ~collections.abc.Sequence[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None)
 
 Bases: `BaseModel`
 

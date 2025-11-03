@@ -18,6 +18,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -252,6 +253,30 @@ description: API reference for {title}
             # Fix <factory> tags that Mintlify interprets as unclosed HTML
             if '<factory>' in line:
                 line = line.replace('<factory>', '`<factory>`')
+            
+            # Fix other angle bracket patterns that Mintlify interprets as HTML tags
+            if '<secret-hidden>' in line:
+                line = line.replace('<secret-hidden>', '`<secret-hidden>`')
+            
+            # General fix for other potential HTML-like patterns in documentation text
+            # Look for patterns like <word> or <word-word> that aren't actual HTML tags
+            # Match patterns like <word> or <word-word> but not actual HTML tags like <a>, <div>, etc.
+            # This regex matches angle brackets around words that contain hyphens or are not common HTML tags
+            html_like_pattern = r'<([a-zA-Z][a-zA-Z0-9]*(?:-[a-zA-Z0-9]+)+)>'
+            if re.search(html_like_pattern, line):
+                line = re.sub(html_like_pattern, r'`<\1>`', line)
+            
+            # Fix complex type signatures that might cause acorn parsing issues
+            # Break up very long lines with complex type annotations
+            if len(line) > 500 and ('~typing.' in line or '~annotated_types.' in line):
+                # This is likely a very complex class signature that might break parsers
+                # We can try to make it more readable by adding line breaks, but for now
+                # let's just ensure it doesn't have problematic characters
+                # Replace problematic patterns that might confuse JavaScript parsers
+                line = line.replace('~typing.', 'typing.')
+                line = line.replace('~annotated_types.', 'annotated_types.')
+                line = line.replace('~uuid.', 'uuid.')
+                line = line.replace('~openhands.', 'openhands.')
             
             # Fix other problematic patterns
             # Escape asterisks that might be interpreted as emphasis when they're part of type annotations

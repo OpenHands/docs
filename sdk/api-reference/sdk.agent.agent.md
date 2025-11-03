@@ -7,7 +7,7 @@ description: API reference for openhands.sdk.agent.agent
 
 <a id="module-openhands.sdk.agent.agent"></a>
 
-### *class* openhands.sdk.agent.agent.Agent(\*, kind: ~typing.Literal['Agent'] = 'Agent', llm: ~openhands.sdk.llm.llm.LLM, tools: list[~openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, ~typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: ~openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: ~openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: ~openhands.sdk.context.condenser.base.CondenserBase | None = None)
+### *class* openhands.sdk.agent.agent.Agent(\*, kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
 
 Bases: [`AgentBase`](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)
 

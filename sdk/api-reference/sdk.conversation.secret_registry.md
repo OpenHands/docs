@@ -67,7 +67,7 @@ fresh values from callables to ensure comprehensive masking.
 * **Parameters:**
   **text** – The text to mask secrets in
 * **Returns:**
-  Text with secret values replaced by <secret-hidden>
+  Text with secret values replaced by ``<secret-hidden>``
 
 #### model_config  : ClassVar[ConfigDict]*  = \{\}*
 
