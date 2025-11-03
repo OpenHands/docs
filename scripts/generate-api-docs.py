@@ -253,6 +253,34 @@ openhands.sdk.{module} module
         
         return content
 
+    def fix_header_hierarchy(self, content: str) -> str:
+        """Fix header hierarchy to ensure proper nesting under class headers."""
+        import re
+        
+        lines = content.split('\n')
+        result_lines = []
+        in_class_section = False
+        
+        for line in lines:
+            # Check if we're entering a class section
+            if re.match(r'^### class ', line):
+                in_class_section = True
+                result_lines.append(line)
+            # Check if we're leaving a class section (another class or module header)
+            elif line.startswith('### ') and not line.startswith('### class '):
+                # This is a non-class h3 header within a class section - convert to h4
+                if in_class_section:
+                    line = '#' + line  # Convert ### to ####
+                result_lines.append(line)
+            # Check if we hit another class or end of content
+            elif re.match(r'^### class ', line) or line.startswith('# '):
+                in_class_section = line.startswith('### class ')
+                result_lines.append(line)
+            else:
+                result_lines.append(line)
+        
+        return '\n'.join(result_lines)
+
     def reorganize_class_content(self, content: str) -> str:
         """Reorganize class content to separate properties from methods."""
         import re
@@ -288,6 +316,9 @@ openhands.sdk.{module} module
             # Stop when we hit the first #### (class member) or another class
             if line.startswith('####') or (line.startswith('### *class*') and i > start_idx):
                 break
+            # Fix Example headers to be h4 instead of h3
+            if line.startswith('### ') and not line.startswith('### *class*'):
+                line = '#' + line  # Convert ### to ####
             result.append(line)
             i += 1
         
@@ -393,6 +424,9 @@ openhands.sdk.{module} module
         
         # Reorganize class content to separate properties from methods
         content = self.reorganize_class_content(content)
+        
+        # Fix header hierarchy (Example sections should be h4 under class headers)
+        content = self.fix_header_hierarchy(content)
         
         lines = content.split('\n')
         cleaned_lines = []
