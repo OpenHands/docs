@@ -354,6 +354,13 @@ description: API reference for {module_name}
         if '{' in line and '}' in line:
             line = re.sub(r'\{[^}]*\}', '(configuration object)', line)
         
+        # Fix internal links from .md to .mdx extensions
+        line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1.mdx)', line)
+        line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#', r'openhands.sdk.\1.mdx#', line)
+        
+        # Fix invalid http:// links
+        line = re.sub(r'\[http://\]\(http://\)', 'http://', line)
+        
         return line
         
     def update_navigation(self):
