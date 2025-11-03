@@ -1,13 +1,12 @@
-OpenHands SDK API Reference
-============================
 
-Welcome to the OpenHands SDK API reference documentation.
+OpenHands SDK API Reference
+===========================
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
-   modules
+   openhands.sdk
 
 Indices and tables
 ==================

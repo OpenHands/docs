@@ -1,0 +1,1813 @@
+---
+title: openhands.sdk
+description: API reference for openhands.sdk
+---
+
+# openhands.sdk package
+
+### Action
+
+Bases: `Schema`, `ABC`
+
+Base schema for input action.
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### property visualize : Text
+
+Return Rich Text representation of this action.
+
+This method can be overridden by subclasses to customize visualization.
+The base implementation displays all action fields systematically.
+
+### Agent
+
+Bases: [`AgentBase`](openhands.sdk.agent.md#openhands.sdk.agent.AgentBase)
+
+Main agent implementation for OpenHands.
+
+The Agent class provides the core functionality for running AI agents that can
+interact with tools, process messages, and execute actions. It inherits from
+AgentBase and implements the agent execution logic.
+
+### Example
+
+```pycon
+>`>`>` from openhands.sdk import LLM, Agent, Tool
+>`>`>` llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("key"))
+>`>`>` tools = [Tool(name="BashTool"), Tool(name="FileEditorTool")]
+>`>`>` agent = Agent(llm=llm, tools=tools)
+```
+
+#### init_state
+
+Initialize the empty conversation state to prepare the agent for user
+messages.
+
+Typically this involves adding system message
+
+NOTE: state will be mutated in-place.
+
+#### kind : Literal['Agent']
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### model_post_init
+
+Override this method to perform additional initialization after __init__ and model_construct.
+This is useful if you want to do some validation that requires the entire model to be initialized.
+
+#### step
+
+Taking a step in the conversation.
+
+Typically this involves:
+1. Making a LLM call
+2. Executing the tool
+3. Updating the conversation state with
+
+>` LLM calls (role=”assistant”) and tool results (role=”tool”)
+
+4.1 If conversation is finished, set state.agent_status to FINISHED
+4.2 Otherwise, just return, Conversation will kick off the next step
+
+NOTE: state will be mutated in-place.
+
+### AgentBase
+
+Bases: `DiscriminatedUnionMixin`, `ABC`
+
+Abstract base class for OpenHands agents.
+
+Agents are stateless and should be fully defined by their configuration.
+This base class provides the common interface and functionality that all
+agent implementations must follow.
+
+#### agent_context *: [AgentContext]
+
+#### condenser : CondenserBase | None
+
+#### filter_tools_regex : str | None
+
+#### get_all_llms
+
+Recursively yield unique base-class LLM objects reachable from self.
+
+- Returns actual object references (not copies).
+- De-dupes by id(LLM).
+- Cycle-safe via a visited set for all traversed objects.
+- Only yields objects whose type is exactly LLM (no subclasses).
+- Does not handle dataclasses.
+
+#### init_state
+
+Initialize the empty conversation state to prepare the agent for user
+messages.
+
+Typically this involves adding system message
+
+NOTE: state will be mutated in-place.
+
+#### llm *: [LLM]
+
+#### mcp_config : dict[str, Any]
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### model_dump_succint
+
+Like model_dump, but excludes None fields by default.
+
+#### model_post_init
+
+Override this method to perform additional initialization after __init__ and model_construct.
+This is useful if you want to do some validation that requires the entire model to be initialized.
+
+#### property name : str
+
+Returns the name of the Agent.
+
+#### property prompt_dir : str
+
+Returns the directory where this class’s module file is located.
+
+#### resolve_diff_from_deserialized
+
+Return a new AgentBase instance equivalent to persisted but with
+explicitly whitelisted fields (e.g. api_key, security_analyzer) taken from
+self.
+
+#### security_analyzer : SecurityAnalyzerBase | None
+
+#### abstractmethod step
+
+Taking a step in the conversation.
+
+Typically this involves:
+1. Making a LLM call
+2. Executing the tool
+3. Updating the conversation state with
+
+>` LLM calls (role=”assistant”) and tool results (role=”tool”)
+
+4.1 If conversation is finished, set state.agent_status to FINISHED
+4.2 Otherwise, just return, Conversation will kick off the next step
+
+NOTE: state will be mutated in-place.
+
+#### property system_message : str
+
+Compute system message on-demand to maintain statelessness.
+
+#### system_prompt_filename : str
+
+#### system_prompt_kwargs : dict[str, object]
+
+#### tools *: list[[Tool]
+
+#### property tools_map *: dict[str, [ToolDefinition]
+
+Get the initialized tools map.
+:raises RuntimeError: If the agent has not been initialized.
+
+### AgentContext
+
+Bases: `BaseModel`
+
+Central structure for managing prompt extension.
+
+AgentContext unifies all the contextual inputs that shape how the system
+extends and interprets user prompts. It combines both static environment
+details and dynamic, user-activated extensions from skills.
+
+Specifically, it provides:
+- Repository context / Repo Skills: Information about the active codebase,
+
+>` branches, and repo-specific instructions contributed by repo skills.
+- Runtime context: Current execution environment (hosts, working
+  directory, secrets, date, etc.).
+- Conversation instructions: Optional task- or channel-specific rules
+  that constrain or guide the agent’s behavior across the session.
+- Knowledge Skills: Extensible components that can be triggered by user input
+  to inject knowledge or domain-specific guidance.
+
+Together, these elements make AgentContext the primary container responsible
+for assembling, formatting, and injecting all prompt-relevant context into
+LLM interactions.
+
+#### get_system_message_suffix
+
+Get the system message with repo skill content and custom suffix.
+
+Custom suffix can typically includes:
+- Repository information (repo name, branch name, PR number, etc.)
+- Runtime information (e.g., available hosts, current date)
+- Conversation instructions (e.g., user preferences, task details)
+- Repository-specific instructions (collected from repo skills)
+
+#### get_user_message_suffix
+
+Augment the user’s message with knowledge recalled from skills.
+
+This works by:
+- Extracting the text content of the user message
+- Matching skill triggers against the query
+- Returning formatted knowledge and triggered skill names if relevant skills were triggered
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### skills : list[Skill]
+
+#### system_message_suffix : str | None
+
+#### user_message_suffix : str | None
+
+### class openhands.sdk.BaseConversation
+
+Bases: `ABC`
+
+Abstract base class for conversation implementations.
+
+This class defines the interface that all conversation implementations must follow.
+Conversations manage the interaction between users and agents, handling message
+exchange, execution control, and state management.
+
+#### abstractmethod close
+
+#### static compose_callbacks
+
+Compose multiple callbacks into a single callback function.
+
+* Parameters:
+  callbacks – An iterable of callback functions
+* Returns:
+  A single callback function that calls all provided callbacks
+
+#### property confirmation_policy_active : bool
+
+#### abstract property conversation_stats *: [ConversationStats]
+
+#### abstractmethod generate_title
+
+Generate a title for the conversation based on the first user message.
+
+* Parameters:
+  * llm – Optional LLM to use for title generation. If not provided,
+    uses the agent’s LLM.
+  * max_length – Maximum length of the generated title.
+* Returns:
+  A generated title for the conversation.
+* Raises:
+  ValueError – If no user messages are found in the conversation.
+
+#### static get_persistence_dir
+
+Get the persistence directory for the conversation.
+
+#### abstract property id : UUID
+
+#### property is_confirmation_mode_active : bool
+
+Check if confirmation mode is active.
+
+Returns True if BOTH conditions are met:
+1. The agent has a security analyzer set (not None)
+2. The confirmation policy is active
+
+#### abstractmethod pause
+
+#### abstractmethod reject_pending_actions
+
+#### abstractmethod run
+
+Execute the agent to process messages and perform actions.
+
+This method runs the agent until it finishes processing the current
+message or reaches the maximum iteration limit.
+
+#### abstractmethod send_message
+
+Send a message to the agent.
+
+#### abstractmethod set_confirmation_policy
+
+Set the confirmation policy for the conversation.
+
+#### abstract property state : ConversationStateProtocol
+
+#### abstractmethod update_secrets
+
+### Conversation
+
+### Conversation
+
+Bases: `object`
+
+Factory class for creating conversation instances with OpenHands agents.
+
+This factory automatically creates either a LocalConversation or RemoteConversation
+based on the workspace type provided. LocalConversation runs the agent locally,
+while RemoteConversation connects to a remote agent server.
+
+* Returns:
+  LocalConversation if workspace is local, RemoteConversation if workspace
+  is remote.
+
+### Example
+
+```pycon
+>`>`>` from openhands.sdk import LLM, Agent, Conversation
+>`>`>` llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("key"))
+>`>`>` agent = Agent(llm=llm, tools=[])
+>`>`>` conversation = Conversation(agent=agent, workspace="./workspace")
+>`>`>` conversation.send_message("Hello!")
+>`>`>` conversation.run()
+```
+
+### ConversationStats
+
+Bases: `BaseModel`
+
+Track per-LLM usage metrics observed during conversations.
+
+#### get_combined_metrics
+
+#### get_metrics_for_service
+
+#### get_metrics_for_usage
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### model_post_init
+
+This function is meant to behave like a BaseModel method to initialise private attributes.
+
+It takes context as an argument since that’s what pydantic-core passes when calling it.
+
+* Parameters:
+  * self – The BaseModel instance.
+  * context – The context.
+
+#### register_llm
+
+#### property service_to_metrics *: dict[str, [Metrics]
+
+#### usage_to_metrics *: dict[str, [Metrics]
+
+### Event
+
+Bases: `DiscriminatedUnionMixin`, `ABC`
+
+Base class for all events.
+
+#### id : str
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### source : Literal['agent', 'user', 'environment']
+
+#### timestamp : str
+
+#### property visualize : Text
+
+Return Rich Text representation of this event.
+
+This is a fallback implementation for unknown event types.
+Subclasses should override this method to provide specific visualization.
+
+### class openhands.sdk.FileStore
+
+Bases: `ABC`
+
+Abstract base class for file storage operations.
+
+This class defines the interface for file storage backends that can
+handle basic file operations like reading, writing, listing, and deleting files.
+
+#### abstractmethod delete
+
+Delete the file or directory at the specified path.
+
+* Parameters:
+  path – The file or directory path to delete.
+
+#### abstractmethod list
+
+List all files and directories at the specified path.
+
+* Parameters:
+  path – The directory path to list contents from.
+* Returns:
+  A list of file and directory names in the specified path.
+
+#### abstractmethod read
+
+Read and return the contents of a file as a string.
+
+* Parameters:
+  path – The file path to read from.
+* Returns:
+  The file contents as a string.
+
+#### abstractmethod write
+
+Write contents to a file at the specified path.
+
+* Parameters:
+  * path – The file path where contents should be written.
+  * contents – The data to write, either as string or bytes.
+
+### ImageContent
+
+Bases: `BaseContent`
+
+#### image_urls : list[str]
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### to_llm_dict
+
+Convert to LLM API format.
+
+#### type : Literal['image']
+
+### LLM
+
+Bases: `BaseModel`, `RetryMixin`, `NonNativeToolCallingMixin`
+
+Language model interface for OpenHands agents.
+
+The LLM class provides a unified interface for interacting with various
+language models through the litellm library. It handles model configuration,
+API authentication,
+retry logic, and tool calling capabilities.
+
+### Example
+
+```pycon
+>`>`>` from openhands.sdk import LLM
+>`>`>` from pydantic import SecretStr
+>`>`>` llm = LLM(
+...     model="claude-sonnet-4-20250514",
+...     api_key=SecretStr("your-api-key"),
+...     usage_id="my-agent"
+... )
+>`>`>` # Use with agent or conversation
+```
+
+#### OVERRIDE_ON_SERIALIZE : tuple[str, ...]
+
+#### api_key : SecretStr | None
+
+#### api_version : str | None
+
+#### aws_access_key_id : SecretStr | None
+
+#### aws_region_name : str | None
+
+#### aws_secret_access_key : SecretStr | None
+
+#### base_url : str | None
+
+#### caching_prompt : bool
+
+#### completion
+
+Generate a completion from the language model.
+
+This is the method for getting responses from the model via Completion API.
+It handles message formatting, tool calling, and response processing.
+
+* Returns:
+  LLMResponse containing the model’s response and metadata.
+* Raises:
+  ValueError – If streaming is requested (not supported).
+
+### Example
+
+```pycon
+>`>`>` from openhands.sdk.llm import Message, TextContent
+>`>`>` messages = [Message(role="user", content=[TextContent(text="Hello")])]
+>`>`>` response = llm.completion(messages)
+>`>`>` print(response.content)
+```
+
+#### custom_llm_provider : str | None
+
+#### custom_tokenizer : str | None
+
+#### disable_stop_word : bool | None
+
+#### disable_vision : bool | None
+
+#### drop_params : bool
+
+#### enable_encrypted_reasoning : bool
+
+#### extended_thinking_budget : int | None
+
+#### format_messages_for_llm
+
+Formats Message objects for LLM consumption.
+
+#### format_messages_for_responses
+
+Prepare (instructions, input[]) for the OpenAI Responses API.
+
+- Skips prompt caching flags and string serializer concerns
+- Uses Message.to_responses_value to get either instructions (system)
+
+>` or input items (others)
+- Concatenates system instructions into a single instructions string
+
+#### get_token_count
+
+#### input_cost_per_token : float | None
+
+#### is_caching_prompt_active
+
+Check if prompt caching is supported and enabled for current model.
+
+* Returns:
+  True if prompt caching is supported and enabled for the given
+  : model.
+* Return type:
+  boolean
+
+#### classmethod load_from_env
+
+#### classmethod load_from_json
+
+#### log_completions : bool
+
+#### log_completions_folder : str
+
+#### max_input_tokens : int | None
+
+#### max_message_chars : int
+
+#### max_output_tokens : int | None
+
+#### metadata : dict[str, Any]
+
+#### property metrics *: [Metrics]
+
+Get usage metrics for this LLM instance.
+
+* Returns:
+  Metrics object containing token usage, costs, and other statistics.
+
+### Example
+
+```pycon
+>`>`>` cost = llm.metrics.accumulated_cost
+>`>`>` print(f"Total cost: ${cost}")
+```
+
+#### model : str
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'extra': 'forbid'}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### property model_info : dict | None
+
+Returns the model info dictionary.
+
+#### model_post_init
+
+This function is meant to behave like a BaseModel method to initialise private attributes.
+
+It takes context as an argument since that’s what pydantic-core passes when calling it.
+
+* Parameters:
+  * self – The BaseModel instance.
+  * context – The context.
+
+#### modify_params : bool
+
+#### native_tool_calling : bool
+
+#### num_retries : int
+
+#### ollama_base_url : str | None
+
+#### openrouter_app_name : str
+
+#### openrouter_site_url : str
+
+#### output_cost_per_token : float | None
+
+#### reasoning_effort : Literal['low', 'medium', 'high', 'none'] | None
+
+#### resolve_diff_from_deserialized
+
+Resolve differences between a deserialized LLM and the current instance.
+
+This is due to fields like api_key being serialized to “
+
+```
+**
+```
+
+```
+**
+```
+
+” in dumps,
+and we want to ensure that when loading from a file, we still use the
+runtime-provided api_key in the self instance.
+
+Return a new LLM instance equivalent to persisted but with
+explicitly whitelisted fields (e.g. api_key) taken from self.
+
+#### responses
+
+Alternative invocation path using OpenAI Responses API via LiteLLM.
+
+Maps Message[] ->` (instructions, input[]) and returns LLMResponse.
+Non-stream only for v1.
+
+#### restore_metrics
+
+#### retry_listener : SkipJsonSchema[Callable[[int, int], None] | None]
+
+#### retry_max_wait : int
+
+#### retry_min_wait : int
+
+#### retry_multiplier : float
+
+#### safety_settings : list[dict[str, str]] | None
+
+#### seed : int | None
+
+#### property service_id : str
+
+#### temperature : float | None
+
+#### timeout : int | None
+
+#### top_k : float | None
+
+#### top_p : float | None
+
+#### usage_id : str
+
+#### uses_responses_api
+
+Whether this model uses the OpenAI Responses API path.
+
+#### vision_is_active
+
+### LLMConvertibleEvent
+
+Bases: [`Event`](openhands.sdk.event.md#openhands.sdk.event.Event), `ABC`
+
+Base class for events that can be converted to LLM messages.
+
+#### static events_to_messages
+
+Convert event stream to LLM message stream, handling multi-action batches
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### abstractmethod to_llm_message
+
+### LLMRegistry
+
+Bases: `object`
+
+A minimal LLM registry for managing LLM instances by usage ID.
+
+This registry provides a simple way to manage multiple LLM instances,
+avoiding the need to recreate LLMs with the same configuration.
+
+#### __init__
+
+Initialize the LLM registry.
+
+* Parameters:
+  retry_listener – Optional callback for retry events.
+
+#### add
+
+Add an LLM instance to the registry.
+
+* Parameters:
+  llm – The LLM instance to register.
+* Raises:
+  ValueError – If llm.usage_id already exists in the registry.
+
+#### get
+
+Get an LLM instance from the registry.
+
+* Parameters:
+  usage_id – Unique identifier for the LLM usage slot.
+* Returns:
+  The LLM instance.
+* Raises:
+  KeyError – If usage_id is not found in the registry.
+
+#### list_services
+
+Deprecated alias for [`list_usage_ids()`](#openhands.sdk.LLMRegistry.list_usage_ids).
+
+#### list_usage_ids
+
+List all registered usage IDs.
+
+#### notify
+
+Notify subscribers of registry events.
+
+* Parameters:
+  event – The registry event to notify about.
+
+#### registry_id : str
+
+#### retry_listener : Callable[[int, int], None] | None
+
+#### property service_to_llm *: dict[str, [LLM]
+
+#### subscribe
+
+Subscribe to registry events.
+
+* Parameters:
+  callback – Function to call when LLMs are created or updated.
+
+#### property usage_to_llm *: dict[str, [LLM]
+
+Access the internal usage-ID-to-LLM mapping.
+
+### LLMSummarizingCondenser
+
+Bases: `RollingCondenser`
+
+#### get_condensation
+
+Get the condensation from a view.
+
+#### handles_condensation_requests
+
+Whether this condenser handles explicit condensation requests.
+
+If this returns True, the agent will trigger the condenser whenever a
+CondensationRequest event is added to the history. If False, the condenser will
+only be triggered when the agent’s own logic decides to do so (e.g. context
+window exceeded).
+
+* Returns:
+  True if the condenser handles explicit condensation requests, False
+  otherwise.
+* Return type:
+  bool
+
+#### keep_first : int
+
+#### kind : Literal['LLMSummarizingCondenser']
+
+#### llm *: [LLM]
+
+#### max_size : int
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### should_condense
+
+Determine if a view should be condensed.
+
+#### validate_keep_first_vs_max_size
+
+### LocalConversation
+
+Bases: [`BaseConversation`](openhands.sdk.conversation.md#openhands.sdk.conversation.BaseConversation)
+
+#### __init__
+
+Initialize the conversation.
+
+* Parameters:
+  * agent – The agent to use for the conversation
+  * workspace – Working directory for agent operations and tool execution
+  * persistence_dir – Directory for persisting conversation state and events
+  * conversation_id – Optional ID for the conversation. If provided, will
+    be used to identify the conversation. The user might want to
+    suffix their persistent filestore with this ID.
+  * callbacks – Optional list of callback functions to handle events
+  * max_iteration_per_run – Maximum number of iterations per run
+  * visualize – Whether to enable default visualization. If True, adds
+    a default visualizer callback. If False, relies on
+    application to provide visualization through callbacks.
+  * name_for_visualization – Optional name to prefix in panel titles to identify
+    which agent/conversation is speaking.
+  * stuck_detection – Whether to enable stuck detection
+
+#### agent *: [AgentBase]
+
+#### close
+
+Close the conversation and clean up all tool executors.
+
+#### property conversation_stats
+
+#### generate_title
+
+Generate a title for the conversation based on the first user message.
+
+* Parameters:
+  * llm – Optional LLM to use for title generation. If not provided,
+    uses self.agent.llm.
+  * max_length – Maximum length of the generated title.
+* Returns:
+  A generated title for the conversation.
+* Raises:
+  ValueError – If no user messages are found in the conversation.
+
+#### property id : UUID
+
+Get the unique ID of the conversation.
+
+#### llm_registry *: [LLMRegistry]
+
+#### max_iteration_per_run : int
+
+#### pause
+
+Pause agent execution.
+
+This method can be called from any thread to request that the agent
+pause execution. The pause will take effect at the next iteration
+of the run loop (between agent steps).
+
+Note: If called during an LLM completion, the pause will not take
+effect until the current LLM call completes.
+
+#### reject_pending_actions
+
+Reject all pending actions from the agent.
+
+This is a non-invasive method to reject actions between run() calls.
+Also clears the agent_waiting_for_confirmation flag.
+
+#### run
+
+Runs the conversation until the agent finishes.
+
+In confirmation mode:
+- First call: creates actions but doesn’t execute them, stops and waits
+- Second call: executes pending actions (implicit confirmation)
+
+In normal mode:
+- Creates and executes actions immediately
+
+Can be paused between steps
+
+#### send_message
+
+Send a message to the agent.
+
+* Parameters:
+  message – Either a string (which will be converted to a user message)
+  or a Message object
+
+#### set_confirmation_policy
+
+Set the confirmation policy and store it in conversation state.
+
+#### property state *: [ConversationState]
+
+Get the conversation state.
+
+It returns a protocol that has a subset of ConversationState methods
+and properties. We will have the ability to access the same properties
+of ConversationState on a remote conversation object.
+But we won’t be able to access methods that mutate the state.
+
+#### property stuck_detector *: [StuckDetector]
+
+Get the stuck detector instance if enabled.
+
+#### update_secrets
+
+Add secrets to the conversation.
+
+* Parameters:
+  secrets – Dictionary mapping secret keys to values or no-arg callables.
+  SecretValue = str | Callable[[], str]. Callables are invoked lazily
+  when a command references the secret key.
+
+#### workspace *: [LocalWorkspace]
+
+### LocalFileStore
+
+Bases: [`FileStore`](#openhands.sdk.FileStore)
+
+#### __init__
+
+#### delete
+
+Delete the file or directory at the specified path.
+
+* Parameters:
+  path – The file or directory path to delete.
+
+#### get_full_path
+
+#### list
+
+List all files and directories at the specified path.
+
+* Parameters:
+  path – The directory path to list contents from.
+* Returns:
+  A list of file and directory names in the specified path.
+
+#### read
+
+Read and return the contents of a file as a string.
+
+* Parameters:
+  path – The file path to read from.
+* Returns:
+  The file contents as a string.
+
+#### root : str
+
+#### write
+
+Write contents to a file at the specified path.
+
+* Parameters:
+  * path – The file path where contents should be written.
+  * contents – The data to write, either as string or bytes.
+
+### LocalWorkspace
+
+Bases: [`BaseWorkspace`](openhands.sdk.workspace.md#openhands.sdk.workspace.BaseWorkspace)
+
+Local workspace implementation that operates on the host filesystem.
+
+LocalWorkspace provides direct access to the local filesystem and command execution
+environment. It’s suitable for development and testing scenarios where the agent
+should operate directly on the host system.
+
+### Example
+
+```pycon
+>`>`>` workspace = LocalWorkspace(working_dir="/path/to/project")
+>`>`>` with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
+
+#### execute_command
+
+Execute a bash command locally.
+
+Uses the shared shell execution utility to run commands with proper
+timeout handling, output streaming, and error management.
+
+* Parameters:
+  * command – The bash command to execute
+  * cwd – Working directory (optional)
+  * timeout – Timeout in seconds
+* Returns:
+  Result with stdout, stderr, exit_code, command, and
+  : timeout_occurred
+* Return type:
+  [CommandResult](openhands.sdk.workspace.md#openhands.sdk.workspace.CommandResult)
+
+#### file_download
+
+Download (copy) a file locally.
+
+For local systems, file download is implemented as a file copy operation
+using shutil.copy2 to preserve metadata.
+
+* Parameters:
+  * source_path – Path to the source file
+  * destination_path – Path where the file should be copied
+* Returns:
+  Result with success status and file information
+* Return type:
+  [FileOperationResult](openhands.sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
+
+#### file_upload
+
+Upload (copy) a file locally.
+
+For local systems, file upload is implemented as a file copy operation
+using shutil.copy2 to preserve metadata.
+
+* Parameters:
+  * source_path – Path to the source file
+  * destination_path – Path where the file should be copied
+* Returns:
+  Result with success status and file information
+* Return type:
+  [FileOperationResult](openhands.sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
+
+#### git_changes
+
+Get the git changes for the repository at the path given.
+
+* Parameters:
+  path – Path to the git repository
+* Returns:
+  List of changes
+* Return type:
+  list[GitChange]
+* Raises:
+  Exception – If path is not a git repository or getting changes failed
+
+#### git_diff
+
+Get the git diff for the file at the path given.
+
+* Parameters:
+  path – Path to the file
+* Returns:
+  Git diff
+* Return type:
+  GitDiff
+* Raises:
+  Exception – If path is not a git repository or getting diff failed
+
+#### kind : Literal['LocalWorkspace']
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+### MCPClient
+
+Bases: `Client`
+
+Behaves exactly like fastmcp.Client (same constructor & async API),
+but owns a background event loop and offers:
+
+>` - call_async_from_sync(awaitable_or_fn, 
+
+>`   ```
+>`   *
+>`   ```
+
+>`   args, timeout=None, 
+
+>`   ```
+>`   **
+>`   ```
+
+>`   kwargs)
+>` - call_sync_from_async(fn, 
+
+>`   ```
+>`   *
+>`   ```
+
+>`   args, 
+
+>`   ```
+>`   **
+>`   ```
+
+>`   kwargs)  # await this from async code
+
+#### __init__
+
+#### call_async_from_sync
+
+Run a coroutine or async function on this client’s loop from sync code.
+
+Usage:
+: mcp.call_async_from_sync(async_fn, arg1, kw=…)
+  mcp.call_async_from_sync(coro)
+
+#### async call_sync_from_async
+
+Await running a blocking function in the default threadpool from async code.
+
+#### sync_close
+
+Synchronously close the MCP client and cleanup resources.
+
+This will attempt to call the async close() method if available,
+then shutdown the background event loop.
+
+### MCPToolDefinition
+
+Bases: `ToolDefinition[MCPToolAction, MCPToolObservation]`
+
+MCP Tool that wraps an MCP client and provides tool functionality.
+
+#### action_from_arguments
+
+Create an MCPToolAction from parsed arguments with early validation.
+
+We validate the raw arguments against the MCP tool’s input schema here so
+Agent._get_action_event can catch ValidationError and surface an
+AgentErrorEvent back to the model instead of crashing later during tool
+execution. On success, we return MCPToolAction with sanitized arguments.
+
+* Parameters:
+  arguments – The parsed arguments from the tool call.
+* Returns:
+  The MCPToolAction instance with data populated from the arguments.
+* Raises:
+  ValidationError – If the arguments do not conform to the tool schema.
+
+#### classmethod create
+
+Create a sequence of ToolDefinition instances.
+
+TODO [https://github.com/OpenHands/agent-sdk/issues/493](https://github.com/OpenHands/agent-sdk/issues/493)
+Refactor this - the ToolDefinition class should not have a concrete create()
+implementation. Built-in tools should be refactored to not rely on this
+method, and then this should be made abstract with @abstractmethod.
+
+#### kind : Literal['MCPToolDefinition']
+
+#### mcp_tool : Tool
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### to_mcp_tool
+
+Convert a Tool to an MCP tool definition.
+
+Allow overriding input/output schemas (usually by subclasses).
+
+* Parameters:
+  * input_schema – Optionally override the input schema.
+  * output_schema – Optionally override the output schema.
+
+#### to_openai_tool
+
+Convert a Tool to an OpenAI tool.
+
+For MCP, we dynamically create the action_type (type: Schema)
+from the MCP tool input schema, and pass it to the parent method.
+It will use the .model_fields from this pydantic model to
+generate the OpenAI-compatible tool schema.
+
+* Parameters:
+  add_security_risk_prediction – Whether to add a security_risk field
+  to the action schema for LLM to predict. This is useful for
+  tools that may have safety risks, so the LLM can reason about
+  the risk level before calling the tool.
+
+### MCPToolObservation
+
+Bases: [`Observation`](openhands.sdk.tool.md#openhands.sdk.tool.Observation)
+
+Observation from MCP tool execution.
+
+#### content *: list[[TextContent]
+
+#### classmethod from_call_tool_result
+
+Create an MCPToolObservation from a CallToolResult.
+
+#### is_error : bool
+
+#### kind : Literal['MCPToolObservation']
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### property to_llm_content *: Sequence[[TextContent]
+
+Format the observation for agent display.
+
+#### tool_name : str
+
+#### property visualize : Text
+
+Return Rich Text representation of this observation.
+
+### Message
+
+Bases: `BaseModel`
+
+#### cache_enabled : bool
+
+#### property contains_image : bool
+
+#### content *: Sequence[[TextContent]
+
+#### force_string_serializer : bool
+
+#### classmethod from_llm_chat_message
+
+Convert a LiteLLMMessage (Chat Completions) to our Message class.
+
+Provider-agnostic mapping for reasoning:
+- Prefer message.reasoning_content if present (LiteLLM normalized field)
+- Extract thinking_blocks from content array (Anthropic-specific)
+
+#### classmethod from_llm_responses_output
+
+Convert OpenAI Responses API output items into a single assistant Message.
+
+Policy (non-stream):
+- Collect assistant text by concatenating output_text parts from message items
+- Normalize function_call items to MessageToolCall list
+
+#### function_calling_enabled : bool
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### name : str | None
+
+#### reasoning_content : str | None
+
+#### responses_reasoning_item *: [ReasoningItemModel]
+
+#### role : Literal['user', 'system', 'assistant', 'tool']
+
+#### thinking_blocks *: Sequence[[ThinkingBlock]
+
+#### to_chat_dict
+
+Serialize message for OpenAI Chat Completions.
+
+Chooses the appropriate content serializer and then injects threading keys:
+- Assistant tool call turn: role == “assistant” and self.tool_calls
+- Tool result turn: role == “tool” and self.tool_call_id (with name)
+
+#### to_responses_dict
+
+Serialize message for OpenAI Responses (input parameter).
+
+Produces a list of “input” items for the Responses API:
+- system: returns [], system content is expected in ‘instructions’
+- user: one ‘message’ item with content parts ->` input_text / input_image
+(when vision enabled)
+- assistant: emits prior assistant content as input_text,
+and function_call items for tool_calls
+- tool: emits function_call_output items (one per TextContent)
+with matching call_id
+
+#### to_responses_value
+
+Return serialized form.
+
+Either an instructions string (for system) or input items (for other roles).
+
+#### tool_call_id : str | None
+
+#### tool_calls *: list[[MessageToolCall]
+
+#### vision_enabled : bool
+
+### MessageEvent
+
+Bases: [`LLMConvertibleEvent`](openhands.sdk.event.md#openhands.sdk.event.LLMConvertibleEvent)
+
+Message from either agent or user.
+
+This is originally the “MessageAction”, but it suppose not to be tool call.
+
+#### activated_skills : list[str]
+
+#### extended_content *: list[[TextContent]
+
+#### kind : Literal['MessageEvent']
+
+#### llm_message *: [Message]
+
+#### llm_response_id : str | None
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### property reasoning_content : str
+
+#### source : Literal['agent', 'user', 'environment']
+
+#### property thinking_blocks *: Sequence[[ThinkingBlock]
+
+Return the Anthropic thinking blocks from the LLM message.
+
+#### to_llm_message
+
+#### property visualize : Text
+
+Return Rich Text representation of this message event.
+
+### Observation
+
+Bases: `Schema`, `ABC`
+
+Base schema for output observation.
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### abstract property to_llm_content *: Sequence[[TextContent]
+
+Get the observation string to show to the agent.
+
+#### property visualize : Text
+
+Return Rich Text representation of this action.
+
+This method can be overridden by subclasses to customize visualization.
+The base implementation displays all action fields systematically.
+
+### RedactedThinkingBlock
+
+Bases: `BaseModel`
+
+Redacted thinking block for previous responses without extended thinking.
+
+This is used as a placeholder for assistant messages that were generated
+before extended thinking was enabled.
+
+#### data : str
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### type : Literal['redacted_thinking']
+
+### RegistryEvent
+
+Bases: `BaseModel`
+
+#### llm *: [LLM]
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+### RemoteConversation
+
+Bases: [`BaseConversation`](openhands.sdk.conversation.md#openhands.sdk.conversation.BaseConversation)
+
+#### __init__
+
+Remote conversation proxy that talks to an agent server.
+
+* Parameters:
+  * agent – Agent configuration (will be sent to the server)
+  * workspace – The working directory for agent operations and tool execution.
+  * conversation_id – Optional existing conversation id to attach to
+  * callbacks – Optional callbacks to receive events (not yet streamed)
+  * max_iteration_per_run – Max iterations configured on server
+  * stuck_detection – Whether to enable stuck detection on server
+  * visualize – Whether to enable the default visualizer callback
+  * name_for_visualization – Optional name to prefix in panel titles to identify
+    which agent/conversation is speaking.
+  * secrets – Optional secrets to initialize the conversation with
+
+#### agent *: [AgentBase]
+
+#### close
+
+#### property conversation_stats *: [ConversationStats]
+
+Get conversation stats from remote server.
+
+#### generate_title
+
+Generate a title for the conversation based on the first user message.
+
+* Parameters:
+  * llm – Optional LLM to use for title generation. If provided, its usage_id
+    will be sent to the server. If not provided, uses the agent’s LLM.
+  * max_length – Maximum length of the generated title.
+* Returns:
+  A generated title for the conversation.
+
+#### property id : UUID
+
+#### max_iteration_per_run : int
+
+#### pause
+
+#### reject_pending_actions
+
+#### run
+
+Execute the agent to process messages and perform actions.
+
+This method runs the agent until it finishes processing the current
+message or reaches the maximum iteration limit.
+
+#### send_message
+
+Send a message to the agent.
+
+#### set_confirmation_policy
+
+Set the confirmation policy for the conversation.
+
+#### property state : RemoteState
+
+Access to remote conversation state.
+
+#### property stuck_detector
+
+Stuck detector for compatibility.
+Not implemented for remote conversations.
+
+#### update_secrets
+
+#### workspace *: [RemoteWorkspace]
+
+### RemoteWorkspace
+
+Bases: `RemoteWorkspaceMixin`, [`BaseWorkspace`](openhands.sdk.workspace.md#openhands.sdk.workspace.BaseWorkspace)
+
+Remote workspace implementation that connects to an OpenHands agent server.
+
+RemoteWorkspace provides access to a sandboxed environment running on a remote
+OpenHands agent server. This is the recommended approach for production deployments
+as it provides better isolation and security.
+
+### Example
+
+```pycon
+>`>`>` workspace = RemoteWorkspace(
+...     host="https://agent-server.example.com",
+...     working_dir="/workspace"
+... )
+>`>`>` with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
+
+#### property client : Client
+
+#### execute_command
+
+Execute a bash command on the remote system.
+
+This method starts a bash command via the remote agent server API,
+then polls for the output until the command completes.
+
+* Parameters:
+  * command – The bash command to execute
+  * cwd – Working directory (optional)
+  * timeout – Timeout in seconds
+* Returns:
+  Result with stdout, stderr, exit_code, and other metadata
+* Return type:
+  [CommandResult](openhands.sdk.workspace.md#openhands.sdk.workspace.CommandResult)
+
+#### file_download
+
+Download a file from the remote system.
+
+Requests the file from the remote system via HTTP API and saves it locally.
+
+* Parameters:
+  * source_path – Path to the source file on remote system
+  * destination_path – Path where the file should be saved locally
+* Returns:
+  Result with success status and metadata
+* Return type:
+  [FileOperationResult](openhands.sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
+
+#### file_upload
+
+Upload a file to the remote system.
+
+Reads the local file and sends it to the remote system via HTTP API.
+
+* Parameters:
+  * source_path – Path to the local source file
+  * destination_path – Path where the file should be uploaded on remote system
+* Returns:
+  Result with success status and metadata
+* Return type:
+  [FileOperationResult](openhands.sdk.workspace.md#openhands.sdk.workspace.FileOperationResult)
+
+#### git_changes
+
+Get the git changes for the repository at the path given.
+
+* Parameters:
+  path – Path to the git repository
+* Returns:
+  List of changes
+* Return type:
+  list[GitChange]
+* Raises:
+  Exception – If path is not a git repository or getting changes failed
+
+#### git_diff
+
+Get the git diff for the file at the path given.
+
+* Parameters:
+  path – Path to the file
+* Returns:
+  Git diff
+* Return type:
+  GitDiff
+* Raises:
+  Exception – If path is not a git repository or getting diff failed
+
+#### kind : Literal['RemoteWorkspace']
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### model_post_init
+
+Override this method to perform additional initialization after __init__ and model_construct.
+This is useful if you want to do some validation that requires the entire model to be initialized.
+
+### TextContent
+
+Bases: `BaseContent`
+
+#### model_config : ClassVar[ConfigDict] = {'extra': 'forbid', 'populate_by_name': True, 'validate_by_alias': True, 'validate_by_name': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### text : str
+
+#### to_llm_dict
+
+Convert to LLM API format.
+
+#### type : Literal['text']
+
+### ThinkingBlock
+
+Bases: `BaseModel`
+
+Anthropic thinking block for extended thinking feature.
+
+This represents the raw thinking blocks returned by Anthropic models
+when extended thinking is enabled. These blocks must be preserved
+and passed back to the API for tool use scenarios.
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### signature : str
+
+#### thinking : str
+
+#### type : Literal['thinking']
+
+### Tool
+
+Bases: `BaseModel`
+
+Defines a tool to be initialized for the agent.
+
+This is only used in agent-sdk for type schema for server use.
+
+#### model_config : ClassVar[ConfigDict] = {}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### name : str
+
+#### params : dict[str, Any]
+
+#### classmethod validate_name
+
+Validate that name is not empty.
+
+#### classmethod validate_params
+
+Convert None params to empty dict.
+
+### ToolBase
+
+Bases: `DiscriminatedUnionMixin`, `ABC`, `Generic`
+
+Base class for tools that agents can use to perform actions.
+
+Tools wrap executor functions with input/output validation and schema definition.
+They provide a standardized interface for agents to interact with external systems,
+APIs, or perform specific operations.
+
+Features:
+- Normalize input/output schemas (class or dict) into both model+schema
+- Validate inputs before execution
+- Coerce outputs only if an output model is defined; else return vanilla JSON
+- Export MCP (Model Context Protocol) tool descriptions
+
+### Example
+
+```pycon
+>`>`>` from openhands.sdk.tool import ToolDefinition
+>`>`>` tool = ToolDefinition(
+...     name="echo",
+...     description="Echo the input message",
+...     action_type=EchoAction,
+...     executor=echo_executor
+... )
+```
+
+#### action_from_arguments
+
+Create an action from parsed arguments.
+
+This method can be overridden by subclasses to provide custom logic
+for creating actions from arguments (e.g., for MCP tools).
+
+* Parameters:
+  arguments – The parsed arguments from the tool call.
+* Returns:
+  The action instance created from the arguments.
+
+#### action_type *: type[[Action]
+
+#### annotations *: [ToolAnnotations]
+
+#### as_executable
+
+Return this tool as an ExecutableTool, ensuring it has an executor.
+
+This method eliminates the need for runtime None checks by guaranteeing
+that the returned tool has a non-None executor.
+
+* Returns:
+  This tool instance, typed as ExecutableTool.
+* Raises:
+  NotImplementedError – If the tool has no executor.
+
+#### abstractmethod classmethod create
+
+Create a sequence of Tool instances. Placeholder for subclasses.
+
+This can be overridden in subclasses to provide custom initialization logic
+: (e.g., typically initializing the executor with parameters).
+
+* Returns:
+  A sequence of Tool instances. Even single tools are returned as a sequence
+  to provide a consistent interface and eliminate union return types.
+
+#### description : str
+
+#### executor *: Annotated[[ToolExecutor]
+
+#### meta : dict[str, Any] | None
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### name : str
+
+#### observation_type *: type[[Observation]
+
+#### classmethod resolve_kind
+
+#### set_executor
+
+Create a new Tool instance with the given executor.
+
+#### property title : str
+
+#### to_mcp_tool
+
+Convert a Tool to an MCP tool definition.
+
+Allow overriding input/output schemas (usually by subclasses).
+
+* Parameters:
+  * input_schema – Optionally override the input schema.
+  * output_schema – Optionally override the output schema.
+
+#### to_openai_tool
+
+Convert a Tool to an OpenAI tool.
+
+* Parameters:
+  * add_security_risk_prediction – Whether to add a security_risk field
+    to the action schema for LLM to predict. This is useful for
+    tools that may have safety risks, so the LLM can reason about
+    the risk level before calling the tool.
+  * action_type – Optionally override the action_type to use for the schema.
+    This is useful for MCPTool to use a dynamically created action type
+    based on the tool’s input schema.
+
+#### to_responses_tool
+
+Convert a Tool to a Responses API function tool (LiteLLM typed).
+
+For Responses API, function tools expect top-level keys:
+{ “type”: “function”, “name”: …, “description”: …, “parameters”: … }
+
+### ToolDefinition
+
+Bases: `ToolBase[TypeVar, TypeVar]`, `Generic`
+
+Concrete tool class that inherits from ToolBase.
+
+This class serves as a concrete implementation of ToolBase for cases where
+you want to create a tool instance directly without implementing a custom
+subclass. Built-in tools (like FinishTool, ThinkTool) are instantiated
+directly from this class, while more complex tools (like BashTool,
+FileEditorTool) inherit from this class and provide their own create()
+method implementations.
+
+#### classmethod create
+
+Create a sequence of ToolDefinition instances.
+
+TODO [https://github.com/OpenHands/agent-sdk/issues/493](https://github.com/OpenHands/agent-sdk/issues/493)
+Refactor this - the ToolDefinition class should not have a concrete create()
+implementation. Built-in tools should be refactored to not rely on this
+method, and then this should be made abstract with @abstractmethod.
+
+#### kind : Literal['ToolDefinition']
+
+#### model_config : ClassVar[ConfigDict] = {'arbitrary_types_allowed': True, 'frozen': True}
+
+Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+### Workspace
+
+### Workspace
+
+Bases: `object`
+
+Factory entrypoint that returns a LocalWorkspace or RemoteWorkspace.
+
+Usage:
+: - Workspace(working_dir=…) ->` LocalWorkspace
+  - Workspace(working_dir=…, host=”[http://](http://)…”) ->` RemoteWorkspace
+
+### create_mcp_tools
+
+Create MCP tools from MCP configuration.
+
+### get_logger
+
+Get a logger instance for the specified module.
+
+This function returns a configured logger that inherits from the root logger
+setup. The logger supports both Rich formatting for human-readable output
+and JSON formatting for machine processing, depending on environment configuration.
+
+* Parameters:
+  name – The name of the module, typically __name__.
+* Returns:
+  A configured Logger instance.
+
+### Example
+
+```pycon
+>`>`>` from openhands.sdk.logger import get_logger
+>`>`>` logger = get_logger(__name__)
+>`>`>` logger.info("This is an info message")
+>`>`>` logger.error("This is an error message")
+```
+
+### list_registered_tools
+
+### register_tool
+
+### resolve_tool
+
+## Submodules
+
+* [openhands.sdk.agent module](openhands.sdk.agent.md)
+* [openhands.sdk.conversation module](openhands.sdk.conversation.md)
+* [openhands.sdk.event module](openhands.sdk.event.md)
+* [openhands.sdk.llm module](openhands.sdk.llm.md)
+* [openhands.sdk.tool module](openhands.sdk.tool.md)
+* [openhands.sdk.workspace module](openhands.sdk.workspace.md)
+* [openhands.sdk.security module](openhands.sdk.security.md)
+* [openhands.sdk.utils module](openhands.sdk.utils.md)
