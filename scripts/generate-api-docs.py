@@ -231,6 +231,11 @@ description: API reference for {title}
 """
         
         # Clean up content
+        # First, handle multiline JSON patterns that span multiple lines
+        # This is a specific fix for the {"key": "value", "key2": "value2"} pattern
+        json_multiline_pattern = r'(\{[^}]*"[^"]*":[^}]*,\s*\n\s*"[^"]*":[^}]*\})'
+        content = re.sub(json_multiline_pattern, lambda m: '`' + m.group(1).replace('\n', ' ').strip() + '`', content, flags=re.MULTILINE)
+        
         lines = content.split('\n')
         cleaned_lines = []
         
@@ -277,6 +282,22 @@ description: API reference for {title}
                 line = line.replace('~annotated_types.', 'annotated_types.')
                 line = line.replace('~uuid.', 'uuid.')
                 line = line.replace('~openhands.', 'openhands.')
+            
+            # Fix JSON-like patterns in documentation that confuse JavaScript parsers
+            # Look for patterns like {"key": "value"} in documentation text
+            if '{' in line and ':' in line and '"' in line:
+                # This might be a JSON example in documentation
+                # Wrap JSON-like patterns in code blocks to prevent parsing as JavaScript
+                # Handle both single-line and partial JSON patterns
+                json_pattern = r'(\{[^}]*"[^"]*":[^}]*)'
+                if re.search(json_pattern, line):
+                    line = re.sub(json_pattern, r'`\1`', line)
+                
+                # Also handle standalone JSON values that might be problematic
+                if '"' in line and ':' in line:
+                    # Pattern for "key": "value" pairs
+                    kv_pattern = r'("[\w\s:]+": "[\w\s]+")'
+                    line = re.sub(kv_pattern, r'`\1`', line)
             
             # Fix other problematic patterns
             # Escape asterisks that might be interpreted as emphasis when they're part of type annotations
