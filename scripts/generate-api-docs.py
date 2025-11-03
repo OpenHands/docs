@@ -83,6 +83,23 @@ class APIDocGenerator:
             self.logger.info("Cloning agent-sdk repository...")
             self.run_command(["git", "clone", sdk_repo_url, str(self.sdk_repo_dir)])
     
+    def install_sdk_package(self) -> None:
+        """Install the openhands-sdk package so Sphinx can import modules."""
+        self.logger.info("Installing openhands-sdk package...")
+        try:
+            # First try to install from the local cloned repo for latest changes
+            sdk_package_dir = self.sdk_repo_dir / "openhands-sdk"
+            if sdk_package_dir.exists():
+                self.logger.info("Installing SDK from local repository...")
+                self.run_command([sys.executable, "-m", "pip", "install", "-e", str(sdk_package_dir)])
+            else:
+                # Fallback to PyPI
+                self.logger.info("Installing SDK from PyPI...")
+                self.run_command([sys.executable, "-m", "pip", "install", "openhands-sdk"])
+        except Exception as e:
+            self.logger.warning(f"Failed to install openhands-sdk: {e}")
+            self.logger.warning("Continuing without SDK installation - docstrings may be minimal")
+
     def check_dependencies(self) -> None:
         """Check if required Python packages are installed."""
         required_packages = ["sphinx", "sphinx_markdown_builder", "myst_parser"]
@@ -109,26 +126,51 @@ class APIDocGenerator:
         """Generate RST files for Sphinx autodoc."""
         source_dir = self.sphinx_dir / "source"
         
-        # Find Python packages in the SDK
-        # Point directly to the sdk directory since that's where the actual modules are
-        openhands_sdk_dir = self.sdk_repo_dir / "openhands-sdk" / "openhands" / "sdk"
-        if not openhands_sdk_dir.exists():
-            self.logger.error(f"SDK directory not found: {openhands_sdk_dir}")
-            sys.exit(1)
+        # Since we installed the package, we can now use the installed module path
+        # instead of pointing to the source directory
+        self.logger.info("Generating RST files with sphinx-apidoc for installed openhands.sdk package...")
         
-        # Generate module documentation
-        self.logger.info("Generating RST files with sphinx-apidoc...")
+        # Use the installed package location
+        import openhands.sdk
+        package_path = Path(openhands.sdk.__file__).parent
+        
+        # Generate RST files with correct module prefix
         self.run_command([
             "sphinx-apidoc",
             "-f",  # Force overwrite
             "-e",  # Put each module on separate page
             "-M",  # Put module documentation before submodule documentation
             "-o", str(source_dir),
-            str(openhands_sdk_dir),
-            "--separate"
+            str(package_path),
+            "--separate",
+            "--module-first"
         ])
+        
+        # Fix the generated RST files to use the correct module names
+        self._fix_rst_module_names(source_dir)
     
-    def run_sphinx_build(self) -> None:
+    def _fix_rst_module_names(self, source_dir: Path) -> None:
+        """Fix RST files to use correct module names (openhands.sdk.* instead of sdk.*)."""
+        self.logger.info("Fixing RST module names...")
+        
+        for rst_file in source_dir.glob("*.rst"):
+            if rst_file.name in ["index.rst", "modules.rst"]:
+                continue
+                
+            content = rst_file.read_text()
+            
+            # Replace module references - be more careful to avoid double prefixes
+            content = content.replace(".. automodule:: sdk.", ".. automodule:: openhands.sdk.")
+            # Fix titles and other references, but avoid double prefixes
+            lines = content.split('\n')
+            for i, line in enumerate(lines):
+                if line.startswith('sdk.') and not line.startswith('openhands.sdk.'):
+                    lines[i] = line.replace('sdk.', 'openhands.sdk.', 1)
+            content = '\n'.join(lines)
+            
+            rst_file.write_text(content)
+    
+    def run_sphinx_build(self) -> Path:
         """Run Sphinx build to generate markdown files."""
         self.logger.info("Building documentation with Sphinx...")
         
@@ -421,6 +463,9 @@ Indices and tables
             
             # Clone or update SDK repository
             self.clone_or_update_sdk_repo()
+            
+            # Install SDK package for proper imports
+            self.install_sdk_package()
             
             # Setup Sphinx directories
             self.setup_sphinx_directories()
