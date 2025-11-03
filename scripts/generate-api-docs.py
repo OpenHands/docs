@@ -533,8 +533,9 @@ description: API reference for {module_name}
         if '{' in line and '}' in line:
             line = re.sub(r'\{[^}]*\}', '(configuration object)', line)
         
-        # Fix internal links from .md to .mdx extensions
-        line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1.mdx)', line)
+        # Fix internal links - remove file extensions for Mintlify
+        line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1)', line)
+        line = re.sub(r'openhands\.sdk\.([^)]+)\.mdx\)', r'openhands.sdk.\1)', line)
         
         # Create mapping from class names to their module files
         class_to_module = {
@@ -582,12 +583,12 @@ description: API reference for {module_name}
         }
 
         # Fix anchor links - convert full module path anchors to simple class format
-        # Pattern: openhands.sdk.module.mdx#openhands.sdk.module.ClassName -> openhands.sdk.module.mdx#class-classname
+        # Pattern: openhands.sdk.module.mdx#openhands.sdk.module.ClassName -> openhands.sdk.module#class-classname
         def convert_anchor(match):
             module_path = match.group(1)
             full_class_path = match.group(2)
             class_name = full_class_path.split('.')[-1].lower()
-            return f'openhands.sdk.{module_path}.mdx#class-{class_name}'
+            return f'openhands.sdk.{module_path}#class-{class_name}'
         
         line = re.sub(r'openhands\.sdk\.([^)#]+)\.mdx#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
         
@@ -595,7 +596,7 @@ description: API reference for {module_name}
         line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
 
         # Fix links pointing to the removed top-level openhands.sdk.md page
-        # Pattern: openhands.sdk.md#openhands.sdk.ClassName -> openhands.sdk.module.mdx#class-classname
+        # Pattern: openhands.sdk.md#openhands.sdk.ClassName -> openhands.sdk.module#class-classname
         def convert_toplevel_anchor(match):
             full_class_path = match.group(1)
             class_name = full_class_path.split('.')[-1]
@@ -604,11 +605,11 @@ description: API reference for {module_name}
             if class_name in class_to_module:
                 module = class_to_module[class_name]
                 class_name_lower = class_name.lower()
-                return f'openhands.sdk.{module}.mdx#class-{class_name_lower}'
+                return f'openhands.sdk.{module}#class-{class_name_lower}'
             else:
                 # Fallback: try to guess module from class name
                 class_name_lower = class_name.lower()
-                return f'openhands.sdk.{class_name_lower}.mdx#class-{class_name_lower}'
+                return f'openhands.sdk.{class_name_lower}#class-{class_name_lower}'
 
         line = re.sub(r'openhands\.sdk\.md#openhands\.sdk\.([^)]+)', convert_toplevel_anchor, line)
         
