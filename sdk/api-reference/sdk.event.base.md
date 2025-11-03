@@ -7,7 +7,16 @@ description: API reference for openhands.sdk.event.base
 
 <a id="module-openhands.sdk.event.base"></a>
 
-### *class* openhands.sdk.event.base.Event(\*, kind: ~typing.Literal['Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
+### *class* openhands.sdk.event.base.Event
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent'] = 'Condensation'`
+- `id: str = `<factory>``
+- `timestamp: str = `<factory>``
+- `source: ~typing.Literal['agent', 'user', 'environment']`
+
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -40,7 +49,16 @@ Developer-friendly representation.
 
 #### kind *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.event.base.LLMConvertibleEvent(\*, kind: ~typing.Literal['CondensationSummaryEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'])
+### *class* openhands.sdk.event.base.LLMConvertibleEvent
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['CondensationSummaryEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent'] = 'CondensationSummaryEvent'`
+- `id: str = `<factory>``
+- `timestamp: str = `<factory>``
+- `source: ~typing.Literal['agent', 'user', 'environment']`
+
 
 Bases: [`Event`](#openhands.sdk.event.base.Event), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -52,7 +70,12 @@ Base class for events that can be converted to LLM messages.
 
 Plain text string representation showing LLM message content.
 
-#### *static* events_to_messages(events: [list](https://docs.python.org/3/library/stdtypes.html#list)[[LLMConvertibleEvent](#openhands.sdk.event.base.LLMConvertibleEvent)]) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)]
+#### *static* events_to_messages
+
+**Parameters:**
+
+- `events: [list](https://docs.python.org/3/library/stdtypes.html#list)[[LLMConvertibleEvent](#openhands.sdk.event.base.LLMConvertibleEvent)]) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message`
+
 
 Convert event stream to LLM message stream, handling multi-action batches
 

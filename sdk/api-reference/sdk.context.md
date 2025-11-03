@@ -7,7 +7,15 @@ description: API reference for openhands.sdk.context
 
 <a id="module-openhands.sdk.context"></a>
 
-### *class* openhands.sdk.context.AgentContext(\*, skills: list[~openhands.sdk.context.skills.skill.Skill] = `<factory>`, system_message_suffix: str | None = None, user_message_suffix: str | None = None)
+### *class* openhands.sdk.context.AgentContext
+
+**Parameters:**
+
+- `\*`
+- `skills: list[~openhands.sdk.context.skills.skill.Skill] = `<factory>``
+- `system_message_suffix: str | None = None`
+- `user_message_suffix: str | None = None`
+
 
 Bases: `BaseModel`
 
@@ -42,7 +50,14 @@ Custom suffix can typically includes:
 - Conversation instructions (e.g., user preferences, task details)
 - Repository-specific instructions (collected from repo skills)
 
-#### get_user_message_suffix(user_message: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message), skip_skill_names: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]) → [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent), [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]] | [None](https://docs.python.org/3/library/constants.html#None)
+#### get_user_message_suffix
+
+**Parameters:**
+
+- `user_message: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)`
+- `skip_skill_names: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]) → [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)`
+- `[list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]] | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Augment the user’s message with knowledge recalled from skills.
 
@@ -55,13 +70,29 @@ This works by:
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill)]*
+#### skills *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill`
+
 
 #### system_message_suffix *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
 #### user_message_suffix *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-### *class* openhands.sdk.context.Skill(\*, name: str, content: str, trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None, source: str | None = None, mcp_tools: dict | None = None, inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>`)
+### *class* openhands.sdk.context.Skill
+
+**Parameters:**
+
+- `\*`
+- `name: str`
+- `content: str`
+- `trigger: ~typing.Annotated[~openhands.sdk.context.skills.trigger.KeywordTrigger | ~openhands.sdk.context.skills.trigger.TaskTrigger, FieldInfo(annotation=NoneType, required=True, discriminator='type')] | None`
+- `source: str | None = None`
+- `mcp_tools: dict | None = None`
+- `inputs: list[~openhands.sdk.context.skills.types.InputMetadata] = `<factory>``
+
 
 Bases: `BaseModel`
 
@@ -72,21 +103,43 @@ Skills use triggers to determine when they should be activated:
 - KeywordTrigger: Activated when keywords appear in user messages
 - TaskTrigger: Activated for specific tasks, may require user input
 
-#### PATH_TO_THIRD_PARTY_SKILL_NAME  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]]*  = \{'.cursorrules': 'cursorrules', 'agent.md': 'agents', 'agents.md': 'agents'\}*
+#### PATH_TO_THIRD_PARTY_SKILL_NAME  : [ClassVar]
 
-#### extract_variables(content: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
+**Parameters:**
+
+- `https://docs.python.org/3/library/typing.html#typing.ClassVar)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str`
+
+
+#### extract_variables
+
+**Parameters:**
+
+- `content: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 Extract variables from the content.
 
 Variables are in the format ${variable_name}.
 
-#### *classmethod* load(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), skill_dir: [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, file_content: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill)
+#### *classmethod* load
+
+**Parameters:**
+
+- `path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)`
+- `skill_dir: [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `file_content: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill`
+
 
 Load a skill from a markdown file with frontmatter.
 
 The agent’s name is derived from its path relative to the skill_dir.
 
-#### match_trigger(message: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)
+#### match_trigger
+
+**Parameters:**
+
+- `message: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Match a trigger in the message.
 
@@ -107,13 +160,24 @@ Returns True if the content contains variables in the format ${variable_name}.
 
 #### content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### trigger *: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[KeywordTrigger](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.KeywordTrigger) | [TaskTrigger](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.TaskTrigger), FieldInfo(annotation=NoneType, required=True, discriminator='type')] | [None](https://docs.python.org/3/library/constants.html#None)*
+#### trigger *: [Annotated]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/typing.html#typing.Annotated)[[KeywordTrigger](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.KeywordTrigger) | [TaskTrigger](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.TaskTrigger)`
+- `FieldInfo(annotation=NoneType, required=True, discriminator='type')] | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### source *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
 #### mcp_tools *: [dict](https://docs.python.org/3/library/stdtypes.html#dict) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-#### inputs *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[InputMetadata](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.types.md#openhands.sdk.context.skills.types.InputMetadata)]*
+#### inputs *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[InputMetadata](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.types.md#openhands.sdk.context.skills.types.InputMetadata`
+
 
 ### *class* openhands.sdk.context.BaseTrigger
 
@@ -125,7 +189,13 @@ Base class for all trigger types.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.KeywordTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword'] = 'keyword', keywords: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### *class* openhands.sdk.context.KeywordTrigger
+
+**Parameters:**
+
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword'] = 'keyword'`
+- `keywords: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]`
+
 
 Bases: [`BaseTrigger`](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.BaseTrigger)
 
@@ -141,7 +211,13 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### keywords *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-### *class* openhands.sdk.context.TaskTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task'] = 'task', triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### *class* openhands.sdk.context.TaskTrigger
+
+**Parameters:**
+
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task'] = 'task'`
+- `triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]`
+
 
 Bases: [`BaseTrigger`](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.trigger.md#openhands.sdk.context.skills.trigger.BaseTrigger)
 
@@ -157,7 +233,14 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### triggers *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-### *class* openhands.sdk.context.SkillKnowledge(, name: [str](https://docs.python.org/3/library/stdtypes.html#str), trigger: [str](https://docs.python.org/3/library/stdtypes.html#str), content: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### *class* openhands.sdk.context.SkillKnowledge
+
+**Parameters:**
+
+- `name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `trigger: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `content: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+
 
 Bases: `BaseModel`
 

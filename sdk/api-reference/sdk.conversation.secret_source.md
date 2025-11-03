@@ -7,7 +7,13 @@ description: API reference for openhands.sdk.conversation.secret_source
 
 <a id="module-openhands.sdk.conversation.secret_source"></a>
 
-### *class* openhands.sdk.conversation.secret_source.SecretSource(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LookupSecret', 'StaticSecret'] = 'LookupSecret', description: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### *class* openhands.sdk.conversation.secret_source.SecretSource
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LookupSecret', 'StaticSecret'] = 'LookupSecret'`
+- `description: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -23,7 +29,14 @@ Get the value of a secret in plain text
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.conversation.secret_source.StaticSecret(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['StaticSecret'] = 'StaticSecret', description: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None, value: SecretStr)
+### *class* openhands.sdk.conversation.secret_source.StaticSecret
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['StaticSecret'] = 'StaticSecret'`
+- `description: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `value: SecretStr`
+
 
 Bases: [`SecretSource`](#openhands.sdk.conversation.secret_source.SecretSource)
 
@@ -41,7 +54,16 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['StaticSecret']*
 
-### *class* openhands.sdk.conversation.secret_source.LookupSecret(\*, kind: ~typing.Literal['LookupSecret'] = 'LookupSecret', description: str | None = None, url: str, headers: dict[str, str] = `<factory>`)
+### *class* openhands.sdk.conversation.secret_source.LookupSecret
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['LookupSecret'] = 'LookupSecret'`
+- `description: str | None = None`
+- `url: str`
+- `headers: dict[str, str] = `<factory>``
+
 
 Bases: [`SecretSource`](#openhands.sdk.conversation.secret_source.SecretSource)
 

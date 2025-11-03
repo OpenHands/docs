@@ -72,7 +72,14 @@ Validate the given JSON data against the Pydantic model.
 * **Raises:**
   **ValidationError** – If json_data is not a JSON string or the object could not be validated.
 
-#### *classmethod* model_json_schema(\*args, \*\*kwargs) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### *classmethod* model_json_schema
+
+**Parameters:**
+
+- `\*args`
+- `\*\*kwargs) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Generates a JSON schema for a model class.
 
@@ -134,7 +141,12 @@ to rebuild everything
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.utils.models.DiscriminatedUnionMixin(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent', 'LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser', 'LookupSecret', 'StaticSecret', 'Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent', 'MCPToolAction', 'MCPToolObservation', 'MCPToolDefinition', 'AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm', 'LLMSecurityAnalyzer', 'FinishAction', 'FinishObservation', 'ThinkAction', 'ThinkObservation', 'Schema', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]', 'LocalWorkspace', 'RemoteWorkspace'] = 'Agent')
+### *class* openhands.sdk.utils.models.DiscriminatedUnionMixin
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['Agent', 'LLMSummarizingCondenser', 'NoOpCondenser', 'PipelineCondenser', 'LookupSecret', 'StaticSecret', 'Condensation', 'CondensationRequest', 'CondensationSummaryEvent', 'ConversationStateUpdateEvent', 'ActionEvent', 'MessageEvent', 'AgentErrorEvent', 'ObservationEvent', 'UserRejectObservation', 'SystemPromptEvent', 'PauseEvent', 'MCPToolAction', 'MCPToolObservation', 'MCPToolDefinition', 'AlwaysConfirm', 'ConfirmRisky', 'NeverConfirm', 'LLMSecurityAnalyzer', 'FinishAction', 'FinishObservation', 'ThinkAction', 'ThinkObservation', 'Schema', 'ToolDefinition', 'ToolDefinition[MCPToolAction, MCPToolObservation]', 'LocalWorkspace', 'RemoteWorkspace'] = 'Agent'`
+
 
 Bases: [`OpenHandsModel`](#openhands.sdk.utils.models.OpenHandsModel), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -198,7 +210,13 @@ Validate a pydantic model instance.
 * **Returns:**
   The validated model instance.
 
-#### *classmethod* model_validate_json(json_data: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes) | [bytearray](https://docs.python.org/3/library/stdtypes.html#bytearray), \*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self)
+#### *classmethod* model_validate_json
+
+**Parameters:**
+
+- `json_data: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes) | [bytearray](https://docs.python.org/3/library/stdtypes.html#bytearray)`
+- `\*\*kwargs) → [Self](https://docs.python.org/3/library/typing.html#typing.Self`
+
 
 !!! abstract “Usage Documentation”
 : [JSON Parsing](../concepts/json.md#json-parsing)

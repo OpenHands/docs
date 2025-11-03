@@ -7,7 +7,20 @@ description: API reference for openhands.sdk.event.condenser
 
 <a id="module-openhands.sdk.event.condenser"></a>
 
-### *class* openhands.sdk.event.condenser.Condensation(\*, kind: ~typing.Literal['Condensation'] = 'Condensation', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', forgotten_event_ids: list[str] = `<factory>`, summary: str | None = None, summary_offset: ~typing.Annotated[int | None, ~annotated_types.Ge(ge=0)] = None, llm_response_id: str)
+### *class* openhands.sdk.event.condenser.Condensation
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['Condensation'] = 'Condensation'`
+- `id: str = `<factory>``
+- `timestamp: str = `<factory>``
+- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
+- `forgotten_event_ids: list[str] = `<factory>``
+- `summary: str | None = None`
+- `summary_offset: ~typing.Annotated[int | None, ~annotated_types.Ge(ge=0)] = None`
+- `llm_response_id: str`
+
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 
@@ -40,7 +53,16 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.event.condenser.CondensationRequest(\*, kind: ~typing.Literal['CondensationRequest'] = 'CondensationRequest', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment')
+### *class* openhands.sdk.event.condenser.CondensationRequest
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['CondensationRequest'] = 'CondensationRequest'`
+- `id: str = `<factory>``
+- `timestamp: str = `<factory>``
+- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
+
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 
@@ -65,7 +87,17 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### timestamp *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-### *class* openhands.sdk.event.condenser.CondensationSummaryEvent(\*, kind: ~typing.Literal['CondensationSummaryEvent'] = 'CondensationSummaryEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'environment', summary: str)
+### *class* openhands.sdk.event.condenser.CondensationSummaryEvent
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['CondensationSummaryEvent'] = 'CondensationSummaryEvent'`
+- `id: str = `<factory>``
+- `timestamp: str = `<factory>``
+- `source: ~typing.Literal['agent', 'user', 'environment'] = 'environment'`
+- `summary: str`
+
 
 Bases: [`LLMConvertibleEvent`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.LLMConvertibleEvent)
 

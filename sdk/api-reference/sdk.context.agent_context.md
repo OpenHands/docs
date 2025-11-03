@@ -7,7 +7,15 @@ description: API reference for openhands.sdk.context.agent_context
 
 <a id="module-openhands.sdk.context.agent_context"></a>
 
-### *class* openhands.sdk.context.agent_context.AgentContext(\*, skills: list[~openhands.sdk.context.skills.skill.Skill] = `<factory>`, system_message_suffix: str | None = None, user_message_suffix: str | None = None)
+### *class* openhands.sdk.context.agent_context.AgentContext
+
+**Parameters:**
+
+- `\*`
+- `skills: list[~openhands.sdk.context.skills.skill.Skill] = `<factory>``
+- `system_message_suffix: str | None = None`
+- `user_message_suffix: str | None = None`
+
 
 Bases: `BaseModel`
 
@@ -32,7 +40,12 @@ Together, these elements make AgentContext the primary container responsible
 for assembling, formatting, and injecting all prompt-relevant context into
 LLM interactions.
 
-#### skills *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill)]*
+#### skills *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[Skill](https://github.com/OpenHands/software-agent-sdk/sdk.context.skills.skill.md#openhands.sdk.context.skills.skill.Skill`
+
 
 #### system_message_suffix *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
@@ -48,7 +61,14 @@ Custom suffix can typically includes:
 - Conversation instructions (e.g., user preferences, task details)
 - Repository-specific instructions (collected from repo skills)
 
-#### get_user_message_suffix(user_message: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message), skip_skill_names: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]) → [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent), [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]] | [None](https://docs.python.org/3/library/constants.html#None)
+#### get_user_message_suffix
+
+**Parameters:**
+
+- `user_message: [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)`
+- `skip_skill_names: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]) → [tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent)`
+- `[list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]] | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Augment the user’s message with knowledge recalled from skills.
 

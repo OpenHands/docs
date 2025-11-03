@@ -25,7 +25,12 @@ Access to the events list.
 
 The current agent execution status.
 
-#### *property* confirmation_policy *: [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)*
+#### *property* confirmation_policy *: [ConfirmationPolicyBase]
+
+**Parameters:**
+
+- `https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase`
+
 
 The confirmation policy.
 
@@ -57,13 +62,28 @@ Bases: [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
 #### *abstract property* state *: [ConversationStateProtocol](#openhands.sdk.conversation.base.ConversationStateProtocol)*
 
-#### *abstract property* conversation_stats *: [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats)*
+#### *abstract property* conversation_stats *: [ConversationStats]
 
-#### *abstractmethod* send_message(message: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)) → [None](https://docs.python.org/3/library/constants.html#None)
+**Parameters:**
+
+- `https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats`
+
+
+#### *abstractmethod* send_message
+
+**Parameters:**
+
+- `message: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Message](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.Message)) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### *abstractmethod* run() → [None](https://docs.python.org/3/library/constants.html#None)
 
-#### *abstractmethod* set_confirmation_policy(policy: [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### *abstractmethod* set_confirmation_policy
+
+**Parameters:**
+
+- `policy: [ConfirmationPolicyBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.confirmation_policy.md#openhands.sdk.security.confirmation_policy.ConfirmationPolicyBase)) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### *property* confirmation_policy_active *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
@@ -75,15 +95,31 @@ Returns True if BOTH conditions are met:
 1. The agent has a security analyzer set (not None)
 2. The confirmation policy is active
 
-#### *abstractmethod* reject_pending_actions(reason: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'User rejected the action') → [None](https://docs.python.org/3/library/constants.html#None)
+#### *abstractmethod* reject_pending_actions
+
+**Parameters:**
+
+- `reason: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'User rejected the action') → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### *abstractmethod* pause() → [None](https://docs.python.org/3/library/constants.html#None)
 
-#### *abstractmethod* update_secrets(secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)]) → [None](https://docs.python.org/3/library/constants.html#None)
+#### *abstractmethod* update_secrets
+
+**Parameters:**
+
+- `secrets: [Mapping](https://docs.python.org/3/library/collections.abc.html#collections.abc.Mapping)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [SecretSource](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.secret_source.md#openhands.sdk.conversation.secret_source.SecretSource)]) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### *abstractmethod* close() → [None](https://docs.python.org/3/library/constants.html#None)
 
-#### *abstractmethod* generate_title(llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM) | [None](https://docs.python.org/3/library/constants.html#None) = None, max_length: [int](https://docs.python.org/3/library/functions.html#int) = 50) → [str](https://docs.python.org/3/library/stdtypes.html#str)
+#### *abstractmethod* generate_title
+
+**Parameters:**
+
+- `llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `max_length: [int](https://docs.python.org/3/library/functions.html#int) = 50) → [str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 Generate a title for the conversation based on the first user message.
 
@@ -96,11 +132,23 @@ Generate a title for the conversation based on the first user message.
 * **Raises:**
   [**ValueError**](https://docs.python.org/3/library/exceptions.html#ValueError) – If no user messages are found in the conversation.
 
-#### *static* get_persistence_dir(persistence_base_dir: [str](https://docs.python.org/3/library/stdtypes.html#str), conversation_id: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
+#### *static* get_persistence_dir
+
+**Parameters:**
+
+- `persistence_base_dir: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `conversation_id: [UUID](https://docs.python.org/3/library/uuid.html#uuid.UUID)) → [str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 Get the persistence directory for the conversation.
 
-#### *static* compose_callbacks(callbacks: [Iterable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable)[[Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]]) → [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]
+#### *static* compose_callbacks
+
+**Parameters:**
+
+- `callbacks: [Iterable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Iterable)[[Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]]) → [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)]`
+- `[None](https://docs.python.org/3/library/constants.html#None`
+
 
 Compose multiple callbacks into a single callback function.
 

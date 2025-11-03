@@ -17,7 +17,12 @@ Bases: `BaseModel`
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.llm_registry.LLMRegistry(retry_listener: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### *class* openhands.sdk.llm.llm_registry.LLMRegistry
+
+**Parameters:**
+
+- `retry_listener: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 
@@ -26,7 +31,12 @@ A minimal LLM registry for managing LLM instances by usage ID.
 This registry provides a simple way to manage multiple LLM instances,
 avoiding the need to recreate LLMs with the same configuration.
 
-#### \_\_init_\_(retry_listener: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None) = None)
+#### \_\_init_\_
+
+**Parameters:**
+
+- `retry_listener: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+
 
 Initialize the LLM registry.
 
@@ -35,11 +45,28 @@ Initialize the LLM registry.
 
 #### registry_id *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### retry_listener *: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None)*
+#### retry_listener *: [Callable]
 
-#### subscriber *: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[RegistryEvent](#openhands.sdk.llm.llm_registry.RegistryEvent)], [None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None)*
+**Parameters:**
 
-#### subscribe(callback: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[RegistryEvent](#openhands.sdk.llm.llm_registry.RegistryEvent)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None)
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[int](https://docs.python.org/3/library/functions.html#int), [int](https://docs.python.org/3/library/functions.html#int)]`
+- `[None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None`
+
+
+#### subscriber *: [Callable]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[RegistryEvent](#openhands.sdk.llm.llm_registry.RegistryEvent)]`
+- `[None](https://docs.python.org/3/library/constants.html#None)] | [None](https://docs.python.org/3/library/constants.html#None`
+
+
+#### subscribe
+
+**Parameters:**
+
+- `callback: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[RegistryEvent](#openhands.sdk.llm.llm_registry.RegistryEvent)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Subscribe to registry events.
 
@@ -53,11 +80,23 @@ Notify subscribers of registry events.
 * **Parameters:**
   **event** – The registry event to notify about.
 
-#### *property* usage_to_llm *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)]*
+#### *property* usage_to_llm *: [dict]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM`
+
 
 Access the internal usage-ID-to-LLM mapping.
 
-#### *property* service_to_llm *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)]*
+#### *property* service_to_llm *: [dict]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM`
+
 
 #### add(llm: [LLM](https://github.com/OpenHands/software-agent-sdk/sdk.llm.llm.md#openhands.sdk.llm.llm.LLM)) → [None](https://docs.python.org/3/library/constants.html#None)
 

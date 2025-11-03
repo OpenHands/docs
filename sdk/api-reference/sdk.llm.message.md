@@ -7,7 +7,15 @@ description: API reference for openhands.sdk.llm.message
 
 <a id="module-openhands.sdk.llm.message"></a>
 
-### *class* openhands.sdk.llm.message.MessageToolCall(, id: [str](https://docs.python.org/3/library/stdtypes.html#str), name: [str](https://docs.python.org/3/library/stdtypes.html#str), arguments: [str](https://docs.python.org/3/library/stdtypes.html#str), origin: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['completion', 'responses'])
+### *class* openhands.sdk.llm.message.MessageToolCall
+
+**Parameters:**
+
+- `id: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `arguments: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `origin: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['completion', 'responses']`
+
 
 Bases: `BaseModel`
 
@@ -34,11 +42,23 @@ Create a MessageToolCall from a typed OpenAI Responses function_call item.
 
 Note: OpenAI Responses function_call.arguments is already a JSON string.
 
-#### to_chat_dict() → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### to_chat_dict
+
+**Parameters:**
+
+- `) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Serialize to OpenAI Chat Completions tool_calls format.
 
-#### to_responses_dict() → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### to_responses_dict
+
+**Parameters:**
+
+- `) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Serialize to OpenAI Responses ‘function_call’ input item format.
 
@@ -46,7 +66,14 @@ Serialize to OpenAI Responses ‘function_call’ input item format.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.ThinkingBlock(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['thinking'] = 'thinking', thinking: [str](https://docs.python.org/3/library/stdtypes.html#str), signature: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### *class* openhands.sdk.llm.message.ThinkingBlock
+
+**Parameters:**
+
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['thinking'] = 'thinking'`
+- `thinking: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `signature: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+
 
 Bases: `BaseModel`
 
@@ -66,7 +93,13 @@ and passed back to the API for tool use scenarios.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.RedactedThinkingBlock(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['redacted_thinking'] = 'redacted_thinking', data: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### *class* openhands.sdk.llm.message.RedactedThinkingBlock
+
+**Parameters:**
+
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['redacted_thinking'] = 'redacted_thinking'`
+- `data: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+
 
 Bases: `BaseModel`
 
@@ -83,7 +116,17 @@ before extended thinking was enabled.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.ReasoningItemModel(\*, id: str | None = None, summary: list[str] = `<factory>`, content: list[str] | None = None, encrypted_content: str | None = None, status: str | None = None)
+### *class* openhands.sdk.llm.message.ReasoningItemModel
+
+**Parameters:**
+
+- `\*`
+- `id: str | None = None`
+- `summary: list[str] = `<factory>``
+- `content: list[str] | None = None`
+- `encrypted_content: str | None = None`
+- `status: str | None = None`
+
 
 Bases: `BaseModel`
 
@@ -95,7 +138,12 @@ Do not log or render encrypted_content.
 
 #### summary *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-#### content *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None)*
+#### content *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### encrypted_content *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
@@ -111,7 +159,12 @@ Bases: `BaseModel`
 
 #### cache_prompt *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
-#### *abstractmethod* to_llm_dict() → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]]]
+#### *abstractmethod* to_llm_dict
+
+**Parameters:**
+
+- `) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 Convert to LLM API format. Always returns a list of dictionaries.
 
@@ -122,7 +175,14 @@ even if they only have a single item.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.llm.message.TextContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['text'] = 'text', text: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### *class* openhands.sdk.llm.message.TextContent
+
+**Parameters:**
+
+- `cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False`
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['text'] = 'text'`
+- `text: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+
 
 Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
@@ -130,17 +190,34 @@ Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
 #### text *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### model_config  : [ClassVar](https://docs.python.org/3/library/typing.html#typing.ClassVar)[ConfigDict]*  = \{'extra': 'forbid', 'populate_by_name': True, 'validate_by_alias': True, 'validate_by_name': True\}*
+#### model_config  : [ClassVar]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/typing.html#typing.ClassVar`
+
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### to_llm_dict() → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]]]
+#### to_llm_dict
+
+**Parameters:**
+
+- `) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 Convert to LLM API format.
 
 #### cache_prompt *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
-### *class* openhands.sdk.llm.message.ImageContent(, cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['image'] = 'image', image_urls: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### *class* openhands.sdk.llm.message.ImageContent
+
+**Parameters:**
+
+- `cache_prompt: [bool](https://docs.python.org/3/library/functions.html#bool) = False`
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['image'] = 'image'`
+- `image_urls: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]`
+
 
 Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
@@ -148,7 +225,12 @@ Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
 #### image_urls *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-#### to_llm_dict() → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)]]]
+#### to_llm_dict
+
+**Parameters:**
+
+- `) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str) | [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 Convert to LLM API format.
 
@@ -158,13 +240,35 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### cache_prompt *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
-### *class* openhands.sdk.llm.message.Message(\*, role: typing.Literal['user', 'system', 'assistant', 'tool'], content: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent | openhands.sdk.llm.message.ImageContent] = `<factory>`, cache_enabled: bool = False, vision_enabled: bool = False, function_calling_enabled: bool = False, tool_calls: list[openhands.sdk.llm.message.MessageToolCall] | None = None, tool_call_id: str | None = None, name: str | None = None, force_string_serializer: bool = False, reasoning_content: str | None = None, thinking_blocks: ~collections.abc.Sequence[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>`, responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None)
+### *class* openhands.sdk.llm.message.Message
+
+**Parameters:**
+
+- `\*`
+- `role: typing.Literal['user', 'system', 'assistant', 'tool']`
+- `content: ~collections.abc.Sequence[openhands.sdk.llm.message.TextContent | openhands.sdk.llm.message.ImageContent] = `<factory>``
+- `cache_enabled: bool = False`
+- `vision_enabled: bool = False`
+- `function_calling_enabled: bool = False`
+- `tool_calls: list[openhands.sdk.llm.message.MessageToolCall] | None = None`
+- `tool_call_id: str | None = None`
+- `name: str | None = None`
+- `force_string_serializer: bool = False`
+- `reasoning_content: str | None = None`
+- `thinking_blocks: ~collections.abc.Sequence[openhands.sdk.llm.message.ThinkingBlock | openhands.sdk.llm.message.RedactedThinkingBlock] = `<factory>``
+- `responses_reasoning_item: openhands.sdk.llm.message.ReasoningItemModel | None = None`
+
 
 Bases: `BaseModel`
 
 #### role *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['user', 'system', 'assistant', 'tool']*
 
-#### content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](#openhands.sdk.llm.message.TextContent) | [ImageContent](#openhands.sdk.llm.message.ImageContent)]*
+#### content *: [Sequence]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](#openhands.sdk.llm.message.TextContent) | [ImageContent](#openhands.sdk.llm.message.ImageContent`
+
 
 #### cache_enabled *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
@@ -172,7 +276,12 @@ Bases: `BaseModel`
 
 #### function_calling_enabled *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
-#### tool_calls *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[MessageToolCall](#openhands.sdk.llm.message.MessageToolCall)] | [None](https://docs.python.org/3/library/constants.html#None)*
+#### tool_calls *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[MessageToolCall](#openhands.sdk.llm.message.MessageToolCall)] | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### tool_call_id *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
@@ -182,13 +291,24 @@ Bases: `BaseModel`
 
 #### reasoning_content *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-#### thinking_blocks *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](#openhands.sdk.llm.message.RedactedThinkingBlock)]*
+#### thinking_blocks *: [Sequence]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[ThinkingBlock](#openhands.sdk.llm.message.ThinkingBlock) | [RedactedThinkingBlock](#openhands.sdk.llm.message.RedactedThinkingBlock`
+
 
 #### responses_reasoning_item *: [ReasoningItemModel](#openhands.sdk.llm.message.ReasoningItemModel) | [None](https://docs.python.org/3/library/constants.html#None)*
 
 #### *property* contains_image *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
-#### to_chat_dict() → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### to_chat_dict
+
+**Parameters:**
+
+- `) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Serialize message for OpenAI Chat Completions.
 
@@ -196,13 +316,23 @@ Chooses the appropriate content serializer and then injects threading keys:
 - Assistant tool call turn: role == “assistant” and self.tool_calls
 - Tool result turn: role == “tool” and self.tool_call_id (with name)
 
-#### to_responses_value(, vision_enabled: [bool](https://docs.python.org/3/library/functions.html#bool)) → [str](https://docs.python.org/3/library/stdtypes.html#str) | [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]]
+#### to_responses_value
+
+**Parameters:**
+
+- `vision_enabled: [bool](https://docs.python.org/3/library/functions.html#bool)) → [str](https://docs.python.org/3/library/stdtypes.html#str) | [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Return serialized form.
 
 Either an instructions string (for system) or input items (for other roles).
 
-#### to_responses_dict(, vision_enabled: [bool](https://docs.python.org/3/library/functions.html#bool)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]]
+#### to_responses_dict
+
+**Parameters:**
+
+- `vision_enabled: [bool](https://docs.python.org/3/library/functions.html#bool)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Serialize message for OpenAI Responses (input parameter).
 

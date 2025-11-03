@@ -7,7 +7,16 @@ description: API reference for openhands.sdk.event.user_action
 
 <a id="module-openhands.sdk.event.user_action"></a>
 
-### *class* openhands.sdk.event.user_action.PauseEvent(\*, kind: ~typing.Literal['PauseEvent'] = 'PauseEvent', id: str = `<factory>`, timestamp: str = `<factory>`, source: ~typing.Literal['agent', 'user', 'environment'] = 'user')
+### *class* openhands.sdk.event.user_action.PauseEvent
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['PauseEvent'] = 'PauseEvent'`
+- `id: str = `<factory>``
+- `timestamp: str = `<factory>``
+- `source: ~typing.Literal['agent', 'user', 'environment'] = 'user'`
+
 
 Bases: [`Event`](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)
 

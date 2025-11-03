@@ -305,12 +305,133 @@ description: API reference for {title}
                 # This is a property/attribute definition with unbalanced asterisks
                 line = line.replace('*:', ' :')
             
+            # Format long class/function signatures for better readability
+            line = self.format_long_signatures(line)
+            
             cleaned_lines.append(line)
         
         cleaned_content = frontmatter + '\n'.join(cleaned_lines)
         
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(cleaned_content)
+    
+    def format_long_signatures(self, line: str) -> str:
+        """Format long class/function signatures for better readability."""
+        # Only process lines that look like class or function signatures
+        if not (line.startswith('### *class*') or line.startswith('#### ') and '(' in line and ')' in line):
+            return line
+        
+        # If the line is not very long, don't modify it
+        if len(line) < 200:
+            return line
+        
+        # For class signatures, format them nicely
+        if line.startswith('### *class*'):
+            # Extract the class name and parameters
+            match = re.match(r'(### \*class\* )([^(]+)\((.*)\)', line)
+            if match:
+                header_prefix = match.group(1)  # "### *class* "
+                class_name = match.group(2).strip()  # Just the class name
+                params_str = match.group(3)
+                
+                # Create clean title with just the class name
+                result = f"{header_prefix}{class_name}\n\n"
+                
+                # Add parameters as formatted text if they exist
+                if params_str.strip():
+                    formatted_params = self.format_parameters_as_text(params_str)
+                    result += f"**Parameters:**\n\n{formatted_params}\n"
+                
+                return result
+        
+        # For method signatures
+        elif line.startswith('#### ') and '(' in line:
+            # Extract method name and parameters
+            match = re.match(r'(#### )([^(]+)\((.*)\)', line)
+            if match:
+                header_prefix = match.group(1)  # "#### "
+                method_name = match.group(2).strip()  # Just the method name
+                params_str = match.group(3)
+                
+                # Create clean title with just the method name
+                result = f"{header_prefix}{method_name}\n\n"
+                
+                # Add parameters as formatted text if they exist
+                if params_str.strip():
+                    formatted_params = self.format_parameters_as_text(params_str)
+                    result += f"**Parameters:**\n\n{formatted_params}\n"
+                
+                return result
+        
+        return line
+    
+    def format_parameters_as_text(self, params_str: str) -> str:
+        """Format parameter list as readable text."""
+        if not params_str.strip():
+            return ""
+        
+        # Split parameters by comma, but be careful about nested types
+        params = []
+        current_param = ""
+        bracket_depth = 0
+        
+        for char in params_str:
+            if char in '([{':
+                bracket_depth += 1
+            elif char in ')]}':
+                bracket_depth -= 1
+            elif char == ',' and bracket_depth == 0:
+                params.append(current_param.strip())
+                current_param = ""
+                continue
+            current_param += char
+        
+        if current_param.strip():
+            params.append(current_param.strip())
+        
+        # Format each parameter as a bullet point
+        formatted_params = []
+        for param in params:
+            if param.strip():
+                # Clean up the parameter for better readability
+                clean_param = param.strip()
+                # Wrap in code blocks for better formatting
+                formatted_params.append(f"- `{clean_param}`")
+        
+        return "\n".join(formatted_params)
+    
+    def format_parameters(self, params_str: str) -> str:
+        """Format parameter list for better readability (legacy method)."""
+        if not params_str.strip():
+            return ""
+        
+        # Split parameters by comma, but be careful about nested types
+        params = []
+        current_param = ""
+        bracket_depth = 0
+        
+        for char in params_str:
+            if char in '([{':
+                bracket_depth += 1
+            elif char in ')]}':
+                bracket_depth -= 1
+            elif char == ',' and bracket_depth == 0:
+                params.append(current_param.strip())
+                current_param = ""
+                continue
+            current_param += char
+        
+        if current_param.strip():
+            params.append(current_param.strip())
+        
+        # Format each parameter with proper indentation
+        formatted_params = []
+        for param in params:
+            if param.strip():
+                # Add indentation for readability
+                formatted_params.append(f"    {param.strip()}")
+        
+        return ",\n".join(formatted_params)
     
     def create_api_index(self) -> None:
         """Create the main API reference index file."""

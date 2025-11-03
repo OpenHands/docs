@@ -55,13 +55,23 @@ Bases: [`LLMError`](https://github.com/OpenHands/software-agent-sdk/sdk.llm.exce
 
 Bases: [`LLMError`](https://github.com/OpenHands/software-agent-sdk/sdk.llm.exceptions.types.md#openhands.sdk.llm.exceptions.types.LLMError)
 
-#### \_\_init_\_(message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'LLM did not return a response. This is only seen in Gemini models so far.') → [None](https://docs.python.org/3/library/constants.html#None)
+#### \_\_init_\_
+
+**Parameters:**
+
+- `message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'LLM did not return a response. This is only seen in Gemini models so far.') → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 ### *exception* openhands.sdk.llm.exceptions.LLMContextWindowExceedError(message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Conversation history longer than LLM context window limit. Consider enabling a condenser or shortening inputs.')
 
 Bases: [`LLMError`](https://github.com/OpenHands/software-agent-sdk/sdk.llm.exceptions.types.md#openhands.sdk.llm.exceptions.types.LLMError)
 
-#### \_\_init_\_(message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Conversation history longer than LLM context window limit. Consider enabling a condenser or shortening inputs.') → [None](https://docs.python.org/3/library/constants.html#None)
+#### \_\_init_\_
+
+**Parameters:**
+
+- `message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Conversation history longer than LLM context window limit. Consider enabling a condenser or shortening inputs.') → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 ### *exception* openhands.sdk.llm.exceptions.LLMAuthenticationError(message: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Invalid or missing API credentials')
 

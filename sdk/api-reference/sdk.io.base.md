@@ -16,7 +16,13 @@ Abstract base class for file storage operations.
 This class defines the interface for file storage backends that can
 handle basic file operations like reading, writing, listing, and deleting files.
 
-#### *abstractmethod* write(path: [str](https://docs.python.org/3/library/stdtypes.html#str), contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### *abstractmethod* write
+
+**Parameters:**
+
+- `path: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Write contents to a file at the specified path.
 
@@ -33,7 +39,12 @@ Read and return the contents of a file as a string.
 * **Returns:**
   The file contents as a string.
 
-#### *abstractmethod* list(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]
+#### *abstractmethod* list
+
+**Parameters:**
+
+- `path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str`
+
 
 List all files and directories at the specified path.
 

@@ -20,7 +20,15 @@ timeout support, and thread safety.
 
 #### \_\_init_\_()
 
-#### run_async(awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any), \*args, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 300.0, \*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any)
+#### run_async
+
+**Parameters:**
+
+- `awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
+- `\*args`
+- `timeout: [float](https://docs.python.org/3/library/functions.html#float) = 300.0`
+- `\*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Run a coroutine or async function on the background loop from sync code.
 

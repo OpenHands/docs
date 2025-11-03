@@ -19,7 +19,12 @@ and can influence the conversation flow based on security policies.
 This is adapted from OpenHands SecurityAnalyzer but designed to work
 with the agent-sdk’s conversation-based architecture.
 
-#### *abstractmethod* security_risk(action: [ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent)) → [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk)
+#### *abstractmethod* security_risk
+
+**Parameters:**
+
+- `action: [ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent)) → [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk`
+
 
 Evaluate the security risk of an ActionEvent.
 
@@ -32,7 +37,12 @@ impact to determine the appropriate risk level.
 * **Returns:**
   ActionSecurityRisk enum indicating the risk level
 
-#### analyze_event(event: [Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)) → [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk) | [None](https://docs.python.org/3/library/constants.html#None)
+#### analyze_event
+
+**Parameters:**
+
+- `event: [Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)) → [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk) | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Analyze an event for security risks.
 
@@ -44,7 +54,13 @@ and calls security_risk() if it is. Non-action events return None.
 * **Returns:**
   ActionSecurityRisk if event is an action, None otherwise
 
-#### should_require_confirmation(risk: [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk), confirmation_mode: [bool](https://docs.python.org/3/library/functions.html#bool) = False) → [bool](https://docs.python.org/3/library/functions.html#bool)
+#### should_require_confirmation
+
+**Parameters:**
+
+- `risk: [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk)`
+- `confirmation_mode: [bool](https://docs.python.org/3/library/functions.html#bool) = False) → [bool](https://docs.python.org/3/library/functions.html#bool`
+
 
 Determine if an action should require user confirmation.
 
@@ -57,7 +73,12 @@ and confirmation mode settings.
 * **Returns:**
   True if confirmation is required, False otherwise
 
-#### analyze_pending_actions(pending_actions: [list](https://docs.python.org/3/library/stdtypes.html#list)[[ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent)]) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent), [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk)]]
+#### analyze_pending_actions
+
+**Parameters:**
+
+- `pending_actions: [list](https://docs.python.org/3/library/stdtypes.html#list)[[ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent)]) → [list](https://docs.python.org/3/library/stdtypes.html#list)[[tuple](https://docs.python.org/3/library/stdtypes.html#tuple)[[ActionEvent](https://github.com/OpenHands/software-agent-sdk/sdk.event.llm_convertible.action.md#openhands.sdk.event.llm_convertible.action.ActionEvent), [SecurityRisk](https://github.com/OpenHands/software-agent-sdk/sdk.security.risk.md#openhands.sdk.security.risk.SecurityRisk`
+
 
 Analyze all pending actions in a conversation.
 

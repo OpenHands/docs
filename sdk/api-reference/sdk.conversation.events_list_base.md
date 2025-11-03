@@ -16,6 +16,11 @@ Abstract base class for event lists that can be appended to.
 This provides a common interface for both local EventLog and remote
 RemoteEventsList implementations, avoiding circular imports in protocols.
 
-#### *abstractmethod* append(event: [Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### *abstractmethod* append
+
+**Parameters:**
+
+- `event: [Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Add a new event to the list.

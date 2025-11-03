@@ -17,7 +17,13 @@ Bases: [`FileStore`](https://github.com/OpenHands/software-agent-sdk/sdk.io.base
 
 #### get_full_path(path: [str](https://docs.python.org/3/library/stdtypes.html#str)) → [str](https://docs.python.org/3/library/stdtypes.html#str)
 
-#### write(path: [str](https://docs.python.org/3/library/stdtypes.html#str), contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### write
+
+**Parameters:**
+
+- `path: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `contents: [str](https://docs.python.org/3/library/stdtypes.html#str) | [bytes](https://docs.python.org/3/library/stdtypes.html#bytes)) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Write contents to a file at the specified path.
 

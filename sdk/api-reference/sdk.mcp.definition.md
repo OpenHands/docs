@@ -37,23 +37,48 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction']*
 
-### *class* openhands.sdk.mcp.definition.MCPToolObservation(\*, kind: ~typing.Literal['MCPToolObservation'] = 'MCPToolObservation', content: list[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = `<factory>`, is_error: bool = False, tool_name: str)
+### *class* openhands.sdk.mcp.definition.MCPToolObservation
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['MCPToolObservation'] = 'MCPToolObservation'`
+- `content: list[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = `<factory>``
+- `is_error: bool = False`
+- `tool_name: str`
+
 
 Bases: [`Observation`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 
 Observation from MCP tool execution.
 
-#### content *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### content *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent`
+
 
 #### is_error *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
 #### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### *classmethod* from_call_tool_result(tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str), result: CallToolResult) → [MCPToolObservation](#openhands.sdk.mcp.definition.MCPToolObservation)
+#### *classmethod* from_call_tool_result
+
+**Parameters:**
+
+- `tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `result: CallToolResult) → [MCPToolObservation](#openhands.sdk.mcp.definition.MCPToolObservation`
+
 
 Create an MCPToolObservation from a CallToolResult.
 
-#### *property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### *property* to_llm_content *: [Sequence]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent`
+
 
 Format the observation for agent display.
 

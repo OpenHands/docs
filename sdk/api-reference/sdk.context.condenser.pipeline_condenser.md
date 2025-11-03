@@ -7,7 +7,13 @@ description: API reference for openhands.sdk.context.condenser.pipeline_condense
 
 <a id="module-openhands.sdk.context.condenser.pipeline_condenser"></a>
 
-### *class* openhands.sdk.context.condenser.pipeline_condenser.PipelineCondenser(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser', condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)])
+### *class* openhands.sdk.context.condenser.pipeline_condenser.PipelineCondenser
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['PipelineCondenser'] = 'PipelineCondenser'`
+- `condensers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)]`
+
 
 Bases: [`CondenserBase`](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)
 
@@ -46,11 +52,21 @@ For example:
 
 > assert result == other_result
 
-#### condensers *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase)]*
+#### condensers *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.base.md#openhands.sdk.context.condenser.base.CondenserBase`
+
 
 The list of condensers to apply in order.
 
-#### condense(view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation)
+#### condense
+
+**Parameters:**
+
+- `view: [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View)) → [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.condenser.md#openhands.sdk.event.condenser.Condensation`
+
 
 Condense a sequence of events into a potentially smaller list.
 

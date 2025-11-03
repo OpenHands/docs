@@ -22,7 +22,13 @@ Base class for all trigger types.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.skills.trigger.KeywordTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword'] = 'keyword', keywords: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### *class* openhands.sdk.context.skills.trigger.KeywordTrigger
+
+**Parameters:**
+
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['keyword'] = 'keyword'`
+- `keywords: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]`
+
 
 Bases: [`BaseTrigger`](#openhands.sdk.context.skills.trigger.BaseTrigger)
 
@@ -38,7 +44,13 @@ These skills are activated when specific keywords appear in the user’s query.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-### *class* openhands.sdk.context.skills.trigger.TaskTrigger(, type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task'] = 'task', triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)])
+### *class* openhands.sdk.context.skills.trigger.TaskTrigger
+
+**Parameters:**
+
+- `type: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['task'] = 'task'`
+- `triggers: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]`
+
 
 Bases: [`BaseTrigger`](#openhands.sdk.context.skills.trigger.BaseTrigger)
 

@@ -49,7 +49,15 @@ Cleanup on deletion.
 
 #### \_\_init_\_(\*args, \*\*kwargs)
 
-#### call_async_from_sync(awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any), \*args, timeout: [float](https://docs.python.org/3/library/functions.html#float), \*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any)
+#### call_async_from_sync
+
+**Parameters:**
+
+- `awaitable_or_fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
+- `\*args`
+- `timeout: [float](https://docs.python.org/3/library/functions.html#float)`
+- `\*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Run a coroutine or async function on this client’s loop from sync code.
 
@@ -57,7 +65,14 @@ Usage:
 : mcp.call_async_from_sync(async_fn, arg1, kw=…)
   mcp.call_async_from_sync(coro)
 
-#### *async* call_sync_from_async(fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)], \*args, \*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any)
+#### *async* call_sync_from_async
+
+**Parameters:**
+
+- `fn: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[...], [Any](https://docs.python.org/3/library/typing.html#typing.Any)]`
+- `\*args`
+- `\*\*kwargs) → [Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Await running a blocking function in the default threadpool from async code.
 
@@ -68,13 +83,32 @@ Synchronously close the MCP client and cleanup resources.
 This will attempt to call the async close() method if available,
 then shutdown the background event loop.
 
-### *class* openhands.sdk.mcp.MCPToolDefinition(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolDefinition'] = 'MCPToolDefinition', name: [str](https://docs.python.org/3/library/stdtypes.html#str), description: [str](https://docs.python.org/3/library/stdtypes.html#str), action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)], observation_type: [type](https://docs.python.org/3/library/functions.html#type)[[Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)] | [None](https://docs.python.org/3/library/constants.html#None) = None, annotations: [ToolAnnotations](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolAnnotations) | [None](https://docs.python.org/3/library/constants.html#None) = None, meta: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None, executor: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()] = None, mcp_tool: Tool)
+### *class* openhands.sdk.mcp.MCPToolDefinition
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolDefinition'] = 'MCPToolDefinition'`
+- `name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `description: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)]`
+- `observation_type: [type](https://docs.python.org/3/library/functions.html#type)[[Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `annotations: [ToolAnnotations](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolAnnotations) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `meta: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `executor: [Annotated](https://docs.python.org/3/library/typing.html#typing.Annotated)[[ToolExecutor](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor) | [None](https://docs.python.org/3/library/constants.html#None), SkipJsonSchema()] = None`
+- `mcp_tool: Tool`
+
 
 Bases: `ToolDefinition[MCPToolAction, MCPToolObservation]`
 
 MCP Tool that wraps an MCP client and provides tool functionality.
 
-#### \_\_call_\_(action: [Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action), conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
+#### \_\_call_\_
+
+**Parameters:**
+
+- `action: [Action](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)`
+- `conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [Observation](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation`
+
 
 Execute the tool action using the MCP client.
 
@@ -86,7 +120,12 @@ the tool’s input schema to validate the action.
 * **Returns:**
   The observation result from executing the action.
 
-#### action_from_arguments(arguments: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]) → [MCPToolAction](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolAction)
+#### action_from_arguments
+
+**Parameters:**
+
+- `arguments: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]) → [MCPToolAction](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolAction`
+
 
 Create an MCPToolAction from parsed arguments with early validation.
 
@@ -102,7 +141,13 @@ execution. On success, we return MCPToolAction with sanitized arguments.
 * **Raises:**
   **ValidationError** – If the arguments do not conform to the tool schema.
 
-#### *classmethod* create(mcp_tool: Tool, mcp_client: [MCPClient](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.client.md#openhands.sdk.mcp.client.MCPClient)) → [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[MCPToolDefinition](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.tool.md#openhands.sdk.mcp.tool.MCPToolDefinition)]
+#### *classmethod* create
+
+**Parameters:**
+
+- `mcp_tool: Tool`
+- `mcp_client: [MCPClient](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.client.md#openhands.sdk.mcp.client.MCPClient)) → [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[MCPToolDefinition](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.tool.md#openhands.sdk.mcp.tool.MCPToolDefinition`
+
 
 Create a sequence of ToolDefinition instances.
 
@@ -115,7 +160,14 @@ method, and then this should be made abstract with @abstractmethod.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### to_mcp_tool(input_schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None, output_schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)]
+#### to_mcp_tool
+
+**Parameters:**
+
+- `input_schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `output_schema: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [Any](https://docs.python.org/3/library/typing.html#typing.Any)] | [None](https://docs.python.org/3/library/constants.html#None) = None) → [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[Any](https://docs.python.org/3/library/typing.html#typing.Any`
+
 
 Convert a Tool to an MCP tool definition.
 
@@ -125,7 +177,13 @@ Allow overriding input/output schemas (usually by subclasses).
   * **input_schema** – Optionally override the input schema.
   * **output_schema** – Optionally override the output schema.
 
-#### to_openai_tool(add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False, action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Schema](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Schema)] | [None](https://docs.python.org/3/library/constants.html#None) = None) → ChatCompletionToolParam
+#### to_openai_tool
+
+**Parameters:**
+
+- `add_security_risk_prediction: [bool](https://docs.python.org/3/library/functions.html#bool) = False`
+- `action_type: [type](https://docs.python.org/3/library/functions.html#type)[[Schema](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Schema)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+
 
 Convert a Tool to an OpenAI tool.
 
@@ -172,13 +230,28 @@ The data field contains the dynamic fields from the tool call.
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolAction']*
 
-### *class* openhands.sdk.mcp.MCPToolObservation(\*, kind: ~typing.Literal['MCPToolObservation'] = 'MCPToolObservation', content: list[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = `<factory>`, is_error: bool = False, tool_name: str)
+### *class* openhands.sdk.mcp.MCPToolObservation
+
+**Parameters:**
+
+- `\*`
+- `kind: ~typing.Literal['MCPToolObservation'] = 'MCPToolObservation'`
+- `content: list[~openhands.sdk.llm.message.TextContent | ~openhands.sdk.llm.message.ImageContent] = `<factory>``
+- `is_error: bool = False`
+- `tool_name: str`
+
 
 Bases: [`Observation`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 
 Observation from MCP tool execution.
 
-#### *classmethod* from_call_tool_result(tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str), result: CallToolResult) → [MCPToolObservation](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolObservation)
+#### *classmethod* from_call_tool_result
+
+**Parameters:**
+
+- `tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `result: CallToolResult) → [MCPToolObservation](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolObservation`
+
 
 Create an MCPToolObservation from a CallToolResult.
 
@@ -186,7 +259,12 @@ Create an MCPToolObservation from a CallToolResult.
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
-#### *property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### *property* to_llm_content *: [Sequence]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent`
+
 
 Format the observation for agent display.
 
@@ -194,7 +272,12 @@ Format the observation for agent display.
 
 Return Rich Text representation of this observation.
 
-#### content *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### content *: [list]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/stdtypes.html#list)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent`
+
 
 #### is_error *: [bool](https://docs.python.org/3/library/functions.html#bool)*
 
@@ -202,19 +285,42 @@ Return Rich Text representation of this observation.
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['MCPToolObservation']*
 
-### *class* openhands.sdk.mcp.MCPToolExecutor(tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str), client: [MCPClient](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.client.md#openhands.sdk.mcp.client.MCPClient))
+### *class* openhands.sdk.mcp.MCPToolExecutor
+
+**Parameters:**
+
+- `tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `client: [MCPClient](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.client.md#openhands.sdk.mcp.client.MCPClient)`
+
 
 Bases: [`ToolExecutor`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.tool.md#openhands.sdk.tool.tool.ToolExecutor)
 
 Executor for MCP tools.
 
-#### \_\_call_\_(action: [MCPToolAction](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolAction), conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [MCPToolObservation](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolObservation)
+#### \_\_call_\_
+
+**Parameters:**
+
+- `action: [MCPToolAction](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolAction)`
+- `conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.md#openhands.sdk.conversation.LocalConversation) | [None](https://docs.python.org/3/library/constants.html#None) = None) → [MCPToolObservation](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolObservation`
+
 
 Execute an MCP tool call.
 
-#### \_\_init_\_(tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str), client: [MCPClient](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.client.md#openhands.sdk.mcp.client.MCPClient))
+#### \_\_init_\_
 
-#### *async* call_tool(action: [MCPToolAction](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolAction)) → [MCPToolObservation](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolObservation)
+**Parameters:**
+
+- `tool_name: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `client: [MCPClient](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.client.md#openhands.sdk.mcp.client.MCPClient)`
+
+
+#### *async* call_tool
+
+**Parameters:**
+
+- `action: [MCPToolAction](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolAction)) → [MCPToolObservation](https://github.com/OpenHands/software-agent-sdk/sdk.mcp.definition.md#openhands.sdk.mcp.definition.MCPToolObservation`
+
 
 #### tool_name *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 

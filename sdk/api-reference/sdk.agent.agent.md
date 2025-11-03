@@ -7,11 +7,32 @@ description: API reference for openhands.sdk.agent.agent
 
 <a id="module-openhands.sdk.agent.agent"></a>
 
-### *class* openhands.sdk.agent.agent.Agent(\*, kind: typing.Literal['Agent'] = 'Agent', llm: openhands.sdk.llm.llm.LLM, tools: list[openhands.sdk.tool.spec.Tool] = `<factory>`, mcp_config: dict[str, typing.Any] = `<factory>`, filter_tools_regex: str | None = None, agent_context: openhands.sdk.context.agent_context.AgentContext | None = None, system_prompt_filename: str = 'system_prompt.j2', system_prompt_kwargs: dict[str, object] = `<factory>`, security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None, condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None)
+### *class* openhands.sdk.agent.agent.Agent
+
+**Parameters:**
+
+- `\*`
+- `kind: typing.Literal['Agent'] = 'Agent'`
+- `llm: openhands.sdk.llm.llm.LLM`
+- `tools: list[openhands.sdk.tool.spec.Tool] = `<factory>``
+- `mcp_config: dict[str, typing.Any] = `<factory>``
+- `filter_tools_regex: str | None = None`
+- `agent_context: openhands.sdk.context.agent_context.AgentContext | None = None`
+- `system_prompt_filename: str = 'system_prompt.j2'`
+- `system_prompt_kwargs: dict[str, object] = `<factory>``
+- `security_analyzer: openhands.sdk.security.analyzer.SecurityAnalyzerBase | None = None`
+- `condenser: openhands.sdk.context.condenser.base.CondenserBase | None = None`
+
 
 Bases: [`AgentBase`](https://github.com/OpenHands/software-agent-sdk/sdk.agent.base.md#openhands.sdk.agent.base.AgentBase)
 
-#### init_state(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState), on_event: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None)
+#### init_state
+
+**Parameters:**
+
+- `state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState)`
+- `on_event: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Initialize the empty conversation state to prepare the agent for user
 messages.
@@ -20,7 +41,13 @@ Typically this involves adding system message
 
 NOTE: state will be mutated in-place.
 
-#### step(conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.impl.local_conversation.md#openhands.sdk.conversation.impl.local_conversation.LocalConversation), on_event: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None)
+#### step
+
+**Parameters:**
+
+- `conversation: [LocalConversation](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.impl.local_conversation.md#openhands.sdk.conversation.impl.local_conversation.LocalConversation)`
+- `on_event: [Callable](https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable)[[[Event](https://github.com/OpenHands/software-agent-sdk/sdk.event.base.md#openhands.sdk.event.base.Event)], [None](https://docs.python.org/3/library/constants.html#None)]) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Taking a step in the conversation.
 
@@ -55,12 +82,33 @@ This is useful if you want to do some validation that requires the entire model 
 
 #### filter_tools_regex *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-#### agent_context *: [AgentContext](https://github.com/OpenHands/software-agent-sdk/sdk.context.md#openhands.sdk.context.AgentContext) | [None](https://docs.python.org/3/library/constants.html#None)*
+#### agent_context *: [AgentContext]
+
+**Parameters:**
+
+- `https://github.com/OpenHands/software-agent-sdk/sdk.context.md#openhands.sdk.context.AgentContext) | [None](https://docs.python.org/3/library/constants.html#None`
+
 
 #### system_prompt_filename *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### system_prompt_kwargs *: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [object](https://docs.python.org/3/library/functions.html#object)]*
+#### system_prompt_kwargs *: [dict]
 
-#### security_analyzer *: [analyzer.SecurityAnalyzerBase](https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase) | [None](https://docs.python.org/3/library/constants.html#None)*
+**Parameters:**
 
-#### condenser *: [CondenserBase](https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.md#openhands.sdk.context.condenser.CondenserBase) | [None](https://docs.python.org/3/library/constants.html#None)*
+- `https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `[object](https://docs.python.org/3/library/functions.html#object`
+
+
+#### security_analyzer *: [analyzer.SecurityAnalyzerBase]
+
+**Parameters:**
+
+- `https://github.com/OpenHands/software-agent-sdk/sdk.security.analyzer.md#openhands.sdk.security.analyzer.SecurityAnalyzerBase) | [None](https://docs.python.org/3/library/constants.html#None`
+
+
+#### condenser *: [CondenserBase]
+
+**Parameters:**
+
+- `https://github.com/OpenHands/software-agent-sdk/sdk.context.condenser.md#openhands.sdk.context.condenser.CondenserBase) | [None](https://docs.python.org/3/library/constants.html#None`
+

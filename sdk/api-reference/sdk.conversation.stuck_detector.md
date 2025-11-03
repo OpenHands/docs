@@ -7,7 +7,12 @@ description: API reference for openhands.sdk.conversation.stuck_detector
 
 <a id="module-openhands.sdk.conversation.stuck_detector"></a>
 
-### *class* openhands.sdk.conversation.stuck_detector.StuckDetector(state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState))
+### *class* openhands.sdk.conversation.stuck_detector.StuckDetector
+
+**Parameters:**
+
+- `state: [ConversationState](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.state.md#openhands.sdk.conversation.state.ConversationState)`
+
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 

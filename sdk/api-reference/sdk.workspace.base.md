@@ -7,7 +7,13 @@ description: API reference for openhands.sdk.workspace.base
 
 <a id="module-openhands.sdk.workspace.base"></a>
 
-### *class* openhands.sdk.workspace.base.BaseWorkspace(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace', working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### *class* openhands.sdk.workspace.base.BaseWorkspace
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['LocalWorkspace', 'RemoteWorkspace'] = 'LocalWorkspace'`
+- `working_dir: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+
 
 Bases: [`DiscriminatedUnionMixin`](https://github.com/OpenHands/software-agent-sdk/sdk.utils.models.md#openhands.sdk.utils.models.DiscriminatedUnionMixin), [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
@@ -28,7 +34,14 @@ Enter the workspace context.
 * **Returns:**
   Self for use in with statements
 
-#### \_\_exit_\_(exc_type: [Any](https://docs.python.org/3/library/typing.html#typing.Any), exc_val: [Any](https://docs.python.org/3/library/typing.html#typing.Any), exc_tb: [Any](https://docs.python.org/3/library/typing.html#typing.Any)) → [None](https://docs.python.org/3/library/constants.html#None)
+#### \_\_exit_\_
+
+**Parameters:**
+
+- `exc_type: [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
+- `exc_val: [Any](https://docs.python.org/3/library/typing.html#typing.Any)`
+- `exc_tb: [Any](https://docs.python.org/3/library/typing.html#typing.Any)) → [None](https://docs.python.org/3/library/constants.html#None`
+
 
 Exit the workspace context and cleanup resources.
 
@@ -40,7 +53,14 @@ to add cleanup logic (e.g., stopping containers, closing connections).
   * **exc_val** – Exception value if an exception occurred
   * **exc_tb** – Exception traceback if an exception occurred
 
-#### *abstractmethod* execute_command(command: [str](https://docs.python.org/3/library/stdtypes.html#str), cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None, timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult)
+#### *abstractmethod* execute_command
+
+**Parameters:**
+
+- `command: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+- `cwd: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `timeout: [float](https://docs.python.org/3/library/functions.html#float) = 30.0) → [CommandResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.CommandResult`
+
 
 Execute a bash command on the system.
 
@@ -56,7 +76,13 @@ Execute a bash command on the system.
 * **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If command execution fails
 
-#### *abstractmethod* file_upload(source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult)
+#### *abstractmethod* file_upload
+
+**Parameters:**
+
+- `source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)`
+- `destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult`
+
 
 Upload a file to the system.
 
@@ -70,7 +96,13 @@ Upload a file to the system.
 * **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If file upload fails
 
-#### *abstractmethod* file_download(source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path), destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult)
+#### *abstractmethod* file_download
+
+**Parameters:**
+
+- `source_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)`
+- `destination_path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [FileOperationResult](https://github.com/OpenHands/software-agent-sdk/sdk.workspace.models.md#openhands.sdk.workspace.models.FileOperationResult`
+
 
 Download a file from the system.
 
@@ -84,7 +116,12 @@ Download a file from the system.
 * **Raises:**
   [**Exception**](https://docs.python.org/3/library/exceptions.html#Exception) – If file download fails
 
-#### *abstractmethod* git_changes(path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [list](https://docs.python.org/3/library/stdtypes.html#list)[GitChange]
+#### *abstractmethod* git_changes
+
+**Parameters:**
+
+- `path: [str](https://docs.python.org/3/library/stdtypes.html#str) | [Path](https://docs.python.org/3/library/pathlib.html#pathlib.Path)) → [list](https://docs.python.org/3/library/stdtypes.html#list`
+
 
 Get the git changes for the repository at the path given.
 

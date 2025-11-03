@@ -7,7 +7,13 @@ description: API reference for openhands.sdk.tool.builtins.think
 
 <a id="module-openhands.sdk.tool.builtins.think"></a>
 
-### *class* openhands.sdk.tool.builtins.think.ThinkAction(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction'] = 'ThinkAction', thought: [str](https://docs.python.org/3/library/stdtypes.html#str))
+### *class* openhands.sdk.tool.builtins.think.ThinkAction
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction'] = 'ThinkAction'`
+- `thought: [str](https://docs.python.org/3/library/stdtypes.html#str)`
+
 
 Bases: [`Action`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Action)
 
@@ -25,7 +31,13 @@ Configuration for the model, should be a dictionary conforming to [ConfigDict][p
 
 #### kind *: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkAction']*
 
-### *class* openhands.sdk.tool.builtins.think.ThinkObservation(, kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation'] = 'ThinkObservation', content: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Your thought has been logged.')
+### *class* openhands.sdk.tool.builtins.think.ThinkObservation
+
+**Parameters:**
+
+- `kind: [Literal](https://docs.python.org/3/library/typing.html#typing.Literal)['ThinkObservation'] = 'ThinkObservation'`
+- `content: [str](https://docs.python.org/3/library/stdtypes.html#str) = 'Your thought has been logged.'`
+
 
 Bases: [`Observation`](https://github.com/OpenHands/software-agent-sdk/sdk.tool.schema.md#openhands.sdk.tool.schema.Observation)
 
@@ -33,7 +45,12 @@ Observation returned after logging a thought.
 
 #### content *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### *property* to_llm_content *: [Sequence](https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent)]*
+#### *property* to_llm_content *: [Sequence]
+
+**Parameters:**
+
+- `https://docs.python.org/3/library/collections.abc.html#collections.abc.Sequence)[[TextContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.TextContent) | [ImageContent](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.ImageContent`
+
 
 Get the observation string to show to the agent.
 

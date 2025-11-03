@@ -7,7 +7,15 @@ description: API reference for openhands.sdk.conversation.visualizer
 
 <a id="module-openhands.sdk.conversation.visualizer"></a>
 
-### *class* openhands.sdk.conversation.visualizer.ConversationVisualizer(highlight_regex: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None, skip_user_messages: [bool](https://docs.python.org/3/library/functions.html#bool) = False, conversation_stats: [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats) | [None](https://docs.python.org/3/library/constants.html#None) = None, name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+### *class* openhands.sdk.conversation.visualizer.ConversationVisualizer
+
+**Parameters:**
+
+- `highlight_regex: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `skip_user_messages: [bool](https://docs.python.org/3/library/functions.html#bool) = False`
+- `conversation_stats: [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+
 
 Bases: [`object`](https://docs.python.org/3/library/functions.html#object)
 
@@ -15,7 +23,15 @@ Handles visualization of conversation events with Rich formatting.
 
 Provides Rich-formatted output with panels and complete content display.
 
-#### \_\_init_\_(highlight_regex: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None, skip_user_messages: [bool](https://docs.python.org/3/library/functions.html#bool) = False, conversation_stats: [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats) | [None](https://docs.python.org/3/library/constants.html#None) = None, name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None)
+#### \_\_init_\_
+
+**Parameters:**
+
+- `highlight_regex: [dict](https://docs.python.org/3/library/stdtypes.html#dict)[[str](https://docs.python.org/3/library/stdtypes.html#str), [str](https://docs.python.org/3/library/stdtypes.html#str)] | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `skip_user_messages: [bool](https://docs.python.org/3/library/functions.html#bool) = False`
+- `conversation_stats: [ConversationStats](https://github.com/OpenHands/software-agent-sdk/sdk.conversation.conversation_stats.md#openhands.sdk.conversation.conversation_stats.ConversationStats) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+- `name_for_visualization: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None) = None`
+
 
 Initialize the visualizer.
 
