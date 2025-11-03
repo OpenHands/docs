@@ -536,6 +536,51 @@ description: API reference for {module_name}
         # Fix internal links from .md to .mdx extensions
         line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1.mdx)', line)
         
+        # Create mapping from class names to their module files
+        class_to_module = {
+            'Agent': 'agent',
+            'AgentBase': 'agent', 
+            'AgentContext': 'agent',
+            'Conversation': 'conversation',
+            'BaseConversation': 'conversation',
+            'LocalConversation': 'conversation',
+            'RemoteConversation': 'conversation',
+            'ConversationState': 'conversation',
+            'ConversationStats': 'conversation',
+            'Event': 'event',
+            'LLMConvertibleEvent': 'event',
+            'MessageEvent': 'event',
+            'LLM': 'llm',
+            'LLMRegistry': 'llm',
+            'LLMResponse': 'llm',
+            'Message': 'llm',
+            'ImageContent': 'llm',
+            'TextContent': 'llm',
+            'ThinkingBlock': 'llm',
+            'RedactedThinkingBlock': 'llm',
+            'Metrics': 'llm',
+            'RegistryEvent': 'llm',
+            'SecurityManager': 'security',
+            'Tool': 'tool',
+            'ToolDefinition': 'tool',
+            'Action': 'tool',
+            'Observation': 'tool',
+            'Workspace': 'workspace',
+            'BaseWorkspace': 'workspace',
+            'LocalWorkspace': 'workspace',
+            'RemoteWorkspace': 'workspace',
+            'WorkspaceFile': 'workspace',
+            'WorkspaceFileEdit': 'workspace',
+            'WorkspaceFileEditResult': 'workspace',
+            'WorkspaceFileReadResult': 'workspace',
+            'WorkspaceFileWriteResult': 'workspace',
+            'WorkspaceListResult': 'workspace',
+            'WorkspaceSearchResult': 'workspace',
+            'WorkspaceSearchResultItem': 'workspace',
+            'WorkspaceUploadResult': 'workspace',
+            'WorkspaceWriteResult': 'workspace',
+        }
+
         # Fix anchor links - convert full module path anchors to simple class format
         # Pattern: openhands.sdk.module.mdx#openhands.sdk.module.ClassName -> openhands.sdk.module.mdx#class-classname
         def convert_anchor(match):
@@ -548,6 +593,24 @@ description: API reference for {module_name}
         
         # Also handle the .md# pattern before converting to .mdx
         line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
+
+        # Fix links pointing to the removed top-level openhands.sdk.md page
+        # Pattern: openhands.sdk.md#openhands.sdk.ClassName -> openhands.sdk.module.mdx#class-classname
+        def convert_toplevel_anchor(match):
+            full_class_path = match.group(1)
+            class_name = full_class_path.split('.')[-1]
+            
+            # Find the correct module for this class
+            if class_name in class_to_module:
+                module = class_to_module[class_name]
+                class_name_lower = class_name.lower()
+                return f'openhands.sdk.{module}.mdx#class-{class_name_lower}'
+            else:
+                # Fallback: try to guess module from class name
+                class_name_lower = class_name.lower()
+                return f'openhands.sdk.{class_name_lower}.mdx#class-{class_name_lower}'
+
+        line = re.sub(r'openhands\.sdk\.md#openhands\.sdk\.([^)]+)', convert_toplevel_anchor, line)
         
         # Fix invalid http:// links
         line = re.sub(r'\[http://\]\(http://\)', 'http://', line)
