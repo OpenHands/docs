@@ -307,13 +307,22 @@ description: API reference for {module_name}
         line = line.replace('\\', '')
         
         # Fix dictionary/object literals that cause parsing issues
-        # Pattern: = {'key': 'value', 'key2': 'value2'}
+        # Pattern: = {'key': 'value', 'key2': 'value2'} or = {}
         if ' = {' in line and '}' in line:
             # Replace with a simple description
-            line = re.sub(r' = \{[^}]+\}', ' = (configuration object)', line)
+            line = re.sub(r' = \{[^}]*\}', ' = (configuration object)', line)
+        
+        # Fix JSON-like patterns that cause parsing issues
+        # Pattern: { "type": "function", "name": …, "description": …, "parameters": … }
+        if line.strip().startswith('{') and line.strip().endswith('}'):
+            # Replace with a simple description
+            line = '(JSON configuration object)'
         
         # Fix ClassVar patterns
         line = re.sub(r'ClassVar\[([^\]]+)\]', r'ClassVar[\1]', line)
+        
+        # Fix template string patterns like ${variable}
+        line = re.sub(r'\$\{[^}]+\}', '(variable)', line)
         
         return line
         
