@@ -1,390 +1,186 @@
 #!/usr/bin/env python3
 """
-Generate Python API reference documentation from the software-agent-sdk.
+Generate API reference documentation from the OpenHands SDK using pydoc-markdown.
 
-This script extracts docstrings from Python modules and generates MDX documentation
-files compatible with Mintlify.
+This script:
+1. Uses pydoc-markdown to generate markdown from the SDK source code
+2. Converts the output to Mintlify-compatible MDX format
+3. Creates a single flattened sdk.mdx file containing all API documentation
+4. Updates docs.json to include the API reference in navigation
 """
 
-import ast
 import json
-import os
+import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
-
-# Modules to document (from openhands.sdk)
-MODULES_TO_DOCUMENT = [
-    "agent",
-    "conversation",
-    "llm",
-    "tool",
-    "workspace",
-    "mcp",
-    "event",
-    "context",
-    "security",
-    "io",
-    "git",
-]
 
 
-def extract_docstring(node: ast.AST) -> Optional[str]:
-    """Extract docstring from an AST node."""
-    if isinstance(node, (ast.FunctionDef, ast.ClassDef, ast.Module)):
-        return ast.get_docstring(node)
-    return None
-
-
-def extract_function_signature(node: ast.FunctionDef) -> str:
-    """Extract function signature as a string."""
-    args = []
+def generate_markdown_from_sdk(sdk_path: Path, output_file: Path) -> None:
+    """
+    Use pydoc-markdown to generate API documentation.
     
-    # Regular arguments
-    for arg in node.args.args:
-        arg_str = arg.arg
-        if arg.annotation:
-            arg_str += f": {ast.unparse(arg.annotation)}"
-        args.append(arg_str)
+    Args:
+        sdk_path: Path to the SDK source directory
+        output_file: Path where the markdown will be saved
+    """
+    print(f"Generating API documentation from {sdk_path}...")
     
-    # Return annotation
-    returns = ""
-    if node.returns:
-        returns = f" -> {ast.unparse(node.returns)}"
+    # Run pydoc-markdown
+    cmd = [
+        "pydoc-markdown",
+        "-I", str(sdk_path),
+        "-p", "openhands.sdk",
+        "--render-toc",
+    ]
     
-    return f"{node.name}({', '.join(args)}){returns}"
-
-
-def parse_module_file(file_path: Path) -> Dict:
-    """Parse a Python file and extract documentation."""
     try:
-        content = file_path.read_text()
-        tree = ast.parse(content)
-    except Exception as e:
-        print(f"Warning: Could not parse {file_path}: {e}")
-        return {"module_doc": "", "classes": [], "functions": []}
-    
-    module_doc = ast.get_docstring(tree) or ""
-    
-    classes = []
-    functions = []
-    
-    # Only process top-level nodes
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef):
-            class_doc = extract_docstring(node)
-            methods = []
-            
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef):
-                    method_doc = extract_docstring(item)
-                    methods.append({
-                        "name": item.name,
-                        "signature": extract_function_signature(item),
-                        "docstring": method_doc or ""
-                    })
-            
-            classes.append({
-                "name": node.name,
-                "docstring": class_doc or "",
-                "methods": methods
-            })
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=sdk_path.parent
+        )
         
-        elif isinstance(node, ast.FunctionDef):
-            func_doc = extract_docstring(node)
-            functions.append({
-                "name": node.name,
-                "signature": extract_function_signature(node),
-                "docstring": func_doc or ""
-            })
-    
-    return {
-        "module_doc": module_doc,
-        "classes": classes,
-        "functions": functions
-    }
-
-
-def format_docstring(docstring: str) -> str:
-    """Format a docstring for MDX output."""
-    if not docstring:
-        return ""
-    
-    # Basic formatting - could be enhanced to handle Google/NumPy style docstrings
-    lines = docstring.split('\n')
-    formatted = []
-    
-    for line in lines:
-        # Convert common docstring patterns to markdown
-        line = line.strip()
-        if line.startswith('Args:') or line.startswith('Parameters:'):
-            formatted.append('\n**Parameters:**\n')
-        elif line.startswith('Returns:'):
-            formatted.append('\n**Returns:**\n')
-        elif line.startswith('Raises:'):
-            formatted.append('\n**Raises:**\n')
-        elif line.startswith('Example:') or line.startswith('Examples:'):
-            formatted.append('\n**Example:**\n')
-        else:
-            formatted.append(line)
-    
-    return '\n'.join(formatted)
-
-
-def generate_mdx_for_module(module_name: str, module_data: Dict, github_base: str) -> str:
-    """Generate MDX content for a module."""
-    title = f"{module_name.capitalize()}"
-    description = f"API reference for openhands.sdk.{module_name}"
-    
-    content = f"""---
-title: {title}
-description: {description}
----
-
-# {title}
-
-"""
-    
-    if module_data.get("module_doc"):
-        content += f"{format_docstring(module_data['module_doc'])}\n\n"
-    
-    # Add source link
-    content += f"""**Source:** [`openhands/sdk/{module_name}/`]({github_base}/openhands-sdk/openhands/sdk/{module_name}/)
-
----
-
-"""
-    
-    # Add classes
-    classes = [c for c in module_data.get("classes", []) if not c["name"].startswith("_")]
-    if classes:
-        content += "## Classes\n\n"
-        for cls in classes:
-            content += f"### `{cls['name']}`\n\n"
-            if cls["docstring"]:
-                content += f"{format_docstring(cls['docstring'])}\n\n"
-            
-            # Add methods
-            methods = [m for m in cls.get("methods", []) 
-                      if not m["name"].startswith("_") or m["name"] == "__init__"]
-            if methods:
-                content += "#### Methods\n\n"
-                for method in methods:
-                    content += f"##### `{method['signature']}`\n\n"
-                    if method["docstring"]:
-                        content += f"{format_docstring(method['docstring'])}\n\n"
-            
-            content += "---\n\n"
-    
-    # Add functions
-    functions = [f for f in module_data.get("functions", []) if not f["name"].startswith("_")]
-    if functions:
-        content += "## Functions\n\n"
-        for func in functions:
-            content += f"### `{func['signature']}`\n\n"
-            if func["docstring"]:
-                content += f"{format_docstring(func['docstring'])}\n\n"
-            content += "---\n\n"
-    
-    return content
-
-
-def generate_docs_for_all_modules(sdk_path: Path, output_dir: Path):
-    """Generate documentation for all modules."""
-    print(f"Generating documentation from {sdk_path}...")
-    
-    # Ensure output directory exists
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    github_base = "https://github.com/OpenHands/software-agent-sdk/tree/main"
-    sdk_module_path = sdk_path / "openhands-sdk" / "openhands" / "sdk"
-    
-    if not sdk_module_path.exists():
-        print(f"Error: SDK module path not found: {sdk_module_path}")
+        markdown_content = result.stdout
+        
+        # Save to file
+        output_file.write_text(markdown_content)
+        print(f"✓ Generated {len(markdown_content)} chars of markdown")
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Error running pydoc-markdown: {e}", file=sys.stderr)
+        print(f"STDOUT: {e.stdout}", file=sys.stderr)
+        print(f"STDERR: {e.stderr}", file=sys.stderr)
         sys.exit(1)
-    
-    # Process each module
-    for module_name in MODULES_TO_DOCUMENT:
-        module_dir = sdk_module_path / module_name
-        
-        if not module_dir.exists():
-            print(f"Warning: Module directory not found: {module_dir}")
-            continue
-        
-        print(f"Processing module: {module_name}")
-        
-        # Start with init file
-        module_data = {"module_doc": "", "classes": [], "functions": []}
-        init_file = module_dir / "__init__.py"
-        
-        if init_file.exists():
-            module_data = parse_module_file(init_file)
-        
-        # Also parse other Python files in the module
-        for py_file in sorted(module_dir.glob("*.py")):
-            if py_file.name != "__init__.py" and not py_file.name.startswith("_"):
-                print(f"  Parsing {py_file.name}")
-                file_data = parse_module_file(py_file)
-                module_data["classes"].extend(file_data.get("classes", []))
-                module_data["functions"].extend(file_data.get("functions", []))
-        
-        # Generate MDX
-        mdx_content = generate_mdx_for_module(module_name, module_data, github_base)
-        output_file = output_dir / f"{module_name}.mdx"
-        output_file.write_text(mdx_content)
-        print(f"  Generated: {output_file.name}")
-    
-    print("Documentation generation complete")
 
 
-def create_index_page(output_dir: Path):
-    """Create the API reference index page."""
-    content = """---
-title: API Reference
-description: Python API reference for the OpenHands SDK
+def convert_to_mdx(markdown_file: Path, mdx_file: Path, github_repo_url: str) -> None:
+    """
+    Convert the generated markdown to MDX format with Mintlify frontmatter.
+    
+    Args:
+        markdown_file: Path to the input markdown file
+        mdx_file: Path where the MDX file will be saved
+        github_repo_url: GitHub repository URL for source links
+    """
+    print(f"Converting to MDX format...")
+    
+    markdown_content = markdown_file.read_text()
+    
+    # Create MDX with frontmatter
+    frontmatter = """---
+title: Python API Reference
+description: Complete API reference for the OpenHands SDK
 ---
 
-# API Reference
+# Python API Reference
 
-This is the auto-generated Python API reference for the OpenHands SDK.
+This page contains the complete API reference for the OpenHands SDK, auto-generated from the source code.
 
-## Available Modules
+**Source:** [`openhands/sdk/`]({repo_url}/tree/main/openhands-sdk/openhands/sdk/)
 
-"""
+---
+
+""".format(repo_url=github_repo_url)
     
-    # Add links to each module
-    for module in MODULES_TO_DOCUMENT:
-        module_title = module.replace("_", " ").title()
-        content += f"- **[{module_title}](./{module})** - API reference for `openhands.sdk.{module}`\n"
+    mdx_content = frontmatter + markdown_content
     
-    content += """
-## Overview
+    # Write MDX file
+    mdx_file.write_text(mdx_content)
+    print(f"✓ Created {mdx_file} ({len(mdx_content)} chars)")
 
-The OpenHands SDK provides a Python interface for building AI agents with:
 
-- **Agent Management**: Core agent orchestration and execution
-- **Conversation Handling**: Structured dialogue and message management  
-- **LLM Integration**: Support for multiple language models via LiteLLM
-- **Tool System**: Extensible tool registry and execution
-- **Workspace Management**: Isolated execution environments
-- **MCP Support**: Model Context Protocol integration
-- **Event System**: Agent lifecycle and execution events
-- **Context Management**: Conversation and execution context
-- **Security**: Safe code execution and sandboxing
-- **I/O Handling**: Stream management and output handling
-- **Git Integration**: Version control operations
-
-For usage examples and guides, see the [SDK Documentation](/sdk/guides/quickstart).
-
-## Source Code
-
-The complete source code is available on GitHub: [OpenHands/software-agent-sdk](https://github.com/OpenHands/software-agent-sdk)
-"""
+def update_docs_json(docs_json_path: Path) -> None:
+    """
+    Update docs.json to include the API Reference page in navigation.
     
-    index_file = output_dir / "index.mdx"
-    index_file.write_text(content)
-    print(f"Created overview page: {index_file}")
-
-
-def update_docs_json(docs_json_path: Path):
-    """Update docs.json to include API reference in navigation."""
-    print("Updating docs.json navigation...")
+    Args:
+        docs_json_path: Path to docs.json file
+    """
+    print(f"Updating {docs_json_path}...")
     
     with open(docs_json_path, 'r') as f:
         docs_config = json.load(f)
     
-    # Find the SDK tab
+    # Find SDK tab in navigation.tabs
     sdk_tab = None
-    for tab in docs_config.get("navigation", {}).get("tabs", []):
-        if tab.get("tab") == "SDK":
+    tabs = docs_config.get('navigation', {}).get('tabs', [])
+    for tab in tabs:
+        if tab.get('tab') == 'SDK':
             sdk_tab = tab
             break
     
     if not sdk_tab:
-        print("Warning: SDK tab not found in docs.json")
+        print("Warning: SDK tab not found in docs.json", file=sys.stderr)
         return
     
     # Check if API Reference already exists
-    api_ref_exists = False
-    for page in sdk_tab.get("pages", []):
-        if isinstance(page, dict) and page.get("group") == "API Reference":
-            api_ref_exists = True
-            break
+    api_ref_entry = {
+        "group": "API Reference",
+        "pages": ["sdk/api/index"]
+    }
     
-    if not api_ref_exists:
-        # Add API Reference section
-        api_ref_section = {
-            "group": "API Reference",
-            "pages": [
-                "sdk/api/index",
-                "sdk/api/agent",
-                "sdk/api/conversation",
-                "sdk/api/llm",
-                "sdk/api/tool",
-                "sdk/api/workspace",
-                "sdk/api/mcp",
-                "sdk/api/event",
-                "sdk/api/context",
-                "sdk/api/security",
-                "sdk/api/io",
-                "sdk/api/git",
-            ]
-        }
-        
-        # Insert after Architecture section if it exists
-        pages = sdk_tab.get("pages", [])
-        arch_index = None
-        for i, page in enumerate(pages):
-            if isinstance(page, dict) and page.get("group") == "Architecture":
-                arch_index = i
-                break
-        
-        if arch_index is not None:
-            pages.insert(arch_index + 1, api_ref_section)
-        else:
-            # Just append at the end
-            pages.append(api_ref_section)
-        
-        sdk_tab["pages"] = pages
-        
-        # Write back to docs.json
-        with open(docs_json_path, 'w') as f:
-            json.dump(docs_config, f, indent=2)
-            f.write('\n')  # Add trailing newline
-        
-        print("docs.json updated successfully")
-    else:
-        print("API Reference already exists in docs.json")
+    # Remove old API reference if exists (could be multi-file version)
+    pages = sdk_tab.get('pages', [])
+    filtered_pages = []
+    for item in pages:
+        if isinstance(item, dict) and item.get('group') == 'API Reference':
+            continue
+        filtered_pages.append(item)
+    
+    # Add the new single-file API reference
+    filtered_pages.append(api_ref_entry)
+    sdk_tab['pages'] = filtered_pages
+    
+    # Write back
+    with open(docs_json_path, 'w') as f:
+        json.dump(docs_config, f, indent=2)
+    
+    print(f"✓ Updated docs.json navigation")
 
 
 def main():
-    """Main entry point."""
-    # Get paths
+    """Main entry point for the documentation generation script."""
+    # Paths
     script_dir = Path(__file__).parent
-    docs_root = script_dir.parent.parent
-    sdk_path = Path(os.environ.get("AGENT_SDK_PATH", docs_root.parent / "agent-sdk"))
+    repo_root = script_dir.parent.parent
     
-    if not sdk_path.exists():
-        print(f"Error: SDK path not found: {sdk_path}")
-        print("Set AGENT_SDK_PATH environment variable to the agent-sdk repository path")
+    # Check if agent-sdk was checked out in workflow
+    # The workflow checks out to repo_root / "agent-sdk"
+    agent_sdk_path = repo_root / "agent-sdk" / "openhands-sdk"
+    
+    if not agent_sdk_path.exists():
+        print(f"Error: SDK path not found at {agent_sdk_path}", file=sys.stderr)
         sys.exit(1)
     
-    # Output directory
-    output_dir = docs_root / "sdk" / "api"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Output paths
+    api_dir = repo_root / "sdk" / "api"
+    api_dir.mkdir(parents=True, exist_ok=True)
+    
+    temp_markdown = repo_root / "temp_api.md"
+    mdx_output = api_dir / "index.mdx"
+    docs_json_path = repo_root / "docs.json"
+    
+    # GitHub repository URL
+    github_repo_url = "https://github.com/OpenHands/software-agent-sdk"
     
     # Generate documentation
-    generate_docs_for_all_modules(sdk_path, output_dir)
+    print("=" * 60)
+    print("Starting API documentation generation")
+    print("=" * 60)
     
-    # Create index page
-    create_index_page(output_dir)
+    generate_markdown_from_sdk(agent_sdk_path, temp_markdown)
+    convert_to_mdx(temp_markdown, mdx_output, github_repo_url)
+    update_docs_json(docs_json_path)
     
-    # Update docs.json
-    docs_json = docs_root / "docs.json"
-    update_docs_json(docs_json)
+    # Clean up temp file
+    temp_markdown.unlink()
     
-    print("\n✅ API documentation generation complete!")
-    print(f"   Output: {output_dir}")
+    print("=" * 60)
+    print("API documentation generation complete!")
+    print(f"Output: {mdx_output}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
