@@ -229,8 +229,26 @@ openhands.sdk.{module} module
             output_file = self.output_dir / output_filename
             output_file.write_text(cleaned_content)
             
+    def clean_multiline_dictionaries(self, content: str) -> str:
+        """Clean multi-line dictionary patterns that cause parsing issues."""
+        import re
+        
+        # Use regex with DOTALL flag to handle multi-line dictionary patterns
+        # Pattern: {"key": "value",\n    "key2": "value2"}
+        pattern = r'\{"[^"]*":\s*"[^"]*",\s*\n\s*"[^"]*":\s*"[^"]*"\}'
+        content = re.sub(pattern, '(configuration dictionary)', content, flags=re.DOTALL)
+        
+        # Also handle simpler multi-line patterns
+        pattern2 = r'\{[^{}]*"[^"]*":[^{}]*\n[^{}]*\}'
+        content = re.sub(pattern2, '(configuration dictionary)', content, flags=re.DOTALL)
+        
+        return content
+
     def clean_markdown_content(self, content: str, filename: str) -> str:
         """Clean markdown content to be parser-friendly."""
+        # First handle multi-line dictionary patterns
+        content = self.clean_multiline_dictionaries(content)
+        
         lines = content.split('\n')
         cleaned_lines = []
         
@@ -318,6 +336,11 @@ description: API reference for {module_name}
             # Replace with a simple description
             line = '(JSON configuration object)'
         
+        # Fix specific problematic dictionary patterns
+        if '{"Reasoning:": "bold blue",' in line or '"Thought:": "bold green"}' in line:
+            # Replace the entire line with a simple description
+            line = re.sub(r'.*\{"[^"]*":[^}]*\}.*', '    For example: (configuration dictionary)', line)
+        
         # Fix ClassVar patterns
         line = re.sub(r'ClassVar\[([^\]]+)\]', r'ClassVar[\1]', line)
         
@@ -326,6 +349,10 @@ description: API reference for {module_name}
         
         # Fix asterisk in type annotations like "property name *: Type"
         line = re.sub(r' \*:', ':', line)
+        
+        # Fix any remaining curly braces that cause parsing issues
+        if '{' in line and '}' in line:
+            line = re.sub(r'\{[^}]*\}', '(configuration object)', line)
         
         return line
         
