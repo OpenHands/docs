@@ -612,12 +612,30 @@ description: API reference for {module_name}
                 return f'openhands.sdk.{class_name_lower}#class-{class_name_lower}'
 
         line = re.sub(r'openhands\.sdk\.md#openhands\.sdk\.([^)]+)', convert_toplevel_anchor, line)
+
+        # Fix same-file anchor references (e.g., #openhands.sdk.llm.LLM -> #class-llm)
+        def convert_same_file_anchor(match):
+            full_class_path = match.group(1)
+            class_name = full_class_path.split('.')[-1].lower()
+            return f'#class-{class_name}'
+
+        line = re.sub(r'#openhands\.sdk\.[^.]+\.([^)]+)', convert_same_file_anchor, line)
         
         # Fix invalid http:// links
         line = re.sub(r'\[http://\]\(http://\)', 'http://', line)
         
         # Remove Python console prompt prefixes from examples
         line = re.sub(r'^>`>`>` ', '', line)
+
+        # Clean up malformed property entries with empty names
+        if '- ``:' in line and 'property ' in line:
+            # Extract the property name and type from malformed entries like:
+            # - ``: property service_to_llm : dict[str, [LLM](#openhands.sdk.llm.LLM)]
+            match = re.search(r'- ``: property (\w+) : (.+)', line)
+            if match:
+                prop_name = match.group(1)
+                prop_type = match.group(2)
+                line = f'- `{prop_name}`: {prop_type}'
         
         return line
         
