@@ -17,7 +17,7 @@ Defines a tool to be initialized for the agent.
 
 This is only used in agent-sdk for type schema for server use.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

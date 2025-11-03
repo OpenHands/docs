@@ -42,7 +42,7 @@ Serialize to OpenAI Chat Completions tool_calls format.
 
 Serialize to OpenAI Responses ‘function_call’ input item format.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -62,7 +62,7 @@ and passed back to the API for tool use scenarios.
 
 #### signature *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -79,7 +79,7 @@ before extended thinking was enabled.
 
 #### data *: [str](https://docs.python.org/3/library/stdtypes.html#str)*
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -101,7 +101,7 @@ Do not log or render encrypted_content.
 
 #### status *: [str](https://docs.python.org/3/library/stdtypes.html#str) | [None](https://docs.python.org/3/library/constants.html#None)*
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -118,7 +118,7 @@ Convert to LLM API format. Always returns a list of dictionaries.
 Subclasses should implement this method to return a list of dictionaries,
 even if they only have a single item.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -152,7 +152,7 @@ Bases: [`BaseContent`](#openhands.sdk.llm.message.BaseContent)
 
 Convert to LLM API format.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -231,7 +231,7 @@ Policy (non-stream):
 - Collect assistant text by concatenating output_text parts from message items
 - Normalize function_call items to MessageToolCall list
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

@@ -129,11 +129,11 @@ Resolve differences between a deserialized LLM and the current instance.
 This is due to fields like api_key being serialized to “
 
 ```
-**
+\*\*
 ```
 
 ```
-**
+\*\*
 ```
 
 ” in dumps,
@@ -410,7 +410,7 @@ Policy (non-stream):
 - Collect assistant text by concatenating output_text parts from message items
 - Normalize function_call items to MessageToolCall list
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -484,7 +484,7 @@ Create a MessageToolCall from a typed OpenAI Responses function_call item.
 
 Note: OpenAI Responses function_call.arguments is already a JSON string.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -524,7 +524,7 @@ Convert to LLM API format.
 
 Bases: [`BaseContent`](https://github.com/OpenHands/software-agent-sdk/sdk.llm.message.md#openhands.sdk.llm.message.BaseContent)
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -546,7 +546,7 @@ This represents the raw thinking blocks returned by Anthropic models
 when extended thinking is enabled. These blocks must be preserved
 and passed back to the API for tool use scenarios.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -565,7 +565,7 @@ Redacted thinking block for previous responses without extended thinking.
 This is used as a placeholder for assistant messages that were generated
 before extended thinking was enabled.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -581,7 +581,7 @@ OpenAI Responses reasoning item (non-stream, subset we consume).
 
 Do not log or render encrypted_content.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -654,7 +654,7 @@ Log the metrics.
 
 Merge ‘other’ metrics into this one.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -674,7 +674,7 @@ A snapshot of metrics at a point in time.
 
 Does not include lists of individual costs, latencies, or token usages.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

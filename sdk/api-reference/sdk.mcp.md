@@ -18,28 +18,20 @@ but owns a background event loop and offers:
 
 > - call_async_from_sync(awaitable_or_fn, 
 
->   ```
->   *
->   ```
+>   \*
 
 >   args, timeout=None, 
 
->   ```
->   **
->   ```
+>   \*\*
 
 >   kwargs)
 > - call_sync_from_async(fn, 
 
->   ```
->   *
->   ```
+>   \*
 
 >   args, 
 
->   ```
->   **
->   ```
+>   \*\*
 
 >   kwargs)  # await this from async code
 

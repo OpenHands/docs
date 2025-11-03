@@ -130,7 +130,7 @@ Generates a JSON representation of the model using Pydantic’s to_json method.
 When a new subclass is defined, mark that we will need
 to rebuild everything
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -218,6 +218,6 @@ Validate the given JSON data against the Pydantic model.
 **Raises:**
   **ValidationError** – If json_data is not a JSON string or the object could not be validated.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].

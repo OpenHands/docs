@@ -316,6 +316,23 @@ description: API reference for {title}
             elif line.strip() == '* **Yields:**':
                 line = line.replace('* **Yields:**', '**Yields:**')
             
+            # Fix problematic patterns that cause acorn parsing errors
+            # Pattern: "ClassVar[ConfigDict]*  = \{\}*" - unbalanced asterisks
+            if 'ClassVar[ConfigDict]*' in line and '= \\{\\}*' in line:
+                line = line.replace('*  = \\{\\}*', ' = \\{\\}')
+            
+            # Fix standalone asterisks in code blocks that confuse parsers
+            if line.strip() == '*' or line.strip() == '**':
+                line = line.replace('*', '\\*')
+            
+            # Fix code blocks containing only asterisks
+            if line.strip() == '>   ```' or (line.strip().startswith('>') and line.strip().endswith('```')):
+                # This is part of a problematic code block pattern, skip it
+                continue
+            if line.strip() in ['>   *', '>   **']:
+                # Replace problematic asterisks in quoted blocks
+                line = line.replace('*', '\\*')
+            
             # Format long class/function signatures for better readability
             # Disabled custom formatting to rely on Sphinx's native output
             # line = self.format_long_signatures(line)

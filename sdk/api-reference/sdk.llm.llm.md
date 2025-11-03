@@ -177,11 +177,11 @@ Resolve differences between a deserialized LLM and the current instance.
 This is due to fields like api_key being serialized to “
 
 ```
-**
+\*\*
 ```
 
 ```
-**
+\*\*
 ```
 
 ” in dumps,

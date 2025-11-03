@@ -18,7 +18,7 @@ Bases: `BaseModel`, [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
 Base class for all trigger types.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -34,7 +34,7 @@ These skills are activated when specific keywords appear in the user’s query.
 
 #### keywords *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -50,6 +50,6 @@ These skills are activated for specific task types and can modify prompts.
 
 #### triggers *: [list](https://docs.python.org/3/library/stdtypes.html#list)[[str](https://docs.python.org/3/library/stdtypes.html#str)]*
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].

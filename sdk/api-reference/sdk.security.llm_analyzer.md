@@ -27,7 +27,7 @@ This method checks if the action has a security_risk attribute set by the LLM
 and returns it. The LLM may not always provide this attribute but it defaults to
 UNKNOWN if not explicitly set.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

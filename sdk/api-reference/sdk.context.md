@@ -51,7 +51,7 @@ This works by:
 - Matching skill triggers against the query
 - Returning formatted knowledge and triggered skill names if relevant skills were triggered
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -93,7 +93,7 @@ Match a trigger in the message.
 Returns the first trigger that matches the message, or None if no match.
 Only applies to KeywordTrigger and TaskTrigger types.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -121,7 +121,7 @@ Bases: `BaseModel`, [`ABC`](https://docs.python.org/3/library/abc.html#abc.ABC)
 
 Base class for all trigger types.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -133,7 +133,7 @@ Trigger for keyword-based skills.
 
 These skills are activated when specific keywords appear in the user’s query.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -149,7 +149,7 @@ Trigger for task-specific skills.
 
 These skills are activated for specific task types and can modify prompts.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
@@ -163,7 +163,7 @@ Bases: `BaseModel`
 
 Represents knowledge from a triggered skill.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

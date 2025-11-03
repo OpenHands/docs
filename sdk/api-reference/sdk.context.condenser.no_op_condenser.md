@@ -31,7 +31,7 @@ relevant per-condensation diagnostic information.
 * **Return type:**
   [View](https://github.com/OpenHands/software-agent-sdk/sdk.context.view.md#openhands.sdk.context.view.View) | [Condensation](https://github.com/OpenHands/software-agent-sdk/sdk.event.md#openhands.sdk.event.Condensation)
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

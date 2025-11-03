@@ -69,7 +69,7 @@ fresh values from callables to ensure comprehensive masking.
 **Returns:**
   Text with secret values replaced by ``<secret-hidden>``
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

@@ -119,7 +119,7 @@ Return True if the lock is currently held by any thread.
 
 Return True if the lock is currently held by the calling thread.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 

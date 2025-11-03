@@ -57,7 +57,7 @@ Check if this skill requires user input.
 
 Returns True if the content contains variables in the format ${variable_name}.
 
-#### model_config  : ClassVar[ConfigDict]*  = \{\}*
+#### model_config  : ClassVar[ConfigDict] = \{\}
 
 Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 
