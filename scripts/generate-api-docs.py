@@ -466,6 +466,10 @@ openhands.sdk.{module} module
             if line.startswith('#'):
                 line = self.clean_header(line)
                 
+                # Skip module headers that duplicate the title
+                if line.startswith('# ') and ' module' in line:
+                    continue
+                
             # Remove problematic patterns
             line = self.remove_problematic_patterns(line)
             
@@ -475,7 +479,7 @@ openhands.sdk.{module} module
         module_name = filename.replace('.md', '')
         frontmatter = f'''---
 title: {module_name}
-description: API reference for {module_name}
+description: API reference for {module_name} module
 ---
 
 '''
