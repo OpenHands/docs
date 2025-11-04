@@ -666,7 +666,8 @@ description: API reference for {module_name} module
         if '- ``:' in line and 'property ' in line:
             # Extract the property name and type from malformed entries like:
             # - ``: property service_to_llm : dict[str, [LLM](#openhands.sdk.llm.LLM)]
-            match = re.search(r'- ``: property (\w+) : (.+)', line)
+            # - ``: abstract property conversation_stats : ConversationStats
+            match = re.search(r'- ``: (?:abstract )?property (\w+) : (.+)', line)
             if match:
                 prop_name = match.group(1)
                 prop_type = match.group(2)
