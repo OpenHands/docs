@@ -238,9 +238,32 @@ rm -rf agent-sdk/
 
 ## Automation
 
+### GitHub Actions Workflow
+
+The repository includes an automated workflow (`.github/workflows/sync-docs-and-api.yml`) that:
+
+- **Runs daily at 2 AM UTC** to keep documentation current
+- **Can be triggered manually** with custom options
+- **Syncs both code blocks and API documentation** from the agent-sdk repository
+
+#### Manual Trigger Options
+
+You can manually trigger the workflow with these options:
+
+- **`agent_sdk_ref`**: Specify which branch/tag/commit to sync from (default: `main`)
+- **`sync_code_blocks`**: Enable/disable code block synchronization (default: `true`)
+- **`generate_api_docs`**: Enable/disable API documentation generation (default: `true`)
+
+#### Workflow Features
+
+- **Automatic dependency installation**: Installs Sphinx and required packages
+- **Conditional execution**: Skip code sync or API generation as needed
+- **Smart commit messages**: Describes exactly what was updated
+- **Error handling**: Fails gracefully with detailed error messages
+
 ### CI/CD Integration
 
-The script is designed to be idempotent and safe for CI/CD environments:
+For custom CI/CD setups, the script is designed to be idempotent and safe:
 
 ```yaml
 # Example GitHub Actions step
@@ -251,27 +274,27 @@ The script is designed to be idempotent and safe for CI/CD environments:
     python scripts/generate-api-docs.py --clean
 ```
 
-### Scheduled Updates
+### Manual Scheduled Updates
 
-You can set up scheduled updates to keep the API documentation current:
+If you prefer custom scheduling, you can set up your own workflow:
 
 ```yaml
-# Example cron job
+# Example custom workflow
 name: Update API Docs
 on:
   schedule:
-    - cron: '0 2 * * *'  # Daily at 2 AM
+    - cron: '0 6 * * 1'  # Weekly on Monday at 6 AM
   workflow_dispatch:
 
 jobs:
   update-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
       - name: Install dependencies
         run: pip install sphinx sphinx-markdown-builder myst-parser
       - name: Generate documentation
@@ -282,7 +305,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add api-reference/
+          git add sdk/api-reference/
           git diff --staged --quiet || git commit -m "Update API documentation"
           git push
 ```

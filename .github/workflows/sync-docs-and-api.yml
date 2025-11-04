@@ -1,0 +1,115 @@
+name: Sync Documentation and API Reference
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC to catch any changes
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      agent_sdk_ref:
+        description: 'Agent SDK branch/tag/commit to sync from'
+        required: false
+        default: 'main'
+      sync_code_blocks:
+        description: 'Sync code blocks from examples'
+        required: false
+        default: 'true'
+        type: boolean
+      generate_api_docs:
+        description: 'Generate API reference documentation'
+        required: false
+        default: 'true'
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-documentation:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - name: Checkout docs repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout agent-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: OpenHands/software-agent-sdk
+          path: agent-sdk
+          ref: ${{ github.event.inputs.agent_sdk_ref || 'main' }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install sphinx sphinx-markdown-builder myst-parser
+
+      - name: Sync code blocks
+        if: ${{ github.event.inputs.sync_code_blocks != 'false' }}
+        env:
+          AGENT_SDK_PATH: ${{ github.workspace }}/agent-sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Syncing code blocks from agent-sdk examples..."
+          python .github/scripts/sync_code_blocks.py
+
+      - name: Generate API documentation
+        if: ${{ github.event.inputs.generate_api_docs != 'false' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Generating API reference documentation..."
+          cd ${{ github.workspace }}
+          python scripts/generate-api-docs.py
+
+      - name: Check for changes
+        id: detect_changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+            echo "Changes detected:"
+            git status --porcelain
+          else
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+            echo "No changes detected"
+          fi
+
+      - name: Commit and push changes
+        if: steps.detect_changes.outputs.changes == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          
+          # Create commit message based on what was updated
+          COMMIT_MSG="docs: sync documentation from agent-sdk"
+          if [[ "${{ github.event.inputs.sync_code_blocks }}" != "false" ]]; then
+            COMMIT_MSG="$COMMIT_MSG
+
+          - Synced code blocks from examples"
+          fi
+          if [[ "${{ github.event.inputs.generate_api_docs }}" != "false" ]]; then
+            COMMIT_MSG="$COMMIT_MSG
+
+          - Generated API reference documentation"
+          fi
+          COMMIT_MSG="$COMMIT_MSG
+
+          Synced from agent-sdk ref: ${{ github.event.inputs.agent_sdk_ref || 'main' }}"
+          
+          git commit -m "$COMMIT_MSG"
+          git push
