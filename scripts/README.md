@@ -39,8 +39,6 @@ pip install sphinx sphinx-markdown-builder myst-parser
 ### System Requirements
 
 - Python 3.8+
-- Git (for cloning the SDK repository)
-- Internet connection (for cloning/updating the SDK repo)
 
 ## Usage
 
