@@ -4,61 +4,172 @@ description: Customize conversation visualization with custom highlighting patte
 ---
 
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/20_custom_visualizer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/20_custom_visualizer.py)
+This example is available on GitHub: [examples/01_standalone_sdk/26_custom_visualizer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/26_custom_visualizer.py)
 </Note>
 
-Customize how your agent's conversation is displayed by passing a custom `ConversationVisualizer` instance directly to the `visualize` parameter:
+Customize how your agent's conversation is displayed by passing a custom `ConversationVisualizer` instance directly to the `visualize` parameter.
 
-```python icon="python" expandable examples/01_standalone_sdk/20_custom_visualizer.py
-"""Example demonstrating custom visualizer usage.
+The example below shows a comprehensive custom visualizer that subclasses `ConversationVisualizer` to create a minimal progress tracker. For simpler use cases, you can also configure the built-in `ConversationVisualizer` with custom highlighting patterns (see [Creating a Custom Visualizer](#creating-a-custom-visualizer) below).
 
-This example shows how to pass a custom ConversationVisualizer directly
-to the Conversation, making it easy to customize the visualization without
-the need for callbacks.
+```python icon="python" expandable examples/01_standalone_sdk/26_custom_visualizer.py
+"""Custom Visualizer Example
+
+This example demonstrates how to create and use a custom visualizer by subclassing
+ConversationVisualizer. This approach provides:
+- Clean, testable code with class-based state management
+- Direct configuration (just pass the visualizer instance to visualize parameter)
+- Reusable visualizer that can be shared across conversations
+- Better separation of concerns compared to callback functions
+
+The MinimalProgressVisualizer produces concise output showing:
+- LLM call completions
+- Tool execution steps with command/path details
+- Agent thinking indicators
+- Error messages
+
+This demonstrates the new API improvement where you can pass a ConversationVisualizer
+instance directly to the visualize parameter instead of using callbacks.
 """
 
+import logging
 import os
 
 from pydantic import SecretStr
 
-from openhands.sdk import LLM, Agent, Conversation
+from openhands.sdk import LLM, Conversation
 from openhands.sdk.conversation.visualizer import ConversationVisualizer
+from openhands.sdk.event import (
+    ActionEvent,
+    AgentErrorEvent,
+    MessageEvent,
+    ObservationEvent,
+)
+from openhands.tools.preset.default import get_default_agent
+
+
+class MinimalProgressVisualizer(ConversationVisualizer):
+    """A minimal progress visualizer that shows step counts and tool names.
+
+    This visualizer produces concise output showing:
+    - LLM call completions
+    - Tool execution steps with command/path details
+    - Agent thinking indicators
+    - Error messages
+
+    Example output:
+        🤖 LLM call completed
+        Step 1: Executing str_replace_editor (view: .../FACTS.txt)... ✓
+        💭 Agent thinking...
+        🤖 LLM call completed
+        Step 2: Executing str_replace_editor (str_replace: .../FACTS.txt)... ✓
+        ❌ Error: File not found
+    """
+
+    def __init__(self, **kwargs):
+        """Initialize the minimal progress visualizer.
+
+        Args:
+            **kwargs: Additional arguments passed to ConversationVisualizer.
+                     Note: We override visualization, so most ConversationVisualizer
+                     parameters are ignored, but we keep the signature for
+                     compatibility.
+        """
+        # Initialize parent but we'll override on_event
+        # We don't need the console/panels from the parent
+        super().__init__(**kwargs)
+
+        # Track state for our custom visualization
+        self.step_count = 0
+        self.current_action = None
+        self.logger = logging.getLogger(__name__)
+
+    def on_event(self, event):
+        """Handle conversation events with minimal progress display."""
+        try:
+            if isinstance(event, MessageEvent):
+                if event.source == "agent":
+                    print("🤖 LLM call completed")
+                elif event.source == "user":
+                    print(f"👤 User: {event.content}")
+
+            elif isinstance(event, ActionEvent):
+                self.step_count += 1
+                action_name = event.action.__class__.__name__
+
+                # Extract useful details from common actions
+                details = ""
+                if hasattr(event.action, "command"):
+                    details = f"command: {event.action.command[:50]}..."
+                elif hasattr(event.action, "path"):
+                    path = event.action.path
+                    if hasattr(event.action, "command"):
+                        details = f"{event.action.command}: {path}"
+                    else:
+                        details = f"path: {path}"
+
+                if details:
+                    print(f"Step {self.step_count}: Executing {action_name} ({details})...", end=" ", flush=True)
+                else:
+                    print(f"Step {self.step_count}: Executing {action_name}...", end=" ", flush=True)
+
+                self.current_action = action_name
+
+            elif isinstance(event, ObservationEvent):
+                if self.current_action:
+                    # Simple success/error indication
+                    if hasattr(event.observation, "error") and event.observation.error:
+                        print("❌")
+                        print(f"❌ Error: {event.observation.error}")
+                    else:
+                        print("✓")
+                    self.current_action = None
+                else:
+                    print("💭 Agent thinking...")
+
+            elif isinstance(event, AgentErrorEvent):
+                print(f"❌ Agent Error: {event.message}")
+
+        except Exception as e:
+            # Fallback to prevent visualization errors from breaking the conversation
+            self.logger.warning(f"Visualization error: {e}")
 
 
 def main():
+    """Demonstrate the custom visualizer with a simple task."""
     # Get API key from environment
     api_key = os.environ.get("LLM_API_KEY")
     if not api_key:
         raise ValueError("LLM_API_KEY environment variable is not set")
 
-    # Create LLM and Agent
+    # Create LLM and Agent with default tools
     llm = LLM(model="gpt-4o-mini", api_key=SecretStr(api_key))
-    agent = Agent(llm=llm, tools=[])
+    agent = get_default_agent(llm=llm)
 
-    # Create a custom visualizer with specific highlighting
-    custom_visualizer = ConversationVisualizer(
-        highlight_regex={
-            r"^Reasoning:": "bold cyan",
-            r"^Thought:": "bold green",
-            r"^Action:": "bold yellow",
-        },
-        skip_user_messages=False,  # Show user messages
-    )
+    # Create our custom visualizer
+    custom_visualizer = MinimalProgressVisualizer()
 
-    # Pass the custom visualizer directly to the conversation
-    # This is more intuitive than visualize=False + callbacks=[...]
+    print("🚀 Starting conversation with custom visualizer...")
+    print("=" * 60)
+
+    # NEW API: Pass the visualizer instance directly!
+    # This is much cleaner than: visualize=False, callbacks=[custom_visualizer.on_event]
     conversation = Conversation(
         agent=agent,
         workspace="./workspace",
-        visualize=custom_visualizer,  # Direct and clear!
+        visualize=custom_visualizer,  # Direct and intuitive!
     )
 
     # Send a message and run
-    conversation.send_message("What is 2 + 2?")
+    conversation.send_message(
+        "Create a file called FACTS.txt with 3 interesting facts about Python programming."
+    )
     conversation.run()
 
-    print("\n✅ Example completed!")
-    print("The conversation used a custom visualizer with custom highlighting.")
+    print("=" * 60)
+    print("✅ Example completed!")
+    print(f"📊 Total steps executed: {custom_visualizer.step_count}")
+    print("\nThe conversation used our custom MinimalProgressVisualizer!")
+    print("Compare this to the default visualizer to see the difference.")
 
 
 if __name__ == "__main__":
@@ -68,24 +179,54 @@ if __name__ == "__main__":
 ```bash Running the Example
 export LLM_API_KEY="your-api-key"
 cd agent-sdk
-uv run python examples/01_standalone_sdk/20_custom_visualizer.py
+uv run python examples/01_standalone_sdk/26_custom_visualizer.py
 ```
 
 ## Creating a Custom Visualizer
 
-Configure a `ConversationVisualizer` with custom highlighting patterns:
+There are two approaches to creating custom visualizers:
+
+### 1. Simple Configuration (Built-in Visualizer)
+
+For basic customization, configure the built-in `ConversationVisualizer` with custom highlighting patterns:
 
 ```python
 from openhands.sdk.conversation.visualizer import ConversationVisualizer
 
+# Simple approach: configure the built-in visualizer
 custom_visualizer = ConversationVisualizer(
     highlight_regex={
         r"^Reasoning:": "bold cyan",
-        r"^Thought:": "bold green",
+        r"^Thought:": "bold green", 
         r"^Action:": "bold yellow",
     },
     skip_user_messages=False,  # Show user messages
 )
+```
+
+### 2. Custom Subclass (Full Control)
+
+For complete control over visualization logic, subclass `ConversationVisualizer`:
+
+```python
+from openhands.sdk.conversation.visualizer import ConversationVisualizer
+from openhands.sdk.event import ActionEvent, MessageEvent
+
+class MinimalProgressVisualizer(ConversationVisualizer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.step_count = 0
+    
+    def on_event(self, event):
+        if isinstance(event, MessageEvent) and event.source == "agent":
+            print("🤖 LLM call completed")
+        elif isinstance(event, ActionEvent):
+            self.step_count += 1
+            action_name = event.action.__class__.__name__
+            print(f"Step {self.step_count}: Executing {action_name}...")
+
+# Use your custom visualizer
+custom_visualizer = MinimalProgressVisualizer()
 ```
 
 ### Visualization Options
