@@ -558,11 +558,7 @@ description: API reference for {module_name}
         if '{' in line and '}' in line:
             line = re.sub(r'\{[^}]*\}', '(configuration object)', line)
         
-        # Fix internal links - remove file extensions for Mintlify
-        line = re.sub(r'openhands\.sdk\.([^)]+)\.md\)', r'openhands.sdk.\1)', line)
-        line = re.sub(r'openhands\.sdk\.([^)]+)\.mdx\)', r'openhands.sdk.\1)', line)
-        
-        # Create mapping from class names to their module files
+        # Note: All cross-reference link conversion logic removed - we now just strip links entirely
         class_to_module = {
             'Agent': 'agent',
             'AgentBase': 'agent', 
@@ -651,6 +647,10 @@ description: API reference for {module_name}
         
         # Remove Python console prompt prefixes from examples
         line = re.sub(r'^>`>`>` ', '', line)
+        
+        # Remove all cross-reference links - just keep the class names as plain text
+        # Pattern: [ClassName](openhands.sdk.module#class-classname) -> ClassName
+        line = re.sub(r'\[([^\]]+)\]\(openhands\.sdk\.[^)]+\)', r'\1', line)
 
         # Clean up malformed property entries with empty names
         if '- ``:' in line and 'property ' in line:
