@@ -673,6 +673,18 @@ description: API reference for {module_name} module
                 prop_type = match.group(2)
                 line = f'- `{prop_name}`: {prop_type}'
         
+        # Format parameter names in backticks for parameter lists
+        # Pattern: "  parameter_name – Description" -> "  `parameter_name` – Description"
+        if line.strip().startswith('* ') or (line.startswith('  ') and ' – ' in line):
+            # This looks like a parameter line in a parameter list
+            # Match pattern: "  * parameter_name – description" or "  parameter_name – description"
+            param_match = re.match(r'^(\s*\*?\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*–\s*(.+)$', line)
+            if param_match:
+                indent = param_match.group(1)
+                param_name = param_match.group(2)
+                description = param_match.group(3)
+                line = f'{indent}`{param_name}` – {description}'
+        
         return line
         
     def update_navigation(self):
