@@ -89,15 +89,15 @@ The script generates the following:
 ### Generated Documentation
 
 - **`sdk/api-reference/`**: Directory containing all generated API documentation
-  - `openhands.sdk.md`: Main SDK module documentation
-  - `openhands.sdk.agent.md`: Agent system documentation
-  - `openhands.sdk.conversation.md`: Conversation management documentation
-  - `openhands.sdk.event.md`: Event system documentation
-  - `openhands.sdk.llm.md`: LLM integration documentation
-  - `openhands.sdk.security.md`: Security features documentation
-  - `openhands.sdk.tool.md`: Tool system documentation
-  - `openhands.sdk.utils.md`: Utilities documentation
-  - `openhands.sdk.workspace.md`: Workspace management documentation
+  - `openhands.sdk.mdx`: Main SDK module documentation
+  - `openhands.sdk.agent.mdx`: Agent system documentation
+  - `openhands.sdk.conversation.mdx`: Conversation management documentation
+  - `openhands.sdk.event.mdx`: Event system documentation
+  - `openhands.sdk.llm.mdx`: LLM integration documentation
+  - `openhands.sdk.security.mdx`: Security features documentation
+  - `openhands.sdk.tool.mdx`: Tool system documentation
+  - `openhands.sdk.utils.mdx`: Utilities documentation
+  - `openhands.sdk.workspace.mdx`: Workspace management documentation
 
 ### Configuration Files
 
