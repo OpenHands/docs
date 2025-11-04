@@ -521,8 +521,14 @@ description: API reference for {module_name}
         line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)  # Remove bold
         line = re.sub(r'\*([^*]+)\*', r'\1', line)      # Remove emphasis
         
-        # Fix HTML-like tags
-        line = line.replace('<', '`<').replace('>', '>`')
+        # Fix HTML-like tags (only actual HTML tags, not all < > characters)
+        # Only replace if it looks like an HTML tag: <tagname> or </tagname>
+        line = re.sub(r'<(/?\w+[^>]*)>', r'`<\1>`', line)
+        
+        # Fix Sphinx-generated blockquote markers that should be list continuations
+        if line.startswith('> ') and not line.startswith('> **'):
+            # This is likely a continuation of a bullet point, not a blockquote
+            line = '  ' + line[2:]  # Replace '> ' with proper indentation
         
         # Remove escaped characters that cause issues
         line = line.replace('\\*', '*')
