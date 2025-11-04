@@ -7,9 +7,9 @@ description: Customize conversation visualization with custom highlighting patte
 This example is available on GitHub: [examples/01_standalone_sdk/26_custom_visualizer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/26_custom_visualizer.py)
 </Note>
 
-Customize how your agent's conversation is displayed by passing a custom `ConversationVisualizer` instance directly to the `visualize` parameter.
+Learn how to create effective custom visualizers by understanding the event system and implementing your own visualization logic. This guide teaches you to build visualizers that range from simple highlighting to complete custom interfaces.
 
-The example below shows a comprehensive custom visualizer that subclasses `ConversationVisualizer` to create a minimal progress tracker. For simpler use cases, you can also configure the built-in `ConversationVisualizer` with custom highlighting patterns (see [Creating a Custom Visualizer](#creating-a-custom-visualizer) below).
+The comprehensive example below demonstrates a production-ready custom visualizer that tracks conversation progress with minimal output. We'll break down the key concepts and best practices used in this implementation.
 
 ```python icon="python" expandable examples/01_standalone_sdk/26_custom_visualizer.py
 """Custom Visualizer Example
@@ -182,147 +182,311 @@ cd agent-sdk
 uv run python examples/01_standalone_sdk/26_custom_visualizer.py
 ```
 
-## Creating a Custom Visualizer
+## Understanding Custom Visualizers
 
-There are two approaches to creating custom visualizers:
+Custom visualizers give you complete control over how conversation events are displayed. There are two main approaches, each suited for different needs.
 
-### 1. Simple Configuration (Built-in Visualizer)
+### Approach 1: Configure the Built-in Visualizer
 
-For basic customization, configure the built-in `ConversationVisualizer` with custom highlighting patterns:
+The built-in `ConversationVisualizer` uses Rich panels and provides extensive customization through configuration:
 
 ```python
 from openhands.sdk.conversation.visualizer import ConversationVisualizer
 
-# Simple approach: configure the built-in visualizer
+# Configure highlighting patterns using regex
 custom_visualizer = ConversationVisualizer(
     highlight_regex={
-        r"^Reasoning:": "bold cyan",
-        r"^Thought:": "bold green", 
-        r"^Action:": "bold yellow",
+        r"^Reasoning:": "bold cyan",      # Lines starting with "Reasoning:"
+        r"^Thought:": "bold green",       # Lines starting with "Thought:"
+        r"^Action:": "bold yellow",       # Lines starting with "Action:"
+        r"\[ERROR\]": "bold red",         # Error markers anywhere
+        r"\*\*(.*?)\*\*": "bold",         # Markdown bold **text**
     },
-    skip_user_messages=False,  # Show user messages
+    skip_user_messages=False,             # Show user messages
+    name_for_visualization="MyAgent",     # Prefix panel titles
 )
 ```
 
-### 2. Custom Subclass (Full Control)
+**When to use**: Perfect for customizing colors and highlighting without changing the overall panel-based layout.
 
-For complete control over visualization logic, subclass `ConversationVisualizer`:
+### Approach 2: Subclass for Complete Control
+
+For entirely different visualization approaches, subclass `ConversationVisualizer` and override the `on_event` method:
 
 ```python
 from openhands.sdk.conversation.visualizer import ConversationVisualizer
-from openhands.sdk.event import ActionEvent, MessageEvent
+from openhands.sdk.event import ActionEvent, MessageEvent, ObservationEvent, AgentErrorEvent
 
 class MinimalProgressVisualizer(ConversationVisualizer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.step_count = 0
+        self.pending_action = False
     
     def on_event(self, event):
-        if isinstance(event, MessageEvent) and event.source == "agent":
-            print("🤖 LLM call completed")
-        elif isinstance(event, ActionEvent):
+        if isinstance(event, ActionEvent):
             self.step_count += 1
-            action_name = event.action.__class__.__name__
-            print(f"Step {self.step_count}: Executing {action_name}...")
+            tool_name = event.tool_name or "unknown"
+            print(f"Step {self.step_count}: Executing {tool_name}...", end="", flush=True)
+            self.pending_action = True
+            
+        elif isinstance(event, ObservationEvent):
+            if self.pending_action:
+                print(" ✓")
+                self.pending_action = False
+                
+        elif isinstance(event, AgentErrorEvent):
+            print(f"❌ Error: {event.error}")
+```
 
-# Use your custom visualizer
+**When to use**: When you need completely different output format, custom state tracking, or integration with external systems.
+
+## Key Event Types
+
+Understanding the event system is crucial for effective custom visualizers:
+
+### ActionEvent
+Fired when the agent decides to use a tool or take an action.
+
+```python
+def handle_action(self, event: ActionEvent):
+    # Access tool information
+    tool_name = event.tool_name  # e.g., "str_replace_editor"
+    action = event.action        # The actual action object
+    
+    # Track LLM calls
+    if event.llm_response_id:
+        print(f"🤖 LLM call {event.llm_response_id}")
+    
+    # Extract action details
+    if hasattr(action, 'command'):
+        print(f"Command: {action.command}")
+    if hasattr(action, 'path'):
+        print(f"File: {action.path}")
+```
+
+### ObservationEvent
+Fired when a tool execution completes and returns results.
+
+```python
+def handle_observation(self, event: ObservationEvent):
+    # Check for errors
+    if hasattr(event.observation, 'error') and event.observation.error:
+        print(f"❌ Tool failed: {event.observation.error}")
+    else:
+        print("✅ Tool completed successfully")
+    
+    # Access results
+    if hasattr(event.observation, 'content'):
+        content = event.observation.content
+        print(f"Result: {content[:100]}...")  # Show first 100 chars
+```
+
+### MessageEvent
+Fired for LLM messages (both user input and agent responses).
+
+```python
+def handle_message(self, event: MessageEvent):
+    if event.source == "user":
+        print(f"👤 User: {event.content}")
+    elif event.source == "agent":
+        print(f"🤖 Agent: {event.content}")
+    
+    # Track LLM response IDs to avoid duplicates
+    if event.llm_response_id:
+        self.seen_responses.add(event.llm_response_id)
+```
+
+### AgentErrorEvent
+Fired when the agent encounters an error.
+
+```python
+def handle_error(self, event: AgentErrorEvent):
+    print(f"🚨 Agent Error: {event.error}")
+    # Optionally log to external systems
+    self.logger.error(f"Agent failed: {event.error}")
+```
+
+## Best Practices
+
+### 1. State Management
+Track conversation state to provide meaningful progress indicators:
+
+```python
+class StatefulVisualizer(ConversationVisualizer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.step_count = 0
+        self.pending_action = False
+        self.seen_llm_responses = set()
+        self.start_time = time.time()
+    
+    def on_event(self, event):
+        # Use state to provide context
+        elapsed = time.time() - self.start_time
+        print(f"[{elapsed:.1f}s] ", end="")
+        # ... handle event
+```
+
+### 2. Error Handling
+Always include error handling to prevent visualization issues from breaking conversations:
+
+```python
+def on_event(self, event):
+    try:
+        # Your visualization logic
+        self._handle_event(event)
+    except Exception as e:
+        # Fallback to prevent breaking the conversation
+        print(f"Visualization error: {e}")
+        # Optionally log for debugging
+        logging.warning(f"Visualizer failed: {e}")
+```
+
+### 3. Performance Considerations
+For high-frequency events, optimize your visualization:
+
+```python
+def on_event(self, event):
+    # Skip verbose events if needed
+    if isinstance(event, SomeVerboseEvent) and not self.verbose_mode:
+        return
+    
+    # Batch updates for better performance
+    if self.should_batch_updates():
+        self.pending_updates.append(event)
+        return
+    
+    self._render_event(event)
+```
+
+### 4. Flexible Output
+Design visualizers that work in different environments:
+
+```python
+class AdaptiveVisualizer(ConversationVisualizer):
+    def __init__(self, output_format="console", **kwargs):
+        super().__init__(**kwargs)
+        self.output_format = output_format
+        
+        if output_format == "json":
+            self.output_handler = self._json_output
+        elif output_format == "markdown":
+            self.output_handler = self._markdown_output
+        else:
+            self.output_handler = self._console_output
+    
+    def on_event(self, event):
+        self.output_handler(event)
+```
+
+### 5. Integration with External Systems
+Custom visualizers can integrate with logging, monitoring, or notification systems:
+
+```python
+class IntegratedVisualizer(ConversationVisualizer):
+    def __init__(self, webhook_url=None, **kwargs):
+        super().__init__(**kwargs)
+        self.webhook_url = webhook_url
+        self.metrics = {"actions": 0, "errors": 0}
+    
+    def on_event(self, event):
+        # Update metrics
+        if isinstance(event, ActionEvent):
+            self.metrics["actions"] += 1
+        elif isinstance(event, AgentErrorEvent):
+            self.metrics["errors"] += 1
+            
+        # Send to external system
+        if self.webhook_url and isinstance(event, AgentErrorEvent):
+            self._send_alert(event)
+    
+    def _send_alert(self, event):
+        # Send webhook notification for errors
+        payload = {"error": event.error, "timestamp": time.time()}
+        requests.post(self.webhook_url, json=payload)
+```
+
+## Using Your Custom Visualizer
+
+### Direct Assignment (Recommended)
+
+Pass your visualizer instance directly to the `visualize` parameter:
+
+```python
+# Create your custom visualizer
 custom_visualizer = MinimalProgressVisualizer()
+
+# Use it directly - clean and intuitive
+conversation = Conversation(
+    agent=agent,
+    workspace="./workspace",
+    visualize=custom_visualizer,  # Direct assignment
+)
 ```
 
 ### Visualization Options
 
 The `visualize` parameter accepts three types:
 
-- **`True`** (default): Use the default visualizer with standard formatting
-- **`False` or `None`**: Disable visualization entirely
+- **`True`** (default): Use the default Rich panel visualizer
+- **`False` or `None`**: Disable visualization entirely  
 - **`ConversationVisualizer` instance**: Use your custom visualizer
 
-### Before and After
+### Combining with Additional Callbacks
 
-**Previous approach** (confusing):
+Custom visualizers work alongside other event callbacks:
+
 ```python
-# Had to set visualize=False and pass callback manually
+def metrics_callback(event):
+    # Track metrics separately from visualization
+    if isinstance(event, ActionEvent):
+        metrics.increment("actions_taken")
+
 conversation = Conversation(
     agent=agent,
-    workspace=cwd,
-    visualize=False,  # Confusing: we DO want visualization!
-    callbacks=[custom_visualizer.on_event],
+    workspace="./workspace", 
+    visualize=custom_visualizer,      # Handle visualization
+    callbacks=[metrics_callback],     # Handle other concerns
 )
 ```
 
-**New approach** (clear and direct):
-```python
-# Pass the visualizer directly
-conversation = Conversation(
-    agent=agent,
-    workspace=cwd,
-    visualize=custom_visualizer,  # Direct and clear!
-)
-```
+## Built-in Visualizer Reference
 
-## Customization Options
+### Default Highlighting Patterns
 
-### Highlight Patterns
-
-Use regex patterns to highlight specific content:
+The built-in visualizer includes these default patterns:
 
 ```python
-highlight_regex={
-    r"^Reasoning:": "bold cyan",      # Lines starting with "Reasoning:"
-    r"^Thought:": "bold green",       # Lines starting with "Thought:"
-    r"^Action:": "bold yellow",       # Lines starting with "Action:"
-    r"\[ERROR\]": "bold red",         # Error markers
-    r"\[SUCCESS\]": "bold green",     # Success markers
+DEFAULT_HIGHLIGHT_REGEX = {
+    r"^Reasoning:": "bold bright_black",
+    r"^Thought:": "bold bright_black", 
+    r"^Action:": "bold blue",
+    r"^Arguments:": "bold blue",
+    r"^Tool:": "bold yellow",
+    r"^Result:": "bold yellow",
+    r"^Rejection Reason:": "bold red",
+    r"\*\*(.*?)\*\*": "bold",          # Markdown bold
+    r"\*(.*?)\*": "italic",            # Markdown italic
 }
 ```
 
 ### Available Colors and Styles
 
-Colors: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`
+**Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `bright_black`, `bright_red`, etc.
 
-Styles: `bold`, `dim`, `italic`, `underline`
+**Styles**: `bold`, `dim`, `italic`, `underline`
 
-Combine them: `"bold cyan"`, `"underline red"`, `"bold italic green"`
+**Combinations**: `"bold cyan"`, `"underline red"`, `"bold italic green"`
 
-### Message Filtering
-
-Control which messages are displayed:
+### Configuration Options
 
 ```python
 ConversationVisualizer(
-    skip_user_messages=False,  # Show user messages (default: True)
-    skip_system_messages=False, # Show system messages (default: False)
-)
-```
-
-## Advanced Usage
-
-### Combining with Callbacks
-
-You can still use custom callbacks alongside a custom visualizer:
-
-```python
-def my_callback(event):
-    # Custom logging or processing
-    print(f"Event received: {event.event_type}")
-
-conversation = Conversation(
-    agent=agent,
-    workspace=cwd,
-    visualize=custom_visualizer,
-    callbacks=[my_callback],  # Additional callbacks
-)
-```
-
-### Disabling Visualization
-
-To disable visualization entirely:
-
-```python
-conversation = Conversation(
-    agent=agent,
-    workspace=cwd,
-    visualize=None,  # or False
+    highlight_regex=custom_patterns,      # Your highlighting rules
+    skip_user_messages=False,             # Show user input (default: False)
+    name_for_visualization="MyAgent",     # Prefix for panel titles
+    conversation_stats=stats_tracker,     # Show token/cost metrics
 )
 ```
 
