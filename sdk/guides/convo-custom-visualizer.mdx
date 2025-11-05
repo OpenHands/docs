@@ -1,0 +1,693 @@
+---
+title: Custom Visualizer
+description: Customize conversation visualization with custom highlighting patterns and display options.
+---
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/26_custom_visualizer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/26_custom_visualizer.py)
+</Note>
+
+Learn how to create effective custom visualizers by understanding the event system and implementing your own visualization logic. This guide teaches you to build visualizers that range from simple highlighting to complete custom interfaces.
+
+The comprehensive example below demonstrates a custom visualizer that tracks conversation progress with minimal output. We'll break down the key concepts and best practices used in this implementation.
+
+```python icon="python" expandable examples/01_standalone_sdk/26_custom_visualizer.py
+"""Custom Visualizer Example
+
+This example demonstrates how to create and use a custom visualizer by subclassing
+ConversationVisualizer. This approach provides:
+- Clean, testable code with class-based state management
+- Direct configuration (just pass the visualizer instance to visualizer parameter)
+- Reusable visualizer that can be shared across conversations
+- Better separation of concerns compared to callback functions
+
+The MinimalProgressVisualizer produces concise output showing:
+- LLM call completions
+- Tool execution steps with command/path details
+- Agent thinking indicators
+- Error messages
+
+This demonstrates how you can pass a ConversationVisualizer instance directly 
+to the visualizer parameter for clean, reusable visualization logic.
+"""
+
+import logging
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation
+from openhands.sdk.conversation.visualizer import ConversationVisualizer
+from openhands.sdk.event import (
+    ActionEvent,
+    AgentErrorEvent,
+    MessageEvent,
+    ObservationEvent,
+)
+from openhands.tools.preset.default import get_default_agent
+
+
+class MinimalProgressVisualizer(ConversationVisualizer):
+    """A minimal progress visualizer that shows step counts and tool names.
+
+    This visualizer produces concise output showing:
+    - LLM call completions
+    - Tool execution steps with command/path details
+    - Agent thinking indicators
+    - Error messages
+
+    Example output:
+        🤖 LLM call completed
+        Step 1: Executing str_replace_editor (view: .../FACTS.txt)... ✓
+        💭 Agent thinking...
+        🤖 LLM call completed
+        Step 2: Executing str_replace_editor (str_replace: .../FACTS.txt)... ✓
+        ❌ Error: File not found
+    """
+
+    def __init__(self, **kwargs):
+        """Initialize the minimal progress visualizer.
+
+        Args:
+            **kwargs: Additional arguments passed to ConversationVisualizer.
+                     Note: We override visualization, so most ConversationVisualizer
+                     parameters are ignored, but we keep the signature for
+                     compatibility.
+        """
+        # Initialize parent but we'll override on_event
+        # We don't need the console/panels from the parent
+        super().__init__(**kwargs)
+
+        # Track state for minimal progress output
+        self._step_count = 0
+        self._pending_action = False
+        self._seen_llm_response_ids: set[str] = set()
+
+    def on_event(self, event) -> None:
+        """Handle events and produce minimal progress output."""
+        if isinstance(event, ActionEvent):
+            self._handle_action_event(event)
+        elif isinstance(event, ObservationEvent):
+            self._handle_observation_event()
+        elif isinstance(event, AgentErrorEvent):
+            self._handle_error_event(event)
+        elif isinstance(event, MessageEvent):
+            self._handle_message_event(event)
+
+    def _handle_action_event(self, event: ActionEvent) -> None:
+        """Handle ActionEvent - track LLM calls and show tool execution."""
+        # Track LLM calls by monitoring new llm_response_id values
+        if (
+            event.llm_response_id
+            and event.llm_response_id not in self._seen_llm_response_ids
+        ):
+            self._seen_llm_response_ids.add(event.llm_response_id)
+            # This is a new LLM call - show it completed
+            if not self._pending_action:
+                print("🤖 LLM call completed", flush=True)
+
+        # If previous action hasn't completed, complete it first
+        if self._pending_action:
+            print(" ✓", flush=True)
+
+        self._step_count += 1
+        tool_name = event.tool_name if event.tool_name else "unknown"
+
+        # Extract command/action details if available
+        action_details = ""
+        if event.action:
+            action_dict = (
+                event.action.model_dump() if hasattr(event.action, "model_dump") else {}
+            )
+            if "command" in action_dict:
+                command = action_dict["command"]
+                # Show file path if available (for file operations)
+                path = action_dict.get("path", "")
+                if path:
+                    # Truncate long paths
+                    if len(path) > 40:
+                        path = "..." + path[-37:]
+                    action_details = f" ({command}: {path})"
+                else:
+                    action_details = f" ({command})"
+
+        # Show step number and tool being executed on its own line
+        print(
+            f"Step {self._step_count}: Executing {tool_name}{action_details}...",
+            end="",
+            flush=True,
+        )
+        self._pending_action = True
+
+    def _handle_observation_event(self) -> None:
+        """Handle ObservationEvent - show completion indicator."""
+        if self._pending_action:
+            print(" ✓", flush=True)
+            self._pending_action = False
+
+    def _handle_error_event(self, event: AgentErrorEvent) -> None:
+        """Handle AgentErrorEvent - show errors."""
+        if self._pending_action:
+            print(" ✗", flush=True)  # Mark previous action as failed
+            self._pending_action = False
+
+        error_msg = event.error
+        # Truncate long error messages
+        error_preview = error_msg[:100] + "..." if len(error_msg) > 100 else error_msg
+        print(f"⚠️  Error: {error_preview}", flush=True)
+
+    def _handle_message_event(self, event: MessageEvent) -> None:
+        """Handle MessageEvent - track LLM calls and show thinking indicators."""
+        # Track LLM calls from MessageEvent (agent messages without tool calls)
+        if (
+            event.source == "agent"
+            and event.llm_response_id
+            and event.llm_response_id not in self._seen_llm_response_ids
+        ):
+            self._seen_llm_response_ids.add(event.llm_response_id)
+            # This is a new LLM call - show it completed
+            if not self._pending_action:
+                print("🤖 LLM call completed", flush=True)
+
+        # Show when agent is "thinking" (making LLM calls between actions)
+        if event.source == "agent" and event.llm_message.role == "assistant":
+            # Agent is thinking/planning - show a thinking indicator
+            if not self._pending_action:
+                # Only show if we haven't already shown the LLM call completion
+                if (
+                    not event.llm_response_id
+                    or event.llm_response_id in self._seen_llm_response_ids
+                ):
+                    print("💭 Agent thinking...", flush=True)
+
+
+def main():
+    # ============================================================================
+    # Configure LLM and Agent
+    # ============================================================================
+    # You can get an API key from https://app.all-hands.dev/settings/api-keys
+    api_key = os.getenv("LLM_API_KEY")
+    assert api_key is not None, "LLM_API_KEY environment variable is not set."
+    model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+    base_url = os.getenv("LLM_BASE_URL")
+    llm = LLM(
+        model=model,
+        api_key=SecretStr(api_key),
+        base_url=base_url,
+        usage_id="agent",
+    )
+    agent = get_default_agent(llm=llm, cli_mode=True)
+
+    # ============================================================================
+    # Configure Visualization
+    # ============================================================================
+    # Set logging level to reduce verbosity
+    logging.getLogger().setLevel(logging.WARNING)
+
+    # Create custom visualizer instance
+    minimal_visualizer = MinimalProgressVisualizer()
+
+    # Start a conversation with custom visualizer
+    cwd = os.getcwd()
+    conversation = Conversation(
+        agent=agent,
+        workspace=cwd,
+        visualizer=minimal_visualizer,
+    )
+
+    # Send a message and let the agent run
+    print("Sending task to agent...")
+    conversation.send_message("Write 3 facts about the current project into FACTS.txt.")
+    conversation.run()
+    print("Task completed!")
+
+    # Report cost
+    cost = llm.metrics.accumulated_cost
+    print(f"EXAMPLE_COST: ${cost:.4f}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/26_custom_visualizer.py
+```
+
+## Understanding Custom Visualizers
+
+Custom visualizers give you complete control over how conversation events are displayed. There are two main approaches, each suited for different needs.
+
+### Approach 1: Configure the Built-in Visualizer
+
+The built-in `ConversationVisualizer` uses Rich panels and provides extensive customization through configuration:
+
+```python
+from openhands.sdk.conversation.visualizer import ConversationVisualizer
+
+# Configure highlighting patterns using regex
+custom_visualizer = ConversationVisualizer(
+    highlight_regex={
+        r"^Reasoning:": "bold cyan",      # Lines starting with "Reasoning:"
+        r"^Thought:": "bold green",       # Lines starting with "Thought:"
+        r"^Action:": "bold yellow",       # Lines starting with "Action:"
+        r"\[ERROR\]": "bold red",         # Error markers anywhere
+        r"\*\*(.*?)\*\*": "bold",         # Markdown bold **text**
+    },
+    skip_user_messages=False,             # Show user messages
+    name_for_visualization="MyAgent",     # Prefix panel titles
+)
+```
+
+**When to use**: Perfect for customizing colors and highlighting without changing the overall panel-based layout.
+
+### Approach 2: Subclass for Complete Control
+
+For entirely different visualization approaches, subclass `ConversationVisualizer` and override the `on_event` method:
+
+```python
+from openhands.sdk.conversation.visualizer import ConversationVisualizer
+from openhands.sdk.event import ActionEvent, MessageEvent, ObservationEvent, AgentErrorEvent
+
+class MinimalProgressVisualizer(ConversationVisualizer):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.step_count = 0
+        self.pending_action = False
+    
+    def on_event(self, event):
+        if isinstance(event, ActionEvent):
+            self.step_count += 1
+            tool_name = event.tool_name or "unknown"
+            print(f"Step {self.step_count}: Executing {tool_name}...", end="", flush=True)
+            self.pending_action = True
+            
+        elif isinstance(event, ObservationEvent):
+            if self.pending_action:
+                print(" ✓")
+                self.pending_action = False
+                
+        elif isinstance(event, AgentErrorEvent):
+            print(f"❌ Error: {event.error}")
+```
+
+**When to use**: When you need completely different output format, custom state tracking, or integration with external systems.
+
+### Approach 3: Custom Object with on_event Method
+
+You can implement custom visualizers without subclassing by creating any object with an `on_event` method. The conversation system only requires that your visualizer has this method:
+
+```python
+from rich.console import Console
+from rich.panel import Panel
+from openhands.sdk.event import Event
+
+class CustomVisualizer:
+    """Custom visualizer without subclassing ConversationVisualizer."""
+    
+    def __init__(self):
+        self.event_count = 0
+        self.console = Console()
+    
+    def on_event(self, event: Event) -> None:
+        """Handle any event - this is the only required method."""
+        self.event_count += 1
+        
+        # Use the event's built-in visualize property
+        content = event.visualize
+        if content.plain.strip():
+            # Create custom panel styling
+            panel = Panel(
+                content,
+                title=f"[bold cyan]Event #{self.event_count}: {event.__class__.__name__}[/]",
+                border_style="cyan",
+                padding=(0, 1)
+            )
+            self.console.print(panel)
+
+# Use it directly
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    visualizer=CustomVisualizer()  # Pass your custom object
+)
+```
+
+**Key Requirements:**
+- Must have an `on_event(self, event: Event) -> None` method
+- Can be any Python object (class instance, function with state, etc.)
+- No inheritance required
+
+**When to use**: When you want maximum flexibility without inheriting from ConversationVisualizer, or when integrating with existing class hierarchies.
+
+## Key Event Types
+
+Understanding the event system is crucial for effective custom visualizers. Here's a comprehensive overview of all event types handled by the default visualizer:
+
+| Event Type | Description | Key Properties | When It Occurs |
+|------------|-------------|----------------|----------------|
+| `SystemPromptEvent` | System-level prompts and instructions | `content`, `source` | Agent initialization, system messages |
+| `ActionEvent` | Agent actions and tool calls | `action`, `tool_name`, `llm_response_id` | When agent decides to take an action |
+| `ObservationEvent` | Results from executed actions | `observation`, `source` | After action execution completes |
+| `MessageEvent` | LLM messages (user/assistant) | `llm_message` (role, content) | User input, agent responses |
+| `AgentErrorEvent` | Error conditions and failures | `error`, `source` | When agent encounters errors |
+| `PauseEvent` | User-initiated pauses | `source` | When user pauses conversation |
+| `Condensation` | Memory condensation events | `content`, `source` | During conversation memory management |
+
+### Detailed Event Descriptions
+
+### ActionEvent
+Fired when the agent decides to use a tool or take an action.
+
+**Key Properties:**
+- `thought`: Agent's reasoning before taking action (list of TextContent)
+- `action`: The actual tool action (None if non-executable)
+- `tool_name`: Name of the tool being called
+- `tool_call_id`: Unique identifier for the tool call
+- `security_risk`: LLM's assessment of action safety
+- `reasoning_content`: Intermediate reasoning from reasoning models
+
+**Default Rendering:** Blue panel titled "Agent Action" showing reasoning, thought process, and action details.
+
+```python
+def handle_action(self, event: ActionEvent):
+    # Access thought process
+    thought_text = " ".join([t.text for t in event.thought])
+    print(f"💭 Thought: {thought_text}")
+    
+    # Check if action is executable
+    if event.action:
+        print(f"🔧 Tool: {event.tool_name}")
+        print(f"⚡ Action: {event.action}")
+    else:
+        print(f"⚠️ Non-executable call: {event.tool_call.name}")
+```
+
+### ObservationEvent
+Contains the result of an executed action.
+
+**Key Properties:**
+- `observation`: The tool execution result (varies by tool)
+- `tool_name`: Name of the tool that was executed
+- `tool_call_id`: ID linking back to the original action
+- `action_id`: ID of the action this observation responds to
+
+**Default Rendering:** Yellow panel titled "Observation" showing tool name and execution results.
+
+```python
+def handle_observation(self, event: ObservationEvent):
+    print(f"🔧 Tool: {event.tool_name}")
+    print(f"🔗 Action ID: {event.action_id}")
+    
+    # Access the observation result
+    obs = event.observation
+    if hasattr(obs, 'error') and obs.error:
+        print(f"❌ Error: {obs.error}")
+    elif hasattr(obs, 'content'):
+        print(f"📄 Content: {obs.content[:100]}...")
+```
+
+### MessageEvent
+Represents messages between user and agent.
+
+**Key Properties:**
+- `llm_message`: The complete LLM message (role, content, tool_calls)
+- `source`: Whether from "user" or "agent"
+- `activated_skills`: List of skills activated for this message
+- `extended_content`: Additional content added by agent context
+
+**Default Rendering:** Gold panel for user messages, blue panel for agent messages, with role-specific titles.
+
+```python
+def handle_message(self, event: MessageEvent):
+    if event.llm_message:
+        role = event.llm_message.role
+        content = event.llm_message.content
+        
+        if role == "user":
+            print(f"👤 User: {content[0].text if content else ''}")
+        elif role == "assistant":
+            print(f"🤖 Agent: {content[0].text if content else ''}")
+            
+        # Check for tool calls
+        if event.llm_message.tool_calls:
+            print(f"🔧 Tool calls: {len(event.llm_message.tool_calls)}")
+```
+
+### AgentErrorEvent
+Error conditions encountered by the agent.
+
+**Key Properties:**
+- `error`: The error message from the agent/scaffold
+- `tool_name`: Tool that caused the error (if applicable)
+- `tool_call_id`: ID of the failed tool call (if applicable)
+
+**Default Rendering:** Red panel titled "Agent Error" displaying error details.
+
+```python
+def handle_error(self, event: AgentErrorEvent):
+    print(f"🚨 Error: {event.error}")
+    if event.tool_name:
+        print(f"🔧 Failed tool: {event.tool_name}")
+    if event.tool_call_id:
+        print(f"🔗 Call ID: {event.tool_call_id}")
+```
+
+## Best Practices
+
+### 1. Understanding ConversationVisualizer Subclassing
+
+When subclassing `ConversationVisualizer`, you inherit several useful features:
+
+**Built-in Features:**
+- Rich Console instance (`self._console`) for formatted output
+- Highlighting patterns (`self._highlight_patterns`) for text styling
+- Conversation stats integration (`self._conversation_stats`) for metrics
+- Name prefixing (`self._name_for_visualization`) for multi-agent scenarios
+
+**Key Methods to Override:**
+- `on_event(self, event: Event)`: Main event handler (most common override)
+- `_create_event_panel(self, event: Event)`: Custom panel creation
+- `_apply_highlighting(self, text: Text)`: Custom text highlighting
+
+**Initialization Pattern:**
+```python
+class MyVisualizer(ConversationVisualizer):
+    def __init__(self, custom_param: str = "default", **kwargs):
+        # Always call super().__init__ to get base functionality
+        super().__init__(**kwargs)
+        
+        # Add your custom state
+        self.custom_param = custom_param
+        self.event_count = 0
+        
+    def on_event(self, event: Event) -> None:
+        # Your custom logic here
+        self.event_count += 1
+        
+        # Option 1: Completely custom handling
+        if isinstance(event, ActionEvent):
+            print(f"Custom action handling: {event.tool_name}")
+            
+        # Option 2: Use parent's panel creation with modifications
+        panel = self._create_event_panel(event)
+        if panel:
+            self._console.print(panel)
+```
+
+### 2. State Management
+Track conversation state to provide meaningful progress indicators. The example shows tracking step counts, pending actions, and LLM response IDs:
+
+```python
+def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+    self._step_count = 0
+    self._pending_action = False
+    self._seen_llm_response_ids: set[str] = set()
+
+def _handle_action_event(self, event: ActionEvent) -> None:
+    # Track new LLM calls by monitoring llm_response_id
+    if (
+        event.llm_response_id
+        and event.llm_response_id not in self._seen_llm_response_ids
+    ):
+        self._seen_llm_response_ids.add(event.llm_response_id)
+        print("🤖 LLM call completed", flush=True)
+    
+    self._step_count += 1
+    # ... handle event
+```
+
+### 3. Event Handler Registration Pattern
+For cleaner, more maintainable code, avoid long if/elif chains in your `on_event` method. Instead, use a decorator-based handler registration pattern:
+
+```python
+from typing import Dict, Callable, Type
+
+def handles(event_type: Type[Event]):
+    """Decorator to register a method as an event handler."""
+    def decorator(func):
+        func._handles_event_type = event_type
+        return func
+    return decorator
+
+class EventHandlerMixin:
+    """Mixin that provides event handler registration via decorators."""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._event_handlers: Dict[Type[Event], Callable[[Event], None]] = {}
+        self._register_handlers()
+    
+    def _register_handlers(self):
+        """Automatically discover and register event handlers."""
+        for attr_name in dir(self):
+            attr = getattr(self, attr_name)
+            if hasattr(attr, '_handles_event_type'):
+                event_type = attr._handles_event_type
+                self._event_handlers[event_type] = attr
+    
+    def on_event(self, event: Event) -> None:
+        """Dispatch events to registered handlers."""
+        event_type = type(event)
+        handler = self._event_handlers.get(event_type)
+        if handler:
+            handler(event)
+
+class MyVisualizer(EventHandlerMixin, ConversationVisualizer):
+    @handles(ActionEvent)
+    def _handle_action_event(self, event: ActionEvent) -> None:
+        print(f"Action: {event.tool_name}")
+    
+    @handles(MessageEvent)
+    def _handle_message_event(self, event: MessageEvent) -> None:
+        print(f"Message: {event.llm_message.role}")
+```
+
+This pattern provides:
+- **Self-documenting code**: `@handles(ActionEvent)` clearly shows what each method does
+- **Type safety**: The decorator enforces the event type relationship
+- **Easy extensibility**: Add new event types without touching dispatch logic
+- **No boilerplate**: No need to maintain separate dictionaries or long if/elif chains
+
+### 4. Error Handling
+Always include error handling to prevent visualization issues from breaking conversations:
+
+```python
+import logging
+
+def on_event(self, event):
+    try:
+        # Your visualization logic
+        if isinstance(event, ActionEvent):
+            self._handle_action_event(event)
+        elif isinstance(event, ObservationEvent):
+            self._handle_observation_event(event)
+        # ... other event types
+    except Exception as e:
+        # Fallback to prevent breaking the conversation
+        print(f"⚠️ Visualization error: {e}", flush=True)
+        # Optionally log for debugging
+        logging.warning(f"Visualizer failed for {event.__class__.__name__}: {e}")
+```
+
+This pattern ensures that visualization problems never interrupt the agent's work.
+
+### 5. Performance Considerations
+For high-frequency events, consider optimizing your visualization by filtering events or using efficient output methods like `flush=True` for immediate display.
+
+## Using Your Custom Visualizer
+
+### Direct Assignment (Recommended)
+
+Pass your visualizer instance directly to the `visualizer` parameter:
+
+```python
+# Create your custom visualizer
+custom_visualizer = MinimalProgressVisualizer()
+
+# Use it directly - clean and intuitive
+conversation = Conversation(
+    agent=agent,
+    workspace="./workspace",
+    visualizer=custom_visualizer,  # Direct assignment
+)
+```
+
+### Visualization Options
+
+The `visualizer` parameter accepts three types:
+
+- **Default behavior** (no parameter): Creates a default Rich panel visualizer automatically
+- **`None`**: Disable visualization entirely  
+- **`ConversationVisualizer` instance**: Use your custom visualizer
+
+### Combining with Additional Callbacks
+
+Custom visualizers work alongside other event callbacks:
+
+```python
+def metrics_callback(event):
+    # Track metrics separately from visualization
+    if isinstance(event, ActionEvent):
+        metrics.increment("actions_taken")
+
+conversation = Conversation(
+    agent=agent,
+    workspace="./workspace", 
+    visualizer=custom_visualizer,      # Handle visualization
+    callbacks=[metrics_callback],     # Handle other concerns
+)
+```
+
+## Built-in Visualizer Reference
+
+For reference, you can view the complete implementation of the default visualizer: [ConversationVisualizer source code](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/visualizer.py)
+
+### Default Highlighting Patterns
+
+The built-in visualizer includes these default patterns:
+
+```python
+DEFAULT_HIGHLIGHT_REGEX = {
+    r"^Reasoning:": "bold bright_black",
+    r"^Thought:": "bold bright_black", 
+    r"^Action:": "bold blue",
+    r"^Arguments:": "bold blue",
+    r"^Tool:": "bold yellow",
+    r"^Result:": "bold yellow",
+    r"^Rejection Reason:": "bold red",
+    r"\*\*(.*?)\*\*": "bold",          # Markdown bold
+    r"\*(.*?)\*": "italic",            # Markdown italic
+}
+```
+
+### Available Colors and Styles
+
+**Colors**: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `bright_black`, `bright_red`, etc.
+
+**Styles**: `bold`, `dim`, `italic`, `underline`
+
+**Combinations**: `"bold cyan"`, `"underline red"`, `"bold italic green"`
+
+### Configuration Options
+
+```python
+ConversationVisualizer(
+    highlight_regex=custom_patterns,      # Your highlighting rules
+    skip_user_messages=False,             # Show user input (default: False)
+    name_for_visualization="MyAgent",     # Prefix for panel titles
+    conversation_stats=stats_tracker,     # Show token/cost metrics
+)
+```
+
+## Next Steps
+
+Now that you understand custom visualizers, explore these related topics:
+
+- **[Async Conversations](/sdk/guides/convo-async)** - Learn about custom event callbacks and async processing
+- **[Conversation Metrics](/sdk/guides/metrics)** - Track LLM usage, costs, and performance data
+- **[Send Messages While Running](/sdk/guides/convo-send-message-while-running)** - Interactive conversations with real-time updates
+- **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** - Control agent execution flow with custom logic
