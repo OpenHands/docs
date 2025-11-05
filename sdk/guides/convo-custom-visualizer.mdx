@@ -27,7 +27,8 @@ The MinimalProgressVisualizer produces concise output showing:
 - Agent thinking indicators
 - Error messages
 
-This shows how you can pass a ConversationVisualizer instance directly to the visualize parameter for clean, reusable visualization logic.
+This demonstrates how you can pass a ConversationVisualizer instance directly 
+to the visualize parameter for clean, reusable visualization logic.
 """
 
 import logging
@@ -77,98 +78,152 @@ class MinimalProgressVisualizer(ConversationVisualizer):
         # We don't need the console/panels from the parent
         super().__init__(**kwargs)
 
-        # Track state for our custom visualization
-        self.step_count = 0
-        self.current_action = None
-        self.logger = logging.getLogger(__name__)
+        # Track state for minimal progress output
+        self._step_count = 0
+        self._pending_action = False
+        self._seen_llm_response_ids: set[str] = set()
 
-    def on_event(self, event):
-        """Handle conversation events with minimal progress display."""
-        try:
-            if isinstance(event, MessageEvent):
-                if event.source == "agent":
-                    print("🤖 LLM call completed")
-                elif event.source == "user":
-                    print(f"👤 User: {event.content}")
+    def on_event(self, event) -> None:
+        """Handle events and produce minimal progress output."""
+        if isinstance(event, ActionEvent):
+            self._handle_action_event(event)
+        elif isinstance(event, ObservationEvent):
+            self._handle_observation_event()
+        elif isinstance(event, AgentErrorEvent):
+            self._handle_error_event(event)
+        elif isinstance(event, MessageEvent):
+            self._handle_message_event(event)
 
-            elif isinstance(event, ActionEvent):
-                self.step_count += 1
-                action_name = event.action.__class__.__name__
+    def _handle_action_event(self, event: ActionEvent) -> None:
+        """Handle ActionEvent - track LLM calls and show tool execution."""
+        # Track LLM calls by monitoring new llm_response_id values
+        if (
+            event.llm_response_id
+            and event.llm_response_id not in self._seen_llm_response_ids
+        ):
+            self._seen_llm_response_ids.add(event.llm_response_id)
+            # This is a new LLM call - show it completed
+            if not self._pending_action:
+                print("🤖 LLM call completed", flush=True)
 
-                # Extract useful details from common actions
-                details = ""
-                if hasattr(event.action, "command"):
-                    details = f"command: {event.action.command[:50]}..."
-                elif hasattr(event.action, "path"):
-                    path = event.action.path
-                    if hasattr(event.action, "command"):
-                        details = f"{event.action.command}: {path}"
-                    else:
-                        details = f"path: {path}"
+        # If previous action hasn't completed, complete it first
+        if self._pending_action:
+            print(" ✓", flush=True)
 
-                if details:
-                    print(f"Step {self.step_count}: Executing {action_name} ({details})...", end=" ", flush=True)
+        self._step_count += 1
+        tool_name = event.tool_name if event.tool_name else "unknown"
+
+        # Extract command/action details if available
+        action_details = ""
+        if event.action:
+            action_dict = (
+                event.action.model_dump() if hasattr(event.action, "model_dump") else {}
+            )
+            if "command" in action_dict:
+                command = action_dict["command"]
+                # Show file path if available (for file operations)
+                path = action_dict.get("path", "")
+                if path:
+                    # Truncate long paths
+                    if len(path) > 40:
+                        path = "..." + path[-37:]
+                    action_details = f" ({command}: {path})"
                 else:
-                    print(f"Step {self.step_count}: Executing {action_name}...", end=" ", flush=True)
+                    action_details = f" ({command})"
 
-                self.current_action = action_name
+        # Show step number and tool being executed on its own line
+        print(
+            f"Step {self._step_count}: Executing {tool_name}{action_details}...",
+            end="",
+            flush=True,
+        )
+        self._pending_action = True
 
-            elif isinstance(event, ObservationEvent):
-                if self.current_action:
-                    # Simple success/error indication
-                    if hasattr(event.observation, "error") and event.observation.error:
-                        print("❌")
-                        print(f"❌ Error: {event.observation.error}")
-                    else:
-                        print("✓")
-                    self.current_action = None
-                else:
-                    print("💭 Agent thinking...")
+    def _handle_observation_event(self) -> None:
+        """Handle ObservationEvent - show completion indicator."""
+        if self._pending_action:
+            print(" ✓", flush=True)
+            self._pending_action = False
 
-            elif isinstance(event, AgentErrorEvent):
-                print(f"❌ Agent Error: {event.message}")
+    def _handle_error_event(self, event: AgentErrorEvent) -> None:
+        """Handle AgentErrorEvent - show errors."""
+        if self._pending_action:
+            print(" ✗", flush=True)  # Mark previous action as failed
+            self._pending_action = False
 
-        except Exception as e:
-            # Fallback to prevent visualization errors from breaking the conversation
-            self.logger.warning(f"Visualization error: {e}")
+        error_msg = event.error
+        # Truncate long error messages
+        error_preview = error_msg[:100] + "..." if len(error_msg) > 100 else error_msg
+        print(f"⚠️  Error: {error_preview}", flush=True)
+
+    def _handle_message_event(self, event: MessageEvent) -> None:
+        """Handle MessageEvent - track LLM calls and show thinking indicators."""
+        # Track LLM calls from MessageEvent (agent messages without tool calls)
+        if (
+            event.source == "agent"
+            and event.llm_response_id
+            and event.llm_response_id not in self._seen_llm_response_ids
+        ):
+            self._seen_llm_response_ids.add(event.llm_response_id)
+            # This is a new LLM call - show it completed
+            if not self._pending_action:
+                print("🤖 LLM call completed", flush=True)
+
+        # Show when agent is "thinking" (making LLM calls between actions)
+        if event.source == "agent" and event.llm_message.role == "assistant":
+            # Agent is thinking/planning - show a thinking indicator
+            if not self._pending_action:
+                # Only show if we haven't already shown the LLM call completion
+                if (
+                    not event.llm_response_id
+                    or event.llm_response_id in self._seen_llm_response_ids
+                ):
+                    print("💭 Agent thinking...", flush=True)
 
 
 def main():
-    """Demonstrate the custom visualizer with a simple task."""
-    # Get API key from environment
-    api_key = os.environ.get("LLM_API_KEY")
-    if not api_key:
-        raise ValueError("LLM_API_KEY environment variable is not set")
+    # ============================================================================
+    # Configure LLM and Agent
+    # ============================================================================
+    # You can get an API key from https://app.all-hands.dev/settings/api-keys
+    api_key = os.getenv("LLM_API_KEY")
+    assert api_key is not None, "LLM_API_KEY environment variable is not set."
+    model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+    base_url = os.getenv("LLM_BASE_URL")
+    llm = LLM(
+        model=model,
+        api_key=SecretStr(api_key),
+        base_url=base_url,
+        usage_id="agent",
+    )
+    agent = get_default_agent(llm=llm, cli_mode=True)
 
-    # Create LLM and Agent with default tools
-    llm = LLM(model="gpt-4o-mini", api_key=SecretStr(api_key))
-    agent = get_default_agent(llm=llm)
+    # ============================================================================
+    # Configure Visualization
+    # ============================================================================
+    # Set logging level to reduce verbosity
+    logging.getLogger().setLevel(logging.WARNING)
 
-    # Create our custom visualizer
-    custom_visualizer = MinimalProgressVisualizer()
+    # Create custom visualizer instance
+    minimal_visualizer = MinimalProgressVisualizer()
 
-    print("🚀 Starting conversation with custom visualizer...")
-    print("=" * 60)
-
-    # NEW API: Pass the visualizer instance directly!
-    # This is much cleaner than: visualize=False, callbacks=[custom_visualizer.on_event]
+    # Start a conversation with custom visualizer
+    cwd = os.getcwd()
     conversation = Conversation(
         agent=agent,
-        workspace="./workspace",
-        visualize=custom_visualizer,  # Direct and intuitive!
+        workspace=cwd,
+        visualize=minimal_visualizer,
     )
 
-    # Send a message and run
-    conversation.send_message(
-        "Create a file called FACTS.txt with 3 interesting facts about Python programming."
-    )
+    # Send a message and let the agent run
+    print("Sending task to agent...")
+    conversation.send_message("Write 3 facts about the current project into FACTS.txt.")
     conversation.run()
+    print("Task completed!")
 
-    print("=" * 60)
-    print("✅ Example completed!")
-    print(f"📊 Total steps executed: {custom_visualizer.step_count}")
-    print("\nThe conversation used our custom MinimalProgressVisualizer!")
-    print("Compare this to the default visualizer to see the difference.")
+    # Report cost
+    cost = llm.metrics.accumulated_cost
+    print(f"EXAMPLE_COST: ${cost:.4f}")
 
 
 if __name__ == "__main__":
@@ -309,22 +364,26 @@ def handle_error(self, event: AgentErrorEvent):
 ## Best Practices
 
 ### 1. State Management
-Track conversation state to provide meaningful progress indicators:
+Track conversation state to provide meaningful progress indicators. The example shows tracking step counts, pending actions, and LLM response IDs:
 
 ```python
-class StatefulVisualizer(ConversationVisualizer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.step_count = 0
-        self.pending_action = False
-        self.seen_llm_responses = set()
-        self.start_time = time.time()
+def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+    self._step_count = 0
+    self._pending_action = False
+    self._seen_llm_response_ids: set[str] = set()
+
+def _handle_action_event(self, event: ActionEvent) -> None:
+    # Track new LLM calls by monitoring llm_response_id
+    if (
+        event.llm_response_id
+        and event.llm_response_id not in self._seen_llm_response_ids
+    ):
+        self._seen_llm_response_ids.add(event.llm_response_id)
+        print("🤖 LLM call completed", flush=True)
     
-    def on_event(self, event):
-        # Use state to provide context
-        elapsed = time.time() - self.start_time
-        print(f"[{elapsed:.1f}s] ", end="")
-        # ... handle event
+    self._step_count += 1
+    # ... handle event
 ```
 
 ### 2. Error Handling
@@ -343,68 +402,7 @@ def on_event(self, event):
 ```
 
 ### 3. Performance Considerations
-For high-frequency events, optimize your visualization:
-
-```python
-def on_event(self, event):
-    # Skip verbose events if needed
-    if isinstance(event, SomeVerboseEvent) and not self.verbose_mode:
-        return
-    
-    # Batch updates for better performance
-    if self.should_batch_updates():
-        self.pending_updates.append(event)
-        return
-    
-    self._render_event(event)
-```
-
-### 4. Flexible Output
-Design visualizers that work in different environments:
-
-```python
-class AdaptiveVisualizer(ConversationVisualizer):
-    def __init__(self, output_format="console", **kwargs):
-        super().__init__(**kwargs)
-        self.output_format = output_format
-        
-        if output_format == "json":
-            self.output_handler = self._json_output
-        elif output_format == "markdown":
-            self.output_handler = self._markdown_output
-        else:
-            self.output_handler = self._console_output
-    
-    def on_event(self, event):
-        self.output_handler(event)
-```
-
-### 5. Integration with External Systems
-Custom visualizers can integrate with logging, monitoring, or notification systems:
-
-```python
-class IntegratedVisualizer(ConversationVisualizer):
-    def __init__(self, webhook_url=None, **kwargs):
-        super().__init__(**kwargs)
-        self.webhook_url = webhook_url
-        self.metrics = {"actions": 0, "errors": 0}
-    
-    def on_event(self, event):
-        # Update metrics
-        if isinstance(event, ActionEvent):
-            self.metrics["actions"] += 1
-        elif isinstance(event, AgentErrorEvent):
-            self.metrics["errors"] += 1
-            
-        # Send to external system
-        if self.webhook_url and isinstance(event, AgentErrorEvent):
-            self._send_alert(event)
-    
-    def _send_alert(self, event):
-        # Send webhook notification for errors
-        payload = {"error": event.error, "timestamp": time.time()}
-        requests.post(self.webhook_url, json=payload)
-```
+For high-frequency events, consider optimizing your visualization by filtering events or using efficient output methods like `flush=True` for immediate display.
 
 ## Using Your Custom Visualizer
 
