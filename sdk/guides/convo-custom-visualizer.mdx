@@ -520,7 +520,59 @@ def _handle_action_event(self, event: ActionEvent) -> None:
     # ... handle event
 ```
 
-### 2. Error Handling
+### 3. Event Handler Registration Pattern
+For cleaner, more maintainable code, avoid long if/elif chains in your `on_event` method. Instead, use a decorator-based handler registration pattern:
+
+```python
+from typing import Dict, Callable, Type
+
+def handles(event_type: Type[Event]):
+    """Decorator to register a method as an event handler."""
+    def decorator(func):
+        func._handles_event_type = event_type
+        return func
+    return decorator
+
+class EventHandlerMixin:
+    """Mixin that provides event handler registration via decorators."""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._event_handlers: Dict[Type[Event], Callable[[Event], None]] = {}
+        self._register_handlers()
+    
+    def _register_handlers(self):
+        """Automatically discover and register event handlers."""
+        for attr_name in dir(self):
+            attr = getattr(self, attr_name)
+            if hasattr(attr, '_handles_event_type'):
+                event_type = attr._handles_event_type
+                self._event_handlers[event_type] = attr
+    
+    def on_event(self, event: Event) -> None:
+        """Dispatch events to registered handlers."""
+        event_type = type(event)
+        handler = self._event_handlers.get(event_type)
+        if handler:
+            handler(event)
+
+class MyVisualizer(EventHandlerMixin, ConversationVisualizer):
+    @handles(ActionEvent)
+    def _handle_action_event(self, event: ActionEvent) -> None:
+        print(f"Action: {event.tool_name}")
+    
+    @handles(MessageEvent)
+    def _handle_message_event(self, event: MessageEvent) -> None:
+        print(f"Message: {event.llm_message.role}")
+```
+
+This pattern provides:
+- **Self-documenting code**: `@handles(ActionEvent)` clearly shows what each method does
+- **Type safety**: The decorator enforces the event type relationship
+- **Easy extensibility**: Add new event types without touching dispatch logic
+- **No boilerplate**: No need to maintain separate dictionaries or long if/elif chains
+
+### 4. Error Handling
 Always include error handling to prevent visualization issues from breaking conversations:
 
 ```python
@@ -535,7 +587,7 @@ def on_event(self, event):
         logging.warning(f"Visualizer failed: {e}")
 ```
 
-### 3. Performance Considerations
+### 5. Performance Considerations
 For high-frequency events, consider optimizing your visualization by filtering events or using efficient output methods like `flush=True` for immediate display.
 
 ## Using Your Custom Visualizer
