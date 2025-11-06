@@ -3,7 +3,6 @@ import json
 import re
 import sys
 import urllib.request
-from typing import Dict, List, Optional, Tuple
 
 LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/refs/heads/main/model_prices_and_context_window.json"
 MDX_PATH = "openhands/usage/llms/openhands-llms.mdx"
@@ -16,18 +15,18 @@ SKIP_MODELS = {
 }
 
 # Optional manual key mapping if MDX model name differs from LiteLLM JSON key
-MODEL_KEY_MAP: Dict[str, str] = {
+MODEL_KEY_MAP: dict[str, str] = {
     # Add mappings here only if necessary
 }
 
 
-def fetch_litellm_db(url: str) -> Dict:
+def fetch_litellm_db(url: str) -> dict:
     with urllib.request.urlopen(url, timeout=30) as resp:
         data = resp.read()
     return json.loads(data)
 
 
-def parse_money(s: str) -> Optional[float]:
+def parse_money(s: str) -> float | None:
     s = s.strip()
     if s.upper() in {"N/A", "NA", "-", "—", "--", ""}:
         return None
@@ -39,7 +38,7 @@ def parse_money(s: str) -> Optional[float]:
         return None
 
 
-def parse_int(s: str) -> Optional[int]:
+def parse_int(s: str) -> int | None:
     s = s.strip()
     if s.upper() in {"N/A", "NA", "-", "—", "--", ""}:
         return None
@@ -50,8 +49,8 @@ def parse_int(s: str) -> Optional[int]:
         return None
 
 
-def extract_table_from_mdx(path: str) -> List[Dict[str, Optional[str]]]:
-    rows: List[Dict[str, Optional[str]]] = []
+def extract_table_from_mdx(path: str) -> list[dict[str, str | None]]:
+    rows: list[dict[str, str | None]] = []
     with open(path, "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
 
@@ -95,13 +94,13 @@ def extract_table_from_mdx(path: str) -> List[Dict[str, Optional[str]]]:
     return rows
 
 
-def to_per_million(val_per_token: Optional[float]) -> Optional[float]:
+def to_per_million(val_per_token: float | None) -> float | None:
     if val_per_token is None:
         return None
     return val_per_token * 1_000_000.0
 
 
-def near(a: Optional[float], b: Optional[float], tol: float = 1e-3) -> bool:
+def near(a: float | None, b: float | None, tol: float = 1e-3) -> bool:
     if a is None and b is None:
         return True
     if a is None or b is None:
