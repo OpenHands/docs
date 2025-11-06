@@ -25,7 +25,7 @@ class TestPricingDocumentation:
     def openhands_models(self) -> list[str]:
         """Get the list of OpenHands models from the OpenHands repository."""
         # Since this test is now in the docs repository, we need to fetch from OpenHands
-        url = 'https://raw.githubusercontent.com/All-Hands-AI/OpenHands/main/openhands/utils/llm.py'
+        url = 'https://raw.githubusercontent.com/OpenHands/OpenHands/main/openhands/utils/llm.py'
         response = requests.get(url)
         response.raise_for_status()
         content = response.text
