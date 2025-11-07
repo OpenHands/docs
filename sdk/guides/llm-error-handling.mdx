@@ -15,7 +15,84 @@ LLM providers format errors differently (status codes, messages, exception class
 - Clear behavior when conversation history exceeds the context window
 - Backward compatibility when you switch providers or SDK versions
 
-## Quick start: handle errors around LLM calls
+## Quick start: Using agents and conversations
+
+Agent-driven conversations are the common entry point. Exceptions from the underlying LLM calls bubble up from `conversation.run()` and `conversation.send_message(...)` when a condenser is not configured.
+
+```python icon="python"
+from pydantic import SecretStr
+from openhands.sdk import Agent, Conversation, LLM
+from openhands.sdk.llm.exceptions import (
+    LLMError,
+    LLMAuthenticationError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    LLMServiceUnavailableError,
+    LLMBadRequestError,
+    LLMContextWindowExceedError,
+)
+
+llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-key"))
+agent = Agent(llm=llm, tools=[])
+conversation = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
+
+try:
+    conversation.send_message("Continue the long analysis we started earlier…")
+    conversation.run()
+
+except LLMContextWindowExceedError:
+    # Conversation is longer than the model’s context window
+    # Options:
+    # 1) Enable a condenser (recommended for long sessions)
+    # 2) Shorten inputs or reset conversation
+    print("Hit the context limit. Consider enabling a condenser.")
+
+except LLMAuthenticationError:
+    print("Invalid or missing API credentials. Check your API key or auth setup.")
+
+except LLMRateLimitError:
+    print("Rate limit exceeded. Back off and retry later.")
+
+except LLMTimeoutError:
+    print("Request timed out. Consider increasing timeout or retrying.")
+
+except LLMServiceUnavailableError:
+    print("Service unavailable or connectivity issue. Retry with backoff.")
+
+except LLMBadRequestError:
+    print("Bad request to provider. Validate inputs and arguments.")
+
+except LLMError as e:
+    # Fallback for other SDK LLM errors (parsing/validation, etc.)
+    print(f"Unhandled LLM error: {e}")
+```
+
+
+
+### Avoiding context‑window errors with a condenser
+
+If a condenser is configured, the SDK emits a condensation request event instead of raising `LLMContextWindowExceedError`. The agent will summarize older history and continue.
+
+```python icon="python" highlight={5-10}
+from openhands.sdk.context.condenser import LLMSummarizingCondenser
+
+condenser = LLMSummarizingCondenser(
+    llm=llm.model_copy(update={"usage_id": "condenser"}),
+    max_size=10,
+    keep_first=2,
+)
+
+agent = Agent(llm=llm, tools=[], condenser=condenser)
+conversation = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
+```
+
+See the dedicated guide: [Context Condenser](/sdk/guides/context-condenser).
+
+## Handling errors with direct LLM calls
+
+The same exceptions are raised from both `LLM.completion()` and `LLM.responses()` paths, so you can share handlers.
+
+### Example: Using completion()
 
 ```python icon="python"
 from pydantic import SecretStr
@@ -40,35 +117,22 @@ try:
     print(response.message)
 
 except LLMContextWindowExceedError:
-    # Conversation is longer than the model’s context window
-    # Options:
-    # 1) Enable a condenser (recommended for long sessions)
-    # 2) Shorten inputs or reset conversation
     print("Context window exceeded. Consider enabling a condenser.")
-
 except LLMAuthenticationError:
-    print("Invalid or missing API credentials. Check your API key or auth setup.")
-
+    print("Invalid or missing API credentials.")
 except LLMRateLimitError:
     print("Rate limit exceeded. Back off and retry later.")
-
 except LLMTimeoutError:
     print("Request timed out. Consider increasing timeout or retrying.")
-
 except LLMServiceUnavailableError:
     print("Service unavailable or connectivity issue. Retry with backoff.")
-
 except LLMBadRequestError:
     print("Bad request to provider. Validate inputs and arguments.")
-
 except LLMError as e:
-    # Fallback for other SDK LLM errors (parsing/validation, etc.)
     print(f"Unhandled LLM error: {e}")
 ```
 
-The same exceptions are raised from both `LLM.completion()` and `LLM.responses()` paths.
-
-### Example: Using the Responses API
+### Example: Using responses()
 
 ```python icon="python"
 from pydantic import SecretStr
@@ -88,45 +152,6 @@ except LLMContextWindowExceedError:
 except LLMError as e:
     print(f"LLM error: {e}")
 ```
-
-## Using agents and conversations
-
-When you use `Agent` and `Conversation`, LLM exceptions propagate out of `conversation.run()` and `conversation.send_message(...)` if a condenser is not present.
-
-```python icon="python"
-from pydantic import SecretStr
-from openhands.sdk import Agent, Conversation, LLM
-from openhands.sdk.llm.exceptions import LLMContextWindowExceedError
-
-llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-key"))
-agent = Agent(llm=llm, tools=[])
-conv = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
-
-try:
-    conv.send_message("Continue the long analysis we started earlier…")
-    conv.run()
-except LLMContextWindowExceedError:
-    print("Hit the context limit. Add a condenser to avoid this in long sessions.")
-```
-
-### Avoiding context‑window errors with a condenser
-
-If a condenser is configured, the SDK emits a condensation request event instead of raising `LLMContextWindowExceedError`. The agent will summarize older history and continue.
-
-```python icon="python" highlight={5-10}
-from openhands.sdk.context.condenser import LLMSummarizingCondenser
-
-condenser = LLMSummarizingCondenser(
-    llm=llm.model_copy(update={"usage_id": "condenser"}),
-    max_size=10,
-    keep_first=2,
-)
-
-agent = Agent(llm=llm, tools=[], condenser=condenser)
-conversation = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
-```
-
-See the dedicated guide: [Context Condenser](/sdk/guides/context-condenser).
 
 ## Exception reference
 
