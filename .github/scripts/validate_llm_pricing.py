@@ -131,11 +131,7 @@ def main() -> int:
                 f"anthropic/{model}",
                 f"google/{model}",
                 f"gemini/{model}",
-                f"vertex_ai/{model}",
                 f"mistral/{model}",
-                f"cloudflare/{model}",
-                f"groq/{model}",
-                f"bedrock/{model}",
             ]
             for c in candidates:
                 if c in db:
