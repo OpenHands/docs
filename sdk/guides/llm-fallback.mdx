@@ -1,0 +1,177 @@
+---
+title: LLM Fallback
+description: Automatically fall back to alternative LLMs when the primary model fails.
+---
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/27_llm_fallback.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/27_llm_fallback.py)
+</Note>
+
+Build resilient applications by automatically falling back to alternative LLM models when the primary model encounters errors such as rate limits, connection failures, or service unavailability.
+
+```python icon="python" expandable examples/01_standalone_sdk/27_llm_fallback.py
+"""
+Example of using FallbackRouter for automatic LLM failover.
+
+This example demonstrates how to configure a FallbackRouter that automatically
+falls back to alternative LLM models when the primary model fails.
+
+The FallbackRouter will:
+1. Try the primary model first
+2. If it fails (rate limit, connection error, etc.), try the first fallback
+3. If that fails, try the next fallback, and so on
+4. Raise an exception if all models fail
+
+This is useful for:
+- Handling rate limits from LLM providers
+- Dealing with intermittent connection issues
+- Building resilient applications with high uptime requirements
+- Cost optimization (use cheaper models as fallbacks)
+"""
+
+import logging
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import TextContent
+from openhands.sdk.llm import LLM
+from openhands.sdk.llm.router import FallbackRouter
+
+# Set up logging to see which model is being used
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+# Configure API credentials
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+base_url = os.getenv("LLM_BASE_URL")
+
+# Create primary LLM (this would be your preferred model)
+primary_llm = LLM(
+    usage_id="primary-model",
+    model="gpt-4",
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Create fallback LLMs (these will be used if primary fails)
+fallback1_llm = LLM(
+    usage_id="fallback1-model",
+    model="gpt-3.5-turbo",
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+fallback2_llm = LLM(
+    usage_id="fallback2-model",
+    model="claude-3-5-sonnet-20241022",
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Create FallbackRouter with multiple fallback levels
+# The router will try models in the order they appear in llms_for_routing
+fallback_router = FallbackRouter(
+    usage_id="fallback-router",
+    llms_for_routing={
+        "primary": primary_llm,  # Required key - the primary model
+        "fallback1": fallback1_llm,  # First fallback
+        "fallback2": fallback2_llm,  # Second fallback
+    },
+)
+
+# Use the router like a regular LLM
+# If the primary model fails, it will automatically try fallbacks
+response = fallback_router.completion(
+    messages=[
+        {
+            "role": "user",
+            "content": [TextContent(text="What is the capital of France?")],
+        }
+    ]
+)
+
+print(response)
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/27_llm_fallback.py
+```
+
+## How it Works
+
+The `FallbackRouter` implements automatic failover by:
+
+1. **Trying the primary model first**: All requests start with the `"primary"` model (this key is required)
+2. **Catching errors**: If the primary model fails with errors like rate limits, connection issues, or service unavailability, the router catches the exception
+3. **Falling back**: The router tries each fallback model in order until one succeeds
+4. **Logging**: All failover attempts are logged for debugging and monitoring
+5. **Raising exceptions**: If all models fail, the last exception is raised
+
+### Common Use Cases
+
+- **Rate Limit Handling**: Automatically switch to alternative models when hitting API rate limits
+- **High Availability**: Ensure your application continues working even when one provider is down
+- **Cost Optimization**: Use expensive models as primary and cheaper models as fallbacks
+- **Geographic Redundancy**: Configure models from different regions or providers
+
+### Configuration Example
+
+```python
+from openhands.sdk.llm import LLM
+from openhands.sdk.llm.router import FallbackRouter
+from pydantic import SecretStr
+
+# Configure with multiple fallback levels
+fallback_router = FallbackRouter(
+    usage_id="my-fallback-router",
+    llms_for_routing={
+        "primary": LLM(
+            model="gpt-4",
+            api_key=SecretStr("key"),
+            usage_id="primary"
+        ),
+        "fallback1": LLM(
+            model="gpt-3.5-turbo",
+            api_key=SecretStr("key"),
+            usage_id="fallback1"
+        ),
+        "fallback2": LLM(
+            model="claude-3-5-sonnet-20241022",
+            api_key=SecretStr("key"),
+            usage_id="fallback2"
+        ),
+    },
+)
+```
+
+### Error Handling
+
+The FallbackRouter catches and handles these types of errors:
+- Rate limit errors (`RateLimitError`)
+- Connection errors (`APIConnectionError`)
+- Service unavailability (`LLMServiceUnavailableError`)
+- General API errors
+
+When an error occurs, the router:
+1. Logs which model failed and why
+2. Tries the next model in the sequence
+3. Continues until a model succeeds or all models fail
+
+## Best Practices
+
+1. **Order models by preference**: Put your preferred model as `"primary"` and less preferred models as fallbacks
+2. **Monitor logs**: Enable logging to track failover events and identify reliability issues
+3. **Consider costs**: Use expensive models as primary and cheaper alternatives as fallbacks
+4. **Test fallback chains**: Verify your fallback configuration handles failures correctly
+5. **Set appropriate timeouts**: Configure timeouts on individual LLMs to avoid long waits
+
+## Next Steps
+
+- **[Model Routing](/sdk/guides/llm-routing)** - Route requests based on task characteristics
+- **[Error Handling](/sdk/guides/llm-error-handling)** - Handle LLM errors gracefully
+- **[LLM Metrics](/sdk/guides/metrics)** - Track token usage and costs across models
