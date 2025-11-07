@@ -14,12 +14,12 @@ Build resilient applications by automatically falling back to alternative LLM mo
 Example of using FallbackRouter for automatic LLM failover.
 
 This example demonstrates how to configure a FallbackRouter that automatically
-falls back to alternative LLM models when the primary model fails.
+falls back to alternative LLM models when the first model fails.
 
 The FallbackRouter will:
-1. Try the primary model first
-2. If it fails (rate limit, connection error, etc.), try the first fallback
-3. If that fails, try the next fallback, and so on
+1. Try the first model in the list
+2. If it fails (rate limit, connection error, etc.), try the next model
+3. If that fails, try the next model, and so on
 4. Raise an exception if all models fail
 
 This is useful for:
@@ -48,7 +48,7 @@ api_key = os.getenv("LLM_API_KEY")
 assert api_key is not None, "LLM_API_KEY environment variable is not set."
 base_url = os.getenv("LLM_BASE_URL")
 
-# Create primary LLM (this would be your preferred model)
+# Create LLMs in order of preference
 primary_llm = LLM(
     usage_id="primary-model",
     model="gpt-4",
@@ -56,7 +56,6 @@ primary_llm = LLM(
     api_key=SecretStr(api_key),
 )
 
-# Create fallback LLMs (these will be used if primary fails)
 fallback1_llm = LLM(
     usage_id="fallback1-model",
     model="gpt-3.5-turbo",
@@ -72,14 +71,10 @@ fallback2_llm = LLM(
 )
 
 # Create FallbackRouter with multiple fallback levels
-# The router will try models in the order they appear in llms_for_routing
+# The router will try models in the order they appear in the list
 fallback_router = FallbackRouter(
     usage_id="fallback-router",
-    llms_for_routing={
-        "primary": primary_llm,  # Required key - the primary model
-        "fallback1": fallback1_llm,  # First fallback
-        "fallback2": fallback2_llm,  # Second fallback
-    },
+    llms=[primary_llm, fallback1_llm, fallback2_llm],
 )
 
 # Use the router like a regular LLM
@@ -106,9 +101,9 @@ uv run python examples/01_standalone_sdk/27_llm_fallback.py
 
 The `FallbackRouter` implements automatic failover by:
 
-1. **Trying the primary model first**: All requests start with the `"primary"` model (this key is required)
-2. **Catching errors**: If the primary model fails with errors like rate limits, connection issues, or service unavailability, the router catches the exception
-3. **Falling back**: The router tries each fallback model in order until one succeeds
+1. **Trying the first model**: All requests start with the first model in the list
+2. **Catching errors**: If the first model fails with errors like rate limits, connection issues, or service unavailability, the router catches the exception
+3. **Falling back**: The router tries each subsequent model in order until one succeeds
 4. **Logging**: All failover attempts are logged for debugging and monitoring
 5. **Raising exceptions**: If all models fail, the last exception is raised
 
@@ -116,7 +111,7 @@ The `FallbackRouter` implements automatic failover by:
 
 - **Rate Limit Handling**: Automatically switch to alternative models when hitting API rate limits
 - **High Availability**: Ensure your application continues working even when one provider is down
-- **Cost Optimization**: Use expensive models as primary and cheaper models as fallbacks
+- **Cost Optimization**: Use expensive models first and cheaper models as fallbacks
 - **Geographic Redundancy**: Configure models from different regions or providers
 
 ### Configuration Example
@@ -127,25 +122,26 @@ from openhands.sdk.llm.router import FallbackRouter
 from pydantic import SecretStr
 
 # Configure with multiple fallback levels
+# Models are tried in list order
 fallback_router = FallbackRouter(
     usage_id="my-fallback-router",
-    llms_for_routing={
-        "primary": LLM(
+    llms=[
+        LLM(
             model="gpt-4",
             api_key=SecretStr("key"),
             usage_id="primary"
         ),
-        "fallback1": LLM(
+        LLM(
             model="gpt-3.5-turbo",
             api_key=SecretStr("key"),
             usage_id="fallback1"
         ),
-        "fallback2": LLM(
+        LLM(
             model="claude-3-5-sonnet-20241022",
             api_key=SecretStr("key"),
             usage_id="fallback2"
         ),
-    },
+    ],
 )
 ```
 
@@ -164,9 +160,9 @@ When an error occurs, the router:
 
 ## Best Practices
 
-1. **Order models by preference**: Put your preferred model as `"primary"` and less preferred models as fallbacks
+1. **Order models by preference**: Put your preferred model first in the list and less preferred models later
 2. **Monitor logs**: Enable logging to track failover events and identify reliability issues
-3. **Consider costs**: Use expensive models as primary and cheaper alternatives as fallbacks
+3. **Consider costs**: Use expensive models first and cheaper alternatives as fallbacks
 4. **Test fallback chains**: Verify your fallback configuration handles failures correctly
 5. **Set appropriate timeouts**: Configure timeouts on individual LLMs to avoid long waits
 
