@@ -1,0 +1,140 @@
+---
+title: Error Handling & SDK Exceptions
+description: Provider‑agnostic exceptions raised by the SDK and recommended patterns for handling them.
+---
+
+The SDK normalizes common provider errors into typed, provider‑agnostic exceptions so your application can handle them consistently across OpenAI, Anthropic, Groq, Google, and others.
+
+This guide explains when these errors occur and shows recommended handling patterns for both direct LLM usage and higher‑level agent/conversation flows.
+
+## Why typed exceptions?
+
+LLM providers format errors differently (status codes, messages, exception classes). The SDK maps those into stable types so client apps don’t depend on provider‑specific details. Typical benefits:
+
+- One code path to handle auth, rate limits, timeouts, service issues, and bad requests
+- Clear behavior when conversation history exceeds the context window
+- Backward compatibility when you switch providers or SDK versions
+
+## Quick start: handle errors around LLM calls
+
+```python icon="python"
+from pydantic import SecretStr
+from openhands.sdk import LLM
+from openhands.sdk.llm import Message, TextContent
+from openhands.sdk.llm.exceptions import (
+    LLMError,
+    LLMAuthenticationError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    LLMServiceUnavailableError,
+    LLMBadRequestError,
+    LLMContextWindowExceedError,
+)
+
+llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-key"))
+
+try:
+    response = llm.completion([
+        Message.user([TextContent(text="Summarize our design doc")])
+    ])
+    print(response.message)
+
+except LLMContextWindowExceedError:
+    # Conversation is longer than the model’s context window
+    # Options:
+    # 1) Enable a condenser (recommended for long sessions)
+    # 2) Shorten inputs or reset conversation
+    print("Context window exceeded. Consider enabling a condenser.")
+
+except LLMAuthenticationError:
+    print("Invalid or missing API credentials. Check your API key or auth setup.")
+
+except LLMRateLimitError:
+    print("Rate limit exceeded. Back off and retry later.")
+
+except LLMTimeoutError:
+    print("Request timed out. Consider increasing timeout or retrying.")
+
+except LLMServiceUnavailableError:
+    print("Service unavailable or connectivity issue. Retry with backoff.")
+
+except LLMBadRequestError:
+    print("Bad request to provider. Validate inputs and arguments.")
+
+except LLMError as e:
+    # Fallback for other SDK LLM errors (parsing/validation, etc.)
+    print(f"Unhandled LLM error: {e}")
+```
+
+The same exceptions are raised from both `LLM.completion()` and `LLM.responses()` paths.
+
+## Using agents and conversations
+
+When you use `Agent` and `Conversation`, LLM exceptions propagate out of `conversation.run()` and `conversation.send_message(...)` if a condenser is not present.
+
+```python icon="python"
+from pydantic import SecretStr
+from openhands.sdk import Agent, Conversation, LLM
+from openhands.sdk.llm.exceptions import LLMContextWindowExceedError
+
+llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-key"))
+agent = Agent(llm=llm, tools=[])
+conv = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
+
+try:
+    conv.send_message("Continue the long analysis we started earlier…")
+    conv.run()
+except LLMContextWindowExceedError:
+    print("Hit the context limit. Add a condenser to avoid this in long sessions.")
+```
+
+### Avoiding context‑window errors with a condenser
+
+If a condenser is configured, the SDK emits a condensation request event instead of raising `LLMContextWindowExceedError`. The agent will summarize older history and continue.
+
+```python icon="python" highlight={5-10}
+from openhands.sdk.context.condenser import LLMSummarizingCondenser
+
+condenser = LLMSummarizingCondenser(
+    llm=llm.model_copy(update={"usage_id": "condenser"}),
+    max_size=10,
+    keep_first=2,
+)
+
+agent = Agent(llm=llm, tools=[], condenser=condenser)
+conversation = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
+```
+
+See the dedicated guide: [Context Condenser](/sdk/guides/context-condenser).
+
+## Exception reference
+
+All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
+
+- Provider/transport mapping (provider‑agnostic):
+  - `LLMContextWindowExceedError` — Conversation exceeds the model’s context window. Without a condenser, thrown for both Chat and Responses paths.
+  - `LLMAuthenticationError` — Invalid or missing credentials (401/403 patterns).
+  - `LLMRateLimitError` — Provider rate limit exceeded.
+  - `LLMTimeoutError` — SDK/lower‑level timeout while waiting for the provider.
+  - `LLMServiceUnavailableError` — Temporary connectivity/service outage (e.g., 5xx, connection issues).
+  - `LLMBadRequestError` — Client‑side request issues (invalid params, malformed input).
+
+- Response parsing/validation:
+  - `LLMMalformedActionError` — Model returned a malformed action.
+  - `LLMNoActionError` — Model did not return an action when one was expected.
+  - `LLMResponseError` — Could not extract an action from the response.
+  - `FunctionCallConversionError` — Failed converting tool/function call payloads.
+  - `FunctionCallValidationError` — Tool/function call arguments failed validation.
+  - `FunctionCallNotExistsError` — Model referenced an unknown tool/function.
+  - `LLMNoResponseError` — Provider returned an empty/invalid response (seen rarely, e.g., some Gemini models).
+
+- Cancellation:
+  - `UserCancelledError` — A user aborted the operation.
+  - `OperationCancelled` — A running operation was cancelled programmatically.
+
+All of the above (except the explicit cancellation types) inherit from `LLMError`, so you can implement a catch‑all for unexpected SDK LLM errors while still keeping fine‑grained handlers for the most common cases.
+
+## Notes for advanced users
+
+- The SDK performs centralized exception mapping, translating provider/LiteLLM exceptions into the types above. This keeps your app free from provider‑specific exception imports.
+- For long‑running sessions, we strongly recommend configuring a condenser to avoid context‑window interruptions. See the [Context Condenser](/sdk/guides/context-condenser) guide for details and examples.
