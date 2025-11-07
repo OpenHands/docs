@@ -12,6 +12,13 @@ class ConversationErrorEvent(Event):
     intended for client applications (e.g., UIs) to present a top-level error
     state, and for orchestration to react. It is not an observation and it is
     not LLM-convertible.
+
+    Diff from AgentErrorEvent (essential):
+    - Not tied to any tool_name/tool_call_id (AgentErrorEvent is a tool
+      observation).
+    - Typically source='environment' and the run loop moves to an ERROR state,
+      while AgentErrorEvent has source='agent' and the conversation can
+      continue.
     """
 
     code: str = Field(description="Code for the error - typically a type")
