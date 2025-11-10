@@ -1,0 +1,325 @@
+---
+title: Observability & Tracing
+description: Enable OpenTelemetry tracing to monitor and debug your agent's execution with tools like Laminar, Honeycomb, or any OTLP-compatible backend.
+---
+
+## Overview
+
+The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowing you to monitor and debug your agent's execution in real-time. You can send traces to any OTLP-compatible observability platform including:
+
+- **[Laminar](https://www.lmnr.ai/)** - AI-focused observability with browser session replay support
+- **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
+- **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
+
+The SDK automatically traces:
+- Agent execution steps
+- Tool calls and executions
+- LLM API calls (via LiteLLM integration)
+- Browser automation sessions (when using browser-use)
+- Conversation lifecycle events
+
+## Quick Start
+
+Tracing is automatically enabled when you set the appropriate environment variables. The SDK detects the configuration on startup and initializes tracing without requiring code changes.
+
+### Using Laminar
+
+[Laminar](https://www.lmnr.ai/) provides specialized AI observability features including browser session replays when using browser-use tools:
+
+```bash
+# Set your Laminar project API key
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+```
+
+That's it! Run your agent code normally and traces will be sent to Laminar automatically.
+
+### Using Honeycomb or Other OTLP Backends
+
+For Honeycomb, Jaeger, or any other OTLP-compatible backend:
+
+```bash
+# Required: Set the OTLP endpoint
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/traces"
+
+# Required: Set authentication headers (format: comma-separated key=value pairs, URL-encoded)
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=your-api-key"
+
+# Optional: Set the protocol (defaults to gRPC)
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"  # or "grpc"
+```
+
+### Alternative Configuration Methods
+
+You can also use these alternative environment variable formats:
+
+```bash
+# Short form for endpoint
+export OTEL_ENDPOINT="http://localhost:4317"
+
+# Alternative header format
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20<KEY>"
+
+# Alternative protocol specification
+export OTEL_EXPORTER="otlp_http"  # or "otlp_grpc"
+```
+
+## How It Works
+
+The OpenHands SDK uses the [Laminar SDK](https://docs.lmnr.ai/) as its OpenTelemetry instrumentation layer. When you set the environment variables, the SDK:
+
+1. **Detects Configuration**: Checks for OTEL environment variables on startup
+2. **Initializes Tracing**: Configures OpenTelemetry with the appropriate exporter
+3. **Instruments Code**: Automatically wraps key functions with tracing decorators
+4. **Captures Context**: Associates traces with conversation IDs for session grouping
+5. **Exports Spans**: Sends trace data to your configured backend
+
+### What Gets Traced
+
+The SDK automatically instruments these components:
+
+- **`agent.step`** - Each iteration of the agent's execution loop
+- **Tool Executions** - Individual tool calls with input/output capture
+- **LLM Calls** - API requests to language models via LiteLLM
+- **Conversation Lifecycle** - Message sending, conversation runs, and title generation
+- **Browser Sessions** - When using browser-use, captures session replays (Laminar only)
+
+### Trace Hierarchy
+
+Traces are organized hierarchically:
+
+```
+conversation (session_id: conversation-uuid)
+└── conversation.run
+    ├── agent.step
+    │   ├── llm.completion
+    │   └── tool.execute (e.g., "bash", "file_editor")
+    └── agent.step
+        └── llm.completion
+```
+
+Each conversation gets its own session ID (the conversation UUID), allowing you to group all traces from a single conversation together in your observability platform.
+
+## Configuration Reference
+
+### Environment Variables
+
+The SDK checks for these environment variables (in order of precedence):
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `LMNR_PROJECT_API_KEY` | Laminar project API key | `lm_xxxxxxxxxxxxxxxx` |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL | `https://api.honeycomb.io:443/v1/traces` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint (traces path appended) | `http://localhost:4317` |
+| `OTEL_ENDPOINT` | Short form endpoint | `http://localhost:4317` |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Authentication headers for traces | `x-honeycomb-team=YOUR_API_KEY` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | General authentication headers | `Authorization=Bearer%20TOKEN` |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | Protocol for traces endpoint | `http/protobuf`, `grpc` |
+| `OTEL_EXPORTER` | Short form protocol | `otlp_http`, `otlp_grpc` |
+
+### Header Format
+
+Headers should be comma-separated `key=value` pairs with URL encoding for special characters:
+
+```bash
+# Single header
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=abc123"
+
+# Multiple headers
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20abc123,X-Custom-Header=value"
+```
+
+### Protocol Options
+
+The SDK supports both HTTP and gRPC protocols:
+
+- **`http/protobuf`** or **`otlp_http`** - HTTP with protobuf encoding
+- **`grpc`** or **`otlp_grpc`** - gRPC with protobuf encoding (default)
+
+## Platform-Specific Configuration
+
+### Laminar Setup
+
+1. Sign up at [lmnr.ai](https://www.lmnr.ai/)
+2. Create a project and copy your API key
+3. Set the environment variable:
+
+```bash
+export LMNR_PROJECT_API_KEY="lm_xxxxxxxxxxxxxxxx"
+```
+
+**Browser Session Replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
+
+### Honeycomb Setup
+
+1. Sign up at [honeycomb.io](https://www.honeycomb.io/)
+2. Get your API key from the account settings
+3. Configure the environment:
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=YOUR_API_KEY"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+### Jaeger Setup
+
+For local development with Jaeger:
+
+```bash
+# Start Jaeger all-in-one container
+docker run -d --name jaeger \
+  -p 4317:4317 \
+  -p 16686:16686 \
+  jaegertracing/all-in-one:latest
+
+# Configure SDK
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://localhost:4317"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="grpc"
+```
+
+Access the Jaeger UI at http://localhost:16686
+
+### Generic OTLP Collector
+
+For other backends, use their OTLP endpoint:
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://your-otlp-collector:4317/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20YOUR_TOKEN"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+## Advanced Usage
+
+### Disabling Observability
+
+To disable tracing, simply unset all OTEL environment variables:
+
+```bash
+unset LMNR_PROJECT_API_KEY
+unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+unset OTEL_EXPORTER_OTLP_ENDPOINT
+unset OTEL_ENDPOINT
+```
+
+The SDK will automatically skip all tracing instrumentation with minimal overhead.
+
+### Custom Span Attributes
+
+The SDK automatically adds these attributes to spans:
+
+- **`conversation_id`** - UUID of the conversation
+- **`tool_name`** - Name of the tool being executed
+- **`action.kind`** - Type of action being performed
+- **`session_id`** - Groups all traces from one conversation
+
+### Debugging Tracing Issues
+
+If traces aren't appearing in your observability platform:
+
+1. **Verify Environment Variables**:
+   ```python
+   import os
+   print(f"OTEL Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')}")
+   print(f"OTEL Headers: {os.getenv('OTEL_EXPORTER_OTLP_TRACES_HEADERS')}")
+   ```
+
+2. **Check SDK Logs**: The SDK logs observability initialization at debug level:
+   ```python
+   import logging
+   logging.basicConfig(level=logging.DEBUG)
+   ```
+
+3. **Test Connectivity**: Ensure your application can reach the OTLP endpoint:
+   ```bash
+   curl -v https://api.honeycomb.io:443/v1/traces
+   ```
+
+4. **Validate Headers**: Check that authentication headers are properly URL-encoded
+
+## Example: Full Setup
+
+Here's a complete example showing tracing in action:
+
+```python
+import os
+from pydantic import SecretStr
+from openhands.sdk import LLM, Agent, Conversation
+from openhands.sdk.tool import Tool
+from openhands.tools.terminal import TerminalTool
+
+# Configure tracing (before creating agent)
+os.environ["LMNR_PROJECT_API_KEY"] = "your-laminar-api-key"
+
+# Configure LLM and agent
+api_key = os.getenv("LLM_API_KEY")
+llm = LLM(
+    model="claude-sonnet-4-20250514",
+    api_key=SecretStr(api_key),
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=TerminalTool.name)],
+)
+
+# Create conversation - tracing is automatic
+conversation = Conversation(agent=agent, workspace=".")
+conversation.send_message("List the files in the current directory")
+conversation.run()
+
+# View traces in your observability platform
+# - Visit Laminar dashboard to see agent execution
+# - Session ID will be the conversation UUID
+# - All spans will be grouped under the conversation session
+```
+
+## Best Practices
+
+1. **Set Environment Variables Early**: Configure OTEL variables before importing the SDK to ensure proper initialization
+
+2. **Use Conversation IDs**: The SDK automatically uses conversation UUIDs as session IDs for trace grouping
+
+3. **Monitor Costs**: Combine observability with [metrics tracking](/sdk/guides/metrics) to understand both performance and cost
+
+4. **Filter Noise**: Some backends let you sample traces - configure this at the collector level, not in the SDK
+
+5. **Secure Secrets**: Never commit API keys to version control. Use environment variables or secret management systems
+
+6. **Test Locally**: Use Jaeger for local development before deploying to production observability platforms
+
+## Troubleshooting
+
+### Traces Not Appearing
+
+**Problem**: No traces showing up in observability platform
+
+**Solutions**:
+- Verify environment variables are set correctly
+- Check network connectivity to OTLP endpoint
+- Ensure authentication headers are valid
+- Look for SDK initialization logs at debug level
+
+### High Trace Volume
+
+**Problem**: Too many spans being generated
+
+**Solutions**:
+- Configure sampling at the collector level
+- For Laminar with non-browser tools, browser instrumentation is automatically disabled
+- Use backend-specific filtering rules
+
+### Performance Impact
+
+**Problem**: Concerned about tracing overhead
+
+**Solutions**:
+- Tracing has minimal overhead when properly configured
+- Disable tracing in development by unsetting environment variables
+- Use asynchronous exporters (default in most OTLP configurations)
+
+## Next Steps
+
+- **[Metrics Tracking](/sdk/guides/metrics)** - Monitor token usage and costs alongside traces
+- **[LLM Registry](/sdk/guides/llm-registry)** - Track multiple LLMs used in your application
+- **[Security](/sdk/guides/security)** - Add security validation to your traced agent executions
