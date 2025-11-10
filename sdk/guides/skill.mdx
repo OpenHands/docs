@@ -1,13 +1,82 @@
 ---
 title: Agent Skills & Context
-description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
+description: Skills (formerly called Microagents) add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
+
+## What are Skills?
+
+Skills (previously known as Microagents) are specialized prompts that enhance your agent with domain-specific knowledge, guidelines, and behaviors. They provide a powerful way to:
+
+- **Add Expert Guidance**: Inject domain-specific knowledge (e.g., coding standards, API usage patterns)
+- **Automate Common Tasks**: Define consistent practices across projects
+- **Context-Aware Behavior**: Activate specific instructions based on keywords or always-on rules
+- **Repository Memory**: Store persistent knowledge about your codebase
+
+<Note>
+Skills take up space in the context window alongside user messages. They inform the agent about the task and environment, so use them judiciously.
+</Note>
+
+## Types of Skills
+
+The SDK supports two main types of skills:
+
+### 1. General Skills (Always Active)
+
+General skills are always loaded and provide constant guidance to your agent. They're ideal for:
+- Repository-specific guidelines and structure
+- Coding standards and best practices
+- Development workflows and CI/CD information
+
+**Example: Repository Context**
+
+```markdown
+# Repository Purpose
+This project is a TODO application that allows users to track TODO items.
+
+# Setup Instructions
+To set it up, you can run `npm run build`.
+
+# Repository Structure
+- `/src`: Core application code
+- `/tests`: Test suite
+- `/docs`: Documentation
+- `/.github`: CI/CD workflows
+
+# Development Guidelines
+Always make sure the tests are passing before committing changes. 
+You can run the tests by running `npm run test`.
+```
+
+### 2. Keyword-Triggered Skills
+
+Keyword-triggered skills are only loaded when specific keywords appear in user messages. They're perfect for:
+- Framework-specific instructions (e.g., "react", "django")
+- Tool-specific guidance (e.g., "docker", "kubernetes")
+- Special commands or workflows
+
+**Example: Framework-Specific Guidance**
+
+```markdown
+---
+triggers:
+- react
+- reactjs
+---
+
+When working with React:
+- Use functional components with hooks instead of class components
+- Follow the React hooks rules
+- Use React.memo() for performance optimization when needed
+- Keep components small and focused on a single responsibility
+```
+
+## Creating Skills in Code
 
 <Note>
 This example is available on GitHub: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
 </Note>
 
-Skills modify agent behavior by injecting additional context and rules. This example shows both always-active skills and keyword-triggered skills:
+This example demonstrates both always-active skills and keyword-triggered skills:
 
 ```python icon="python" expandable examples/01_standalone_sdk/03_activate_skill.py
 import os
@@ -124,7 +193,7 @@ cd agent-sdk
 uv run python examples/01_standalone_sdk/03_activate_skill.py
 ```
 
-### Creating Skills
+### Defining Skills Programmatically
 
 Skills are defined with a name, content (the instructions), and an optional trigger:
 
@@ -146,6 +215,12 @@ agent_context = AgentContext(
     ]
 )
 ```
+
+**Key Parameters:**
+- `name`: Identifier for the skill
+- `content`: The instructions/guidelines (can be multi-line)
+- `source`: Optional path to file containing skill content
+- `trigger`: `None` for always-active, or `KeywordTrigger` for keyword-based activation
 
 ### Keyword Triggers
 
@@ -170,6 +245,76 @@ agent_context = AgentContext(
     user_message_suffix="The first character of your response should be 'I'",
 )
 ```
+
+## Loading Skills from Files
+
+While the SDK examples show creating skills programmatically, a common pattern is to load skills from `.openhands/microagents/` directory in your repository:
+
+```
+your-repository/
+└── .openhands/
+    └── microagents/
+        ├── repo.md              # General guidelines (always active)
+        ├── react.md             # Framework-specific (keyword-triggered)
+        └── docker.md            # Tool-specific (keyword-triggered)
+```
+
+### Loading Example
+
+```python
+from pathlib import Path
+from openhands.sdk.context import Skill, KeywordTrigger
+
+def load_skill_from_file(filepath: Path) -> Skill:
+    """Load a skill from a markdown file."""
+    content = filepath.read_text()
+    
+    # Parse frontmatter if present to extract triggers
+    # (implementation depends on your frontmatter parser)
+    
+    return Skill(
+        name=filepath.stem,
+        content=content,
+        source=str(filepath),
+        trigger=None,  # or KeywordTrigger based on frontmatter
+    )
+
+# Load all skills from .openhands/microagents/
+microagents_dir = Path(".openhands/microagents")
+skills = [
+    load_skill_from_file(f) 
+    for f in microagents_dir.glob("*.md")
+    if f.is_file()
+]
+
+agent_context = AgentContext(skills=skills)
+```
+
+### Best Practices
+
+- **Keep Skills Focused**: Each skill should address a specific domain or task
+- **Use Clear Instructions**: Provide explicit, unambiguous guidelines
+- **Include Examples**: Add practical examples of common use cases
+- **Consider Context Window**: Skills consume tokens, so be concise
+- **Test Triggers**: Verify keyword triggers activate correctly
+- **Avoid Conflicts**: Ensure skills don't contradict each other
+
+### Creating a Comprehensive Repository Skill
+
+For a general repository skill, you can prompt an agent to analyze your codebase:
+
+```
+Please browse the repository, look at the documentation and relevant code, 
+and understand the purpose of this repository.
+
+Create a `.openhands/microagents/repo.md` file with:
+1. The purpose of this repository
+2. The general setup of this repo
+3. A brief description of the structure
+4. CI/CD workflows and checks (from .github/ directory)
+```
+
+This creates persistent memory that helps the agent work more effectively with your codebase.
 
 ## Next Steps
 
