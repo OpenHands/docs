@@ -371,6 +371,9 @@
                       "$ref": "#/components/schemas/SystemPromptEvent"
                     },
                     {
+                      "$ref": "#/components/schemas/TokenEvent"
+                    },
+                    {
                       "$ref": "#/components/schemas/PauseEvent"
                     }
                   ],
@@ -389,6 +392,7 @@
                       "openhands__sdk__event__llm_convertible__observation__ObservationEvent-Output__1": "#/components/schemas/ObservationEvent",
                       "openhands__sdk__event__llm_convertible__observation__UserRejectObservation-Output__1": "#/components/schemas/UserRejectObservation",
                       "openhands__sdk__event__llm_convertible__system__SystemPromptEvent-Output__1": "#/components/schemas/SystemPromptEvent",
+                      "openhands__sdk__event__token__TokenEvent-Output__1": "#/components/schemas/TokenEvent",
                       "openhands__sdk__event__user_action__PauseEvent-Output__1": "#/components/schemas/PauseEvent"
                     }
                   }
@@ -952,6 +956,7 @@
                       "llm": {
                         "model": "your-model-provider/your-model-name",
                         "api_key": "**********",
+                        "temperature": 0.0,
                         "usage_id": "your-llm-service"
                       },
                       "tools": [
@@ -964,7 +969,10 @@
                         {
                           "name": "TaskTrackerTool"
                         }
-                      ]
+                      ],
+                      "system_prompt_kwargs": {
+                        "llm_security_analyzer": true
+                      }
                     },
                     "workspace": {
                       "working_dir": "workspace/project"
@@ -1186,6 +1194,63 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SetConfirmationPolicyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{conversation_id}/security_analyzer": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Set Conversation Security Analyzer",
+        "description": "Set the security analyzer for a conversation.",
+        "operationId": "set_conversation_security_analyzer_api_conversations__conversation_id__security_analyzer_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetSecurityAnalyzerRequest"
               }
             }
           }
@@ -3379,6 +3444,17 @@
           "confirmation_policy": {
             "$ref": "#/components/schemas/ConfirmationPolicyBase"
           },
+          "security_analyzer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityAnalyzerBase"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional security analyzer to evaluate action risks."
+          },
           "activated_knowledge_skills": {
             "items": {
               "type": "string"
@@ -3617,6 +3693,9 @@
                   "$ref": "#/components/schemas/SystemPromptEvent"
                 },
                 {
+                  "$ref": "#/components/schemas/TokenEvent"
+                },
+                {
                   "$ref": "#/components/schemas/PauseEvent"
                 }
               ],
@@ -3635,6 +3714,7 @@
                   "openhands__sdk__event__llm_convertible__observation__ObservationEvent-Output__1": "#/components/schemas/ObservationEvent",
                   "openhands__sdk__event__llm_convertible__observation__UserRejectObservation-Output__1": "#/components/schemas/UserRejectObservation",
                   "openhands__sdk__event__llm_convertible__system__SystemPromptEvent-Output__1": "#/components/schemas/SystemPromptEvent",
+                  "openhands__sdk__event__token__TokenEvent-Output__1": "#/components/schemas/TokenEvent",
                   "openhands__sdk__event__user_action__PauseEvent-Output__1": "#/components/schemas/PauseEvent"
                 }
               }
@@ -4168,6 +4248,226 @@
         ],
         "title": "GitDiff"
       },
+      "GlobAction": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "GlobAction",
+            "title": "Kind",
+            "default": "GlobAction"
+          },
+          "pattern": {
+            "type": "string",
+            "title": "Pattern",
+            "description": "The glob pattern to match files (e.g., \"**/*.js\", \"src/**/*.ts\")"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path",
+            "description": "The directory (absolute path) to search in. Defaults to the current working directory."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "title": "GlobAction",
+        "description": "Schema for glob pattern matching operations."
+      },
+      "GlobObservation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "GlobObservation",
+            "title": "Kind",
+            "default": "GlobObservation"
+          },
+          "content": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TextContent"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContent"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Content",
+            "description": "Content returned from the tool as a list of TextContent/ImageContent objects. When there is an error, it should be written in this field."
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "description": "Whether the observation indicates an error",
+            "default": false
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "List of matching file paths sorted by modification time"
+          },
+          "pattern": {
+            "type": "string",
+            "title": "Pattern",
+            "description": "The glob pattern that was used"
+          },
+          "search_path": {
+            "type": "string",
+            "title": "Search Path",
+            "description": "The directory that was searched"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "Whether results were truncated to 100 files",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "files",
+          "pattern",
+          "search_path"
+        ],
+        "title": "GlobObservation",
+        "description": "Observation from glob pattern matching operations."
+      },
+      "GrepAction": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "GrepAction",
+            "title": "Kind",
+            "default": "GrepAction"
+          },
+          "pattern": {
+            "type": "string",
+            "title": "Pattern",
+            "description": "The regex pattern to search for in file contents"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path",
+            "description": "The directory (absolute path) to search in. Defaults to the current working directory."
+          },
+          "include": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include",
+            "description": "Optional file pattern to filter which files to search (e.g., \"*.js\", \"*.{ts,tsx}\")"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pattern"
+        ],
+        "title": "GrepAction",
+        "description": "Schema for grep content search operations."
+      },
+      "GrepObservation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "GrepObservation",
+            "title": "Kind",
+            "default": "GrepObservation"
+          },
+          "content": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TextContent"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContent"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Content",
+            "description": "Content returned from the tool as a list of TextContent/ImageContent objects. When there is an error, it should be written in this field."
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "description": "Whether the observation indicates an error",
+            "default": false
+          },
+          "matches": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matches",
+            "description": "List of file paths containing the pattern"
+          },
+          "pattern": {
+            "type": "string",
+            "title": "Pattern",
+            "description": "The regex pattern that was used"
+          },
+          "search_path": {
+            "type": "string",
+            "title": "Search Path",
+            "description": "The directory that was searched"
+          },
+          "include_pattern": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Pattern",
+            "description": "The file pattern filter that was used"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "Whether results were truncated to 100 files",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "matches",
+          "pattern",
+          "search_path"
+        ],
+        "title": "GrepObservation",
+        "description": "Observation from grep content search operations."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -4409,7 +4709,7 @@
               }
             ],
             "title": "Temperature",
-            "default": 0.0
+            "description": "Sampling temperature for response generation. Defaults to 0 for most models and provider default for reasoning models."
           },
           "top_p": {
             "anyOf": [
@@ -4947,6 +5247,13 @@
           "force_string_serializer": {
             "type": "boolean",
             "title": "Force String Serializer",
+            "description": "Force using string content serializer when sending to LLM API. Useful for providers that do not support list content, like HuggingFace and Groq.",
+            "default": false
+          },
+          "send_reasoning_content": {
+            "type": "boolean",
+            "title": "Send Reasoning Content",
+            "description": "Whether to include the full reasoning content when sending to the LLM. Useful for models that support extended reasoning, like Kimi-K2-thinking.",
             "default": false
           },
           "reasoning_content": {
@@ -5368,6 +5675,197 @@
         "title": "PipelineCondenser",
         "description": "A condenser that applies a sequence of condensers in order.\n\nAll condensers are defined primarily by their `condense` method, which takes a\n`View` and returns either a new `View` or a `Condensation` event. That means we can\nchain multiple condensers together by passing `View`s along and exiting early if any\ncondenser returns a `Condensation`.\n\nFor example:\n\n    # Use the pipeline condenser to chain multiple other condensers together\n    condenser = PipelineCondenser(condensers=[\n        CondenserA(...),\n        CondenserB(...),\n        CondenserC(...),\n    ])\n\n    result = condenser.condense(view)\n\n    # Doing the same thing without the pipeline condenser requires more boilerplate\n    # for the monadic chaining\n    other_result = view\n\n    if isinstance(other_result, View):\n        other_result = CondenserA(...).condense(other_result)\n\n    if isinstance(other_result, View):\n        other_result = CondenserB(...).condense(other_result)\n\n    if isinstance(other_result, View):\n        other_result = CondenserC(...).condense(other_result)\n\n    assert result == other_result"
       },
+      "PlanningFileEditorAction": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "PlanningFileEditorAction",
+            "title": "Kind",
+            "default": "PlanningFileEditorAction"
+          },
+          "command": {
+            "type": "string",
+            "enum": [
+              "view",
+              "create",
+              "str_replace",
+              "insert",
+              "undo_edit"
+            ],
+            "title": "Command",
+            "description": "The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`."
+          },
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Absolute path to file or directory."
+          },
+          "file_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Text",
+            "description": "Required parameter of `create` command, with the content of the file to be created."
+          },
+          "old_str": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Str",
+            "description": "Required parameter of `str_replace` command containing the string in `path` to replace."
+          },
+          "new_str": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Str",
+            "description": "Optional parameter of `str_replace` command containing the new string (if not given, no string will be added). Required parameter of `insert` command containing the string to insert."
+          },
+          "insert_line": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insert Line",
+            "description": "Required parameter of `insert` command. The `new_str` will be inserted AFTER the line `insert_line` of `path`."
+          },
+          "view_range": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View Range",
+            "description": "Optional parameter of `view` command when `path` points to a file. If none is given, the full file is shown. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Setting `[start_line, -1]` shows all lines from `start_line` to the end of the file."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command",
+          "path"
+        ],
+        "title": "PlanningFileEditorAction",
+        "description": "Schema for planning file editor operations.\n\nInherits from FileEditorAction but restricts editing to PLAN.md only.\nAllows viewing any file but only editing PLAN.md."
+      },
+      "PlanningFileEditorObservation": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "PlanningFileEditorObservation",
+            "title": "Kind",
+            "default": "PlanningFileEditorObservation"
+          },
+          "content": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TextContent"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContent"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Content",
+            "description": "Content returned from the tool as a list of TextContent/ImageContent objects. When there is an error, it should be written in this field."
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "description": "Whether the observation indicates an error",
+            "default": false
+          },
+          "command": {
+            "type": "string",
+            "enum": [
+              "view",
+              "create",
+              "str_replace",
+              "insert",
+              "undo_edit"
+            ],
+            "title": "Command",
+            "description": "The command that was run: `view`, `create`, `str_replace`, `insert`, or `undo_edit`."
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path",
+            "description": "The file path that was edited."
+          },
+          "prev_exist": {
+            "type": "boolean",
+            "title": "Prev Exist",
+            "description": "Indicates if the file previously existed. If not, it was created.",
+            "default": true
+          },
+          "old_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Old Content",
+            "description": "The content of the file before the edit."
+          },
+          "new_content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Content",
+            "description": "The content of the file after the edit."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "PlanningFileEditorObservation",
+        "description": "Observation from planning file editor operations.\n\nInherits from FileEditorObservation - same structure, just different type."
+      },
       "ReasoningItemModel": {
         "properties": {
           "id": {
@@ -5623,7 +6121,7 @@
           "version": {
             "type": "string",
             "title": "Version",
-            "default": "1.0.0"
+            "default": "1.1.0"
           },
           "docs": {
             "type": "string",
@@ -5675,6 +6173,27 @@
         ],
         "title": "SetConfirmationPolicyRequest",
         "description": "Payload to set confirmation policy for a conversation."
+      },
+      "SetSecurityAnalyzerRequest": {
+        "properties": {
+          "security_analyzer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SecurityAnalyzerBase"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The security analyzer to set"
+          }
+        },
+        "type": "object",
+        "required": [
+          "security_analyzer"
+        ],
+        "title": "SetSecurityAnalyzerRequest",
+        "description": "Payload to set security analyzer for a conversation"
       },
       "Skill": {
         "properties": {
@@ -6202,6 +6721,60 @@
         "title": "ThinkingBlock",
         "description": "Anthropic thinking block for extended thinking feature.\n\nThis represents the raw thinking blocks returned by Anthropic models\nwhen extended thinking is enabled. These blocks must be preserved\nand passed back to the API for tool use scenarios."
       },
+      "TokenEvent": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "TokenEvent",
+            "title": "Kind",
+            "default": "TokenEvent"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique event id (ULID/UUID)"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp",
+            "description": "Event timestamp"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "user",
+              "environment"
+            ],
+            "title": "Source"
+          },
+          "prompt_token_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Prompt Token Ids",
+            "description": "The exact prompt token IDs for this message event"
+          },
+          "response_token_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Response Token Ids",
+            "description": "The exact response token IDs for this message event"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "prompt_token_ids",
+          "response_token_ids"
+        ],
+        "title": "TokenEvent",
+        "description": "Event from VLLM representing token IDs used in LLM interaction."
+      },
       "TokenUsage": {
         "properties": {
           "model": {
@@ -6498,6 +7071,9 @@
             "$ref": "#/components/schemas/SystemPromptEvent"
           },
           {
+            "$ref": "#/components/schemas/TokenEvent"
+          },
+          {
             "$ref": "#/components/schemas/PauseEvent"
           }
         ],
@@ -6515,6 +7091,7 @@
             "openhands__sdk__event__llm_convertible__observation__ObservationEvent-Output__1": "#/components/schemas/ObservationEvent",
             "openhands__sdk__event__llm_convertible__observation__UserRejectObservation-Output__1": "#/components/schemas/UserRejectObservation",
             "openhands__sdk__event__llm_convertible__system__SystemPromptEvent-Output__1": "#/components/schemas/SystemPromptEvent",
+            "openhands__sdk__event__token__TokenEvent-Output__1": "#/components/schemas/TokenEvent",
             "openhands__sdk__event__user_action__PauseEvent-Output__1": "#/components/schemas/PauseEvent"
           }
         },
@@ -6586,6 +7163,15 @@
             "$ref": "#/components/schemas/FileEditorAction"
           },
           {
+            "$ref": "#/components/schemas/GlobAction"
+          },
+          {
+            "$ref": "#/components/schemas/GrepAction"
+          },
+          {
+            "$ref": "#/components/schemas/PlanningFileEditorAction"
+          },
+          {
             "$ref": "#/components/schemas/TaskTrackerAction"
           },
           {
@@ -6610,6 +7196,9 @@
             "openhands__tools__browser_use__definition__BrowserSwitchTabAction-Output__1": "#/components/schemas/BrowserSwitchTabAction",
             "openhands__tools__browser_use__definition__BrowserTypeAction-Output__1": "#/components/schemas/BrowserTypeAction",
             "openhands__tools__file_editor__definition__FileEditorAction-Output__1": "#/components/schemas/FileEditorAction",
+            "openhands__tools__glob__definition__GlobAction-Output__1": "#/components/schemas/GlobAction",
+            "openhands__tools__grep__definition__GrepAction-Output__1": "#/components/schemas/GrepAction",
+            "openhands__tools__planning_file_editor__definition__PlanningFileEditorAction-Output__1": "#/components/schemas/PlanningFileEditorAction",
             "openhands__tools__task_tracker__definition__TaskTrackerAction-Output__1": "#/components/schemas/TaskTrackerAction",
             "openhands__tools__terminal__definition__ExecuteBashAction-Output__1": "#/components/schemas/ExecuteBashAction"
           }
@@ -6696,6 +7285,15 @@
             "$ref": "#/components/schemas/FileEditorObservation"
           },
           {
+            "$ref": "#/components/schemas/GlobObservation"
+          },
+          {
+            "$ref": "#/components/schemas/GrepObservation"
+          },
+          {
+            "$ref": "#/components/schemas/PlanningFileEditorObservation"
+          },
+          {
             "$ref": "#/components/schemas/TaskTrackerObservation"
           },
           {
@@ -6710,6 +7308,9 @@
             "openhands__sdk__tool__builtins__think__ThinkObservation-Output__1": "#/components/schemas/ThinkObservation",
             "openhands__tools__browser_use__definition__BrowserObservation-Output__1": "#/components/schemas/BrowserObservation",
             "openhands__tools__file_editor__definition__FileEditorObservation-Output__1": "#/components/schemas/FileEditorObservation",
+            "openhands__tools__glob__definition__GlobObservation-Output__1": "#/components/schemas/GlobObservation",
+            "openhands__tools__grep__definition__GrepObservation-Output__1": "#/components/schemas/GrepObservation",
+            "openhands__tools__planning_file_editor__definition__PlanningFileEditorObservation-Output__1": "#/components/schemas/PlanningFileEditorObservation",
             "openhands__tools__task_tracker__definition__TaskTrackerObservation-Output__1": "#/components/schemas/TaskTrackerObservation",
             "openhands__tools__terminal__definition__ExecuteBashObservation-Output__1": "#/components/schemas/ExecuteBashObservation"
           }
