@@ -85,4 +85,4 @@ Example:
 When linking other pages in the docs, always use absolute paths.
 
 Example:
-This is link to [the quick start page](/overview/quickstart).
+This is link to [the quick start page](/openhands/overview/quickstart).
