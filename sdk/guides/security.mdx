@@ -32,6 +32,7 @@ from openhands.sdk.conversation.state import (
     ConversationState,
 )
 from openhands.sdk.security.confirmation_policy import AlwaysConfirm, NeverConfirm
+from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
 from openhands.tools.preset.default import get_default_agent
 
 
@@ -111,11 +112,14 @@ llm = LLM(
     api_key=SecretStr(api_key),
 )
 
+agent = get_default_agent(llm=llm)
+conversation = Conversation(agent=agent, workspace=os.getcwd())
+
+# Conditionally add security analyzer based on environment variable
 add_security_analyzer = bool(os.getenv("ADD_SECURITY_ANALYZER", "").strip())
 if add_security_analyzer:
     print("Agent security analyzer added.")
-agent = get_default_agent(llm=llm, add_security_analyzer=add_security_analyzer)
-conversation = Conversation(agent=agent, workspace=os.getcwd())
+    conversation.set_security_analyzer(LLMSecurityAnalyzer())
 
 # 1) Confirmation mode ON
 conversation.set_confirmation_policy(AlwaysConfirm())
@@ -342,14 +346,15 @@ tools = [
     Tool(name=FileEditorTool.name),
 ]
 
-# Agent with security analyzer
-security_analyzer = LLMSecurityAnalyzer()
-agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+# Agent
+agent = Agent(llm=llm, tools=tools)
 
 # Conversation with persisted filestore
 conversation = Conversation(
     agent=agent, persistence_dir="./.conversations", workspace="."
 )
+# Set security analyzer via conversation (new approach after deprecation)
+conversation.set_security_analyzer(LLMSecurityAnalyzer())
 conversation.set_confirmation_policy(ConfirmRisky())
 
 print("\n1) Safe command (LOW risk - should execute automatically)...")
@@ -373,7 +378,7 @@ uv run python examples/01_standalone_sdk/16_llm_security_analyzer.py
 
 Create an LLM-based security analyzer to review actions before execution:
 
-```python highlight={9}
+```python highlight={9-11}
 from openhands.sdk import LLM
 from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
 llm = LLM(
@@ -382,8 +387,9 @@ llm = LLM(
     base_url=base_url,
     api_key=SecretStr(api_key),
 )
-security_analyzer = LLMSecurityAnalyzer(llm=security_llm)
-agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+agent = Agent(llm=llm, tools=tools)
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_security_analyzer(LLMSecurityAnalyzer(llm=security_llm))
 ```
 
 The security analyzer:
@@ -432,8 +438,9 @@ class CustomSecurityAnalyzer(SecurityAnalyzerBase):
         return SecurityRisk.LOW
 
 # Use your custom analyzer
-security_analyzer = CustomSecurityAnalyzer()
-agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+agent = Agent(llm=llm, tools=tools)
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_security_analyzer(CustomSecurityAnalyzer())
 ```
 
 For more details on the base class implementation, see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py).
