@@ -1,0 +1,152 @@
+---
+title: LLM Streaming
+description: Stream LLM responses token-by-token for real-time display and interactive user experiences.
+---
+
+<Note>
+This is currently only supported for the chat completion endpoint.
+</Note>
+
+Enable real-time display of LLM responses as they're generated, token by token. This guide demonstrates how to use streaming callbacks to process and display tokens as they arrive from the language model.
+
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/29_llm_streaming.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/29_llm_streaming.py)
+</Note>
+
+Streaming allows you to display LLM responses progressively as the model generates them, rather than waiting for the complete response. This creates a more responsive user experience, especially for long-form content generation.
+
+```python icon="python" expandable examples/01_standalone_sdk/29_llm_streaming.py
+import os
+import sys
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    Conversation,
+    get_logger,
+)
+from openhands.sdk.llm import LLM
+from openhands.sdk.llm.streaming import ModelResponseStream
+from openhands.tools.preset.default import get_default_agent
+
+
+logger = get_logger(__name__)
+
+
+api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise RuntimeError("Set LLM_API_KEY or OPENAI_API_KEY in your environment.")
+
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    model=model,
+    api_key=SecretStr(api_key),
+    base_url=base_url,
+    usage_id="stream-demo",
+    stream=True,
+)
+
+agent = get_default_agent(llm=llm, cli_mode=True)
+
+
+def on_token(chunk: ModelResponseStream) -> None:
+    choices = chunk.choices
+    for choice in choices:
+        delta = choice.delta
+        if delta is not None:
+            content = getattr(delta, "content", None)
+            if isinstance(content, str):
+                sys.stdout.write(content)
+                sys.stdout.flush()
+
+
+conversation = Conversation(
+    agent=agent,
+    workspace=os.getcwd(),
+    token_callbacks=[on_token],
+)
+
+story_prompt = (
+    "Tell me a long story about LLM streaming, make sure it has multiple paragraphs. "
+)
+conversation.send_message(story_prompt)
+print("Token Streaming:")
+print("-" * 100 + "\n")
+conversation.run()
+
+cleanup_prompt = (
+    "Thank you. Please delete the streaming story file now that I've read it, "
+    "then confirm the deletion."
+)
+conversation.send_message(cleanup_prompt)
+print("Token Streaming:")
+print("-" * 100 + "\n")
+conversation.run()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+export LLM_MODEL="anthropic/claude-sonnet-4-5-20250929"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/29_llm_streaming.py
+```
+
+## How It Works
+
+### 1. Enable Streaming on LLM
+
+Configure the LLM with streaming enabled:
+
+```python highlight={6}
+llm = LLM(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=SecretStr(api_key),
+    base_url=base_url,
+    usage_id="stream-demo",
+    stream=True,  # Enable streaming
+)
+```
+
+### 2. Define Token Callback
+
+Create a callback function that processes streaming chunks as they arrive:
+
+```python highlight={1-9}
+def on_token(chunk: ModelResponseStream) -> None:
+    """Process each streaming chunk as it arrives."""
+    choices = chunk.choices
+    for choice in choices:
+        delta = choice.delta
+        if delta is not None:
+            content = getattr(delta, "content", None)
+            if isinstance(content, str):
+                sys.stdout.write(content)
+                sys.stdout.flush()
+```
+
+The callback receives a `ModelResponseStream` object containing:
+- **`choices`**: List of response choices from the model
+- **`delta`**: Incremental content changes for each choice
+- **`content`**: The actual text tokens being streamed
+
+### 3. Register Callback with Conversation
+
+Pass your token callback to the conversation:
+
+```python highlight={3}
+conversation = Conversation(
+    agent=agent,
+    token_callbacks=[on_token],  # Register streaming callback
+    workspace=os.getcwd(),
+)
+```
+
+The `token_callbacks` parameter accepts a list of callbacks, allowing you to register multiple handlers if needed (e.g., one for display, another for logging).
+
+## Next Steps
+
+- **[LLM Error Handling](/sdk/guides/llm-error-handling)** - Handle streaming errors gracefully
+- **[Custom Visualizer](/sdk/guides/convo-custom-visualizer)** - Build custom UI for streaming
+- **[Interactive Terminal](/sdk/guides/agent-interactive-terminal)** - Display streams in terminal UI
