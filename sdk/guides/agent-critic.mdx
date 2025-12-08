@@ -1,0 +1,188 @@
+---
+title: Agent Critic
+description: Learn how to use critics to evaluate and provide feedback on agent actions in real-time.
+---
+
+## Overview
+
+The Agent Critic system enables real-time evaluation of agent actions during execution. Critics analyze agent behavior and provide structured feedback through probability scores, helping you understand agent performance and decision quality.
+
+## What is a Critic?
+
+A critic is a component that evaluates agent actions and messages, providing:
+- **Success probability scores** (0-1 range) indicating action quality
+- **Detailed feedback** with breakdown of evaluation dimensions
+- **Real-time monitoring** during conversation execution
+
+Critics are particularly useful for:
+- Monitoring agent behavior during complex tasks
+- Evaluating action quality in production environments
+- Building feedback loops for agent improvement
+- Debugging agent decision-making
+
+## Using API-Based Critics
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/31_critic_example.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/31_critic_example.py)
+</Note>
+
+The `APIBasedCritic` connects to an external critic model API to evaluate agent actions:
+
+```python icon="python" expandable examples/01_standalone_sdk/31_critic_example.py
+"""Example demonstrating critic-based evaluation of agent actions.
+
+This shows how to configure an agent with a critic to evaluate action quality
+in real-time. The critic scores are displayed in the conversation visualizer.
+"""
+
+import os
+import sys
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.critic import APIBasedCritic
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task_tracker import TaskTrackerTool
+from openhands.tools.terminal import TerminalTool
+
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    sys.exit(
+        f"Missing required environment variable: {name}. "
+        f"Set {name} before running this example."
+    )
+
+
+llm_api_key = get_required_env("LLM_API_KEY")
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=llm_api_key,
+    base_url=os.getenv("LLM_BASE_URL", None),
+)
+
+critic_kwargs = {}
+if server_url := os.getenv("CRITIC_SERVER_URL"):
+    critic_kwargs["server_url"] = server_url
+if model_name := os.getenv("CRITIC_MODEL_NAME"):
+    critic_kwargs["model_name"] = model_name
+
+critic = APIBasedCritic(
+    server_url=get_required_env("CRITIC_SERVER_URL"),
+    api_key=get_required_env("CRITIC_API_KEY"),
+    model_name=get_required_env("CRITIC_MODEL_NAME"),
+)
+
+
+# Configure agent with critic
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+        Tool(name=TaskTrackerTool.name),
+    ],
+    # Add critic to evaluate agent actions
+    critic=critic,
+    # finish_and_message: evaluate on FinishAction and agent MessageEvent (default)
+    critic_evaluation_mode="finish_and_message",
+)
+
+cwd = os.getcwd()
+conversation = Conversation(agent=agent, workspace=cwd)
+
+conversation.send_message(
+    "Create a file called GREETING.txt with a friendly greeting message."
+)
+conversation.run()
+
+print("\nAll done! Check the output above for 'Critic Score' in the visualizer.")
+```
+
+## Critic Evaluation Modes
+
+When configuring an agent with a critic, you can control when evaluations occur using the `critic_evaluation_mode` parameter:
+
+```python
+# Evaluate on FinishAction and agent messages (default)
+agent = Agent(llm=llm, critic=critic, critic_evaluation_mode="finish_and_message")
+
+# Evaluate only on FinishAction
+agent = Agent(llm=llm, critic=critic, critic_evaluation_mode="finish_only")
+
+# Evaluate on every agent message
+agent = Agent(llm=llm, critic=critic, critic_evaluation_mode="message_only")
+```
+
+## Understanding Critic Results
+
+Critic results include:
+
+- **Overall Score**: Success probability from 0.0 to 1.0 (threshold: 0.5)
+- **Detailed Breakdown**: JSON probabilities for specific evaluation dimensions
+- **Visualization**: Color-coded display in conversation output
+
+Example output:
+```
+Critic Score:
+  Overall: 0.8500
+  sentiment_positive: 0.9000
+  direction_forward: 0.8500
+  correction: 0.1500
+```
+
+## Built-in Critics
+
+The SDK includes several built-in critics for common use cases:
+
+### PassCritic
+Always returns a success score, useful as a no-op placeholder:
+```python
+from openhands.sdk.critic import PassCritic
+
+agent = Agent(llm=llm, critic=PassCritic())
+```
+
+### AgentFinishedCritic
+Evaluates whether the agent has properly finished its task:
+```python
+from openhands.sdk.critic import AgentFinishedCritic
+
+agent = Agent(llm=llm, critic=AgentFinishedCritic())
+```
+
+## Custom Critics
+
+You can implement custom critics by extending the `Critic` base class:
+
+```python
+from openhands.sdk.critic import Critic, CriticResult
+from openhands.sdk import Conversation
+
+class MyCustomCritic(Critic):
+    async def evaluate(self, conversation: Conversation) -> CriticResult:
+        # Implement your evaluation logic
+        score = analyze_conversation(conversation)
+        message = {"quality": score, "issues_found": 0}
+        
+        return CriticResult(
+            score=score,
+            message=json.dumps(message)
+        )
+```
+
+## Best Practices
+
+1. **Choose appropriate evaluation modes** - Balance monitoring detail with performance impact
+2. **Set up proper API credentials** - Secure your critic API keys using environment variables
+3. **Monitor critic scores** - Use scores to identify patterns in agent behavior
+4. **Handle failures gracefully** - Critics may fail; ensure your workflow continues
+5. **Use visualization** - Critic results appear in conversation output for easy inspection
+
+## Next Steps
+
+- Explore [Agent Architecture](/sdk/arch/agent) for deeper understanding
+- Learn about [Custom Tools](/sdk/guides/custom-tools) to extend agent capabilities
+- Review [Security Best Practices](/sdk/guides/security) for production deployments
