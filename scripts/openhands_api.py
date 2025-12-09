@@ -75,9 +75,9 @@ def main() -> int:
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="OpenHands API base URL")
     args = parser.parse_args()
 
-    api_key = os.getenv("OPENHANDS_API_KEY") or os.getenv("OPENHANDS_CLOUD_API_KEY") or os.getenv("ALL_HANDS_BOT")
+    api_key = os.getenv("OPENHANDS_API_KEY")
     if not api_key:
-        print("ERROR: OPENHANDS_API_KEY (or OPENHANDS_CLOUD_API_KEY / ALL_HANDS_BOT) is not set.", file=sys.stderr)
+        print("ERROR: OPENHANDS_API_KEY is not set.", file=sys.stderr)
         return 2
 
     try:
