@@ -21,36 +21,20 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import textwrap
 from dataclasses import dataclass
 from typing import Any
 
-import json
-import time
 import requests
 
 
 DEFAULT_BASE_URL = "https://app.all-hands.dev"
-API_TIMEOUT = 30
+API_TIMEOUT = 30  # seconds
 
 
 @dataclass
 class Conversation:
     id: str
     status: str | None
-
-
-def _http_json(url: str, method: str, headers: dict[str, str], data: dict[str, Any] | None) -> dict[str, Any]:
-    with requests.Session() as s:
-        s.headers.update(headers)
-        if method.upper() == "POST":
-            r = s.post(url, json=data, timeout=API_TIMEOUT)
-        elif method.upper() == "GET":
-            r = s.get(url, timeout=API_TIMEOUT)
-        else:
-            r = s.request(method.upper(), url, json=data, timeout=API_TIMEOUT)
-        r.raise_for_status()
-        return r.json() if r.content else {}
 
 
 def create_conversation(base_url: str, api_key: str, initial_user_msg: str, repo: str | None = None) -> Conversation:
@@ -63,7 +47,11 @@ def create_conversation(base_url: str, api_key: str, initial_user_msg: str, repo
     payload: dict[str, Any] = {"initial_user_msg": initial_user_msg}
     if repo:
         payload["repository"] = repo
-    data = _http_json(url, "POST", headers, payload)
+    with requests.Session() as s:
+        s.headers.update(headers)
+        r = s.post(url, json=payload, timeout=API_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
     conv_id = data.get("conversation_id") or data.get("id") or ""
     status = data.get("status")
     if not conv_id:
