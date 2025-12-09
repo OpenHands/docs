@@ -23,7 +23,7 @@ import os
 import sys
 import textwrap
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 import json
 import time
@@ -40,7 +40,7 @@ class Conversation:
     status: str | None
 
 
-def _http_json(url: str, method: str, headers: Dict[str, str], data: Dict[str, Any] | None) -> Dict[str, Any]:
+def _http_json(url: str, method: str, headers: dict[str, str], data: dict[str, Any] | None) -> dict[str, Any]:
     req = urllib.request.Request(url=url, method=method)
     for k, v in headers.items():
         req.add_header(k, v)
@@ -61,7 +61,7 @@ def create_conversation(base_url: str, api_key: str, initial_user_msg: str, repo
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    payload: Dict[str, Any] = {"initial_user_msg": initial_user_msg}
+    payload: dict[str, Any] = {"initial_user_msg": initial_user_msg}
     if repo:
         payload["repository"] = repo
     data = _http_json(url, "POST", headers, payload)
