@@ -27,7 +27,7 @@ from typing import Any
 
 import json
 import time
-import urllib.request
+import requests
 
 
 DEFAULT_BASE_URL = "https://app.all-hands.dev"
@@ -41,17 +41,16 @@ class Conversation:
 
 
 def _http_json(url: str, method: str, headers: dict[str, str], data: dict[str, Any] | None) -> dict[str, Any]:
-    req = urllib.request.Request(url=url, method=method)
-    for k, v in headers.items():
-        req.add_header(k, v)
-    if data is not None:
-        payload = json.dumps(data).encode("utf-8")
-        req.data = payload
-    with urllib.request.urlopen(req, timeout=API_TIMEOUT) as resp:
-        body = resp.read().decode("utf-8")
-        if not body:
-            return {}
-        return json.loads(body)
+    with requests.Session() as s:
+        s.headers.update(headers)
+        if method.upper() == "POST":
+            r = s.post(url, json=data, timeout=API_TIMEOUT)
+        elif method.upper() == "GET":
+            r = s.get(url, timeout=API_TIMEOUT)
+        else:
+            r = s.request(method.upper(), url, json=data, timeout=API_TIMEOUT)
+        r.raise_for_status()
+        return r.json() if r.content else {}
 
 
 def create_conversation(base_url: str, api_key: str, initial_user_msg: str, repo: str | None = None) -> Conversation:
