@@ -14,7 +14,7 @@ Usage:
 
 Notes:
 - This helper only creates the conversation and prints its URL. The remote
-  agent (per your prompt) is expected to open any PRs.
+  agent is expected to open any PRs.
 """
 from __future__ import annotations
 
