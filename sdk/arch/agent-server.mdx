@@ -1,534 +1,159 @@
 ---
 title: Agent Server Package
-description: HTTP API server for remote agent execution with workspace isolation, container orchestration, and multi-user support.
+description: HTTP API server for remote agent execution with conversation/event endpoints and WebSocket streaming.
 ---
 
-The Agent Server package (`openhands.agent_server`) provides an HTTP API server for remote agent execution. It enables building multi-user systems, SaaS products, and distributed agent platforms.
+The Agent Server package (`openhands.agent_server`) exposes a FastAPI-based HTTP/WebSocket interface that runs OpenHands conversations remotely. It is stateless with respect to agent logic and does not orchestrate containers by itself. Containerization is handled by workspace implementations (e.g., DockerWorkspace) that launch this server inside a sandbox when needed.
 
-**Source**: [`openhands/agent_server/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands/agent_server)
+Source: [`openhands-agent-server/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server)
 
-## Purpose
+## Core Responsibilities
 
-The Agent Server enables:
-- **Remote execution**: Clients interact with agents via HTTP API
-- **Multi-user isolation**: Each user gets isolated workspace
-- **Container orchestration**: Manages Docker containers for workspaces
-- **Centralized management**: Monitor and control all agents
-- **Scalability**: Horizontal scaling with multiple servers
+The server provides:
 
-## Architecture Overview
+1. **Conversation lifecycle API** - Create, run, pause, delete conversations (source: openhands/agent_server/conversation_router.py)
+2. **Event access** - Search, count, get, batch-get conversation events; WebSocket event streaming (source: openhands/agent_server/event_router.py, openhands/agent_server/sockets.py)
+3. **Execution utilities** - Start and monitor bash commands; file upload/download; simple Git ops (source: openhands/agent_server/bash_router.py, file_router.py, git_router.py)
+4. **Tool registry listing** - Introspect available tools on the server (source: openhands/agent_server/tool_router.py)
+5. **Server details** - Health, alive, and server info endpoints (source: openhands/agent_server/server_details_router.py)
+
+## Architecture
 
 ```mermaid
-graph TB
-    Client[Web/Mobile Client] -->|HTTPS| API[FastAPI Server]
-    
-    API --> Auth[Authentication]
-    API --> Router[API Router]
-    
-    Router --> WS[Workspace Manager]
-    Router --> Conv[Conversation Handler]
-    
-    WS --> Docker[Docker Manager]
-    Docker --> C1[Container 1<br/>User A]
-    Docker --> C2[Container 2<br/>User B]
-    Docker --> C3[Container 3<br/>User C]
-    
-    Conv --> Agent[Software Agent SDK]
-    Agent --> C1
-    Agent --> C2
-    Agent --> C3
-    
-    style Client fill:#e1f5fe
-    style API fill:#fff3e0
-    style WS fill:#e8f5e8
-    style Docker fill:#f3e5f5
-    style Agent fill:#fce4ec
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 28, "rankSpacing": 40}} }%%
+flowchart TB
+    Client[Client / SDK] -->|HTTP/WS| API[FastAPI App]
+
+    subgraph Routers[Routers (/api/*)]
+        Conv[conversations]
+        Events[conversations/{id}/events]
+        Bash[bash]
+        File[file]
+        Git[git]
+        Tools[tools]
+    end
+
+    WS[/sockets/*\n(WebSocket)/]
+
+    API --> Routers
+    API --> WS
+
+    subgraph Services[Services]
+        ConvSvc[ConversationService]
+        EventSvc[EventService]
+    end
+
+    Routers --> ConvSvc
+    Routers --> EventSvc
+    WS --> EventSvc
+
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+
+    class API primary
+    class Routers,WS secondary
+    class Services tertiary
 ```
 
-### Key Components
+- App construction and route wiring happen in [`api.py`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/api.py): the app mounts a single `/api` router that includes conversation, event, tool, bash, git, file, vscode, and desktop routers.
+- Event and VSCode/Desktop services are initialized in the lifespan context (source: openhands/agent_server/api.py).
 
-**1. FastAPI Server**
-- HTTP REST API endpoints
-- Authentication and authorization
-- Request validation
-- WebSocket support for streaming
+## Authentication
 
-**2. Workspace Manager**
-- Creates and manages Docker containers
-- Isolates workspaces per user
-- Handles container lifecycle
-- Manages resource limits
+- HTTP requests: header `X-Session-API-Key` if session keys are configured (source: openhands/agent_server/dependencies.py, `create_session_api_key_dependency`)
+- WebSocket: query parameter `session_api_key` (source: openhands/agent_server/dependencies.py, sockets.py)
+- Configuration source: environment-driven `Config` (source: openhands/agent_server/config.py)
 
-**3. Conversation Handler**
-- Routes requests to appropriate workspace
-- Manages conversation state
-- Handles concurrent requests
-- Supports streaming responses
-
-**4. Docker Manager**
-- Interfaces with Docker daemon
-- Builds and pulls images
-- Creates and destroys containers
-- Monitors container health
-
-## Design Decisions
-
-### Why HTTP API?
-
-Alternative approaches considered:
-- **gRPC**: More efficient but harder for web clients
-- **WebSockets only**: Good for streaming but not RESTful
-- **HTTP + WebSockets**: Best of both worlds
-
-**Decision**: HTTP REST for operations, WebSockets for streaming
-- ✅ Works from any client (web, mobile, CLI)
-- ✅ Easy to debug (curl, Postman)
-- ✅ Standard authentication (API keys, OAuth)
-- ✅ Streaming where needed
-
-### Why Container Per User?
-
-Alternative approaches:
-- **Shared container**: Multiple users in one container
-- **Container per session**: New container each conversation
-- **Container per user**: One container per user (chosen)
-
-**Decision**: Container per user
-- ✅ Strong isolation between users
-- ✅ Persistent workspace across sessions
-- ✅ Better resource management
-- ⚠️ More containers, but worth it for isolation
-
-### Why FastAPI?
-
-Alternative frameworks:
-- **Flask**: Simpler but less type-safe
-- **Django**: Too heavyweight
-- **FastAPI**: Modern, fast, type-safe (chosen)
-
-**Decision**: FastAPI
-- ✅ Automatic API documentation (OpenAPI)
-- ✅ Type validation with Pydantic
-- ✅ Async support for performance
-- ✅ WebSocket support built-in
-
-## API Design
-
-### Key Endpoints
-
-**Workspace Management**
-```
-POST   /workspaces              Create new workspace
-GET    /workspaces/{id}         Get workspace info
-DELETE /workspaces/{id}         Delete workspace
-POST   /workspaces/{id}/execute Execute command
+```mermaid
+flowchart LR
+    Client -->|X-Session-API-Key| HTTP[HTTP /api/*]
+    Client -->|session_api_key| WS[/sockets/*]
 ```
 
-**Conversation Management**
-```
-POST   /conversations                Create conversation
-GET    /conversations/{id}           Get conversation
-POST   /conversations/{id}/messages  Send message
-GET    /conversations/{id}/stream    Stream responses (WebSocket)
-```
+## Endpoints (selected)
 
-**Health & Monitoring**
-```
-GET    /health                   Server health check
-GET    /metrics                  Prometheus metrics
-```
+All REST endpoints are mounted under `/api` unless noted.
 
-### Authentication
+- Conversations (source: openhands/agent_server/conversation_router.py)
+  - `GET /api/conversations/search` – list
+  - `GET /api/conversations/count` – count
+  - `GET /api/conversations/{conversation_id}` – get
+  - `GET /api/conversations?ids=...` – batch get
+  - `POST /api/conversations` – start (accepts `StartConversationRequest` built with SDK `Agent` and `LocalWorkspace`)
+  - `POST /api/conversations/{conversation_id}/run` – run loop
+  - `POST /api/conversations/{conversation_id}/pause` – pause
+  - `DELETE /api/conversations/{conversation_id}` – delete
+  - `PATCH /api/conversations/{conversation_id}` – update metadata (title)
+  - `POST /api/conversations/{id}/generate_title` – title via LLM
+  - `POST /api/conversations/{id}/secrets` – update secrets
+  - `POST /api/conversations/{id}/confirmation_policy` – set policy
+  - `POST /api/conversations/{id}/security_analyzer` – set analyzer
+  - `POST /api/conversations/{id}/ask_agent` – question-only (no state change)
 
-**API Key Authentication**
-```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-     https://agent-server.example.com/conversations
-```
+- Events (source: openhands/agent_server/event_router.py)
+  - `GET /api/conversations/{conversation_id}/events/search`
+  - `GET /api/conversations/{conversation_id}/events/count`
+  - `GET /api/conversations/{conversation_id}/events/{event_id}`
+  - `GET /api/conversations/{conversation_id}/events?event_ids=...`
+  - `POST /api/conversations/{conversation_id}/events` – send `Message`
 
-**Per-user workspace isolation**
-- API key → user ID mapping
-- Each user gets separate workspace
-- Users can't access each other's workspaces
+- Bash (source: openhands/agent_server/bash_router.py)
+  - `POST /api/bash/start_bash_command`
+  - `POST /api/bash/execute_bash_command`
+  - `GET /api/bash/bash_events/search|{event_id}|` (list/get)
+  - `DELETE /api/bash/bash_events` – clear
 
-### Streaming Responses
+- Files (source: openhands/agent_server/file_router.py)
+  - `POST /api/file/upload/{path}` – upload to absolute path
+  - `GET /api/file/download/{path}` – download absolute path
+  - `GET /api/file/download-trajectory/{conversation_id}` – zip state
 
-**WebSocket for real-time updates**
-```python
-async with websocket_connect(url) as ws:
-    # Send message
-    await ws.send_json({"message": "Hello"})
-    
-    # Receive events
-    async for event in ws:
-        if event["type"] == "message":
-            print(event["content"])
-```
+- Git (source: openhands/agent_server/git_router.py)
+  - `GET /api/git/changes/{path}`
+  - `GET /api/git/diff/{path}`
 
-**Why streaming?**
-- Real-time feedback to users
-- Show agent thinking process
-- Better UX for long-running tasks
+- Tools (source: openhands/agent_server/tool_router.py)
+  - `GET /api/tools/` – list registered tools
 
-## Deployment Models
+- Server details (source: openhands/agent_server/server_details_router.py)
+  - `GET /alive`, `GET /health`, `GET /server_info`
 
-### 1. Local Development
+- WebSockets (source: openhands/agent_server/sockets.py)
+  - `WS /sockets/events/{conversation_id}?session_api_key=...&resend_all=bool`
+  - `WS /sockets/bash-events?session_api_key=...&resend_all=bool`
 
-Run server locally for testing:
-```bash
-# Start server
-openhands-agent-server --port 8000
+## Design Notes
 
-# Or with Docker
-docker run -p 8000:8000 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/all-hands-ai/agent-server:latest
-```
+- The server itself does not manage Docker containers. Containerization and lifecycle are handled by workspace implementations such as `DockerWorkspace` in the `openhands-workspace` package, which run this server inside the container and connect via HTTP (source: openhands-workspace/openhands/workspace/docker/workspace.py).
+- Request/response models are Pydantic classes in `models.py` (source: openhands/agent_server/models.py).
+- Security: schema-level API key checks, path validation for file ops (absolute path enforcement), and typed payloads (sources: dependencies.py, file_router.py).
 
-**Use case**: Development and testing
+## Component Relationships
 
-### 2. Single-Server Deployment
+```mermaid
+flowchart LR
+    Server[Agent Server]
+    SDK[SDK RemoteWorkspace]
+    Docker[DockerWorkspace]
 
-Deploy on one server (VPS, EC2, etc.):
-```bash
-# Install
-pip install openhands-agent-server
+    Docker -.->|launches server in container| Server
+    SDK -->|HTTP/WS| Server
 
-# Run with systemd/supervisor
-openhands-agent-server \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --workers 4
-```
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
 
-**Use case**: Small deployments, prototypes, MVPs
-
-### 3. Multi-Server Deployment
-
-Scale horizontally with load balancer:
-```
-                 Load Balancer
-                       |
-        +-------------+-------------+
-        |             |             |
-   Server 1      Server 2      Server 3
-   (Agents)      (Agents)      (Agents)
-        |             |             |
-        +-------------+-------------+
-                       |
-              Shared State Store
-           (Database, Redis, etc.)
+    class Server primary
+    class SDK,Docker secondary
 ```
 
-**Use case**: Production SaaS, high traffic, need redundancy
+- SDK’s `RemoteWorkspace` and higher-level `RemoteConversation` use these endpoints (source: openhands/sdk/workspace/remote/*, openhands/sdk/conversation/impl/remote_conversation.py).
 
-### 4. Kubernetes Deployment
+## See Also
 
-Container orchestration with Kubernetes:
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: agent-server
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: agent-server
-        image: ghcr.io/all-hands-ai/agent-server:latest
-        ports:
-        - containerPort: 8000
-```
+- [Workspace Architecture](/sdk/arch/workspace) – HTTP delegation model
+- [SDK Architecture](/sdk/arch/overview) – Packages and modes
 
-**Use case**: Enterprise deployments, auto-scaling, high availability
-
-## Resource Management
-
-### Container Limits
-
-Set per-workspace resource limits:
-```python
-# In server configuration
-WORKSPACE_CONFIG = {
-    "resource_limits": {
-        "memory": "2g",      # 2GB RAM
-        "cpus": "2",         # 2 CPU cores
-        "disk": "10g"        # 10GB disk
-    },
-    "timeout": 300,          # 5 min timeout
-}
-```
-
-**Why limit resources?**
-- Prevent one user from consuming all resources
-- Fair usage across users
-- Protect server from runaway processes
-- Cost control
-
-### Cleanup & Garbage Collection
-
-**Container lifecycle**:
-- Containers created on first use
-- Kept alive between requests (warm)
-- Cleaned up after inactivity timeout
-- Force cleanup on server shutdown
-
-**Storage management**:
-- Old workspaces deleted automatically
-- Disk usage monitored
-- Alerts when approaching limits
-
-## Security Considerations
-
-### Multi-Tenant Isolation
-
-**Container isolation**:
-- Each user gets separate container
-- Containers can't communicate
-- Network isolation (optional)
-- File system isolation
-
-**API isolation**:
-- API keys mapped to users
-- Users can only access their workspaces
-- Server validates all permissions
-
-### Input Validation
-
-**Server validates**:
-- API request schemas
-- Command injection attempts
-- Path traversal attempts
-- File size limits
-
-**Defense in depth**:
-- API validation
-- Container validation
-- Docker security features
-- OS-level security
-
-### Network Security
-
-**Best practices**:
-- HTTPS only (TLS certificates)
-- Firewall rules (only port 443/8000)
-- Rate limiting
-- DDoS protection
-
-**Container networking**:
-```python
-# Disable network for workspace
-WORKSPACE_CONFIG = {
-    "network_mode": "none"  # No network access
-}
-
-# Or allow specific hosts
-WORKSPACE_CONFIG = {
-    "allowed_hosts": ["api.example.com"]
-}
-```
-
-## Monitoring & Observability
-
-### Health Checks
-
-```bash
-# Simple health check
-curl https://agent-server.example.com/health
-
-# Response
-{
-  "status": "healthy",
-  "docker": "connected",
-  "workspaces": 15,
-  "uptime": 86400
-}
-```
-
-### Metrics
-
-**Prometheus metrics**:
-- Request count and latency
-- Active workspaces
-- Container resource usage
-- Error rates
-
-**Logging**:
-- Structured JSON logs
-- Per-request tracing
-- Workspace events
-- Error tracking
-
-### Alerting
-
-**Alert on**:
-- Server down
-- High error rate
-- Resource exhaustion
-- Container failures
-
-## Client SDK
-
-Python SDK for interacting with Agent Server:
-
-```python
-from openhands.client import AgentServerClient
-
-client = AgentServerClient(
-    url="https://agent-server.example.com",
-    api_key="your-api-key"
-)
-
-# Create conversation
-conversation = client.create_conversation()
-
-# Send message
-response = client.send_message(
-    conversation_id=conversation.id,
-    message="Hello, agent!"
-)
-
-# Stream responses
-for event in client.stream_conversation(conversation.id):
-    if event.type == "message":
-        print(event.content)
-```
-
-**Client handles**:
-- Authentication
-- Request/response serialization
-- Error handling
-- Streaming
-- Retries
-
-## Cost Considerations
-
-### Server Costs
-
-**Compute**: CPU and memory for containers
-- Each active workspace = 1 container
-- Typically 1-2 GB RAM per workspace
-- 0.5-1 CPU core per workspace
-
-**Storage**: Workspace files and conversation state
-- ~1-10 GB per workspace (depends on usage)
-- Conversation history in database
-
-**Network**: API requests and responses
-- Minimal (mostly text)
-- Streaming adds bandwidth
-
-### Cost Optimization
-
-**1. Idle timeout**: Shutdown containers after inactivity
-```python
-WORKSPACE_CONFIG = {
-    "idle_timeout": 3600  # 1 hour
-}
-```
-
-**2. Resource limits**: Don't over-provision
-```python
-WORKSPACE_CONFIG = {
-    "resource_limits": {
-        "memory": "1g",    # Smaller limit
-        "cpus": "0.5"      # Fractional CPU
-    }
-}
-```
-
-**3. Shared resources**: Use single server for multiple low-traffic apps
-
-**4. Auto-scaling**: Scale servers based on demand
-
-## When to Use Agent Server
-
-### Use Agent Server When:
-
-✅ **Multi-user system**: Web app with many users  
-✅ **Remote clients**: Mobile app, web frontend  
-✅ **Centralized management**: Need to monitor all agents  
-✅ **Workspace isolation**: Users shouldn't interfere  
-✅ **SaaS product**: Building agent-as-a-service  
-✅ **Scaling**: Need to handle concurrent users
-
-**Examples**:
-- Chatbot platforms
-- Code assistant web apps
-- Agent marketplaces
-- Enterprise agent deployments
-
-### Use Standalone SDK When:
-
-✅ **Single-user**: Personal tool or script  
-✅ **Local execution**: Running on your machine  
-✅ **Full control**: Need programmatic access  
-✅ **Simpler deployment**: No server management  
-✅ **Lower latency**: No network overhead
-
-**Examples**:
-- CLI tools
-- Automation scripts
-- Local development
-- Desktop applications
-
-### Hybrid Approach
-
-Use SDK locally but RemoteAPIWorkspace for execution:
-- Agent logic in your Python code
-- Execution happens on remote server
-- Best of both worlds
-
-## Building Custom Agent Server
-
-The server is extensible for custom needs:
-
-**Custom authentication**:
-```python
-from openhands.agent_server import AgentServer
-
-class CustomAgentServer(AgentServer):
-    async def authenticate(self, request):
-        # Custom auth logic
-        return await oauth_verify(request)
-```
-
-**Custom workspace configuration**:
-```python
-server = AgentServer(
-    workspace_factory=lambda user: DockerWorkspace(
-        image=f"custom-image-{user.tier}",
-        resource_limits=user.resource_limits
-    )
-)
-```
-
-**Custom middleware**:
-```python
-@server.middleware
-async def logging_middleware(request, call_next):
-    # Custom logging
-    response = await call_next(request)
-    return response
-```
-
-## Next Steps
-
-### For Usage Examples
-
-- [Local Agent Server](/sdk/guides/agent-server/local-server) - Run locally
-- [Docker Sandboxed Server](/sdk/guides/agent-server/docker-sandbox) - Docker setup
-- [API Sandboxed Server](/sdk/guides/agent-server/api-sandbox) - Remote API
-- [Remote Agent Server Overview](/sdk/guides/agent-server/overview) - All options
-
-### For Related Architecture
-
-- [Workspace Architecture](/sdk/arch/workspace) - RemoteAPIWorkspace details
-- [SDK Architecture](/sdk/arch/sdk) - Core framework
-- [Architecture Overview](/sdk/arch/overview) - System design
-
-### For Implementation Details
-
-- [`openhands/agent_server/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands/agent_server) - Server source
-- [`examples/`](https://github.com/OpenHands/software-agent-sdk/tree/main/examples) - Working examples
+---
+Last updated: 2025-12-09 06:57 UTC  
+Source commit (software-agent-sdk): `93d405c9`
