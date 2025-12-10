@@ -3,5 +3,5 @@
 posthog.init('phc_ERBPfEE0gwNgkOBsxbHr1wh9mBsYcsw4zSLtvdA9RFg', {
     api_host: 'https://us.i.posthog.com',
     defaults: '2025-11-30',
-    person_profiles: 'always',
+    person_profiles: 'identified_only',
 });
