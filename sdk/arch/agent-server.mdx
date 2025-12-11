@@ -155,5 +155,93 @@ flowchart LR
 - [SDK Architecture](/sdk/arch/overview) – Packages and modes
 
 ---
+
+## Client SDK
+
+Python examples for interacting with Agent Server:
+
+```python
+# Minimal REST client using httpx (no SDK wrapper required)
+# Endpoints from conversation/event routers:
+# - POST /api/conversations/{conversation_id}/events (send message)
+# - GET  /api/conversations/{conversation_id}/events/search (read events)
+# (source: event_router.py)
+# https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/event_router.py
+
+import httpx
+
+BASE_URL = "https://agent-server.example.com"
+API_KEY = "your-api-key"
+CONVERSATION_ID = "your-conversation-uuid"
+
+headers = {"X-Session-API-Key": API_KEY}
+
+# Send a user message and start the agent loop
+send = {
+    "role": "user",
+    "content": [{"type": "text", "text": "Hello, agent!"}],
+    "run": True,
+}
+r = httpx.post(
+    f"{BASE_URL}/api/conversations/{CONVERSATION_ID}/events",
+    json=send,
+    headers=headers,
+)
+r.raise_for_status()
+
+# Poll recent events (use WebSockets for streaming if preferred)
+resp = httpx.get(
+    f"{BASE_URL}/api/conversations/{CONVERSATION_ID}/events/search",
+    headers=headers,
+    params={"limit": 50},
+)
+resp.raise_for_status()
+for ev in resp.json().get("items", []):
+    print(ev.get("kind"), ev.get("source"))
+```
+
+<Note>
+To create a new conversation via REST, post a StartConversationRequest to `/api/conversations`.
+See the JSON example in
+[conversation_router.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/conversation_router.py)
+(START_CONVERSATION_EXAMPLES).
+</Note>
+
+### WebSocket streaming example (events)
+
+```python
+# Stream conversation events over WebSocket
+# Endpoint: /sockets/events/{conversation_id}?session_api_key=...
+# (source: sockets.py)
+# https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/sockets.py
+
+import asyncio
+import json
+import websockets
+
+BASE_WS = "wss://agent-server.example.com"
+API_KEY = "your-api-key"
+CONVERSATION_ID = "your-conversation-uuid"
+
+async def stream_events():
+    ws_url = (
+        f"{BASE_WS}/sockets/events/{CONVERSATION_ID}"
+        f"?session_api_key={API_KEY}&resend_all=false"
+    )
+    async with websockets.connect(ws_url) as ws:
+        while True:
+            raw = await ws.recv()
+            event = json.loads(raw)
+            print(event.get("kind"), event.get("source"))
+
+asyncio.run(stream_events())
+```
+
+<Note>
+WebSockets require passing the session key as a query parameter
+(`session_api_key`). See
+[sockets.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/sockets.py).
+</Note>
+
 Last updated: 2025-12-09 06:57 UTC  
 Source commit (software-agent-sdk): `93d405c9`
