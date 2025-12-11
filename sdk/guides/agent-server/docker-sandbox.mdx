@@ -605,6 +605,146 @@ http://localhost:8012/vnc.html?autoconnect=1&resize=remote
 
 ---
 
+## 4) GPU Support in Docker Sandbox
+
+<Note>
+GPU support requires NVIDIA Container Toolkit (nvidia-docker2) to be installed on the host system.
+</Note>
+
+The Docker sandbox supports GPU acceleration for compute-intensive tasks like machine learning, data processing, and GPU-accelerated applications. Enable GPU support by setting the `enable_gpu` parameter when creating a `DockerWorkspace` or `DockerDevWorkspace`.
+
+### Basic GPU Configuration
+
+```python
+from openhands.workspace import DockerWorkspace
+
+with DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    host_port=8010,
+    platform="linux/amd64",
+    enable_gpu=True,  # Enable GPU support
+) as workspace:
+    # GPU is now available in the workspace
+    result = workspace.execute_command("nvidia-smi")
+    print(result.stdout)
+```
+
+### GPU with Custom Base Image
+
+When using GPU-accelerated workloads, you may want to use a CUDA-enabled base image:
+
+```python
+from openhands.workspace import DockerDevWorkspace
+
+with DockerDevWorkspace(
+    base_image="nvidia/cuda:12.2.0-devel-ubuntu22.04",
+    host_port=8010,
+    platform="linux/amd64",
+    enable_gpu=True,
+    target="source",
+) as workspace:
+    # Workspace has CUDA toolkit and GPU access
+    result = workspace.execute_command("nvcc --version && nvidia-smi")
+    print(result.stdout)
+```
+
+### Prerequisites for GPU Support
+
+1. **NVIDIA GPU** with drivers installed on the host system
+2. **NVIDIA Container Toolkit** (nvidia-docker2) installed:
+
+```bash
+# For Ubuntu/Debian
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | \
+    sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-docker2
+sudo systemctl restart docker
+```
+
+3. **Docker runtime** configured with NVIDIA runtime support
+
+### Verifying GPU Access
+
+After enabling GPU support, verify GPU access in the workspace:
+
+```python
+from openhands.workspace import DockerWorkspace
+
+with DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    enable_gpu=True,
+) as workspace:
+    # Check GPU availability
+    result = workspace.execute_command("nvidia-smi")
+    
+    if result.exit_code == 0:
+        print("✅ GPU is accessible:")
+        print(result.stdout)
+    else:
+        print("❌ GPU not accessible:")
+        print(result.stderr)
+```
+
+### GPU-Enabled Use Cases
+
+**Machine Learning Training:**
+```python
+from openhands.sdk import LLM, Conversation
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import DockerWorkspace
+from pydantic import SecretStr
+import os
+
+llm = LLM(
+    usage_id="agent",
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=SecretStr(os.getenv("LLM_API_KEY")),
+)
+
+with DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    enable_gpu=True,
+) as workspace:
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    conversation = Conversation(agent=agent, workspace=workspace)
+    
+    conversation.send_message(
+        "Install PyTorch with CUDA support and verify GPU is available. "
+        "Then create a simple neural network training script that uses GPU."
+    )
+    conversation.run()
+    conversation.close()
+```
+
+**GPU-Accelerated Data Processing:**
+```python
+with DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    enable_gpu=True,
+) as workspace:
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    conversation = Conversation(agent=agent, workspace=workspace)
+    
+    conversation.send_message(
+        "Install RAPIDS cuDF and process the CSV file using GPU acceleration. "
+        "Compare performance with pandas CPU processing."
+    )
+    conversation.run()
+    conversation.close()
+```
+
+### Notes
+
+- When `enable_gpu=True`, the workspace mounts **all available GPUs** into the container
+- Currently, the SDK does not support selective GPU mounting (e.g., mounting only specific GPU IDs)
+- For selective GPU control, consider using the main OpenHands application with `SANDBOX_CUDA_VISIBLE_DEVICES` configuration
+- GPU support adds the `--gpus all` flag to the Docker container runtime
+- Ensure your Docker daemon has proper permissions to access NVIDIA devices
+
+---
+
 ## Next Steps
 
 - **[Local Agent Server](/sdk/guides/agent-server/local-server)**
