@@ -5,34 +5,38 @@ description: When using a Local LLM, OpenHands may have limited functionality. I
 
 ## News
 
-- 2025/05/21: We collaborated with Mistral AI and released [Devstral Small](https://mistral.ai/news/devstral) that achieves [46.8% on SWE-Bench Verified](https://github.com/SWE-bench/experiments/pull/228)!
-- 2025/03/31: We released an open model OpenHands LM 32B v0.1 that achieves 37.1% on SWE-Bench Verified
-([blog](https://openhands.dev/blog/introducing-openhands-lm-32b----a-strong-open-coding-agent-model), [model](https://huggingface.co/all-hands/openhands-lm-32b-v0.1)).
+- 2025/12/12: We now recommend two powerful local models for OpenHands: [Qwen 3 Coder 30B](https://huggingface.co/Qwen/Qwen2.5-Coder-32B-Instruct) and [Devstral Small 2512](https://mistral.ai/news/devstral). Both models deliver excellent performance on coding tasks and work great with OpenHands!
 
 ## Quickstart: Running OpenHands with a Local LLM using LM Studio
 
-This guide explains how to serve a local Devstral LLM using [LM Studio](https://lmstudio.ai/) and have OpenHands connect to it.
+This guide explains how to serve a local LLM using [LM Studio](https://lmstudio.ai/) and have OpenHands connect to it.
 
 We recommend:
 - **LM Studio** as the local model server, which handles metadata downloads automatically and offers a simple, user-friendly interface for configuration.
-- **Devstral Small 2505** as the LLM for software development, trained on real GitHub issues and optimized for agent-style workflows like OpenHands.
+- **Qwen 3 Coder 30B** or **Devstral Small 2512** as the LLM for software development. Both models are optimized for coding tasks and work excellently with agent-style workflows like OpenHands.
 
 ### Hardware Requirements
 
-Running Devstral requires a recent GPU with at least 16GB of VRAM, or a Mac with Apple Silicon (M1, M2, etc.) with at least 32GB of RAM.
+Running these models requires:
+- **Qwen 3 Coder 30B**: A recent GPU with at least 12GB of VRAM (tested on RTX 3060 with 12GB VRAM + 64GB RAM), or a Mac with Apple Silicon with at least 32GB of RAM.
+- **Devstral Small 2512**: A recent GPU with at least 16GB of VRAM, or a Mac with Apple Silicon with at least 32GB of RAM.
 
 ### 1. Install LM Studio
 
 Download and install the LM Studio desktop app from [lmstudio.ai](https://lmstudio.ai/).
 
-### 2. Download Devstral Small
+### 2. Download a Model
 
 1. Make sure to set the User Interface Complexity Level to "Power User", by clicking on the appropriate label at the bottom of the window.
 2. Click the "Discover" button (Magnifying Glass icon) on the left navigation bar to open the Models download page.
 
 ![image](./screenshots/01_lm_studio_open_model_hub.png)
 
-3. Search for the "Devstral Small 2505" model, confirm it's the official Mistral AI (mistralai) model, then proceed to download.
+3. Search for either:
+   - **"Qwen 3 Coder 30B"** (also listed as Qwen2.5-Coder-32B-Instruct) - Recommended for systems with 12GB+ VRAM
+   - **"Devstral Small 2512"** - Recommended for systems with 16GB+ VRAM
+
+   Confirm you're downloading from the official publisher, then proceed to download.
 
 ![image](./screenshots/02_lm_studio_download_devstral.png)
 
@@ -46,12 +50,12 @@ Download and install the LM Studio desktop app from [lmstudio.ai](https://lmstud
 ![image](./screenshots/03_lm_studio_open_load_model.png)
 
 3. Enable the "Manually choose model load parameters" switch.
-4. Select 'Devstral Small 2505' from the model list.
+4. Select your downloaded model from the model list.
 
 ![image](./screenshots/04_lm_studio_setup_devstral_part_1.png)
 
 5. Enable the "Show advanced settings" switch at the bottom of the Model settings flyout to show all the available settings.
-6. Set "Context Length" to at least 32768 and enable Flash Attention.
+6. Set "Context Length" to at least 22000 (for Qwen 3 Coder on lower VRAM systems) or 32768 (recommended for better performance) and enable Flash Attention.
 7. Click "Load Model" to start loading the model.
 
 ![image](./screenshots/05_lm_studio_setup_devstral_part_2.png)
@@ -109,7 +113,9 @@ When started for the first time, OpenHands will prompt you to set up the LLM pro
 2. Enable the "Advanced" switch at the top of the page to show all the available settings.
 
 3. Set the following values:
-    - **Custom Model**: `openai/mistralai/devstral-small-2505` (the Model API identifier from LM Studio, prefixed with "openai/")
+    - **Custom Model**: Use the Model API identifier from LM Studio, prefixed with "openai/". For example:
+      - `openai/qwen/qwen-3-coder-30b-a3b` for Qwen 3 Coder 30B
+      - `openai/mistralai/devstral-small-2512` for Devstral Small 2512
     - **Base URL**: `http://host.docker.internal:1234/v1`
     - **API Key**: `local-llm`
 
@@ -128,33 +134,58 @@ This section describes how to run local LLMs with OpenHands using alternative ba
 ### Create an OpenAI-Compatible Endpoint with Ollama
 
 - Install Ollama following [the official documentation](https://ollama.com/download).
-- Example launch command for Devstral Small 2505:
+- Example launch commands:
 
+**For Qwen 3 Coder 30B:**
 ```bash
 # ⚠️ WARNING: OpenHands requires a large context size to work properly.
-# When using Ollama, set OLLAMA_CONTEXT_LENGTH to at least 32768.
+# When using Ollama, set OLLAMA_CONTEXT_LENGTH to at least 22000.
 # The default (4096) is way too small — not even the system prompt will fit, and the agent will not behave correctly.
+OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_HOST=0.0.0.0:11434 OLLAMA_KEEP_ALIVE=-1 nohup ollama serve &
+ollama pull qwen2.5-coder:32b-instruct
+```
+
+**For Devstral Small 2512:**
+```bash
 OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_HOST=0.0.0.0:11434 OLLAMA_KEEP_ALIVE=-1 nohup ollama serve &
 ollama pull devstral:latest
 ```
 
 ### Create an OpenAI-Compatible Endpoint with vLLM or SGLang
 
-First, download the model checkpoints. For [Devstral Small 2505](https://huggingface.co/mistralai/Devstral-Small-2505):
+First, download the model checkpoints:
 
+**For Qwen 3 Coder 30B:**
 ```bash
-huggingface-cli download mistralai/Devstral-Small-2505 --local-dir mistralai/Devstral-Small-2505
+huggingface-cli download Qwen/Qwen2.5-Coder-32B-Instruct --local-dir Qwen/Qwen2.5-Coder-32B-Instruct
+```
+
+**For Devstral Small 2512:**
+```bash
+huggingface-cli download mistralai/Devstral-Small-2512 --local-dir mistralai/Devstral-Small-2512
 ```
 
 #### Serving the model using SGLang
 
 - Install SGLang following [the official documentation](https://docs.sglang.ai/start/install.html).
-- Example launch command for Devstral Small 2505 (with at least 2 GPUs):
+- Example launch commands (with at least 2 GPUs):
 
+**For Qwen 3 Coder 30B:**
 ```bash
 SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 python3 -m sglang.launch_server \
-    --model mistralai/Devstral-Small-2505 \
-    --served-model-name Devstral-Small-2505 \
+    --model Qwen/Qwen2.5-Coder-32B-Instruct \
+    --served-model-name Qwen2.5-Coder-32B-Instruct \
+    --port 8000 \
+    --tp 2 --dp 1 \
+    --host 0.0.0.0 \
+    --api-key mykey --context-length 131072
+```
+
+**For Devstral Small 2512:**
+```bash
+SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 python3 -m sglang.launch_server \
+    --model mistralai/Devstral-Small-2512 \
+    --served-model-name Devstral-Small-2512 \
     --port 8000 \
     --tp 2 --dp 1 \
     --host 0.0.0.0 \
@@ -164,14 +195,25 @@ SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 python3 -m sglang.launch_server \
 #### Serving the model using vLLM
 
 - Install vLLM following [the official documentation](https://docs.vllm.ai/en/latest/getting_started/installation.html).
-- Example launch command for Devstral Small 2505 (with at least 2 GPUs):
+- Example launch commands (with at least 2 GPUs):
 
+**For Qwen 3 Coder 30B:**
 ```bash
-vllm serve mistralai/Devstral-Small-2505 \
+vllm serve Qwen/Qwen2.5-Coder-32B-Instruct \
     --host 0.0.0.0 --port 8000 \
     --api-key mykey \
     --tensor-parallel-size 2 \
-    --served-model-name Devstral-Small-2505 \
+    --served-model-name Qwen2.5-Coder-32B-Instruct \
+    --enable-prefix-caching
+```
+
+**For Devstral Small 2512:**
+```bash
+vllm serve mistralai/Devstral-Small-2512 \
+    --host 0.0.0.0 --port 8000 \
+    --api-key mykey \
+    --tensor-parallel-size 2 \
+    --served-model-name Devstral-Small-2512 \
     --enable-prefix-caching
 ```
 
@@ -185,14 +227,14 @@ which can achieve up to 2x speedup in some cases.
 pip install git+https://github.com/snowflakedb/ArcticInference.git
 ```
 
-2. Run the launch command with speculative decoding enabled:
+2. Run the launch command with speculative decoding enabled (example for Qwen 3 Coder 30B):
 
 ```bash
-vllm serve mistralai/Devstral-Small-2505 \
+vllm serve Qwen/Qwen2.5-Coder-32B-Instruct \
     --host 0.0.0.0 --port 8000 \
     --api-key mykey \
     --tensor-parallel-size 2 \
-    --served-model-name Devstral-Small-2505 \
+    --served-model-name Qwen2.5-Coder-32B-Instruct \
     --speculative-config '{"method": "suffix"}'
 ```
 
@@ -216,7 +258,8 @@ Once OpenHands is running, open the Settings page in the UI and go to the `LLM` 
 2. Enable the **Advanced** toggle at the top of the page.
 3. Set the following parameters, if you followed the examples above:
    - **Custom Model**: `openai/<served-model-name>`
-     e.g. `openai/devstral` if you're using Ollama, or `openai/Devstral-Small-2505` for SGLang or vLLM.
+     - For **Ollama**: `openai/qwen2.5-coder:32b-instruct` or `openai/devstral`
+     - For **SGLang/vLLM**: `openai/Qwen2.5-Coder-32B-Instruct` or `openai/Devstral-Small-2512`
    - **Base URL**: `http://host.docker.internal:<port>/v1`
      Use port `11434` for Ollama, or `8000` for SGLang and vLLM.
    - **API Key**:
