@@ -1,0 +1,218 @@
+---
+title: Iterative Refinement
+description: Implement iterative refinement workflows where agents refine their work based on critique feedback until quality thresholds are met.
+---
+
+## Overview
+
+Iterative refinement is a powerful pattern where multiple agents work together in a feedback loop:
+1. A **refactoring agent** performs the main task (e.g., code conversion)
+2. A **critique agent** evaluates the quality and provides detailed feedback
+3. If quality is below threshold, the refactoring agent tries again with the feedback
+
+This pattern is useful for:
+- Code refactoring and modernization (e.g., COBOL to Java)
+- Document translation and localization
+- Content generation with quality requirements
+- Any task requiring iterative improvement
+
+## Quick Start
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/31_iterative_refinement.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/31_iterative_refinement.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/31_iterative_refinement.py
+"""
+Iterative Refinement Example: COBOL to Java Refactoring
+
+This example demonstrates an iterative refinement workflow where:
+1. A refactoring agent converts COBOL files to Java files
+2. A critique agent evaluates the quality of each conversion and provides scores
+3. If the average score is below 90%, the process repeats with feedback
+
+The workflow continues until the refactoring meets the quality threshold.
+"""
+
+import os
+import re
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation
+from openhands.tools.preset.default import get_default_agent
+
+
+QUALITY_THRESHOLD = 90.0
+MAX_ITERATIONS = 5
+
+
+def setup_workspace() -> tuple[Path, Path, Path]:
+    """Create workspace directories for the refactoring workflow."""
+    workspace_dir = Path(tempfile.mkdtemp())
+    cobol_dir = workspace_dir / "cobol"
+    java_dir = workspace_dir / "java"
+    critique_dir = workspace_dir / "critiques"
+
+    cobol_dir.mkdir(parents=True, exist_ok=True)
+    java_dir.mkdir(parents=True, exist_ok=True)
+    critique_dir.mkdir(parents=True, exist_ok=True)
+
+    return workspace_dir, cobol_dir, java_dir
+
+
+def create_sample_cobol_files(cobol_dir: Path) -> list[str]:
+    """Create sample COBOL files for demonstration."""
+    # Sample COBOL files based on AWS CardDemo structure
+    sample_files = {
+        "CBACT01C.cbl": "...",  # Account Display Program
+        "CBCUS01C.cbl": "...",  # Customer Information Program
+        "CBTRN01C.cbl": "...",  # Transaction Processing Program
+    }
+    created_files = []
+    for filename, content in sample_files.items():
+        file_path = cobol_dir / filename
+        file_path.write_text(content)
+        created_files.append(filename)
+    return created_files
+
+
+def parse_critique_score(critique_file: Path) -> float:
+    """Parse the average score from the critique report."""
+    if not critique_file.exists():
+        return 0.0
+    content = critique_file.read_text()
+    patterns = [
+        r"\*\*Average Score\*\*:\s*(\d+(?:\.\d+)?)",
+        r"Average Score:\s*(\d+(?:\.\d+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, content, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+    return 0.0
+
+
+def run_iterative_refinement() -> None:
+    """Run the iterative refinement workflow."""
+    api_key = os.getenv("LLM_API_KEY")
+    model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+
+    llm = LLM(
+        model=model,
+        api_key=SecretStr(api_key),
+        usage_id="iterative_refinement",
+    )
+
+    workspace_dir, cobol_dir, java_dir = setup_workspace()
+    critique_dir = workspace_dir / "critiques"
+    cobol_files = create_sample_cobol_files(cobol_dir)
+
+    critique_file = critique_dir / "critique_report.md"
+    current_score = 0.0
+    iteration = 0
+
+    while current_score < QUALITY_THRESHOLD and iteration < MAX_ITERATIONS:
+        iteration += 1
+
+        # Phase 1: Refactoring
+        refactoring_agent = get_default_agent(llm=llm, cli_mode=True)
+        refactoring_conversation = Conversation(
+            agent=refactoring_agent,
+            workspace=str(workspace_dir),
+        )
+        refactoring_conversation.send_message(get_refactoring_prompt(...))
+        refactoring_conversation.run()
+
+        # Phase 2: Critique
+        critique_agent = get_default_agent(llm=llm, cli_mode=True)
+        critique_conversation = Conversation(
+            agent=critique_agent,
+            workspace=str(workspace_dir),
+        )
+        critique_conversation.send_message(get_critique_prompt(...))
+        critique_conversation.run()
+
+        current_score = parse_critique_score(critique_file)
+
+    print(f"Final score: {current_score:.1f}%")
+    print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost}")
+
+
+if __name__ == "__main__":
+    run_iterative_refinement()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/31_iterative_refinement.py
+```
+
+## How It Works
+
+### The Iteration Loop
+
+The core workflow runs in a loop until quality threshold is met:
+
+```python
+QUALITY_THRESHOLD = 90.0
+MAX_ITERATIONS = 5
+
+while current_score < QUALITY_THRESHOLD and iteration < MAX_ITERATIONS:
+    # Phase 1: Refactoring agent converts COBOL to Java
+    refactoring_agent = get_default_agent(llm=llm, cli_mode=True)
+    refactoring_conversation = Conversation(agent=refactoring_agent, workspace=str(workspace_dir))
+    refactoring_conversation.send_message(refactoring_prompt)
+    refactoring_conversation.run()
+
+    # Phase 2: Critique agent evaluates the conversion
+    critique_agent = get_default_agent(llm=llm, cli_mode=True)
+    critique_conversation = Conversation(agent=critique_agent, workspace=str(workspace_dir))
+    critique_conversation.send_message(critique_prompt)
+    critique_conversation.run()
+
+    # Parse score and decide whether to continue
+    current_score = parse_critique_score(critique_file)
+```
+
+### Critique Scoring
+
+The critique agent evaluates each file on four dimensions (0-25 pts each):
+- **Correctness**: Does the Java code preserve the original business logic?
+- **Code Quality**: Is the code clean and following Java conventions?
+- **Completeness**: Are all COBOL features properly converted?
+- **Best Practices**: Does it use proper OOP, error handling, and documentation?
+
+### Feedback Loop
+
+When the score is below threshold, the refactoring agent receives the critique file location:
+
+```python
+if critique_file and critique_file.exists():
+    base_prompt += f"""
+IMPORTANT: A previous refactoring attempt was evaluated and needs improvement.
+Please review the critique at: {critique_file}
+Address all issues mentioned in the critique to improve the conversion quality.
+"""
+```
+
+## Customization
+
+### Adjusting Thresholds
+
+```python
+QUALITY_THRESHOLD = 95.0  # Require higher quality
+MAX_ITERATIONS = 10       # Allow more iterations
+```
+
+### Using Real COBOL Files
+
+The example uses sample files, but you can use real files from the [AWS CardDemo project](https://github.com/aws-samples/aws-mainframe-modernization-carddemo/tree/main/app/cbl).
+
+## Next Steps
+
+- [Agent Delegation](/sdk/guides/agent-delegation) - Parallel task execution with sub-agents
+- [Custom Tools](/sdk/guides/custom-tools) - Create specialized tools for your workflow
