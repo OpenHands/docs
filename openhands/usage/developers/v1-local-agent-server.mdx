@@ -1,11 +1,9 @@
 ---
-title: Run OpenHands App-Server with Local SDK Agent-Server and Custom Agent
-description: Run the OpenHands V1 app-server backed by a purely local agent-server from software-agent-sdk, and learn multiple ways to integrate a custom SDK agent.
+title: Run OpenHands App-Server with Local SDK Agent-Server
+description: Run the OpenHands V1 app-server backed by a purely local SDK agent-server, no Docker or remote runtime required.
 ---
 
-This guide shows how to:
-- Run the OpenHands V1 app-server while spawning a fully local agent-server process (no Docker, no remote runtime)
-- Build a custom agent with software-agent-sdk and integrate it into the locally running app-server
+This guide shows how to run the OpenHands V1 app-server while spawning a fully local agent-server process (no Docker, no remote runtime).
 
 <Note>
 Applies to the V1 app-server path enabled under <code>/api/v1</code>.
@@ -25,7 +23,7 @@ OpenHands V1 exposes its API under <code>/api/v1</code> and keeps the V1 server 
 - On the SDK side, the agent-server exposes <code>/alive</code> and <code>/health</code> (and <code>/api/*</code>). See [server_details_router.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/server_details_router.py#L27-L41) and bootstrap in [agent_server/__main__.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/__main__.py#L1-L40).
 - The app-server talks to the agent-server using <code>AsyncRemoteWorkspace</code> and the agent-server REST/WebSocket API. See [AsyncRemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/remote/async_remote_workspace.py) and where the app-server builds conversation requests in <code>_build_start_conversation_request_for_user</code> ([source](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L929-L1014)).
 
-## Part 1 — Run App-Server with a Local Agent-Server
+## Run App-Server with a Local Agent-Server
 
 ### 1) Build OpenHands and Enable V1
 By default V1 is enabled (unless <code>ENABLE_V1=0</code>). Ensure you’re on Python 3.12 and have Poetry and Node installed, then:
@@ -67,47 +65,12 @@ You can list sandboxes via V1 API and find the exposed agent-server URL; the nam
 ### 5) How the App-Server Talks to the Agent-Server
 When reading/writing files or executing commands in the conversation’s workspace, the app-server uses <code>AsyncRemoteWorkspace</code> that targets the agent-server. Example usage: [app_conversation_router.read_conversation_file](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_router.py#L335-L409) and throughout [live_status_app_conversation_service](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py).
 
-## Part 2 — Build a Custom Agent with the SDK and Integrate Locally
-There are two practical paths, depending on how much you want to change.
+## Customize the Agent Loaded by the GUI
 
-### Path A — Skills and MCP Servers (No-Code)
-V1 lets you customize the agent that runs inside the agent-server by layering skills and MCP servers. The app-server automatically loads:
-- User skills from <code>~/.openhands/skills</code> and <code>~/.openhands/microagents/</code> via the SDK’s loader (see [load_user_skills](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills.py)), which the app-server calls in [skill loading](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_service_base.py#L56-L104).
-- Org/repo skills from your target repository via [skill_loader.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/skill_loader.py).
-- MCP servers: the app-server assembles an SDK-compatible <code>mcpServers</code> config (default OpenHands server + Tavily if available, and any custom MCP servers you set in user settings). See <code>_configure_llm_and_mcp</code> ([source](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L804-L865)).
-
-<strong>Example: Add a User Skill</strong>
-1. Create a file <code>~/.openhands/skills/security_expert.md</code>
-
-```markdown Skill: security_expert.md
----
-triggers:
-- security
----
-# Security Expert
-You are a cybersecurity expert. Always consider security implications.
-```
-
-2. Start a V1 conversation and include the word “security” in your ask. The skill is merged into the agent’s context by the app-server (see [merge path](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_service_base.py#L84-L115)).
-
-### Path B — Custom SDK Agent via App-Server
-- The agent-server API accepts a full Agent specification (LLM, tools, context, etc.) as part of <code>StartConversationRequest</code> (see [conversation_router](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/conversation_router.py#L67-L105)).
-- In OpenHands V1, the app-server constructs this Agent for you based on <code>AgentType</code> (<code>DEFAULT</code> or <code>PLAN</code>), LLM settings, MCP config, and merged skills. See <code>_create_agent_with_context</code> ([source](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L866-L923)) and how it finishes the request in <code>_finalize_conversation_request</code> ([source](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L1016-L1082)).
-
-You can customize behavior without forking by:
-- Switching <code>AgentType</code> between <code>DEFAULT</code> and <code>PLAN</code> via the Start request (UI or API) to change tool presets (see [tool presets](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-tools/openhands/tools/preset)).
-- Supplying skills and MCP servers as described above.
-
-<strong>Advanced: Add a New Agent Type to OpenHands</strong>
-If you want the UI and app-server to create your own agent layout (custom tools/system prompt/etc.), extend OpenHands:
-1. Add a new enum to [AgentType](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_models.py#L18-L26).
-2. Update <code>_create_agent_with_context</code> ([source](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L866-L923)) to construct your Agent when your new type is selected.
-3. Optionally expose the type in the frontend to make it selectable.
-
-### Path C — Test with the SDK Directly (Optional but Useful)
-The SDK ships standalone examples you can run locally to validate your Agent design before wiring through OpenHands. See:
-- **[Local Agent Server](/sdk/guides/agent-server/local-server)**
-- **[Agent Server Overview](/sdk/guides/agent-server/overview)**
+For customization paths (skills/MCP, agent presets, or defining a new Agent type the app can instantiate), see:
+- /sdk/guides/agent-server/app-integration
+- /sdk/guides/agent-custom
+- /sdk/guides/custom-tools
 
 ## Troubleshooting
 - If no agent-server starts when you create a V1 conversation, ensure:
