@@ -1,0 +1,124 @@
+---
+title: Run OpenHands V1 app-server with a local SDK agent-server (no Docker) and integrate a custom agent
+description: Step-by-step guide to run the OpenHands V1 app-server backed by a purely local agent-server from software-agent-sdk, plus multiple ways to integrate a custom SDK agent
+---
+
+This guide shows how to:
+- Run the OpenHands V1 app-server while spawning a fully local agent-server process (no Docker, no remote runtime)
+- Build a custom agent with software-agent-sdk and integrate it into the locally running app-server
+
+The instructions below are grounded in code from OpenHands V1 app-server and software-agent-sdk. Direct source links to the relevant files are included.
+
+Prerequisites
+- Python 3.12, Node 22.x, Poetry 1.8+
+- OpenHands repo checked out
+- software-agent-sdk is an install-time dependency of OpenHands (see pyproject), and the agent-server binary entrypoint is provided by that package
+
+Where V1 lives (execution path overview)
+OpenHands V1 exposes its API under /api/v1 and keeps the V1 server logic in app_server/:
+- The FastAPI app includes V1 only when ENABLE_V1 != '0'. See [server/app.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/server/app.py#L90-L98).
+- The V1 router aggregates app_server endpoints. See [v1_router.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/v1_router.py).
+- For a “local” runtime, the app-server launches a separate agent-server process (from software-agent-sdk) on a free localhost port. This is done by the process sandbox service: [process_sandbox_service](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/sandbox/process_sandbox_service.py#L113-L154) which executes python -m openhands.agent_server and then probes /alive.
+- That default choice comes from env → config wiring. When RUNTIME is local or process, the injectors select the process-based sandbox and spec: see [app_server/config.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/config.py#L102-L160) and [process_sandbox_spec_service.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/sandbox/process_sandbox_spec_service.py#L17-L34).
+- On the SDK side, the agent-server exposes /alive and /health (and /api/*). See [server_details_router.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/server_details_router.py#L27-L41) and the FastAPI app bootstrap in [agent_server/__main__.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/__main__.py#L1-L40).
+- The app-server talks to the agent-server using AsyncRemoteWorkspace and the agent-server REST/WebSocket API. See [AsyncRemoteWorkspace](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/remote/async_remote_workspace.py) and where the app-server builds conversation requests in [live_status_app_conversation_service._build_start_conversation_request_for_user](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L929-L1014).
+
+Part 1 — Run OpenHands app-server with a purely local agent-server
+1) Build OpenHands and enable V1
+- By default V1 is enabled (unless ENABLE_V1=0). Ensure you’re on Python 3.12 and have Poetry and Node installed, then:
+
+```bash
+export INSTALL_DOCKER=0         # we won’t use Docker
+export RUNTIME=local            # force process-based sandbox (spawns local agent-server)
+# optional: export ENABLE_V1=1 # V1 is enabled by default; set explicitly if you disabled it elsewhere
+
+make build
+```
+
+2) Run backend + frontend
+- For local dev, either:
+
+```bash
+# Full app (backend + frontend). Adjust ports/hosts if you’re on a remote machine.
+make run FRONTEND_PORT=12000 FRONTEND_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0
+```
+
+or start servers individually:
+
+```bash
+make start-backend
+make start-frontend
+```
+
+3) Start a V1 conversation to spawn the local agent-server
+- From the UI (Chat → Start), or via the V1 endpoints under /api/v1, create a new conversation. The app-server will:
+  - Start a “sandbox” using the process sandbox service, which launches a local agent-server process via python -m openhands.agent_server
+  - Poll the agent-server /alive endpoint until it reports status ok
+  - Store the agent-server URL and a per-sandbox session API key, then use it for subsequent operations
+
+4) Verify the local agent-server
+- You can list sandboxes via V1 API and find the exposed agent-server URL; the name in the response is "agent-server". The health checks are:
+  - GET {agent_server_url}/alive → {"status":"ok"} (see [server_details_router.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/server_details_router.py#L27-L41))
+  - GET {agent_server_url}/server_info for uptime/idle info
+
+5) How the app-server talks to the agent-server
+- When reading/writing files or executing commands in the conversation’s workspace, the app-server uses AsyncRemoteWorkspace that targets the agent-server. Example usage in the app-server: [app_conversation_router.read_conversation_file](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_router.py#L335-L409) and throughout [live_status_app_conversation_service](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py).
+
+Part 2 — Build a custom agent with the SDK and integrate it locally
+There are two practical paths, depending on how much you want to change.
+
+A) Zero-code integration via Skills and MCP servers (recommended)
+- V1 lets you customize the agent that runs inside the agent-server by layering skills and MCP servers. The app-server automatically loads:
+  - User skills from ~/.openhands/skills and ~/.openhands/microagents/ via the SDK’s loader (see [load_user_skills](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills.py)) which the app-server calls in [skill loading](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_service_base.py#L56-L104).
+  - Org/repo skills from your target repository via [skill_loader.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/skill_loader.py).
+  - MCP servers: the app-server assembles an SDK-compatible mcpServers config (default OpenHands server + Tavily if available, and any custom MCP servers you set in user settings). See [_configure_llm_and_mcp](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L804-L865).
+
+Example: add a user skill
+1. Create a file ~/.openhands/skills/security_expert.md
+
+```markdown
+---
+triggers:
+- security
+---
+# Security Expert
+You are a cybersecurity expert. Always consider security implications.
+```
+
+2. Start a V1 conversation and include the word “security” in your ask. The skill is merged into the agent’s context by the app-server (see [merge path](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_service_base.py#L84-L115)).
+
+B) Build a custom SDK Agent and run it through the app-server
+- The agent-server API accepts a full Agent specification (LLM, tools, context, etc.) as part of StartConversationRequest (see [agent-server conversation_router](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/conversation_router.py#L67-L105)).
+- In OpenHands V1, the app-server constructs this Agent for you based on AgentType (DEFAULT or PLAN), LLM settings, MCP config, and merged skills. See [LiveStatusAppConversationService._create_agent_with_context](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L866-L923) and how it finishes the request in [_finalize_conversation_request](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L1016-L1082).
+
+You can customize behavior without forking by:
+- Switching AgentType between DEFAULT and PLAN via the Start request (UI or API) to change tool presets (see [tool presets](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-tools/openhands/tools/preset)).
+- Supplying skills and MCP servers as described above.
+
+Advanced: add a new "agent type" to OpenHands
+If you want the UI and app-server to create your own agent layout (custom tools/system prompt/etc.), extend OpenHands:
+1) Add a new enum to [AgentType](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_models.py#L18-L26).
+2) Update [LiveStatusAppConversationService._create_agent_with_context](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py#L866-L923) to construct your Agent when your new type is selected.
+3) Optionally expose the type in the frontend to make it selectable.
+
+C) Test your custom agent directly with the SDK (optional but useful)
+- The SDK ships standalone examples you can run locally to validate your Agent design before wiring through OpenHands. See the “Local Agent Server” guide: [/sdk/guides/agent-server/local-server](/sdk/guides/agent-server/local-server) and examples under software-agent-sdk/examples.
+
+Troubleshooting tips
+- If no agent-server starts when you create a V1 conversation, ensure:
+  - ENABLE_V1 is not '0' (V1 router included): [server/app.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/server/app.py#L90-L98)
+  - RUNTIME=local or process so process sandbox is selected: [config_from_env](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/config.py#L102-L160)
+  - The spawned server is probing /alive: [process_sandbox_service](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/sandbox/process_sandbox_service.py#L155-L200)
+- To inspect the agent-server API, open its Swagger at {agent_server_url}/docs (the server is started via uvicorn in [__main__.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/__main__.py#L1-L40)).
+
+References (source of truth)
+- OpenHands V1 app-server boot and routing: [server/app.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/server/app.py#L90-L98), [v1_router.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/v1_router.py)
+- Sandbox process service (spawns local agent-server): [process_sandbox_service.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/sandbox/process_sandbox_service.py#L113-L200)
+- Env→injector selection for local runtime: [config.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/config.py#L102-L160)
+- Default command and env to start agent-server: [process_sandbox_spec_service.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/sandbox/process_sandbox_spec_service.py#L17-L34)
+- Agent-server app and health endpoints: [__main__.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/__main__.py#L1-L40), [server_details_router.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/server_details_router.py#L27-L41)
+- Agent-server conversation API: [conversation_router.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/conversation_router.py)
+- AsyncRemoteWorkspace client: [async_remote_workspace.py](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/remote/async_remote_workspace.py)
+- V1 agent composition in app-server: [live_status_app_conversation_service.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/live_status_app_conversation_service.py)
+- Skills loading and merge points: [app_conversation_service_base.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/app_conversation_service_base.py#L56-L115), [skill_loader.py](https://github.com/OpenHands/OpenHands/blob/main/openhands/app_server/app_conversation/skill_loader.py)
+- SDK documentation on agent-server modes: [/sdk/guides/agent-server/overview](/sdk/guides/agent-server/overview), [/sdk/guides/agent-server/local-server](/sdk/guides/agent-server/local-server)
