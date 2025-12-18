@@ -1467,6 +1467,53 @@
         }
       }
     },
+    "/api/conversations/{conversation_id}/condense": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "summary": "Condense Conversation",
+        "description": "Force condensation of the conversation history.",
+        "operationId": "condense_conversation_api_conversations__conversation_id__condense_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Conversation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Success"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/tools/": {
       "get": {
         "tags": [
@@ -2586,6 +2633,43 @@
             "title": "Load Public Skills",
             "description": "Whether to automatically load skills from the public OpenHands skills repository at https://github.com/OpenHands/skills. This allows you to get the latest skills without SDK updates.",
             "default": false
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "oneOf": [
+                        {
+                          "$ref": "#/components/schemas/LookupSecret"
+                        },
+                        {
+                          "$ref": "#/components/schemas/StaticSecret"
+                        }
+                      ],
+                      "title": "SecretSource",
+                      "discriminator": {
+                        "propertyName": "kind",
+                        "mapping": {
+                          "openhands__sdk__secret__secrets__LookupSecret-Output__1": "#/components/schemas/LookupSecret",
+                          "openhands__sdk__secret__secrets__StaticSecret-Output__1": "#/components/schemas/StaticSecret"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets",
+            "description": "Dictionary mapping secret keys to values or secret sources. Secrets are used for authentication and sensitive data handling. Values can be either strings or SecretSource instances (str | SecretSource)."
           }
         },
         "type": "object",
@@ -3570,7 +3654,8 @@
           "waiting_for_confirmation",
           "finished",
           "error",
-          "stuck"
+          "stuck",
+          "deleting"
         ],
         "title": "ConversationExecutionStatus",
         "description": "Enum representing the current execution state of the conversation."
@@ -4115,137 +4200,6 @@
         ],
         "title": "EventSortOrder",
         "description": "Enum for event sorting options."
-      },
-      "ExecuteBashAction": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "const": "ExecuteBashAction",
-            "title": "Kind",
-            "default": "ExecuteBashAction"
-          },
-          "command": {
-            "type": "string",
-            "title": "Command",
-            "description": "The bash command to execute. Can be empty string to view additional logs when previous exit code is `-1`. Can be `C-c` (Ctrl+C) to interrupt the currently running process. Note: You can only execute one bash command at a time. If you need to run multiple commands sequentially, you can use `&&` or `;` to chain them together."
-          },
-          "is_input": {
-            "type": "boolean",
-            "title": "Is Input",
-            "description": "If True, the command is an input to the running process. If False, the command is a bash command to be executed in the terminal. Default is False.",
-            "default": false
-          },
-          "timeout": {
-            "anyOf": [
-              {
-                "type": "number",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Timeout",
-            "description": "Optional. Sets a maximum time limit (in seconds) for running the command. If the command takes longer than this limit, you\u2019ll be asked whether to continue or stop it. If you don\u2019t set a value, the command will instead pause and ask for confirmation when it produces no new output for 30 seconds. Use a higher value if the command is expected to take a long time (like installation or testing), or if it has a known fixed duration (like sleep)."
-          },
-          "reset": {
-            "type": "boolean",
-            "title": "Reset",
-            "description": "If True, reset the terminal by creating a new session. Use this only when the terminal becomes unresponsive. Note that all previously set environment variables and session state will be lost after reset. Cannot be used with is_input=True.",
-            "default": false
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "command"
-        ],
-        "title": "ExecuteBashAction",
-        "description": "Deprecated: Use TerminalAction instead.\n\nThis class is deprecated and will be removed in version 1.5.0.\nPlease use TerminalAction instead."
-      },
-      "ExecuteBashObservation": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "const": "ExecuteBashObservation",
-            "title": "Kind",
-            "default": "ExecuteBashObservation"
-          },
-          "content": {
-            "items": {
-              "anyOf": [
-                {
-                  "$ref": "#/components/schemas/TextContent"
-                },
-                {
-                  "$ref": "#/components/schemas/ImageContent"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Content",
-            "description": "Content returned from the tool as a list of TextContent/ImageContent objects. When there is an error, it should be written in this field."
-          },
-          "is_error": {
-            "type": "boolean",
-            "title": "Is Error",
-            "description": "Whether the observation indicates an error",
-            "default": false
-          },
-          "command": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Command",
-            "description": "The bash command that was executed. Can be empty string if the observation is from a previous command that hit soft timeout and is not yet finished."
-          },
-          "exit_code": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exit Code",
-            "description": "The exit code of the command. -1 indicates the process hit the soft timeout and is not yet finished."
-          },
-          "timeout": {
-            "type": "boolean",
-            "title": "Timeout",
-            "description": "Whether the command execution timed out.",
-            "default": false
-          },
-          "metadata": {
-            "$ref": "#/components/schemas/CmdOutputMetadata",
-            "description": "Additional metadata captured from PS1 after command execution."
-          },
-          "full_output_save_dir": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Full Output Save Dir",
-            "description": "Directory where full output files are saved"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "command"
-        ],
-        "title": "ExecuteBashObservation",
-        "description": "Deprecated: Use TerminalObservation instead.\n\nThis class is deprecated and will be removed in version 1.5.0.\nPlease use TerminalObservation instead."
       },
       "ExecuteBashRequest": {
         "properties": {
@@ -5315,6 +5269,7 @@
                   "low",
                   "medium",
                   "high",
+                  "xhigh",
                   "none"
                 ]
               },
@@ -5323,7 +5278,7 @@
               }
             ],
             "title": "Reasoning Effort",
-            "description": "The effort to put into reasoning. This is a string that can be one of 'low', 'medium', 'high', or 'none'. Can apply to all reasoning models.",
+            "description": "The effort to put into reasoning. This is a string that can be one of 'low', 'medium', 'high', 'xhigh', or 'none'. Can apply to all reasoning models.",
             "default": "high"
           },
           "reasoning_summary": {
@@ -5347,7 +5302,7 @@
             "type": "boolean",
             "title": "Enable Encrypted Reasoning",
             "description": "If True, ask for ['reasoning.encrypted_content'] in Responses API include.",
-            "default": false
+            "default": true
           },
           "prompt_cache_retention": {
             "anyOf": [
@@ -6535,8 +6490,8 @@
               "discriminator": {
                 "propertyName": "kind",
                 "mapping": {
-                  "openhands__sdk__conversation__secret_source__LookupSecret-Output__1": "#/components/schemas/LookupSecret",
-                  "openhands__sdk__conversation__secret_source__StaticSecret-Output__1": "#/components/schemas/StaticSecret"
+                  "openhands__sdk__secret__secrets__LookupSecret-Output__1": "#/components/schemas/LookupSecret",
+                  "openhands__sdk__secret__secrets__StaticSecret-Output__1": "#/components/schemas/StaticSecret"
                 }
               }
             },
@@ -6615,7 +6570,7 @@
           "version": {
             "type": "string",
             "title": "Version",
-            "default": "1.4.1"
+            "default": "1.6.0"
           },
           "docs": {
             "type": "string",
@@ -7033,8 +6988,8 @@
               "discriminator": {
                 "propertyName": "kind",
                 "mapping": {
-                  "openhands__sdk__conversation__secret_source__LookupSecret-Input__1": "#/components/schemas/LookupSecret",
-                  "openhands__sdk__conversation__secret_source__StaticSecret-Input__1": "#/components/schemas/StaticSecret"
+                  "openhands__sdk__secret__secrets__LookupSecret-Input__1": "#/components/schemas/LookupSecret",
+                  "openhands__sdk__secret__secrets__StaticSecret-Input__1": "#/components/schemas/StaticSecret"
                 }
               }
             },
@@ -7434,6 +7389,11 @@
           "text": {
             "type": "string",
             "title": "Text"
+          },
+          "enable_truncation": {
+            "type": "boolean",
+            "title": "Enable Truncation",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -7514,15 +7474,21 @@
             "description": "The thinking content"
           },
           "signature": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Signature",
             "description": "Cryptographic signature for the thinking block"
           }
         },
         "type": "object",
         "required": [
-          "thinking",
-          "signature"
+          "thinking"
         ],
         "title": "ThinkingBlock",
         "description": "Anthropic thinking block for extended thinking feature.\n\nThis represents the raw thinking blocks returned by Anthropic models\nwhen extended thinking is enabled. These blocks must be preserved\nand passed back to the API for tool use scenarios."
@@ -7710,8 +7676,8 @@
               "discriminator": {
                 "propertyName": "kind",
                 "mapping": {
-                  "openhands__sdk__conversation__secret_source__LookupSecret-Input__1": "#/components/schemas/LookupSecret",
-                  "openhands__sdk__conversation__secret_source__StaticSecret-Input__1": "#/components/schemas/StaticSecret"
+                  "openhands__sdk__secret__secrets__LookupSecret-Input__1": "#/components/schemas/LookupSecret",
+                  "openhands__sdk__secret__secrets__StaticSecret-Input__1": "#/components/schemas/StaticSecret"
                 }
               }
             },
@@ -7985,9 +7951,6 @@
             "$ref": "#/components/schemas/TaskTrackerAction"
           },
           {
-            "$ref": "#/components/schemas/ExecuteBashAction"
-          },
-          {
             "$ref": "#/components/schemas/TerminalAction"
           }
         ],
@@ -8013,7 +7976,6 @@
             "openhands__tools__grep__definition__GrepAction-Output__1": "#/components/schemas/GrepAction",
             "openhands__tools__planning_file_editor__definition__PlanningFileEditorAction-Output__1": "#/components/schemas/PlanningFileEditorAction",
             "openhands__tools__task_tracker__definition__TaskTrackerAction-Output__1": "#/components/schemas/TaskTrackerAction",
-            "openhands__tools__terminal__definition__ExecuteBashAction-Output__1": "#/components/schemas/ExecuteBashAction",
             "openhands__tools__terminal__definition__TerminalAction-Output__1": "#/components/schemas/TerminalAction"
           }
         },
@@ -8040,6 +8002,24 @@
           }
         },
         "title": "CondenserBase"
+      },
+      "SecretSource": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/LookupSecret"
+          },
+          {
+            "$ref": "#/components/schemas/StaticSecret"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "openhands__sdk__secret__secrets__LookupSecret-Input__1": "#/components/schemas/LookupSecret",
+            "openhands__sdk__secret__secrets__StaticSecret-Input__1": "#/components/schemas/StaticSecret"
+          }
+        },
+        "title": "SecretSource"
       },
       "BaseWorkspace": {
         "oneOf": [
@@ -8111,9 +8091,6 @@
             "$ref": "#/components/schemas/TaskTrackerObservation"
           },
           {
-            "$ref": "#/components/schemas/ExecuteBashObservation"
-          },
-          {
             "$ref": "#/components/schemas/TerminalObservation"
           }
         ],
@@ -8129,7 +8106,6 @@
             "openhands__tools__grep__definition__GrepObservation-Output__1": "#/components/schemas/GrepObservation",
             "openhands__tools__planning_file_editor__definition__PlanningFileEditorObservation-Output__1": "#/components/schemas/PlanningFileEditorObservation",
             "openhands__tools__task_tracker__definition__TaskTrackerObservation-Output__1": "#/components/schemas/TaskTrackerObservation",
-            "openhands__tools__terminal__definition__ExecuteBashObservation-Output__1": "#/components/schemas/ExecuteBashObservation",
             "openhands__tools__terminal__definition__TerminalObservation-Output__1": "#/components/schemas/TerminalObservation"
           }
         },
