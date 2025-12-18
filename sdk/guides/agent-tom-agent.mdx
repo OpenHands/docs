@@ -1,0 +1,298 @@
+---
+title: Theory of Mind (TOM) Agent
+description: Enable your agent to understand user intent and preferences through Theory of Mind capabilities, providing personalized guidance based on user modeling.
+---
+
+## Overview
+
+Tom (Theory of Mind) Agent provides advanced user understanding capabilities that help your agent interpret vague instructions and adapt to user preferences over time. Built on research in user mental modeling, Tom agents can:
+
+- Understand unclear or ambiguous user requests
+- Provide personalized guidance based on user modeling
+- Build long-term user preference profiles
+- Adapt responses based on conversation history
+
+This is particularly useful when:
+- User instructions are vague or incomplete
+- You need to infer user intent from minimal context
+- Building personalized experiences across multiple conversations
+- Understanding user preferences and working patterns
+
+## Research Foundation
+
+Tom agent is based on the TOM-SWE research paper on user mental modeling for software engineering agents:
+
+```bibtex Citation
+@misc{zhou2025tomsweusermentalmodeling,
+      title={TOM-SWE: User Mental Modeling For Software Engineering Agents},
+      author={Xuhui Zhou and Valerie Chen and Zora Zhiruo Wang and Graham Neubig and Maarten Sap and Xingyao Wang},
+      year={2025},
+      eprint={2510.21903},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2510.21903},
+}
+```
+
+<Note>
+Paper: [TOM-SWE on arXiv](https://arxiv.org/abs/2510.21903)
+</Note>
+
+## Quick Start
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/30_tom_agent.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/30_tom_agent.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/30_tom_agent.py
+"""Example demonstrating Tom agent with Theory of Mind capabilities.
+
+This example shows how to set up an agent with Tom tools for getting
+personalized guidance based on user modeling. Tom tools include:
+- TomConsultTool: Get guidance for vague or unclear tasks
+- SleeptimeComputeTool: Index conversations for user modeling
+"""
+
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation
+from openhands.sdk.tool import Tool
+from openhands.tools.preset.default import get_default_tools
+from openhands.tools.tom_consult import (
+    SleeptimeComputeAction,
+    SleeptimeComputeTool,
+    TomConsultTool,
+)
+
+
+# Configure LLM
+api_key: str | None = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm: LLM = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+    usage_id="agent",
+    drop_params=True,
+)
+
+# Build tools list with Tom tools
+# Note: Tom tools are automatically registered on import (PR #862)
+tools = get_default_tools(enable_browser=False)
+
+# Configure Tom tools with parameters
+tom_params: dict[str, bool | str] = {
+    "enable_rag": True,  # Enable RAG in Tom agent
+}
+
+# Add LLM configuration for Tom tools (uses same LLM as main agent)
+tom_params["llm_model"] = llm.model
+if llm.api_key:
+    if isinstance(llm.api_key, SecretStr):
+        tom_params["api_key"] = llm.api_key.get_secret_value()
+    else:
+        tom_params["api_key"] = llm.api_key
+if llm.base_url:
+    tom_params["api_base"] = llm.base_url
+
+# Add both Tom tools to the agent
+tools.append(Tool(name=TomConsultTool.name, params=tom_params))
+tools.append(Tool(name=SleeptimeComputeTool.name, params=tom_params))
+
+# Create agent with Tom capabilities
+# This agent can consult Tom for personalized guidance
+# Note: Tom's user modeling data will be stored in ~/.openhands/
+agent: Agent = Agent(llm=llm, tools=tools)
+
+# Start conversation
+cwd: str = os.getcwd()
+PERSISTENCE_DIR = os.path.expanduser("~/.openhands")
+CONVERSATIONS_DIR = os.path.join(PERSISTENCE_DIR, "conversations")
+conversation = Conversation(
+    agent=agent, workspace=cwd, persistence_dir=CONVERSATIONS_DIR
+)
+
+# Optionally run sleeptime compute to index existing conversations
+# This builds user preferences and patterns from conversation history
+sleeptime_compute_tool = conversation.agent.tools_map.get("sleeptime_compute")
+if sleeptime_compute_tool and sleeptime_compute_tool.executor:
+    print("\nRunning sleeptime compute to index conversations...")
+    sleeptime_result = sleeptime_compute_tool.executor(
+        SleeptimeComputeAction(), conversation
+    )
+    print(f"Result: {sleeptime_result.message}")
+    print(f"Sessions processed: {sleeptime_result.sessions_processed}")
+
+# Send a potentially vague message where Tom consultation might help
+conversation.send_message(
+    "I need to debug some code but I'm not sure where to start. "
+    + "Can you help me figure out the best approach?"
+)
+conversation.run()
+
+print("\n" + "=" * 80)
+print("Tom agent consultation example completed!")
+print("=" * 80)
+
+# Report cost
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+
+
+# Optional: Index this conversation for Tom's user modeling
+# This builds user preferences and patterns from conversation history
+# Uncomment the lines below to index the conversation:
+#
+# conversation.send_message("Please index this conversation using sleeptime_compute")
+# conversation.run()
+# print("\nConversation indexed for user modeling!")
+
+# Report cost
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/25_tom_agent.py
+```
+
+## Tom Tools
+
+### TomConsultTool
+
+The consultation tool provides personalized guidance when the agent encounters vague or unclear user requests:
+
+```python
+# The agent can automatically call this tool when needed
+# Example: User says "I need to debug something"
+# Tom analyzes the vague request and provides specific guidance
+```
+
+Key features:
+- Analyzes conversation history for context
+- Provides personalized suggestions based on user modeling
+- Helps disambiguate vague instructions
+- Adapts to user communication patterns
+
+### SleeptimeComputeTool
+
+The indexing tool processes conversation history to build user preference profiles:
+
+```python
+# Index conversations for future personalization
+sleeptime_compute_tool = conversation.agent.tools_map.get("sleeptime_compute")
+if sleeptime_compute_tool:
+    result = sleeptime_compute_tool.executor(
+        SleeptimeComputeAction(), conversation
+    )
+```
+
+Key features:
+- Processes conversation history into user models
+- Stores preferences in `~/.openhands/` directory
+- Builds understanding of user patterns over time
+- Enables long-term personalization across sessions
+
+## Configuration
+
+### RAG Support
+
+Enable retrieval-augmented generation for enhanced context awareness:
+
+```python
+tom_params = {
+    "enable_rag": True,  # Enable RAG for better context retrieval
+}
+```
+
+### Custom LLM for Tom
+
+You can optionally use a different LLM for Tom's internal reasoning:
+
+```python
+# Use the same LLM as main agent
+tom_params["llm_model"] = llm.model
+tom_params["api_key"] = llm.api_key.get_secret_value()
+
+# Or configure a separate LLM for Tom
+tom_llm = LLM(model="gpt-4", api_key=SecretStr("different-key"))
+tom_params["llm_model"] = tom_llm.model
+tom_params["api_key"] = tom_llm.api_key.get_secret_value()
+```
+
+## Data Storage
+
+Tom stores user modeling data persistently in `~/.openhands/`:
+
+```
+~/.openhands/
+├── user_models/              # User preference profiles
+│   └── {user_id}/
+│       ├── user_model.json   # Current user model
+│       └── processed_sessions_timestamps.json
+└── conversations/            # Indexed conversation data
+    └── {session_id}/
+        └── events/
+```
+
+This persistent storage enables Tom to:
+- Remember user preferences across sessions
+- Track which conversations have been indexed
+- Build long-term understanding of user patterns
+
+## Use Cases
+
+### 1. Handling Vague Requests
+
+When a user provides minimal information:
+
+```python
+conversation.send_message("Help me with that bug")
+# Tom analyzes history to determine which bug and suggest approach
+```
+
+### 2. Personalized Recommendations
+
+Tom adapts suggestions based on past interactions:
+
+```python
+# After multiple conversations, Tom learns:
+# - User prefers minimal explanations
+# - User typically works with Python
+# - User values efficiency over verbosity
+```
+
+### 3. Intent Inference
+
+Understanding what the user really wants:
+
+```python
+conversation.send_message("Make it better")
+# Tom infers from context what "it" is and how to improve it
+```
+
+## Best Practices
+
+1. **Enable RAG**: For better context awareness, always enable RAG:
+   ```python
+   tom_params = {"enable_rag": True}
+   ```
+
+2. **Index Regularly**: Run sleeptime compute after important conversations to build better user models
+
+3. **Provide Context**: Even with Tom, providing more context leads to better results
+
+4. **Monitor Data**: Check `~/.openhands/` periodically to understand what's being learned
+
+5. **Privacy Considerations**: Be aware that conversation data is stored locally for user modeling
+
+## Next Steps
+
+- **[Agent Delegation](/sdk/guides/agent-delegation)** - Combine Tom with sub-agents for complex workflows
+- **[Context Condenser](/sdk/guides/context-condenser)** - Manage long conversation histories effectively
+- **[Custom Tools](/sdk/guides/custom-tools)** - Create tools that work with Tom's insights
