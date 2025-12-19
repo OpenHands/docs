@@ -23,8 +23,13 @@ Usage:
   uv run examples/02_remote_agent_server/06_convo_with_cloud_workspace.py
 
 Requirements:
-  - LLM_API_KEY: API key for LLM access
+  - LLM_API_KEY: API key for direct LLM provider access (e.g., Anthropic API key)
   - OPENHANDS_CLOUD_API_KEY: API key for OpenHands Cloud access
+
+Note:
+  The LLM configuration is sent to the cloud sandbox, so you need an API key
+  that works directly with the LLM provider (not a local proxy). If using
+  Anthropic, set LLM_API_KEY to your Anthropic API key.
 """
 
 import os
@@ -48,10 +53,13 @@ logger = get_logger(__name__)
 api_key = os.getenv("LLM_API_KEY")
 assert api_key, "LLM_API_KEY required"
 
+# Note: Don't use a local proxy URL here - the cloud sandbox needs direct access
+# to the LLM provider. Use None for base_url to let LiteLLM use the default
+# provider endpoint, or specify the provider's direct URL.
 llm = LLM(
     usage_id="agent",
     model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
-    base_url=os.getenv("LLM_BASE_URL"),
+    base_url=os.getenv("LLM_BASE_URL") or None,
     api_key=SecretStr(api_key),
 )
 
@@ -63,15 +71,9 @@ if not cloud_api_key:
 cloud_api_url = os.getenv("OPENHANDS_CLOUD_API_URL", "https://app.all-hands.dev")
 logger.info(f"Using OpenHands Cloud API: {cloud_api_url}")
 
-# Optional: specify a sandbox spec ID for custom environments
-sandbox_spec_id = os.getenv("OPENHANDS_SANDBOX_SPEC_ID")
-if sandbox_spec_id:
-    logger.info(f"Using sandbox spec: {sandbox_spec_id}")
-
 with OpenHandsCloudWorkspace(
     cloud_api_url=cloud_api_url,
     cloud_api_key=cloud_api_key,
-    sandbox_spec_id=sandbox_spec_id,
 ) as workspace:
     agent = get_default_agent(llm=llm, cli_mode=True)
     received_events: list = []
@@ -106,6 +108,9 @@ with OpenHandsCloudWorkspace(
         print(f"EXAMPLE_COST: {cost}")
     finally:
         conversation.close()
+
+    logger.info("✅ Conversation completed successfully.")
+    logger.info(f"Total {len(received_events)} events received during conversation.")
 ```
 
 ```bash Running the Example
