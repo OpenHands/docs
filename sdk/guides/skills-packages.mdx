@@ -1,0 +1,291 @@
+---
+title: Skill Packages
+description: Load reusable skills from installed Python packages to extend agent capabilities with community-created or custom skill collections.
+---
+
+## Overview
+
+Skill packages allow you to distribute and share collections of skills as Python packages. Skills can be loaded from installed packages using Python's entry points mechanism, making it easy to integrate third-party skill collections into your agents.
+
+## What are Skill Packages?
+
+A skill package is a Python package that:
+- Contains one or more skill files (Markdown with optional frontmatter)
+- Includes a `manifest.json` file describing the skills
+- Registers itself via the `openhands.skill_packages` entry point
+
+Skills can be either:
+- **Repository skills** (always active): Provide context about how to work with a specific repository or codebase
+- **Knowledge skills** (triggered by keywords): Activated when specific keywords appear in conversation
+
+## Using Skill Packages
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/31_use_skill_packages.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/31_use_skill_packages.py)
+</Note>
+
+### Discovering Installed Packages
+
+```python icon="python" expandable examples/01_standalone_sdk/31_use_skill_packages.py
+"""Example demonstrating OpenHands skill package loading.
+
+This example shows how to:
+1. Discover installed skill packages
+2. Load skills from specific packages
+3. Use package skills with an agent
+4. Configure packages via .openhands/packages.yaml
+"""
+
+import os
+
+from openhands.sdk.agent.agent import Agent
+from openhands.sdk.context.skills.package_loader import (
+    get_skill_package,
+    list_skill_packages,
+    load_configured_package_skills,
+    load_skills_from_package,
+)
+from openhands.sdk.llm.llm import LLM
+
+
+def main():
+    """Demonstrate skill package loading capabilities."""
+    # Initialize LLM
+    llm = LLM(
+        model="anthropic/claude-3-5-sonnet-20241022",
+        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    )
+
+    # Example 1: Discover installed packages
+    print("=" * 60)
+    print("1. Discovering Installed Skill Packages")
+    print("=" * 60)
+
+    packages = list_skill_packages()
+
+    if not packages:
+        print("\nNo skill packages installed.")
+        print(
+            "\nTo install a skill package, use pip:\n"
+            "  pip install openhands-skill-package-name\n"
+        )
+        return
+
+    print(f"\nFound {len(packages)} installed skill package(s):\n")
+
+    for pkg in packages:
+        descriptor = pkg["descriptor"]
+        metadata = descriptor["metadata"]
+
+        print(f"Package: {pkg['name']}")
+        print(f"  Display Name: {metadata.get('displayName', 'N/A')}")
+        print(f"  Version: {metadata.get('version', 'N/A')}")
+        print(f"  Description: {metadata.get('description', 'N/A')}")
+        print(f"  Author: {metadata.get('author', 'N/A')}")
+
+        skills = descriptor.get("spec", {}).get("skills", [])
+        print(f"  Skills: {len(skills)} skill(s)")
+
+        if skills:
+            for skill in skills:
+                print(f"    - {skill.get('name', 'Unnamed')}")
+        print()
+
+    # Example 2: Get and inspect a specific package
+    print("\n" + "=" * 60)
+    print("2. Inspecting a Specific Package")
+    print("=" * 60)
+
+    if packages:
+        package_name = packages[0]["name"]
+        print(f"\nInspecting package: {package_name}\n")
+
+        package = get_skill_package(package_name)
+        if package:
+            descriptor = package["descriptor"]
+            skills_spec = descriptor.get("spec", {}).get("skills", [])
+
+            print("Skills in this package:")
+            for skill in skills_spec:
+                print(f"\n  Skill: {skill.get('name')}")
+                print(f"  Path: {skill.get('path')}")
+                print(f"  Type: {skill.get('type', 'repo-skill')}")
+
+    # Example 3: Load skills from a package
+    print("\n" + "=" * 60)
+    print("3. Loading Skills from a Package")
+    print("=" * 60)
+
+    if packages:
+        package_name = packages[0]["name"]
+
+        print(f"\nLoading Skills from: {package_name}")
+        print("=" * 60)
+
+        try:
+            repo_skills, knowledge_skills = load_skills_from_package(package_name)
+
+            print(
+                f"\nLoaded {len(repo_skills)} repo skills and "
+                f"{len(knowledge_skills)} knowledge skills"
+            )
+
+            if repo_skills:
+                print("\nRepo Skills (always active):")
+                for name, skill in repo_skills.items():
+                    print(f"  • {name}")
+                    print(f"    Source: {skill.source}")
+
+            if knowledge_skills:
+                print("\nKnowledge Skills (keyword-triggered):")
+                for name, skill in knowledge_skills.items():
+                    print(f"  • {name}")
+                    if skill.trigger:
+                        print(f"    Keywords: {', '.join(skill.trigger.keywords)}")
+                    print(f"    Source: {skill.source}")
+
+            # Example 4: Use package skills with an agent
+            print("\n" + "=" * 60)
+            print("4. Using Package Skills with an Agent")
+            print("=" * 60)
+
+            # Create agent with package skills
+            agent = Agent(llm=llm, repo_skills=repo_skills, knowledge_skills=knowledge_skills)
+
+            print(f"\nCreated agent with skills from '{package_name}'")
+            print(
+                f"Agent has {len(repo_skills)} repo skills "
+                f"and {len(knowledge_skills)} knowledge skills"
+            )
+
+            # Run a simple test
+            print("\nTesting agent with loaded skills...")
+            result = agent.run(
+                (
+                    "List the skills you have loaded and explain "
+                    "what they help you do."
+                ),
+                max_iterations=1,
+            )
+            print(f"\nAgent response:\n{result.response}")
+
+        except ValueError as e:
+            print(f"\nError: {e}")
+
+    # Example 5: Load from configuration file
+    print("\n" + "=" * 60)
+    print("5. Loading Skills from Configuration")
+    print("=" * 60)
+
+    print(
+        "\nYou can configure packages to load via .openhands/packages.yaml:\n"
+        "\n"
+        "packages:\n"
+        "  - package-name-1\n"
+        "  - package-name-2\n"
+    )
+
+    repo_skills, knowledge_skills = load_configured_package_skills()
+
+    if repo_skills or knowledge_skills:
+        print(
+            f"\nLoaded {len(repo_skills)} repo skills and "
+            f"{len(knowledge_skills)} knowledge skills from configured packages"
+        )
+    else:
+        print("\nNo packages configured or no skills found")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Creating a Skill Package
+
+To create your own skill package:
+
+1. **Create the package structure**:
+```
+my-skills-package/
+├── pyproject.toml
+├── my_skills/
+│   ├── __init__.py
+│   ├── manifest.json
+│   └── skills/
+│       ├── skill1.md
+│       └── skill2.md
+```
+
+2. **Create manifest.json** in your package:
+```json
+{
+  "name": "my-skills",
+  "version": "1.0.0",
+  "displayName": "My Custom Skills",
+  "description": "A collection of custom skills",
+  "author": "Your Name",
+  "skills": [
+    {
+      "name": "skill1",
+      "path": "skills/skill1.md"
+    },
+    {
+      "name": "skill2",
+      "path": "skills/skill2.md"
+    }
+  ]
+}
+```
+
+3. **Create skill files**:
+```markdown
+---
+triggers:
+  - keyword1
+  - keyword2
+---
+
+# Skill Name
+
+Skill content and instructions for the agent...
+```
+
+4. **Register the entry point** in `pyproject.toml`:
+```toml
+[project.entry-points."openhands.skill_packages"]
+my-skills = "my_skills"
+```
+
+## Configuring Packages
+
+Create `.openhands/packages.yaml` in your project root:
+
+```yaml
+packages:
+  - simple-code-review
+  - my-custom-skills
+```
+
+Then load them automatically:
+
+```python
+from openhands.sdk.context.skills.package_loader import load_configured_package_skills
+
+repo_skills, knowledge_skills = load_configured_package_skills()
+agent = Agent(llm=llm, repo_skills=repo_skills, knowledge_skills=knowledge_skills)
+```
+
+## Best Practices
+
+- **Organize by domain**: Group related skills into packages (e.g., "git-workflows", "python-testing")
+- **Clear naming**: Use descriptive names for both packages and individual skills
+- **Document triggers**: Clearly document which keywords trigger knowledge skills
+- **Version properly**: Use semantic versioning for your skill packages
+- **Test thoroughly**: Ensure skills work as expected before publishing
+
+## API Reference
+
+- [`list_skill_packages()`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/package_loader.py) - Discover all installed packages
+- [`get_skill_package(name)`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/package_loader.py) - Get a specific package
+- [`load_skills_from_package(name)`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/package_loader.py) - Load skills from a package
+- [`load_configured_package_skills()`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/package_loader.py) - Load from configuration file
