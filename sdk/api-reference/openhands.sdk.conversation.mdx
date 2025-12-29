@@ -188,6 +188,8 @@ Bases: `OpenHandsModel`
 
 - `activated_knowledge_skills`: list[str]
 - `agent`: AgentBase
+- `blocked_actions`: dict[str, str]
+- `blocked_messages`: dict[str, str]
 - `confirmation_policy`: ConfirmationPolicyBase
 - `env_observation_persistence_dir`: str | None
   Directory for persisting environment observation files.
@@ -217,6 +219,14 @@ Acquire the lock.
     -1 means wait indefinitely.
 * Returns:
   True if lock was acquired, False otherwise.
+
+#### block_action()
+
+Persistently record a hook-blocked action.
+
+#### block_message()
+
+Persistently record a hook-blocked user message.
 
 #### classmethod create()
 
@@ -251,6 +261,14 @@ This is useful if you want to do some validation that requires the entire model 
 #### owned()
 
 Return True if the lock is currently held by the calling thread.
+
+#### pop_blocked_action()
+
+Remove and return a hook-blocked action reason, if present.
+
+#### pop_blocked_message()
+
+Remove and return a hook-blocked message reason, if present.
 
 #### release()
 
@@ -424,6 +442,7 @@ Initialize the conversation.
     suffix their persistent filestore with this ID.
   * `callbacks` – Optional list of callback functions to handle events
   * `token_callbacks` – Optional list of callbacks invoked for streaming deltas
+  * `hook_config` – Optional hook configuration to auto-wire session hooks
   * `max_iteration_per_run` – Maximum number of iterations per run
   * `visualizer` –  
 
@@ -433,6 +452,11 @@ Initialize the conversation.
     - ConversationVisualizerBase instance: Use custom visualizer
     - None: No visualization
   * `stuck_detection` – Whether to enable stuck detection
+  * `stuck_detection_thresholds` – Optional configuration for stuck detection
+    thresholds. Can be a StuckDetectionThresholds instance or
+    a dict with keys: ‘action_observation’, ‘action_error’,
+    ‘monologue’, ‘alternating_pattern’. Values are integers
+    representing the number of repetitions before triggering.
 
 #### ask_agent()
 
@@ -564,6 +588,12 @@ Remote conversation proxy that talks to an agent server.
   * `callbacks` – Optional callbacks to receive events (not yet streamed)
   * `max_iteration_per_run` – Max iterations configured on server
   * `stuck_detection` – Whether to enable stuck detection on server
+  * `stuck_detection_thresholds` – Optional configuration for stuck detection
+    thresholds. Can be a StuckDetectionThresholds instance or
+    a dict with keys: ‘action_observation’, ‘action_error’,
+    ‘monologue’, ‘alternating_pattern’. Values are integers
+    representing the number of repetitions before triggering.
+  * `hook_config` – Optional hook configuration for session hooks
   * `visualizer` –  
 
     Visualization configuration. Can be:
@@ -629,10 +659,17 @@ Generate a title for the conversation based on the first user message.
 
 #### run()
 
-Execute the agent to process messages and perform actions.
+Trigger a run on the server.
 
-This method runs the agent until it finishes processing the current
-message or reaches the maximum iteration limit.
+* Parameters:
+  * `blocking` – If True (default), wait for the run to complete by polling
+    the server. If False, return immediately after triggering the run.
+  * `poll_interval` – Time in seconds between status polls (only used when
+    blocking=True). Default is 1.0 second.
+  * `timeout` – Maximum time in seconds to wait for the run to complete
+    (only used when blocking=True). Default is 3600 seconds.
+* Raises:
+  `ConversationRunError` – If the run fails or times out.
 
 #### send_message()
 
@@ -749,7 +786,12 @@ This detector analyzes the conversation history to identify various stuck patter
 
 #### Properties
 
+- `action_error_threshold`: int
+- `action_observation_threshold`: int
+- `alternating_pattern_threshold`: int
+- `monologue_threshold`: int
 - `state`: [ConversationState](#class-conversationstate)
+- `thresholds`: StuckDetectionThresholds
 
 #### Methods
 
