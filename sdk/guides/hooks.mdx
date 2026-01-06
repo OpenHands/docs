@@ -12,19 +12,21 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 - Tracing and debugging
 
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/33_hooks.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/33_hooks.py)
+This example is available on GitHub: [examples/01_standalone_sdk/33_hooks](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/33_hooks/)
 </Note>
 
-```python icon="python" expandable examples/01_standalone_sdk/33_hooks.py
+```python icon="python" expandable examples/01_standalone_sdk/33_hooks/33_hooks.py
 """OpenHands Agent SDK — Hooks Example
 
-This example demonstrates how to use hooks to intercept and control agent behavior.
-Hooks are shell scripts that run at key lifecycle events, enabling:
-- Blocking dangerous commands before execution (PreToolUse)
-- Logging tool usage after execution (PostToolUse)
-- Processing user messages before they reach the agent (UserPromptSubmit)
+Demonstrates the OpenHands hooks system.
+Hooks are shell scripts that run at key lifecycle events:
 
-Hooks are configured in .openhands/hooks.json or passed programmatically.
+- PreToolUse: Block dangerous commands before execution
+- PostToolUse: Log tool usage after execution
+- UserPromptSubmit: Inject context into user messages
+- Stop: Enforce task completion criteria
+
+The hook scripts are in the scripts/ directory alongside this file.
 """
 
 import os
@@ -39,22 +41,140 @@ from openhands.sdk.hooks import HookConfig
 from openhands.tools.preset.default import get_default_agent
 
 
-# Make ^C a clean exit instead of a stack trace
 signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
+SCRIPT_DIR = Path(__file__).parent / "hook_scripts"
 
-def create_example_hooks(tmpdir: Path) -> tuple[HookConfig, Path]:
-    """Create example hook scripts and configuration.
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
 
-    This creates two hooks:
-    1. A PreToolUse hook that blocks 'rm -rf' commands
-    2. A PostToolUse hook that logs all tool usage
-    """
-    # Create a blocking hook that prevents dangerous commands
-    # Uses jq for JSON parsing (needed for nested fields like tool_input.command)
-    block_script = tmpdir / "block_dangerous.sh"
-    block_script.write_text("""#!/bin/bash
-# Read JSON input from stdin
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Create temporary workspace with git repo
+with tempfile.TemporaryDirectory() as tmpdir:
+    workspace = Path(tmpdir)
+    os.system(f"cd {workspace} && git init -q && echo 'test' > file.txt")
+
+    log_file = workspace / "tool_usage.log"
+    summary_file = workspace / "summary.txt"
+
+    # Configure ALL hook types in one config
+    hook_config = HookConfig.from_dict(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "terminal",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": str(SCRIPT_DIR / "block_dangerous.sh"),
+                                "timeout": 10,
+                            }
+                        ],
+                    }
+                ],
+                "PostToolUse": [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": f"LOG_FILE={log_file} "
+                                f"{SCRIPT_DIR / 'log_tools.sh'}",
+                                "timeout": 5,
+                            }
+                        ],
+                    }
+                ],
+                "UserPromptSubmit": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": str(SCRIPT_DIR / "inject_git_context.sh"),
+                            }
+                        ],
+                    }
+                ],
+                "Stop": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": f"SUMMARY_FILE={summary_file} "
+                                f"{SCRIPT_DIR / 'require_summary.sh'}",
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    )
+
+    agent = get_default_agent(llm=llm)
+    conversation = Conversation(
+        agent=agent,
+        workspace=str(workspace),
+        hook_config=hook_config,
+    )
+
+    # Demo 1: Safe command (PostToolUse logs it)
+    print("=" * 60)
+    print("Demo 1: Safe command - logged by PostToolUse")
+    print("=" * 60)
+    conversation.send_message("Run: echo 'Hello from hooks!'")
+    conversation.run()
+
+    if log_file.exists():
+        print(f"\n[Log: {log_file.read_text().strip()}]")
+
+    # Demo 2: Dangerous command (PreToolUse blocks it)
+    print("\n" + "=" * 60)
+    print("Demo 2: Dangerous command - blocked by PreToolUse")
+    print("=" * 60)
+    conversation.send_message("Run: rm -rf /tmp/test")
+    conversation.run()
+
+    # Demo 3: Context injection + Stop hook enforcement
+    print("\n" + "=" * 60)
+    print("Demo 3: Context injection + Stop hook")
+    print("=" * 60)
+    print("UserPromptSubmit injects git status; Stop requires summary.txt\n")
+    conversation.send_message(
+        "Check what files have changes, then create summary.txt describing the repo."
+    )
+    conversation.run()
+
+    if summary_file.exists():
+        print(f"\n[summary.txt: {summary_file.read_text()[:80]}...]")
+
+    print("\n" + "=" * 60)
+    print("Example Complete!")
+    print("=" * 60)
+
+    cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+    print(f"\nEXAMPLE_COST: {cost}")
+```
+
+### Hook Scripts
+
+The example uses external hook scripts in the `hook_scripts/` directory:
+
+<Accordion title="block_dangerous.sh - PreToolUse hook">
+```bash
+#!/bin/bash
+# PreToolUse hook: Block dangerous rm -rf commands
+# Uses jq for JSON parsing (needed for nested fields like tool_input.command)
+
 input=$(cat)
 command=$(echo "$input" | jq -r '.tool_input.command // ""')
 
@@ -65,125 +185,78 @@ if [[ "$command" =~ "rm -rf" ]]; then
 fi
 
 exit 0  # Exit code 0 = allow the operation
-""")
-    block_script.chmod(0o755)
-
-    # Create a logging hook that records tool usage
-    # Uses OPENHANDS_TOOL_NAME env var (no jq/python needed!)
-    log_file = tmpdir / "tool_usage.log"
-    log_script = tmpdir / "log_tools.sh"
-    log_script.write_text(f"""#!/bin/bash
-# OPENHANDS_TOOL_NAME is set by the hooks system
-echo "[$(date)] Tool used: $OPENHANDS_TOOL_NAME" >> {log_file}
-exit 0
-""")
-    log_script.chmod(0o755)
-
-    # Create hook configuration
-    return HookConfig.from_dict(
-        {
-            "hooks": {
-                "PreToolUse": [
-                    {
-                        "matcher": "terminal",  # Only match the terminal tool
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": str(block_script),
-                                "timeout": 10,
-                            }
-                        ],
-                    }
-                ],
-                "PostToolUse": [
-                    {
-                        "matcher": "*",  # Match all tools
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": str(log_script),
-                                "timeout": 5,
-                            }
-                        ],
-                    }
-                ],
-            }
-        }
-    ), log_file
-
-
-def main():
-    # Configure LLM
-    api_key = os.getenv("LLM_API_KEY")
-    assert api_key is not None, "LLM_API_KEY environment variable is not set."
-    model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-20250514")
-    base_url = os.getenv("LLM_BASE_URL")
-    llm = LLM(
-        usage_id="agent",
-        model=model,
-        base_url=base_url,
-        api_key=SecretStr(api_key),
-    )
-
-    # Create a temporary directory for hook scripts
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-
-        # Create example hooks
-        hook_config, log_file = create_example_hooks(tmpdir)
-        print(f"Created hook scripts in {tmpdir}")
-
-        # Create agent and conversation with hooks
-        # Just pass hook_config - it auto-wires everything!
-        agent = get_default_agent(llm=llm)
-        conversation = Conversation(
-            agent=agent,
-            workspace=os.getcwd(),
-            hook_config=hook_config,
-        )
-
-        print("\n" + "=" * 60)
-        print("Example 1: Safe command (should work)")
-        print("=" * 60)
-        conversation.send_message("Please run: echo 'Hello from hooks example!'")
-        conversation.run()
-
-        # Show the log file
-        if log_file.exists():
-            print("\n[Log file contents]")
-            print(log_file.read_text())
-
-        print("\n" + "=" * 60)
-        print("Example 2: Dangerous command (should be BLOCKED)")
-        print("=" * 60)
-        conversation.send_message("Please run: rm -rf /tmp/test_delete")
-        conversation.run()
-
-        print("\n" + "=" * 60)
-        print("Example Complete!")
-        print("=" * 60)
-        print("\nKey points:")
-        print("- PreToolUse hooks run BEFORE tool execution and can block operations")
-        print("- PostToolUse hooks run AFTER tool execution for logging/auditing")
-        print("- Exit code 2 from a hook blocks the operation")
-        print("- Hooks receive JSON on stdin with event details")
-        print("- Environment variables like $OPENHANDS_TOOL_NAME simplify simple hooks")
-        print("- Hook config can be in .openhands/hooks.json or passed via hook_config")
-
-        # Report cost
-        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
-        print(f"EXAMPLE_COST: {cost}")
-
-
-if __name__ == "__main__":
-    main()
 ```
+</Accordion>
+
+<Accordion title="log_tools.sh - PostToolUse hook">
+```bash
+#!/bin/bash
+# PostToolUse hook: Log all tool usage
+# Uses OPENHANDS_TOOL_NAME env var (no jq/python needed!)
+
+# LOG_FILE should be set by the calling script
+LOG_FILE="${LOG_FILE:-/tmp/tool_usage.log}"
+
+echo "[$(date)] Tool used: $OPENHANDS_TOOL_NAME" >> "$LOG_FILE"
+exit 0
+```
+</Accordion>
+
+<Accordion title="inject_git_context.sh - UserPromptSubmit hook">
+```bash
+#!/bin/bash
+# UserPromptSubmit hook: Inject git status when user asks about code changes
+
+input=$(cat)
+
+# Check if user is asking about changes, diff, or git
+if echo "$input" | grep -qiE "(changes|diff|git|commit|modified)"; then
+    # Get git status if in a git repo
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        status=$(git status --short 2>/dev/null | head -10)
+        if [ -n "$status" ]; then
+            # Escape for JSON
+            escaped=$(echo "$status" | sed 's/"/\\"/g' | tr '\n' ' ')
+            echo "{\"additionalContext\": \"Current git status: $escaped\"}"
+        fi
+    fi
+fi
+exit 0
+```
+</Accordion>
+
+<Accordion title="require_summary.sh - Stop hook">
+```bash
+#!/bin/bash
+# Stop hook: Require a summary.txt file before allowing agent to finish
+# SUMMARY_FILE should be set by the calling script
+
+SUMMARY_FILE="${SUMMARY_FILE:-./summary.txt}"
+
+if [ ! -f "$SUMMARY_FILE" ]; then
+    echo '{"decision": "deny", "additionalContext": "Create summary.txt first."}'
+    exit 2
+fi
+exit 0
+```
+</Accordion>
 
 ```bash Running the Example
 export LLM_API_KEY="your-api-key"
 cd agent-sdk
-uv run python examples/01_standalone_sdk/33_hooks.py
+uv run python examples/01_standalone_sdk/33_hooks/33_hooks.py
 ```
+
+## Hook Types
+
+| Hook | When it runs | Can block? |
+|------|--------------|------------|
+| PreToolUse | Before tool execution | Yes (exit 2) |
+| PostToolUse | After tool execution | No |
+| UserPromptSubmit | Before processing user message | Yes (exit 2) |
+| Stop | When agent tries to finish | Yes (exit 2) |
+| SessionStart | When conversation starts | No |
+| SessionEnd | When conversation ends | No |
 
 ## Key Concepts
 
