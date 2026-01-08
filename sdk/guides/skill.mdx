@@ -3,21 +3,45 @@ title: Agent Skills & Context
 description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
 
-Skills modify agent behavior by injecting additional context and rules. OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with additional trigger-based activation.
+Skills modify agent behavior by injecting additional context and rules. OpenHands supports the [AgentSkills standard](https://agentskills.io/specification) with extensions for backward compatibility with legacy skill formats.
 
-## Overview
+## Quick Reference: Skill Behavior
 
-| Feature | Standard AgentSkills | OpenHands Extension |
-|---------|---------------------|---------------------|
-| SKILL.md format | ✅ Supported | ✅ Supported |
-| `name`, `description` | ✅ Required | ✅ Required |
-| `license`, `compatibility`, `metadata` | ✅ Optional | ✅ Optional |
-| `scripts/`, `references/`, `assets/` | ✅ Supported | ✅ Supported |
-| `triggers` field | ❌ Not in standard | ✅ OpenHands extension |
-| Activation | Agent decides based on description | Automatic keyword matching OR agent decides |
+OpenHands handles skills differently based on their **format** and **trigger configuration**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SKILL CATEGORIZATION FLOW                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Is it a SKILL.md file?                                                     │
+│       │                                                                     │
+│       ├── YES (AgentSkills format) ──► Listed in <available_skills>         │
+│       │       │                         • Name, description, location only  │
+│       │       │                         • Agent reads full content on demand│
+│       │       │                                                             │
+│       │       └── Has triggers? ──► ALSO auto-inject when triggered         │
+│       │                                                                     │
+│       └── NO (Legacy OpenHands format)                                      │
+│               │                                                             │
+│               ├── Has triggers? ──► Listed in <available_skills>            │
+│               │                      • Content injected when triggered      │
+│               │                                                             │
+│               └── No triggers ──► Full content in <REPO_CONTEXT>            │
+│                                   • Always active in system prompt          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+| Skill Type | Format | Trigger | System Prompt | Content Loading |
+|------------|--------|---------|---------------|-----------------|
+| AgentSkills (SKILL.md) | `is_agentskills_format=True` | None | `<available_skills>` | Agent reads file on demand |
+| AgentSkills (SKILL.md) | `is_agentskills_format=True` | Has triggers | `<available_skills>` | Auto-inject on trigger + agent can read anytime |
+| Legacy with triggers | `is_agentskills_format=False` | `KeywordTrigger`/`TaskTrigger` | `<available_skills>` | Injected when triggered |
+| Legacy always-active | `is_agentskills_format=False` | `None` | `<REPO_CONTEXT>` | Full content at startup |
 
 <Note>
-The official AgentSkills standard lists all skills in the system prompt with their description and location, letting the agent decide when to read the full content. OpenHands extends this with optional `triggers` for automatic keyword-based activation.
+**AgentSkills Standard Compliance**: SKILL.md files follow the [progressive disclosure model](https://agentskills.io/specification#progressive-disclosure) - they are always listed with name/description/location. Skills with triggers get the best of both worlds: automatic injection when triggered, plus the agent can proactively read them anytime.
 </Note>
 
 ## Inline Skills
@@ -208,32 +232,44 @@ Skill(
 
 ### How Skills Appear in the System Prompt
 
-Skills are handled differently based on their trigger type:
+Skills appear in different sections based on their format and trigger:
 
-| Trigger Type | System Prompt | When Content is Loaded |
-|--------------|---------------|------------------------|
-| `trigger=None` | Full content in `<REPO_CONTEXT>` | Always (at startup) |
-| `KeywordTrigger` | Listed in `<SKILLS>` with location | When keyword detected in user message |
-| `TaskTrigger` | Listed in `<SKILLS>` with location | When task type matches |
+**`<available_skills>` section** (progressive disclosure):
+- All AgentSkills-format skills (SKILL.md files)
+- Legacy skills with triggers (`KeywordTrigger` or `TaskTrigger`)
 
-For triggered skills, the system prompt includes an `<available_skills>` block (following the AgentSkills standard format):
+**`<REPO_CONTEXT>` section** (full content):
+- Legacy skills without triggers (`trigger=None`)
 
 ```xml
+<!-- Skills listed for progressive disclosure -->
 <SKILLS>
 The following skills are available and may be triggered by keywords or task types.
 You can also directly look up a skill's full content by reading its location path.
 
 <available_skills>
   <skill>
+    <name>code-style</name>
+    <description>Project coding standards and style guidelines.</description>
+    <location>/path/to/code-style/SKILL.md</location>
+  </skill>
+  <skill>
     <name>magic-word</name>
     <description>Special instructions when magic word is detected</description>
-    <location>/path/to/skill</location>
+    <location>/path/to/magic-word.md</location>
   </skill>
 </available_skills>
 </SKILLS>
+
+<!-- Legacy always-active skills have full content here -->
+<REPO_CONTEXT>
+[BEGIN context from [repo-rules]]
+Full content of legacy skill without triggers...
+[END Context]
+</REPO_CONTEXT>
 ```
 
-When a keyword is detected, the skill's full content is injected into the conversation as `<EXTRA_INFO>`.
+When a keyword trigger is detected, the skill's full content is injected into the user message as `<EXTRA_INFO>`.
 
 ## Loading Skills from Disk (AgentSkills Standard)
 
@@ -297,15 +333,17 @@ Instructions and documentation for the agent...
 The `triggers` field is an OpenHands extension not part of the official AgentSkills standard. Skills using this field may not be portable to other AgentSkills-compatible tools.
 </Warning>
 
-#### Trigger Behavior
+#### SKILL.md Behavior (Progressive Disclosure)
+
+All SKILL.md files follow the AgentSkills progressive disclosure model - they are **always listed** in `<available_skills>`:
 
 | Has `triggers`? | System Prompt | Content Loading |
 |-----------------|---------------|-----------------|
-| Yes | Listed in `<SKILLS>` | Injected when keyword detected |
-| No | Full content in `<REPO_CONTEXT>` | Always loaded at startup |
+| Yes | Listed in `<available_skills>` | **Both**: Auto-injected when triggered AND agent can read file anytime |
+| No | Listed in `<available_skills>` | Agent reads file on demand |
 
 <Note>
-**Known limitation**: The official AgentSkills standard recommends progressive disclosure where ALL skills are listed with just name/description/location, and the agent decides when to read full content. Currently, OpenHands loads full content for skills without triggers. See [issue #1646](https://github.com/OpenHands/software-agent-sdk/issues/1646) for discussion.
+**Best of Both Worlds**: SKILL.md files with triggers get automatic content injection when keywords are detected, while still being listed in `<available_skills>` so the agent can proactively access them even without a trigger match.
 </Note>
 
 ### Loading Skills
