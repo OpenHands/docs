@@ -3,65 +3,95 @@ title: Agent Skills & Context
 description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
 
-Skills modify agent behavior by injecting additional context and rules. OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers for automatic activation.
+Skills add context and rules to your agent's behavior. OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
 
-## Skill Formats
-
-OpenHands supports two skill formats:
+## Two Types of Skills
 
 <CardGroup cols={2}>
-  <Card title="SKILL.md (AgentSkills Standard)" icon="file-code">
-    **Recommended for new skills**
+  <Card title="Always-Active Skills" icon="circle-check">
+    Content is **always available** to the agent.
     
-    - Directory-based: `my-skill/SKILL.md`
-    - Progressive disclosure: agent reads content on demand
-    - Optional `triggers` for automatic activation
-    - Supports `scripts/`, `references/`, `assets/` directories
+    **Use for:**
+    - Repository guidelines (`repo.md`)
+    - Coding standards
+    - Project-specific rules
+    
+    **How it works:** Content appears in the system prompt so the agent always follows these rules.
   </Card>
-  <Card title="Legacy .md Files" icon="file">
-    **For backward compatibility**
+  <Card title="Keyword-Triggered Skills" icon="bolt">
+    Content is **injected when keywords match**.
     
-    - Single file: `my-skill.md`
-    - With triggers: content injected when triggered
-    - Without triggers: full content always in system prompt
+    **Use for:**
+    - Specialized tasks (encryption, PDF handling)
+    - Domain-specific knowledge
+    - Context-dependent instructions
+    
+    **How it works:** When a user message contains a trigger keyword, the skill content is automatically added to that message.
   </Card>
 </CardGroup>
 
-### How Content is Loaded
+## Quick Start
 
-| File Format | Has Triggers? | Behavior |
-|-------------|---------------|----------|
-| `SKILL.md` | No | Listed in system prompt; agent reads file when needed |
-| `SKILL.md` | Yes | Listed in system prompt + auto-injected when triggered |
-| Legacy `.md` | No | Full content always in system prompt |
-| Legacy `.md` | Yes | Listed in system prompt; injected when triggered |
+The simplest way to add skills is inline in your code:
 
-<Tip>
-**Best of both worlds**: SKILL.md files with triggers are always discoverable by the agent AND automatically inject content when keywords match. This gives you automatic activation without sacrificing discoverability.
-</Tip>
+```python
+from openhands.sdk import AgentContext
+from openhands.sdk.context import Skill, KeywordTrigger
 
-## Inline Skills
+agent_context = AgentContext(
+    skills=[
+        # Always-active: content always in system prompt
+        Skill(
+            name="repo-guidelines",
+            content="Always use type hints in Python code.",
+            trigger=None,  # No trigger = always active
+        ),
+        # Keyword-triggered: content injected when "encrypt" appears
+        Skill(
+            name="encryption-helper",
+            content="Use the encrypt.sh script in /scripts to encrypt messages.",
+            trigger=KeywordTrigger(keywords=["encrypt", "decrypt"]),
+        ),
+    ]
+)
+```
+
+## How It Works
+
+<Steps>
+  <Step title="System Prompt Setup">
+    When a conversation starts, OpenHands builds the system prompt:
+    - **Always-active skills**: Full content added to system prompt
+    - **Triggered skills**: Listed by name/description (agent knows they exist)
+  </Step>
+  <Step title="User Sends Message">
+    When the user sends a message, OpenHands checks for keyword matches.
+  </Step>
+  <Step title="Trigger Matching">
+    If a keyword matches (e.g., user says "encrypt this"), the skill's full content is injected into the user message:
+    ```xml
+    <EXTRA_INFO>
+    The following information has been included based on a keyword match for "encrypt".
+    Skill location: /path/to/encryption-helper
+    
+    Use the encrypt.sh script in /scripts to encrypt messages.
+    </EXTRA_INFO>
+    ```
+  </Step>
+  <Step title="Agent Responds">
+    The agent sees the injected skill content and follows those instructions.
+  </Step>
+</Steps>
+
+---
+
+## Inline Skills (Code-Based)
 
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
+Full example: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
 </Note>
 
-Define skills directly in your code with always-active or keyword-triggered behavior:
-Skills modify agent behavior by injecting additional context and rules.
-
-## Permanent agent context (recommended)
-
-For *always-on, repository-level instructions*, prefer using a top-level `AGENTS.md` file.
-
-We also support model-specific variants:
-- **Gemini**: `GEMINI.md`
-- **Claude**: `CLAUDE.md`
-
-These files are treated as permanent context and are loaded automatically when present.
-
-## Skills (triggered or always-on)
-
-Skills can be always-active or keyword-triggered. This example shows both:
+Define skills directly in your code:
 
 ```python icon="python" expandable examples/01_standalone_sdk/03_activate_skill.py
 import os
@@ -241,55 +271,15 @@ Skill(
 )
 ```
 
-### How Skills Appear in the System Prompt
 
-Skills are presented to the agent in two ways:
 
-<Tabs>
-  <Tab title="Listed Skills (Progressive Disclosure)">
-    Skills are listed with name, description, and location. The agent reads the full content when needed.
-    
-    ```xml
-    <SKILLS>
-    The following skills are available and may be triggered by keywords.
-    You can look up a skill's full content by reading its location path.
+## File-Based Skills (SKILL.md)
 
-    <available_skills>
-      <skill>
-        <name>code-style</name>
-        <description>Project coding standards and style guidelines.</description>
-        <location>/path/to/code-style/SKILL.md</location>
-      </skill>
-    </available_skills>
-    </SKILLS>
-    ```
-    
-    **Used by**: All SKILL.md files, legacy files with triggers
-  </Tab>
-  <Tab title="Full Content (Always Active)">
-    The complete skill content is included in the system prompt.
-    
-    ```xml
-    <REPO_CONTEXT>
-    [BEGIN context from [repo-rules]]
-    Full content of the skill is included here...
-    [END Context]
-    </REPO_CONTEXT>
-    ```
-    
-    **Used by**: Legacy `.md` files without triggers
-  </Tab>
-</Tabs>
-
-When a keyword trigger is detected, the skill's full content is injected into the user message as `<EXTRA_INFO>`.
-
-## Loading Skills from Disk (AgentSkills Standard)
+For reusable skills, use the [AgentSkills standard](https://agentskills.io/specification) directory format.
 
 <Note>
-This example is available on GitHub: [examples/05_skills_and_plugins/01_loading_agentskills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/01_loading_agentskills/main.py)
+Full example: [examples/05_skills_and_plugins/01_loading_agentskills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/01_loading_agentskills/main.py)
 </Note>
-
-OpenHands supports the [AgentSkills standard](https://agentskills.io/specification) for organizing skills as self-contained packages with scripts, references, and assets.
 
 ### Directory Structure
 
@@ -330,20 +320,20 @@ triggers:                         # Optional (OpenHands extension)
 Instructions and documentation for the agent...
 ```
 
-#### Standard vs Extension Fields
+#### Frontmatter Fields
 
-| Field | Source | Description |
-|-------|--------|-------------|
-| `name` | Standard | Skill identifier (max 64 chars, lowercase + hyphens) |
-| `description` | Standard | What the skill does and when to use it (max 1024 chars) |
-| `license` | Standard | License name or reference |
-| `compatibility` | Standard | Environment requirements |
-| `metadata` | Standard | Arbitrary key-value pairs |
-| `triggers` | **OpenHands** | Keywords that auto-activate this skill |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Skill identifier (lowercase + hyphens) |
+| `description` | Yes | What the skill does (shown to agent) |
+| `triggers` | No | Keywords that auto-activate this skill (**OpenHands extension**) |
+| `license` | No | License name |
+| `compatibility` | No | Environment requirements |
+| `metadata` | No | Custom key-value pairs |
 
-<Info>
-The `triggers` field is an OpenHands extension to the AgentSkills standard. It enables automatic content injection when keywords are detected, while maintaining full compatibility with the standard's progressive disclosure model.
-</Info>
+<Tip>
+Add `triggers` to make your SKILL.md keyword-activated. Without triggers, the skill is listed but the agent must read the file to see its content.
+</Tip>
 
 ### Loading Skills
 
