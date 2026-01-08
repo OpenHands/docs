@@ -3,75 +3,66 @@ title: Agent Skills & Context
 description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
 
-Skills add context and rules to your agent's behavior. OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
+This guide shows how to implement skills in the SDK. For conceptual overview, see [Skills Overview](/overview/skills).
 
-## Choosing the Right Approach
+OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
 
-<CardGroup cols={3}>
-  <Card title="AGENTS.md" icon="file-lines">
-    **Best for: Repository-wide rules**
-    
-    - Place at repo root
-    - Always loaded automatically
-    - Model variants: `CLAUDE.md`, `GEMINI.md`
-    - Works with other AI tools
-  </Card>
-  <Card title="Always-Active Skills" icon="circle-check">
-    **Best for: Custom SDK behavior**
-    
-    - Define in code or `.openhands/skills/`
-    - Always in system prompt
-    - Full programmatic control
-  </Card>
-  <Card title="Keyword-Triggered Skills" icon="bolt">
-    **Best for: On-demand knowledge**
-    
-    - Activated by keywords
-    - Keeps system prompt lean
-    - Injected when needed
-  </Card>
-</CardGroup>
+## Context Loading Methods
 
-## AGENTS.md (Recommended for Repos)
+| Method | When Content Loads | Use Case |
+|--------|-------------------|----------|
+| **Always-loaded** | At conversation start | Repository rules, coding standards |
+| **Trigger-loaded** | When keywords match | Specialized tasks, domain knowledge |
+| **Progressive disclosure** | Agent reads on demand | Large reference docs (AgentSkills) |
 
-For repository-wide instructions, create an `AGENTS.md` file at your repo root:
+## Always-Loaded Context
 
-```markdown
-# Repository Guidelines
+Content that's always in the system prompt.
 
-- Use TypeScript for all new code
-- Follow the existing code style
-- Write tests for new features
+### Option 1: AGENTS.md (Auto-loaded)
+
+Place `AGENTS.md` at your repo root - it's loaded automatically. See [Permanent Context](/overview/skills/repo).
+
+```python
+from openhands.sdk.context.skills import load_project_skills
+
+# Automatically finds AGENTS.md, CLAUDE.md, GEMINI.md at workspace root
+skills = load_project_skills(workspace_dir="/path/to/repo")
+agent_context = AgentContext(skills=skills)
 ```
 
-OpenHands automatically loads this file. You can also create model-specific variants:
-- `CLAUDE.md` - Instructions specific to Claude models
-- `GEMINI.md` - Instructions specific to Gemini models
-
-<Tip>
-`AGENTS.md` is the recommended approach for repository-level instructions because it's automatically loaded and works with other AI coding tools.
-</Tip>
-
-## Keyword-Triggered Skills
-
-For specialized knowledge that should only appear when relevant, use keyword triggers:
+### Option 2: Inline Skill (Code-defined)
 
 ```python
 from openhands.sdk import AgentContext
-from openhands.sdk.context import Skill, KeywordTrigger
+from openhands.sdk.context import Skill
 
 agent_context = AgentContext(
     skills=[
         Skill(
-            name="encryption-helper",
-            content="Use the encrypt.sh script to encrypt messages.",
-            trigger=KeywordTrigger(keywords=["encrypt", "decrypt"]),
+            name="code-style",
+            content="Always use type hints in Python.",
+            trigger=None,  # No trigger = always loaded
         ),
     ]
 )
 ```
 
-When the user says "encrypt this file", the skill content is injected:
+## Trigger-Loaded Context
+
+Content injected when keywords appear in user messages. See [Keyword-Triggered Skills](/overview/skills/keyword).
+
+```python
+from openhands.sdk.context import Skill, KeywordTrigger
+
+Skill(
+    name="encryption-helper",
+    content="Use the encrypt.sh script to encrypt messages.",
+    trigger=KeywordTrigger(keywords=["encrypt", "decrypt"]),
+)
+```
+
+When user says "encrypt this", the content is injected into the message:
 
 ```xml
 <EXTRA_INFO>
@@ -82,17 +73,32 @@ Use the encrypt.sh script to encrypt messages.
 </EXTRA_INFO>
 ```
 
-## Always-Active Skills (Code-Based)
+## Progressive Disclosure (AgentSkills Standard)
 
-For programmatic control, define always-active skills in code:
+For large skills, use the [AgentSkills standard](https://agentskills.io/specification) `SKILL.md` format. The agent sees a summary and reads full content on demand.
 
 ```python
-Skill(
-    name="code-style",
-    content="Always use type hints in Python.",
-    trigger=None,  # No trigger = always active
-)
+from openhands.sdk.context.skills import load_skills_from_dir
+
+# Load SKILL.md files from a directory
+_, _, agent_skills = load_skills_from_dir("/path/to/skills")
+agent_context = AgentContext(skills=list(agent_skills.values()))
 ```
+
+Skills are listed in the system prompt:
+```xml
+<available_skills>
+  <skill>
+    <name>code-style</name>
+    <description>Project coding standards.</description>
+    <location>/path/to/code-style/SKILL.md</location>
+  </skill>
+</available_skills>
+```
+
+<Tip>
+Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic injection when keywords match.
+</Tip>
 
 ---
 
@@ -101,8 +107,6 @@ Skill(
 <Note>
 Full example: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
 </Note>
-
-Define skills directly in your code:
 
 ```python icon="python" expandable examples/01_standalone_sdk/03_activate_skill.py
 import os
