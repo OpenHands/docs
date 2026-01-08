@@ -3,7 +3,22 @@ title: Agent Skills & Context
 description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
 
-Skills modify agent behavior by injecting additional context and rules. You can define skills inline in code or load them from disk following the [AgentSkills standard](https://github.com/OpenHands/skills).
+Skills modify agent behavior by injecting additional context and rules. OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with additional trigger-based activation.
+
+## Overview
+
+| Feature | Standard AgentSkills | OpenHands Extension |
+|---------|---------------------|---------------------|
+| SKILL.md format | ✅ Supported | ✅ Supported |
+| `name`, `description` | ✅ Required | ✅ Required |
+| `license`, `compatibility`, `metadata` | ✅ Optional | ✅ Optional |
+| `scripts/`, `references/`, `assets/` | ✅ Supported | ✅ Supported |
+| `triggers` field | ❌ Not in standard | ✅ OpenHands extension |
+| Activation | Agent decides based on description | Automatic keyword matching OR agent decides |
+
+<Note>
+The official AgentSkills standard lists all skills in the system prompt with their description and location, letting the agent decide when to read the full content. OpenHands extends this with optional `triggers` for automatic keyword-based activation.
+</Note>
 
 ## Inline Skills
 
@@ -195,12 +210,13 @@ Skill(
 
 Skills are handled differently based on their trigger type:
 
-- **Always-active skills** (`trigger=None`): Full content is included directly in the system prompt
-- **Triggered skills** (`KeywordTrigger`, `TaskTrigger`): Listed in a `<SKILLS>` section so the agent knows they exist, with full content injected only when triggered
+| Trigger Type | System Prompt | When Content is Loaded |
+|--------------|---------------|------------------------|
+| `trigger=None` | Full content in `<REPO_CONTEXT>` | Always (at startup) |
+| `KeywordTrigger` | Listed in `<SKILLS>` with location | When keyword detected in user message |
+| `TaskTrigger` | Listed in `<SKILLS>` with location | When task type matches |
 
-This design keeps the system prompt concise while letting the agent proactively look up skill content by reading the skill's location path.
-
-For triggered skills, the system prompt includes:
+For triggered skills, the system prompt includes an `<available_skills>` block (following the AgentSkills standard format):
 
 ```xml
 <SKILLS>
@@ -217,7 +233,7 @@ You can also directly look up a skill's full content by reading its location pat
 </SKILLS>
 ```
 
-When a keyword is detected in a user message, the skill's full content is injected into the conversation.
+When a keyword is detected, the skill's full content is injected into the conversation as `<EXTRA_INFO>`.
 
 ## Loading Skills from Disk (AgentSkills Standard)
 
@@ -225,7 +241,7 @@ When a keyword is detected in a user message, the skill's full content is inject
 This example is available on GitHub: [examples/05_skills_and_plugins/01_loading_agentskills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/01_loading_agentskills/main.py)
 </Note>
 
-The OpenHands SDK supports skills in the [AgentSkills standard](https://agentskills.io/home), which is compatible with Claude's skill format. This allows you to organize skills as self-contained packages with their own scripts, references, and assets.
+OpenHands supports the [AgentSkills standard](https://agentskills.io/specification) for organizing skills as self-contained packages with scripts, references, and assets.
 
 ### Directory Structure
 
@@ -248,15 +264,15 @@ The `SKILL.md` file defines the skill with YAML frontmatter:
 
 ```yaml
 ---
-name: my-skill
-description: >
-  A brief description of what this skill does.
-license: MIT
-compatibility: Requires bash
-metadata:
+name: my-skill                    # Required (standard)
+description: >                    # Required (standard)
+  A brief description of what this skill does and when to use it.
+license: MIT                      # Optional (standard)
+compatibility: Requires bash      # Optional (standard)
+metadata:                         # Optional (standard)
   author: your-name
   version: "1.0"
-triggers:            # Optional: keywords that activate this skill
+triggers:                         # Optional (OpenHands extension)
   - keyword1
   - keyword2
 ---
@@ -266,9 +282,25 @@ triggers:            # Optional: keywords that activate this skill
 Instructions and documentation for the agent...
 ```
 
-<Note>
-The `triggers` field is optional. If omitted, the skill is always active and its full content is included in the system prompt. If `triggers` is defined, the skill is listed in the `<SKILLS>` section and its content is only injected when a trigger keyword is detected.
-</Note>
+#### Standard vs Extension Fields
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `name` | Standard | Skill identifier (max 64 chars, lowercase + hyphens) |
+| `description` | Standard | What the skill does and when to use it (max 1024 chars) |
+| `license` | Standard | License name or reference |
+| `compatibility` | Standard | Environment requirements |
+| `metadata` | Standard | Arbitrary key-value pairs |
+| `triggers` | **OpenHands** | Keywords that auto-activate this skill |
+
+<Warning>
+The `triggers` field is an OpenHands extension not part of the official AgentSkills standard. Skills using this field may not be portable to other AgentSkills-compatible tools.
+</Warning>
+
+#### Trigger Behavior
+
+- **With `triggers`**: Skill is listed in `<SKILLS>` section; content injected when keyword detected
+- **Without `triggers`**: Skill is always active; full content included in system prompt
 
 ### Loading Skills
 
@@ -445,12 +477,11 @@ print(resources.skill_root)  # Path to skill directory
 
 ### Skill Location in Prompts
 
-Skills with triggers are listed in the system prompt with their location path (see [How Triggered Skills Work](#how-triggered-skills-work)). When a skill is triggered by a keyword match, the agent receives the full skill content:
+The `<location>` element in `<available_skills>` follows the AgentSkills standard, allowing agents to read the full skill content on demand. When a triggered skill is activated, the content is injected with the location path:
 
 ```
 <EXTRA_INFO>
 The following information has been included based on a keyword match for "encrypt".
-It may or may not be relevant to the user's request.
 
 Skill location: /path/to/rot13-encryption
 (Use this path to resolve relative file references in the skill content below)
@@ -463,7 +494,7 @@ This enables skills to reference their own scripts and resources using relative 
 
 ### Example Skill: ROT13 Encryption
 
-Here's a complete skill demonstrating the AgentSkills standard:
+Here's a skill with triggers (OpenHands extension):
 
 **SKILL.md:**
 ```yaml
