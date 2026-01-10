@@ -1,6 +1,6 @@
 ---
 title: Overview
-description: This section is for users that would like to use a runtime other than Docker for OpenHands.
+description: This section covers the different sandbox and runtime options available for OpenHands.
 ---
 
 <Note>
@@ -8,21 +8,133 @@ description: This section is for users that would like to use a runtime other th
 </Note>
 
 A Runtime is an environment where the OpenHands agent can edit files and run
-commands.
+commands. OpenHands supports multiple sandboxing options to fit different security requirements and deployment scenarios.
 
-By default, OpenHands uses a [Docker-based runtime](/usage/runtimes/docker), running on your local computer.
-This means you only have to pay for the LLM you're using, and your code is only ever sent to the LLM.
+## Choosing a Runtime
 
-Additionally, we provide a [Local Runtime](/usage/runtimes/local) that runs directly on your machine without Docker,
-which can be useful in controlled environments like CI pipelines.
+| Runtime | Sandbox Type | Best For |
+|---------|-------------|----------|
+| [Docker Runtime](/usage/runtimes/docker) | Docker container | Most users (default, recommended) |
+| [Remote Runtime](/usage/runtimes/remote) | Cloud sandbox | Parallel workloads, managed infrastructure |
+| [Local Runtime](/usage/runtimes/local) | No sandbox | CI/CD pipelines, development, controlled environments |
+| [Apptainer Runtime](#run-in-an-apptainer-sandbox) | Apptainer container | HPC environments, no root required |
+
+### Run in a Docker Sandbox (Default)
+
+The [Docker Runtime](/usage/runtimes/docker) creates isolated Docker containers for the agent to execute commands.
+This is the recommended option for most users as it provides strong isolation while keeping everything local.
+
+<Note>
+The Docker Runtime requires mounting the Docker socket (`/var/run/docker.sock`) so OpenHands can create sandbox containers.
+This gives OpenHands access to the Docker daemon. If you prefer not to expose the Docker daemon, consider the
+[Remote Runtime](/usage/runtimes/remote) for cloud-based sandboxing, the [Apptainer Runtime](#run-in-an-apptainer-sandbox) for
+daemon-free sandboxing, or the [Local Runtime](/usage/runtimes/local) for no sandboxing.
+</Note>
+
+**Using the SDK:**
+
+```python
+from openhands.workspace import DockerWorkspace
+
+with DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    host_port=8000,
+) as workspace:
+    # Agent server is now running at http://localhost:8000
+    result = workspace.execute_command("echo 'Hello from Docker sandbox!'")
+    print(result.stdout)
+```
+
+### Run on the Cloud
+
+The [Remote Runtime](/usage/runtimes/remote) connects to cloud-based sandbox environments.
+This is ideal for parallel execution, managed infrastructure, or when you don't want to run sandboxes locally.
+
+**Using the SDK with OpenHands Cloud:**
+
+```python
+from openhands.workspace import OpenHandsCloudWorkspace
+
+with OpenHandsCloudWorkspace(
+    cloud_api_url="https://app.all-hands.dev",
+    cloud_api_key="your-api-key",  # Get from app.all-hands.dev
+) as workspace:
+    # Connected to cloud sandbox
+    result = workspace.execute_command("echo 'Hello from cloud sandbox!'")
+    print(result.stdout)
+```
+
+### Run Without Sandboxing
+
+The [Local Runtime](/usage/runtimes/local) runs the agent directly on your machine (or inside the OpenHands container)
+without any sandbox isolation. This is useful for CI/CD pipelines, development workflows, or environments where
+container-based sandboxing is not available.
+
+<Warning>
+Running without sandboxing means the agent has direct access to your filesystem and can execute commands
+without isolation. Only use this in controlled environments where you understand the security implications.
+</Warning>
+
+**Starting the agent server locally:**
+
+```bash
+# Install the SDK
+pip install openhands-sdk openhands-agent-server
+
+# Start the agent server (no sandbox)
+python -m openhands.agent_server --port 8000 --host 127.0.0.1
+```
+
+**Using the SDK:**
+
+```python
+from openhands.sdk import Workspace
+
+# Connect to a running agent server
+workspace = Workspace(host="http://127.0.0.1:8000")
+result = workspace.execute_command("echo 'Hello from local workspace!'")
+print(result.stdout)
+```
+
+### Run in an Apptainer Sandbox
+
+[Apptainer](https://apptainer.org/) (formerly Singularity) is a container runtime designed for HPC environments that can run
+without root privileges and without exposing a daemon socket. The [OpenHands SDK](https://github.com/OpenHands/software-agent-sdk)
+provides an `ApptainerWorkspace` for sandboxed execution without requiring Docker.
+
+Key benefits of Apptainer:
+- **No root required**: Runs as the invoking user without privilege escalation
+- **No daemon**: Doesn't require a background daemon like Docker
+- **HPC-friendly**: Designed for shared computing environments
+- **Secure**: Better security model for multi-tenant systems
+
+**Using the SDK:**
+
+```python
+from openhands.workspace import ApptainerWorkspace
+
+with ApptainerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    host_port=8000,
+) as workspace:
+    # Agent server is now running at http://localhost:8000
+    result = workspace.execute_command("echo 'Hello from Apptainer sandbox!'")
+    print(result.stdout)
+```
+
+<Note>
+Apptainer must be installed on your system. See the [Apptainer installation guide](https://apptainer.org/docs/admin/main/installation.html)
+for instructions.
+</Note>
+
+See the [SDK documentation](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/apptainer/README.md)
+for more details.
 
 ## Available Runtimes
 
-OpenHands supports several different runtime environments:
-
-- [Docker Runtime](/usage/runtimes/docker) - The default runtime that uses Docker containers for isolation (recommended for most users).
-- [OpenHands Remote Runtime](/usage/runtimes/remote) - Cloud-based runtime for parallel execution (beta).
-- [Local Runtime](/usage/runtimes/local) - Direct execution on your local machine without Docker.
+- [Docker Runtime](/usage/runtimes/docker) - Run in a Docker sandbox (recommended for most users).
+- [Remote Runtime](/usage/runtimes/remote) - Run on the cloud with managed sandboxes (beta).
+- [Local Runtime](/usage/runtimes/local) - Run without sandboxing, directly on your machine.
 
 ### Third-Party Runtimes
 
