@@ -1,0 +1,410 @@
+---
+title: openhands.sdk.workspace
+description: API reference for openhands.sdk.workspace module
+---
+
+
+### class BaseWorkspace
+
+Bases: `DiscriminatedUnionMixin`, `ABC`
+
+Abstract base class for workspace implementations.
+
+Workspaces provide a sandboxed environment where agents can execute commands,
+read/write files, and perform other operations. All workspace implementations
+support the context manager protocol for safe resource management.
+
+#### Example
+
+```pycon
+>>> with workspace:
+...     result = workspace.execute_command("echo 'hello'")
+...     content = workspace.read_file("example.txt")
+```
+
+
+#### Properties
+
+- `model_config`: ClassVar[ConfigDict] = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `working_dir`: Annotated[str, BeforeValidator(func=_convert_path_to_str, json_schema_input_type=PydanticUndefined), FieldInfo(annotation=NoneType, required=True, description='The working directory for agent operations and tool execution. Accepts both string paths and Path objects. Path objects are automatically converted to strings.')]
+
+#### Methods
+
+#### abstractmethod execute_command()
+
+Execute a bash command on the system.
+
+* Parameters:
+  * `command` – The bash command to execute
+  * `cwd` – Working directory for the command (optional)
+  * `timeout` – Timeout in seconds (defaults to 30.0)
+* Returns:
+  Result containing stdout, stderr, exit_code, and other
+  : metadata
+* Return type:
+  [CommandResult](#class-commandresult)
+* Raises:
+  `Exception` – If command execution fails
+
+#### abstractmethod file_download()
+
+Download a file from the system.
+
+* Parameters:
+  * `source_path` – Path to the source file on the system
+  * `destination_path` – Path where the file should be downloaded
+* Returns:
+  Result containing success status and metadata
+* Return type:
+  [FileOperationResult](#class-fileoperationresult)
+* Raises:
+  `Exception` – If file download fails
+
+#### abstractmethod file_upload()
+
+Upload a file to the system.
+
+* Parameters:
+  * `source_path` – Path to the source file
+  * `destination_path` – Path where the file should be uploaded
+* Returns:
+  Result containing success status and metadata
+* Return type:
+  [FileOperationResult](#class-fileoperationresult)
+* Raises:
+  `Exception` – If file upload fails
+
+#### abstractmethod git_changes()
+
+Get the git changes for the repository at the path given.
+
+* Parameters:
+  `path` – Path to the git repository
+* Returns:
+  List of changes
+* Return type:
+  list[GitChange]
+* Raises:
+  `Exception` – If path is not a git repository or getting changes failed
+
+#### abstractmethod git_diff()
+
+Get the git diff for the file at the path given.
+
+* Parameters:
+  `path` – Path to the file
+* Returns:
+  Git diff
+* Return type:
+  GitDiff
+* Raises:
+  `Exception` – If path is not a git repository or getting diff failed
+
+#### pause()
+
+Pause the workspace to conserve resources.
+
+For local workspaces, this is a no-op.
+For container-based workspaces, this pauses the container.
+
+* Raises:
+  `NotImplementedError` – If the workspace type does not support pausing.
+
+#### resume()
+
+Resume a paused workspace.
+
+For local workspaces, this is a no-op.
+For container-based workspaces, this resumes the container.
+
+* Raises:
+  `NotImplementedError` – If the workspace type does not support resuming.
+
+### class CommandResult
+
+Bases: `BaseModel`
+
+Result of executing a command in the workspace.
+
+
+#### Properties
+
+- `command`: str
+- `exit_code`: int
+- `model_config`: ClassVar[ConfigDict] = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `stderr`: str
+- `stdout`: str
+- `timeout_occurred`: bool
+### class FileOperationResult
+
+Bases: `BaseModel`
+
+Result of a file upload or download operation.
+
+
+#### Properties
+
+- `destination_path`: str
+- `error`: str | None
+- `file_size`: int | None
+- `model_config`: ClassVar[ConfigDict] = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `source_path`: str
+- `success`: bool
+### class LocalWorkspace
+
+Bases: [`BaseWorkspace`](#class-baseworkspace)
+
+Local workspace implementation that operates on the host filesystem.
+
+LocalWorkspace provides direct access to the local filesystem and command execution
+environment. It’s suitable for development and testing scenarios where the agent
+should operate directly on the host system.
+
+#### Example
+
+```pycon
+>>> workspace = LocalWorkspace(working_dir="/path/to/project")
+>>> with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
+
+
+#### Properties
+
+- `model_config`: ClassVar[ConfigDict] = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `working_dir`: Annotated[str, BeforeValidator(_convert_path_to_str), Field(description='The working directory for agent operations and tool execution. Accepts both string paths and Path objects. Path objects are automatically converted to strings.')]
+
+#### Methods
+
+#### __init__()
+
+Create a new model by parsing and validating input data from keyword arguments.
+
+Raises [ValidationError][pydantic_core.ValidationError] if the input data cannot be
+validated to form a valid model.
+
+self is explicitly positional-only to allow self as a field name.
+
+#### execute_command()
+
+Execute a bash command locally.
+
+Uses the shared shell execution utility to run commands with proper
+timeout handling, output streaming, and error management.
+
+* Parameters:
+  * `command` – The bash command to execute
+  * `cwd` – Working directory (optional)
+  * `timeout` – Timeout in seconds
+* Returns:
+  Result with stdout, stderr, exit_code, command, and
+  : timeout_occurred
+* Return type:
+  [CommandResult](#class-commandresult)
+
+#### file_download()
+
+Download (copy) a file locally.
+
+For local systems, file download is implemented as a file copy operation
+using shutil.copy2 to preserve metadata.
+
+* Parameters:
+  * `source_path` – Path to the source file
+  * `destination_path` – Path where the file should be copied
+* Returns:
+  Result with success status and file information
+* Return type:
+  [FileOperationResult](#class-fileoperationresult)
+
+#### file_upload()
+
+Upload (copy) a file locally.
+
+For local systems, file upload is implemented as a file copy operation
+using shutil.copy2 to preserve metadata.
+
+* Parameters:
+  * `source_path` – Path to the source file
+  * `destination_path` – Path where the file should be copied
+* Returns:
+  Result with success status and file information
+* Return type:
+  [FileOperationResult](#class-fileoperationresult)
+
+#### git_changes()
+
+Get the git changes for the repository at the path given.
+
+* Parameters:
+  `path` – Path to the git repository
+* Returns:
+  List of changes
+* Return type:
+  list[GitChange]
+* Raises:
+  `Exception` – If path is not a git repository or getting changes failed
+
+#### git_diff()
+
+Get the git diff for the file at the path given.
+
+* Parameters:
+  `path` – Path to the file
+* Returns:
+  Git diff
+* Return type:
+  GitDiff
+* Raises:
+  `Exception` – If path is not a git repository or getting diff failed
+
+#### pause()
+
+Pause the workspace (no-op for local workspaces).
+
+Local workspaces have nothing to pause since they operate directly
+on the host filesystem.
+
+#### resume()
+
+Resume the workspace (no-op for local workspaces).
+
+Local workspaces have nothing to resume since they operate directly
+on the host filesystem.
+
+### class RemoteWorkspace
+
+Bases: `RemoteWorkspaceMixin`, [`BaseWorkspace`](#class-baseworkspace)
+
+Remote workspace implementation that connects to an OpenHands agent server.
+
+RemoteWorkspace provides access to a sandboxed environment running on a remote
+OpenHands agent server. This is the recommended approach for production deployments
+as it provides better isolation and security.
+
+#### Example
+
+```pycon
+>>> workspace = RemoteWorkspace(
+...     host="https://agent-server.example.com",
+...     working_dir="/workspace"
+... )
+>>> with workspace:
+...     result = workspace.execute_command("ls -la")
+...     content = workspace.read_file("README.md")
+```
+
+
+#### Properties
+
+- `alive`: bool
+  Check if the remote workspace is alive by querying the health endpoint.
+  * Returns:
+    True if the health endpoint returns a successful response, False otherwise.
+- `api_key`: str | None
+- `client`: Client
+- `host`: str
+- `model_config`: ClassVar[ConfigDict] = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `working_dir`: str
+
+#### Methods
+
+#### execute_command()
+
+Execute a bash command on the remote system.
+
+This method starts a bash command via the remote agent server API,
+then polls for the output until the command completes.
+
+* Parameters:
+  * `command` – The bash command to execute
+  * `cwd` – Working directory (optional)
+  * `timeout` – Timeout in seconds
+* Returns:
+  Result with stdout, stderr, exit_code, and other metadata
+* Return type:
+  [CommandResult](#class-commandresult)
+
+#### file_download()
+
+Download a file from the remote system.
+
+Requests the file from the remote system via HTTP API and saves it locally.
+
+* Parameters:
+  * `source_path` – Path to the source file on remote system
+  * `destination_path` – Path where the file should be saved locally
+* Returns:
+  Result with success status and metadata
+* Return type:
+  [FileOperationResult](#class-fileoperationresult)
+
+#### file_upload()
+
+Upload a file to the remote system.
+
+Reads the local file and sends it to the remote system via HTTP API.
+
+* Parameters:
+  * `source_path` – Path to the local source file
+  * `destination_path` – Path where the file should be uploaded on remote system
+* Returns:
+  Result with success status and metadata
+* Return type:
+  [FileOperationResult](#class-fileoperationresult)
+
+#### git_changes()
+
+Get the git changes for the repository at the path given.
+
+* Parameters:
+  `path` – Path to the git repository
+* Returns:
+  List of changes
+* Return type:
+  list[GitChange]
+* Raises:
+  `Exception` – If path is not a git repository or getting changes failed
+
+#### git_diff()
+
+Get the git diff for the file at the path given.
+
+* Parameters:
+  `path` – Path to the file
+* Returns:
+  Git diff
+* Return type:
+  GitDiff
+* Raises:
+  `Exception` – If path is not a git repository or getting diff failed
+
+#### model_post_init()
+
+Override this method to perform additional initialization after __init__ and model_construct.
+This is useful if you want to do some validation that requires the entire model to be initialized.
+
+#### reset_client()
+
+Reset the HTTP client to force re-initialization.
+
+This is useful when connection parameters (host, api_key) have changed
+and the client needs to be recreated with new values.
+
+### class Workspace
+
+### class Workspace
+
+Bases: `object`
+
+Factory entrypoint that returns a LocalWorkspace or RemoteWorkspace.
+
+Usage:
+: - Workspace(working_dir=…) -> LocalWorkspace
+  - Workspace(working_dir=…, host=”http://…”) -> RemoteWorkspace

@@ -5,14 +5,16 @@ description: Run agent server in isolated Docker containers for security and rep
 
 The docker sandboxed agent server demonstrates how to run agents in isolated Docker containers using DockerWorkspace. 
 
-This provides complete isolation from the host system, making it ideal for production deployments, testing, and executing untrusted code safely. 
+This provides complete isolation from the host system, making it ideal for production deployments, testing, and executing untrusted code safely.
 
-<Note>the Docker sandbox image ships with features configured in the [Dockerfile](https://github.com/All-Hands-AI/agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile) (e.g., secure defaults and services like VSCode and VNC exposed behind well-defined ports), which are not available in the local (non-Docker) agent server.</Note>
+Use `DockerWorkspace` with a pre-built agent server image for the fastest startup. When you need to build your own image from a base image, switch to `DockerDevWorkspace`. 
+
+<Note>the Docker sandbox image ships with features configured in the [Dockerfile](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile) (e.g., secure defaults and services like VSCode and VNC exposed behind well-defined ports), which are not available in the local (non-Docker) agent server.</Note>
 
 ## 1) Basic Docker Sandbox
 
 <Note>
-This example is available on GitHub: [examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py)
+This example is available on GitHub: [examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/02_convo_with_docker_sandboxed_server.py)
 </Note>
 
 This example shows how to create a DockerWorkspace that automatically manages Docker containers for agent execution:
@@ -144,11 +146,9 @@ uv run python examples/02_remote_agent_server/02_convo_with_docker_sandboxed_ser
 
 The `DockerWorkspace` uses a context manager to automatically handle container lifecycle:
 
-```python highlight={42-50}
+```python highlight={42-47}
 with DockerWorkspace(
-    # dynamically build agent-server image
-    # base_image="nikolaik/python-nodejs:python3.12-nodejs22",
-    # use pre-built image for faster startup
+    # use pre-built image for faster startup (recommended)
     server_image="ghcr.io/openhands/agent-server:latest-python",
     host_port=8010,
     platform=detect_platform(),
@@ -214,7 +214,7 @@ assert isinstance(conversation, RemoteConversation)
 The SDK detects the remote workspace and uses WebSocket communication for real-time event streaming.
 
 
-#### Pre-built vs Base Images
+#### DockerWorkspace vs DockerDevWorkspace
 
 ```python
 # ✅ Fast: Use pre-built image (recommended)
@@ -223,26 +223,27 @@ DockerWorkspace(
     host_port=8010,
 )
 
-# ⏱️ Slower: Build on the fly from base image (more control)
-DockerWorkspace(
+# 🛠️ Custom: Build on the fly (requires SDK tooling)
+DockerDevWorkspace(
     base_image="nikolaik/python-nodejs:python3.12-nodejs22",
     host_port=8010,
+    target="source",
 )
 ```
 
-Pre-built images start immediately, while base images need to build the agent server first.
+Use `DockerWorkspace` when you can rely on the official pre-built images for the agent server. Switch to `DockerDevWorkspace` when you need to build or customize the image on-demand (slower startup, requires the SDK source tree and Docker build support).
 
 ---
 
 ## 2) VS Code in Docker Sandbox
 
 <Note>
-This example is available on GitHub: [examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py)
+This example is available on GitHub: [examples/02_remote_agent_server/05_vscode_with_docker_sandboxed_server.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/05_vscode_with_docker_sandboxed_server.py)
 </Note>
 
 VS Code with Docker demonstrates how to enable VS Code Web integration in a Docker-sandboxed environment. This allows you to access a full VS Code editor running in the container, making it easy to inspect, edit, and manage files that the agent is working with.
 
-```python icon="python" expandable examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py
+```python icon="python" expandable examples/02_remote_agent_server/05_vscode_with_docker_sandboxed_server.py
 import os
 import time
 
@@ -257,20 +258,18 @@ from openhands.workspace import DockerWorkspace
 
 logger = get_logger(__name__)
 
-
 api_key = os.getenv("LLM_API_KEY")
 assert api_key is not None, "LLM_API_KEY environment variable is not set."
 
 llm = LLM(
     usage_id="agent",
-    model="litellm_proxy/anthropic/claude-sonnet-4-5-20250929",
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
     base_url=os.getenv("LLM_BASE_URL"),
     api_key=SecretStr(api_key),
 )
 
+
 # Create a Docker-based remote workspace with extra ports for VSCode access
-
-
 def detect_platform():
     """Detects the correct Docker platform string."""
     import platform
@@ -282,7 +281,7 @@ def detect_platform():
 
 
 with DockerWorkspace(
-    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    server_image="ghcr.io/openhands/agent-server:latest-python",
     host_port=18010,
     platform=detect_platform(),
     extra_ports=True,  # Expose extra ports for VSCode and VNC
@@ -310,7 +309,6 @@ with DockerWorkspace(
         agent=agent,
         workspace=workspace,
         callbacks=[event_callback],
-        visualize=True,
     )
     assert isinstance(conversation, RemoteConversation)
 
@@ -344,7 +342,7 @@ with DockerWorkspace(
     while y != "y":
         y = input(
             "\n"
-            "Because you've enabled extra_ports=True in DockerWorkspace, "
+            "Because you've enabled extra_ports=True in DockerDevWorkspace, "
             "you can open VSCode Web to see the workspace.\n\n"
             f"VSCode URL: {vscode_url}\n\n"
             "The VSCode should have the OpenHands settings extension installed:\n"
@@ -360,7 +358,7 @@ with DockerWorkspace(
 ```bash Running the Example
 export LLM_API_KEY="your-api-key"
 cd agent-sdk
-uv run python examples/02_remote_agent_server/04_vscode_with_docker_sandboxed_server.py
+uv run python examples/02_remote_agent_server/05_vscode_with_docker_sandboxed_server.py
 ```
 
 ### Key Concepts
@@ -371,18 +369,19 @@ The workspace is configured with extra ports for VS Code access:
 
 ```python highlight={27-34}
 with DockerWorkspace(
-    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    server_image="ghcr.io/openhands/agent-server:latest-python",
     host_port=18010,
-    platform="linux/arm64",
+    platform="linux/arm64", # or "linux/amd64" depending on your architecture
     extra_ports=True,  # Expose extra ports for VSCode and VNC
 ) as workspace:
-    """Extra ports allows you to access VSCode at localhost:8011"""
+    """Extra ports allows you to access VSCode at localhost:18011"""
 ```
 
 The `extra_ports=True` setting exposes:
 - Port `host_port+1`: VS Code Web interface (host_port + 1)
 - Port `host_port+2`: VNC viewer for visual access
 
+If you need to customize the agent-server image, swap in `DockerDevWorkspace` with the same parameters and provide `base_image`/`target` to build on demand.
 
 #### VS Code URL Generation
 
@@ -412,8 +411,6 @@ except Exception:
 
 This generates a properly authenticated URL with the workspace directory pre-opened.
 
-Read the API Reference [here](/sdk/guides/agent-server/api-reference/vscode/get-vscode-url) for more information.
-
 #### VS Code URL Format
 
 ```
@@ -429,7 +426,7 @@ http://localhost:{vscode_port}/?tkn={token}&folder={workspace_dir}
 ## 3) Browser in Docker Sandbox
 
 <Note>
-This example is available on GitHub: [examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py](https://github.com/OpenHands/agent-sdk/blob/main/examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py)
+This example is available on GitHub: [examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/03_browser_use_with_docker_sandboxed_server.py)
 </Note>
 
 Browser with Docker demonstrates how to enable browser automation capabilities in a Docker-sandboxed environment. This allows agents to browse websites, interact with web content, and perform web automation tasks while maintaining complete isolation from your host system.
@@ -554,7 +551,7 @@ The workspace is configured with extra ports for browser access:
 
 ```python highlight={36-43}
 with DockerWorkspace(
-    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    server_image="ghcr.io/openhands/agent-server:latest-python",
     host_port=8010,
     platform=detect_platform(),
     extra_ports=True,  # Expose extra ports for VSCode and VNC
@@ -565,6 +562,9 @@ with DockerWorkspace(
 The `extra_ports=True` setting exposes additional ports for:
 - Port `host_port+1`: VS Code Web interface
 - Port `host_port+2`: VNC viewer for browser visualization
+
+If you need to pre-build a custom browser image, replace `DockerWorkspace` with `DockerDevWorkspace` and provide `base_image`/`target` to build before launch.
+
 
 #### Enabling Browser Tools
 
@@ -598,13 +598,11 @@ http://localhost:8012/vnc.html?autoconnect=1&resize=remote
 - autoconnect=1: Automatically connect to VNC server
 - resize=remote: Automatically adjust resolution
 
-Read the API Reference [here](/sdk/guides/agent-server/api-reference/desktop/get-desktop-url) for more information.
-
 ---
 
 ## Next Steps
 
 - **[Local Agent Server](/sdk/guides/agent-server/local-server)**
-- **[Agent Server Overview](/sdk/guides/agent-server/overview)**
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)** - Architecture and implementation details
 - **[API Sandboxed Server](/sdk/guides/agent-server/api-sandbox)** - Connect to hosted API service
-- **[Agent Server Package Architecture](/sdk/arch/agent-server-package)** - Architecture and design decisions
+- **[Agent Server Package Architecture](/sdk/arch/agent-server)** - Remote execution architecture

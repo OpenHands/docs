@@ -1,13 +1,112 @@
 ---
-title: Agent Skills
+title: Agent Skills & Context
 description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
 
-<Note>
-This example is available on GitHub: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/All-Hands-AI/agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
-</Note>
+This guide shows how to implement skills in the SDK. For conceptual overview, see [Skills Overview](/overview/skills).
 
-Skills modify agent behavior by injecting additional context and rules. This example shows both always-active skills and keyword-triggered skills:
+OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
+
+## Context Loading Methods
+
+| Method | When Content Loads | Use Case |
+|--------|-------------------|----------|
+| **Always-loaded** | At conversation start | Repository rules, coding standards |
+| **Trigger-loaded** | When keywords match | Specialized tasks, domain knowledge |
+| **Progressive disclosure** | Agent reads on demand | Large reference docs (AgentSkills) |
+
+## Always-Loaded Context
+
+Content that's always in the system prompt.
+
+### Option 1: AGENTS.md (Auto-loaded)
+
+Place `AGENTS.md` at your repo root - it's loaded automatically. See [Permanent Context](/overview/skills/repo).
+
+```python
+from openhands.sdk.context.skills import load_project_skills
+
+# Automatically finds AGENTS.md, CLAUDE.md, GEMINI.md at workspace root
+skills = load_project_skills(workspace_dir="/path/to/repo")
+agent_context = AgentContext(skills=skills)
+```
+
+### Option 2: Inline Skill (Code-defined)
+
+```python
+from openhands.sdk import AgentContext
+from openhands.sdk.context import Skill
+
+agent_context = AgentContext(
+    skills=[
+        Skill(
+            name="code-style",
+            content="Always use type hints in Python.",
+            trigger=None,  # No trigger = always loaded
+        ),
+    ]
+)
+```
+
+## Trigger-Loaded Context
+
+Content injected when keywords appear in user messages. See [Keyword-Triggered Skills](/overview/skills/keyword).
+
+```python
+from openhands.sdk.context import Skill, KeywordTrigger
+
+Skill(
+    name="encryption-helper",
+    content="Use the encrypt.sh script to encrypt messages.",
+    trigger=KeywordTrigger(keywords=["encrypt", "decrypt"]),
+)
+```
+
+When user says "encrypt this", the content is injected into the message:
+
+```xml
+<EXTRA_INFO>
+The following information has been included based on a keyword match for "encrypt".
+Skill location: /path/to/encryption-helper
+
+Use the encrypt.sh script to encrypt messages.
+</EXTRA_INFO>
+```
+
+## Progressive Disclosure (AgentSkills Standard)
+
+For the agent to trigger skills, use the [AgentSkills standard](https://agentskills.io/specification) `SKILL.md` format. The agent sees a summary and reads full content on demand.
+
+```python
+from openhands.sdk.context.skills import load_skills_from_dir
+
+# Load SKILL.md files from a directory
+_, _, agent_skills = load_skills_from_dir("/path/to/skills")
+agent_context = AgentContext(skills=list(agent_skills.values()))
+```
+
+Skills are listed in the system prompt:
+```xml
+<available_skills>
+  <skill>
+    <name>code-style</name>
+    <description>Project coding standards.</description>
+    <location>/path/to/code-style/SKILL.md</location>
+  </skill>
+</available_skills>
+```
+
+<Tip>
+Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic injection when keywords match.
+</Tip>
+
+---
+
+## Full Example
+
+<Note>
+Full example: [examples/01_standalone_sdk/03_activate_skill.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/03_activate_skill.py)
+</Note>
 
 ```python icon="python" expandable examples/01_standalone_sdk/03_activate_skill.py
 import os
@@ -160,7 +259,7 @@ Skills are defined with a name, content (the instructions), and an optional trig
 agent_context = AgentContext(
     skills=[
         Skill(
-            name="repo.md",
+            name="AGENTS.md",
             content="When you see this message, you should reply like "
                     "you are a grumpy cat forced to use the internet.",
             trigger=None,  # Always active
@@ -187,17 +286,430 @@ Skill(
 )
 ```
 
-### Message Suffixes
 
-Add consistent prefixes or suffixes to system and user messages:
 
-```python highlight={3-4}
+## File-Based Skills (SKILL.md)
+
+For reusable skills, use the [AgentSkills standard](https://agentskills.io/specification) directory format.
+
+<Note>
+Full example: [examples/05_skills_and_plugins/01_loading_agentskills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/01_loading_agentskills/main.py)
+</Note>
+
+### Directory Structure
+
+Each skill is a directory containing:
+
+```
+my-skill/
+├── SKILL.md          # Required: Skill definition with frontmatter
+├── scripts/          # Optional: Executable scripts
+│   └── helper.sh
+├── references/       # Optional: Reference documentation
+│   └── examples.md
+└── assets/           # Optional: Static assets
+    └── config.json
+```
+
+### SKILL.md Format
+
+The `SKILL.md` file defines the skill with YAML frontmatter:
+
+```yaml
+---
+name: my-skill                    # Required (standard)
+description: >                    # Required (standard)
+  A brief description of what this skill does and when to use it.
+license: MIT                      # Optional (standard)
+compatibility: Requires bash      # Optional (standard)
+metadata:                         # Optional (standard)
+  author: your-name
+  version: "1.0"
+triggers:                         # Optional (OpenHands extension)
+  - keyword1
+  - keyword2
+---
+
+# Skill Content
+
+Instructions and documentation for the agent...
+```
+
+#### Frontmatter Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Skill identifier (lowercase + hyphens) |
+| `description` | Yes | What the skill does (shown to agent) |
+| `triggers` | No | Keywords that auto-activate this skill (**OpenHands extension**) |
+| `license` | No | License name |
+| `compatibility` | No | Environment requirements |
+| `metadata` | No | Custom key-value pairs |
+
+<Tip>
+Add `triggers` to make your SKILL.md keyword-activated by matching a user prompt. Without triggers, the skill can only be triggered by the agent, not the user.
+</Tip>
+
+### Loading Skills
+
+Use `load_skills_from_dir()` to load all skills from a directory:
+
+```python icon="python" expandable examples/05_skills_and_plugins/01_loading_agentskills/main.py
+"""Example: Loading Skills from Disk (AgentSkills Standard)
+
+This example demonstrates how to load skills following the AgentSkills standard
+from a directory on disk.
+
+Skills are modular, self-contained packages that extend an agent's capabilities
+by providing specialized knowledge, workflows, and tools. They follow the
+AgentSkills standard which includes:
+- SKILL.md file with frontmatter metadata (name, description, triggers)
+- Optional resource directories: scripts/, references/, assets/
+
+The example_skills/ directory contains two skills:
+- rot13-encryption: Has triggers (encrypt, decrypt) - listed in <available_skills>
+  AND content auto-injected when triggered
+- code-style-guide: No triggers - listed in <available_skills> for on-demand access
+
+All SKILL.md files follow the AgentSkills progressive disclosure model:
+they are listed in <available_skills> with name, description, and location.
+Skills with triggers get the best of both worlds: automatic content injection
+when triggered, plus the agent can proactively read them anytime.
+"""
+
+import os
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, AgentContext, Conversation
+from openhands.sdk.context.skills import (
+    discover_skill_resources,
+    load_skills_from_dir,
+)
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+def main():
+    # Get the directory containing this script
+    script_dir = Path(__file__).parent
+    example_skills_dir = script_dir / "example_skills"
+
+    # =========================================================================
+    # Part 1: Loading Skills from a Directory
+    # =========================================================================
+    print("=" * 80)
+    print("Part 1: Loading Skills from a Directory")
+    print("=" * 80)
+
+    print(f"Loading skills from: {example_skills_dir}")
+
+    # Discover resources in the skill directory
+    skill_subdir = example_skills_dir / "rot13-encryption"
+    resources = discover_skill_resources(skill_subdir)
+    print("\nDiscovered resources in rot13-encryption/:")
+    print(f"  - scripts: {resources.scripts}")
+    print(f"  - references: {resources.references}")
+    print(f"  - assets: {resources.assets}")
+
+    # Load skills from the directory
+    repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(
+        example_skills_dir
+    )
+
+    print("\nLoaded skills from directory:")
+    print(f"  - Repo skills: {list(repo_skills.keys())}")
+    print(f"  - Knowledge skills: {list(knowledge_skills.keys())}")
+    print(f"  - Agent skills (SKILL.md): {list(agent_skills.keys())}")
+
+    # Access the loaded skill and show all AgentSkills standard fields
+    if agent_skills:
+        skill_name = list(agent_skills.keys())[0]
+        loaded_skill = agent_skills[skill_name]
+        print(f"\nDetails for '{skill_name}' (AgentSkills standard fields):")
+        print(f"  - Name: {loaded_skill.name}")
+        desc = loaded_skill.description or ""
+        print(f"  - Description: {desc[:70]}...")
+        print(f"  - License: {loaded_skill.license}")
+        print(f"  - Compatibility: {loaded_skill.compatibility}")
+        print(f"  - Metadata: {loaded_skill.metadata}")
+        if loaded_skill.resources:
+            print("  - Resources:")
+            print(f"    - Scripts: {loaded_skill.resources.scripts}")
+            print(f"    - References: {loaded_skill.resources.references}")
+            print(f"    - Assets: {loaded_skill.resources.assets}")
+            print(f"    - Skill root: {loaded_skill.resources.skill_root}")
+
+    # =========================================================================
+    # Part 2: Using Skills with an Agent
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("Part 2: Using Skills with an Agent")
+    print("=" * 80)
+
+    # Check for API key
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        print("Skipping agent demo (LLM_API_KEY not set)")
+        print("\nTo run the full demo, set the LLM_API_KEY environment variable:")
+        print("  export LLM_API_KEY=your-api-key")
+        return
+
+    # Configure LLM
+    model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+    llm = LLM(
+        usage_id="skills-demo",
+        model=model,
+        api_key=SecretStr(api_key),
+        base_url=os.getenv("LLM_BASE_URL"),
+    )
+
+    # Create agent context with loaded skills
+    agent_context = AgentContext(
+        skills=list(agent_skills.values()),
+        # Disable public skills for this demo to keep output focused
+        load_public_skills=False,
+    )
+
+    # Create agent with tools so it can read skill resources
+    tools = [
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ]
+    agent = Agent(llm=llm, tools=tools, agent_context=agent_context)
+
+    # Create conversation
+    conversation = Conversation(agent=agent, workspace=os.getcwd())
+
+    # Test the skill (triggered by "encrypt" keyword)
+    # The skill provides instructions and a script for ROT13 encryption
+    print("\nSending message with 'encrypt' keyword to trigger skill...")
+    conversation.send_message("Encrypt the message 'hello world'.")
+    conversation.run()
+
+    print(f"\nTotal cost: ${llm.metrics.accumulated_cost:.4f}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/05_skills_and_plugins/01_loading_agentskills/main.py
+```
+
+### Key Functions
+
+#### `load_skills_from_dir()`
+
+Loads all skills from a directory, returning three dictionaries:
+
+```python
+from openhands.sdk.context.skills import load_skills_from_dir
+
+repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
+```
+
+- **repo_skills**: Skills from `repo.md` files (always active)
+- **knowledge_skills**: Skills from `knowledge/` subdirectories
+- **agent_skills**: Skills from `SKILL.md` files (AgentSkills standard)
+
+#### `discover_skill_resources()`
+
+Discovers resource files in a skill directory:
+
+```python
+from openhands.sdk.context.skills import discover_skill_resources
+
+resources = discover_skill_resources(skill_dir)
+print(resources.scripts)     # List of script files
+print(resources.references)  # List of reference files
+print(resources.assets)      # List of asset files
+print(resources.skill_root)  # Path to skill directory
+```
+
+### Skill Location in Prompts
+
+The `<location>` element in `<available_skills>` follows the AgentSkills standard, allowing agents to read the full skill content on demand. When a triggered skill is activated, the content is injected with the location path:
+
+```
+<EXTRA_INFO>
+The following information has been included based on a keyword match for "encrypt".
+
+Skill location: /path/to/rot13-encryption
+(Use this path to resolve relative file references in the skill content below)
+
+[skill content from SKILL.md]
+</EXTRA_INFO>
+```
+
+This enables skills to reference their own scripts and resources using relative paths like `./scripts/encrypt.sh`.
+
+### Example Skill: ROT13 Encryption
+
+Here's a skill with triggers (OpenHands extension):
+
+**SKILL.md:**
+```yaml
+---
+name: rot13-encryption
+description: >
+  This skill helps encrypt and decrypt messages using ROT13 cipher.
+triggers:
+  - encrypt
+  - decrypt
+  - cipher
+---
+
+# ROT13 Encryption Skill
+
+Run the [encrypt.sh](scripts/encrypt.sh) script with your message:
+
+\`\`\`bash
+./scripts/encrypt.sh "your message"
+\`\`\`
+```
+
+**scripts/encrypt.sh:**
+```bash
+#!/bin/bash
+echo "$1" | tr 'A-Za-z' 'N-ZA-Mn-za-m'
+```
+
+When the user says "encrypt", the skill is triggered and the agent can use the provided script.
+
+## Loading Public Skills
+
+OpenHands maintains a [public skills repository](https://github.com/OpenHands/skills) with community-contributed skills. You can automatically load these skills without waiting for SDK updates.
+
+### Automatic Loading via AgentContext
+
+Enable public skills loading in your `AgentContext`:
+
+```python highlight={2}
 agent_context = AgentContext(
-    skills=[...],
-    system_message_suffix="Always finish your response with the word 'yay!'",
-    user_message_suffix="The first character of your response should be 'I'",
+    load_public_skills=True,  # Auto-load from public registry
+    skills=[
+        # Your custom skills here
+    ]
 )
 ```
+
+When enabled, the SDK will:
+1. Clone or update the public skills repository to `~/.openhands/cache/skills/` on first run
+2. Load all available skills from the repository
+3. Merge them with your explicitly defined skills
+
+**Skill Precedence**: If a skill name conflicts, your explicitly defined skills take precedence over public skills.
+
+### Programmatic Loading
+
+You can also load public skills manually and have more control:
+
+```python
+from openhands.sdk.context.skills import load_public_skills
+
+# Load all public skills
+public_skills = load_public_skills()
+
+# Use with AgentContext
+agent_context = AgentContext(skills=public_skills)
+
+# Or combine with custom skills
+my_skills = [
+    Skill(name="custom", content="Custom instructions", trigger=None)
+]
+agent_context = AgentContext(skills=my_skills + public_skills)
+```
+
+### Custom Skills Repository
+
+You can load skills from your own repository:
+
+```python
+from openhands.sdk.context.skills import load_public_skills
+
+# Load from a custom repository
+custom_skills = load_public_skills(
+    repo_url="https://github.com/my-org/my-skills",
+    branch="main"
+)
+```
+
+### How It Works
+
+The `load_public_skills()` function uses git-based caching for efficiency:
+
+- **First run**: Clones the skills repository to `~/.openhands/cache/skills/public-skills/`
+- **Subsequent runs**: Pulls the latest changes to keep skills up-to-date
+- **Offline mode**: Uses the cached version if network is unavailable
+
+This approach is more efficient than fetching individual skill files via HTTP and ensures you always have access to the latest community skills.
+
+<Note>
+Explore available public skills at [github.com/OpenHands/skills](https://github.com/OpenHands/skills). These skills cover various domains like GitHub integration, Python development, debugging, and more.
+</Note>
+
+## Customizing Agent Context
+
+### Message Suffixes
+
+Append custom instructions to the system prompt or user messages via `AgentContext`:
+
+```python
+agent_context = AgentContext(
+    system_message_suffix="""
+<REPOSITORY_INFO>
+Repository: my-project
+Branch: feature/new-api
+</REPOSITORY_INFO>
+    """.strip(),
+    user_message_suffix="Remember to explain your reasoning."
+)
+```
+
+- **`system_message_suffix`**: Appended to system prompt (always active, combined with repo skills)
+- **`user_message_suffix`**: Appended to each user message
+
+### Replacing the Entire System Prompt
+
+For complete control, provide a custom Jinja2 template via the `Agent` class:
+
+```python
+from openhands.sdk import Agent
+
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    system_prompt_filename="/path/to/custom_system_prompt.j2",  # Absolute path
+    system_prompt_kwargs={"cli_mode": True, "repo_name": "my-project"}
+)
+```
+
+**Custom template example** (`custom_system_prompt.j2`):
+
+```jinja2
+You are a helpful coding assistant for {{ repo_name }}.
+
+{% if cli_mode %}
+You are running in CLI mode. Keep responses concise.
+{% endif %}
+
+Follow these guidelines:
+- Write clean, well-documented code
+- Consider edge cases and error handling
+- Suggest tests when appropriate
+```
+
+**Key points:**
+- Use relative filenames (e.g., `"system_prompt.j2"`) to load from the agent's prompts directory
+- Use absolute paths (e.g., `"/path/to/prompt.j2"`) to load from any location
+- Pass variables to the template via `system_prompt_kwargs`
+- The `system_message_suffix` from `AgentContext` is automatically appended after your custom prompt
 
 ## Next Steps
 

@@ -3,11 +3,15 @@
 Sync code blocks in documentation files with their corresponding source files.
 
 This script:
-1. Scans MDX files for code blocks with file references (e.g., ```python expandable examples/01_standalone_sdk/02_custom_tools.py)
+1. Scans MDX files for code blocks with file references (e.g., ```python expandable examples/01_standalone_sdk/02_custom_tools.py or ```yaml expandable examples/03_github_workflows/02_pr_review/workflow.yml)
 2. Extracts the file path from the code block metadata
 3. Reads the actual content from the source file in agent-sdk/
 4. Compares the code block content with the actual file content
 5. Updates the documentation if there are differences
+
+Supported file types:
+- Python files (.py) with ```python blocks
+- YAML files (.yml, .yaml) with ```yaml blocks
 """
 
 import os
@@ -26,26 +30,46 @@ def find_mdx_files(docs_path: Path) -> list[Path]:
     return mdx_files
 
 
-def extract_code_blocks(content: str) -> list[tuple[str, str, int, int]]:
+def extract_code_blocks(content: str) -> list[tuple[str, str, str, int, int]]:
     """
     Extract code blocks that reference source files.
 
-    Returns list of tuples: (file_reference, code_content, start_pos, end_pos)
+    Returns list of tuples: (language, file_reference, code_content, start_pos, end_pos)
 
     Pattern matches blocks like:
     ```python icon="python" expandable examples/01_standalone_sdk/02_custom_tools.py
     <code content>
     ```
+    
+    OR
+    
+    ```yaml icon="yaml" expandable examples/03_github_workflows/02_pr_review/workflow.yml
+    <code content>
+    ```
     """
-    # Captures ...*.py after the first line, then the body up to ```
-    pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)```'
-    matches: list[tuple[str, str, int, int]] = []
-    for match in re.finditer(pattern, content, re.DOTALL):
+    matches: list[tuple[str, str, str, int, int]] = []
+    
+    # Pattern for Python files
+    python_pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)```'
+    for match in re.finditer(python_pattern, content, re.DOTALL):
         file_ref = match.group(1)
         code_content = match.group(2)
         start_pos = match.start()
         end_pos = match.end()
-        matches.append((file_ref, code_content, start_pos, end_pos))
+        matches.append(('python', file_ref, code_content, start_pos, end_pos))
+    
+    # Pattern for YAML files
+    yaml_pattern = r'```yaml[^\n]*\s+([^\s]+\.ya?ml)\n(.*?)```'
+    for match in re.finditer(yaml_pattern, content, re.DOTALL):
+        file_ref = match.group(1)
+        code_content = match.group(2)
+        start_pos = match.start()
+        end_pos = match.end()
+        matches.append(('yaml', file_ref, code_content, start_pos, end_pos))
+    
+    # Sort by position to maintain order
+    matches.sort(key=lambda x: x[3])
+    
     return matches
 
 
@@ -123,7 +147,7 @@ def resolve_paths() -> tuple[Path, Path]:
 def update_doc_file(
     doc_path: Path,
     content: str,
-    code_blocks: list[tuple[str, str, int, int]],
+    code_blocks: list[tuple[str, str, str, int, int]],
     agent_sdk_path: Path,
 ) -> bool:
     """
@@ -135,7 +159,7 @@ def update_doc_file(
     new_content = content
     offset = 0  # Track offset due to content changes
 
-    for file_ref, old_code, start_pos, end_pos in code_blocks:
+    for language, file_ref, old_code, start_pos, end_pos in code_blocks:
         actual_content = read_source_file(agent_sdk_path, file_ref)
         if actual_content is None:
             continue
@@ -150,8 +174,9 @@ def update_doc_file(
             adj_start = start_pos + offset
             adj_end = end_pos + offset
 
+            # Match opening line with the appropriate language
             opening_line_match = re.search(
-                r"```python[^\n]*\s+" + re.escape(file_ref),
+                r"```" + re.escape(language) + r"[^\n]*\s+" + re.escape(file_ref),
                 new_content[adj_start:adj_end],
             )
             if opening_line_match:

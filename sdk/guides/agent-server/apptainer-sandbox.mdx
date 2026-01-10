@@ -1,0 +1,254 @@
+---
+title: Apptainer Sandbox
+description: Run agent server in rootless Apptainer containers for HPC and shared computing environments.
+---
+
+The Apptainer sandboxed agent server demonstrates how to run agents in isolated Apptainer containers using ApptainerWorkspace.
+
+Apptainer (formerly Singularity) is a container runtime designed for HPC environments that doesn't require root access, making it ideal for shared computing environments, university clusters, and systems where Docker is not available.
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/08_convo_with_apptainer_sandboxed_server.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/08_convo_with_apptainer_sandboxed_server.py)
+</Note>
+
+## When to Use Apptainer
+
+Use Apptainer instead of Docker when:
+- Running on HPC clusters or shared computing environments
+- Root access is not available
+- Docker daemon cannot be installed
+- Working in academic or research computing environments
+- Security policies restrict Docker usage
+
+## Prerequisites
+
+Before running this example, ensure you have:
+- Apptainer installed ([Installation Guide](https://apptainer.org/docs/user/main/quick_start.html))
+- LLM API key set in environment
+
+## Basic Apptainer Sandbox Example
+
+This example shows how to create an ApptainerWorkspace that automatically manages Apptainer containers for agent execution:
+
+```python icon="python" expandable examples/02_remote_agent_server/08_convo_with_apptainer_sandboxed_server.py
+import os
+import platform
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Conversation,
+    RemoteConversation,
+    get_logger,
+)
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import ApptainerWorkspace
+
+
+logger = get_logger(__name__)
+
+# 1) Ensure we have LLM API key
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    usage_id="agent",
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    api_key=SecretStr(api_key),
+)
+
+
+def detect_platform():
+    """Detects the correct platform string."""
+    machine = platform.machine().lower()
+    if "arm" in machine or "aarch64" in machine:
+        return "linux/arm64"
+    return "linux/amd64"
+
+
+# 2) Create an Apptainer-based remote workspace that will set up and manage
+#    the Apptainer container automatically. Use `ApptainerWorkspace` with a
+#    pre-built agent server image.
+#    Apptainer (formerly Singularity) doesn't require root access, making it
+#    ideal for HPC and shared computing environments.
+with ApptainerWorkspace(
+    # use pre-built image for faster startup
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+    host_port=8010,
+    platform=detect_platform(),
+) as workspace:
+    # 3) Create agent
+    agent = get_default_agent(
+        llm=llm,
+        cli_mode=True,
+    )
+
+    # 4) Set up callback collection
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        event_type = type(event).__name__
+        logger.info(f"🔔 Callback received event: {event_type}\n{event}")
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    # 5) Test the workspace with a simple command
+    result = workspace.execute_command(
+        "echo 'Hello from sandboxed environment!' && pwd"
+    )
+    logger.info(
+        f"Command '{result.command}' completed with exit code {result.exit_code}"
+    )
+    logger.info(f"Output: {result.stdout}")
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        callbacks=[event_callback],
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    try:
+        logger.info(f"\n📋 Conversation ID: {conversation.state.id}")
+
+        logger.info("📝 Sending first message...")
+        conversation.send_message(
+            "Read the current repo and write 3 facts about the project into FACTS.txt."
+        )
+        logger.info("🚀 Running conversation...")
+        conversation.run()
+        logger.info("✅ First task completed!")
+        logger.info(f"Agent status: {conversation.state.execution_status}")
+
+        # Wait for events to settle (no events for 2 seconds)
+        logger.info("⏳ Waiting for events to stop...")
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+        logger.info("✅ Events have stopped")
+
+        logger.info("🚀 Running conversation again...")
+        conversation.send_message("Great! Now delete that file.")
+        conversation.run()
+        logger.info("✅ Second task completed!")
+
+        # Report cost (must be before conversation.close())
+        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        print(f"EXAMPLE_COST: {cost}")
+    finally:
+        print("\n🧹 Cleaning up conversation...")
+        conversation.close()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/08_convo_with_apptainer_sandboxed_server.py
+```
+
+## Configuration Options
+
+The `ApptainerWorkspace` supports several configuration options:
+
+### Option 1: Pre-built Image (Recommended)
+
+Use a pre-built agent server image for fastest startup:
+
+```python highlight={2}
+with ApptainerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:main-python",
+    host_port=8010,
+) as workspace:
+    # Your code here
+```
+
+### Option 2: Build from Base Image
+
+Build from a base image when you need custom dependencies:
+
+```python highlight={2}
+with ApptainerWorkspace(
+    base_image="nikolaik/python-nodejs:python3.12-nodejs22",
+    host_port=8010,
+) as workspace:
+    # Your code here
+```
+
+<Note>
+Building from a base image requires internet access and may take several minutes on first run. The built image is cached for subsequent runs.
+</Note>
+
+### Option 3: Use Existing SIF File
+
+If you have a pre-built Apptainer SIF file:
+
+```python highlight={2}
+with ApptainerWorkspace(
+    sif_file="/path/to/your/agent-server.sif",
+    host_port=8010,
+) as workspace:
+    # Your code here
+```
+
+## Key Features
+
+### Rootless Container Execution
+
+Apptainer runs completely without root privileges:
+- No daemon process required
+- User namespace isolation
+- Compatible with most HPC security policies
+
+### Image Caching
+
+Apptainer automatically caches container images:
+- First run builds/pulls the image
+- Subsequent runs reuse cached SIF files
+- Cache location: `~/.cache/apptainer/`
+
+### Port Mapping
+
+The workspace exposes ports for agent services:
+```python
+with ApptainerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:main-python",
+    host_port=8010,  # Maps to container port 8010
+) as workspace:
+    # Access agent server at http://localhost:8010
+```
+
+## Differences from Docker
+
+While the API is similar to DockerWorkspace, there are some differences:
+
+| Feature | Docker | Apptainer |
+|---------|--------|-----------|
+| Root access required | Yes (daemon) | No |
+| Installation | Requires Docker Engine | Single binary |
+| Image format | OCI/Docker | SIF |
+| Build speed | Fast (layers) | Slower (monolithic) |
+| HPC compatibility | Limited | Excellent |
+| Networking | Bridge/overlay | Host networking |
+
+## Troubleshooting
+
+### Apptainer Not Found
+
+If you see `apptainer: command not found`:
+1. Install Apptainer following the [official guide](https://apptainer.org/docs/user/main/quick_start.html)
+2. Ensure it's in your PATH: `which apptainer`
+
+### Permission Errors
+
+Apptainer should work without root. If you see permission errors:
+- Check that your user has access to `/tmp`
+- Verify Apptainer is properly installed: `apptainer version`
+- Ensure the cache directory is writable: `ls -la ~/.cache/apptainer/`
+
+## Next Steps
+
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Alternative container runtime
+- **[API Sandbox](/sdk/guides/agent-server/api-sandbox)** - Remote API-based sandboxing
+- **[Local Server](/sdk/guides/agent-server/local-server)** - Non-sandboxed local execution

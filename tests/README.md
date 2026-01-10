@@ -23,4 +23,4 @@ This test verifies that the pricing information in the OpenHands LLM documentati
 
 The test fetches data from:
 - LiteLLM's pricing JSON: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
-- OpenHands model list: https://github.com/All-Hands-AI/OpenHands/blob/main/openhands/utils/llm.py
+- OpenHands model list: https://github.com/OpenHands/OpenHands/blob/main/openhands/utils/llm.py

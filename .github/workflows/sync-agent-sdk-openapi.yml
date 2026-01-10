@@ -1,9 +1,6 @@
 name: Sync agent-sdk OpenAPI
 
 on:
-  push:
-    branches:
-      - '**'      # run on every branch
   schedule:
     - cron: '0 2 * * *'   # nightly catch-up
   workflow_dispatch:
@@ -15,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync-openapi:
@@ -38,7 +36,7 @@ jobs:
       - name: Checkout agent-sdk
         uses: actions/checkout@v4
         with:
-          repository: OpenHands/agent-sdk
+          repository: OpenHands/software-agent-sdk
           path: agent-sdk
           ref: ${{ env.AGENT_SDK_REF }}
           fetch-depth: 0
@@ -72,19 +70,38 @@ jobs:
             echo "changes=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Commit and push OpenAPI spec
+      - name: Get commit info
         if: steps.detect_changes.outputs.changes == 'true'
+        id: commit_info
         run: |
-          set -euo pipefail
-          git add openapi/agent-sdk.json
-          # Re-check in case only unrelated files changed
-          if git diff --cached --quiet; then
-            echo "No OpenAPI changes to commit."
-            exit 0
-          fi
-
           SHA_SHORT="$(git -C agent-sdk rev-parse --short=7 HEAD || echo manual)"
           BRANCH="${AGENT_SDK_REF:-main}"
+          echo "sha_short=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 
-          git commit -m "sync(openapi): agent-sdk/${BRANCH} ${SHA_SHORT}"
-          git push
+      - name: Create Pull Request
+        if: steps.detect_changes.outputs.changes == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: openapi/agent-sdk.json
+          commit-message: "sync(openapi): agent-sdk/${{ steps.commit_info.outputs.branch }} ${{ steps.commit_info.outputs.sha_short }}"
+          branch: sync-openapi
+          branch-suffix: timestamp
+          delete-branch: true
+          title: "sync(openapi): agent-sdk/${{ steps.commit_info.outputs.branch }} ${{ steps.commit_info.outputs.sha_short }}"
+          body: |
+            ## Summary of changes
+
+            This PR automatically syncs the OpenAPI specification from the agent-sdk repository.
+
+            **Agent SDK Reference**: `${{ steps.commit_info.outputs.branch }}` (commit: `${{ steps.commit_info.outputs.sha_short }}`)
+
+            ### Changes Made
+            - Updated `openapi/agent-sdk.json` with the latest OpenAPI spec from agent-sdk
+            - This is an automated sync performed by the `sync-agent-sdk-openapi` workflow
+
+            ### Checklist
+            - [x] I have read and reviewed the documentation changes to the best of my ability.
+            - [x] If the change is significant, I have run the documentation site locally and confirmed it renders as expected.
+
+            **Note**: This is an automated pull request. Please review the changes to ensure they are correct before merging.
