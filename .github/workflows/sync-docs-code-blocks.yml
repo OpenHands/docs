@@ -69,6 +69,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.detect_changes.outputs.changes == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@v7
         with:
           commit-message: |
@@ -94,3 +95,28 @@ jobs:
             ### Checklist
             - [x] I have read and reviewed the documentation changes to the best of my ability.
             - [x] If the change is significant, I have run the documentation site locally and confirmed it renders as expected.
+
+      - name: Auto-approve PR
+        if: steps.cpr.outputs.pull-request-number != '' && secrets.DOCS_SYNC_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+        run: |
+          gh pr review "${{ steps.cpr.outputs.pull-request-number }}" \
+            --approve \
+            --body "Auto-approving automated docs sync PR."
+
+      - name: Enable auto-merge
+        if: steps.cpr.outputs.pull-request-number != '' && secrets.DOCS_SYNC_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.cpr.outputs.pull-request-number }}"
+
+          # Prefer auto-merge (merges when required checks finish). If auto-merge
+          # isn't enabled for the repo, fall back to attempting an immediate merge.
+          gh pr merge "$PR_NUMBER" --auto --delete-branch --squash \
+            || gh pr merge "$PR_NUMBER" --auto --delete-branch --merge \
+            || gh pr merge "$PR_NUMBER" --auto --delete-branch --rebase \
+            || gh pr merge "$PR_NUMBER" --delete-branch --squash \
+            || gh pr merge "$PR_NUMBER" --delete-branch --merge \
+            || gh pr merge "$PR_NUMBER" --delete-branch --rebase
