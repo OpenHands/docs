@@ -15,6 +15,10 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: sync-docs-code-blocks
+  cancel-in-progress: true
+
 jobs:
   sync-code-blocks:
     runs-on: ubuntu-latest
@@ -69,6 +73,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.detect_changes.outputs.changes == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@v7
         with:
           commit-message: |
@@ -94,3 +99,24 @@ jobs:
             ### Checklist
             - [x] I have read and reviewed the documentation changes to the best of my ability.
             - [x] If the change is significant, I have run the documentation site locally and confirmed it renders as expected.
+
+      - name: Auto-approve PR
+        if: steps.cpr.outputs.pull-request-url && secrets.DOCS_SYNC_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+        run: |
+          gh pr review "${{ steps.cpr.outputs.pull-request-url }}" \
+            --approve \
+            --body "Auto-approving automated docs sync PR."
+
+      - name: Enable auto-merge (squash)
+        if: steps.cpr.outputs.pull-request-url && secrets.DOCS_SYNC_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+        run: |
+          PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
+
+          # Prefer auto-merge (merges when required checks finish).
+          # If auto-merge isn't enabled for the repo, fall back to attempting an immediate merge.
+          gh pr merge "$PR_URL" --auto --delete-branch --squash \
+            || gh pr merge "$PR_URL" --delete-branch --squash
