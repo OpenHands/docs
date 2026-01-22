@@ -1,0 +1,224 @@
+---
+title: "Containerize an Application"
+sidebarTitle: "Containerization"
+description: "Tutorial: Dockerize an application with OpenHands"
+---
+
+# Tutorial: Containerize an Application
+
+Learn how to use OpenHands to containerize an existing application with Docker.
+
+## Prerequisites
+
+- Existing application to containerize
+- Docker installed locally
+- OpenHands CLI or Cloud access
+
+## What We'll Create
+
+- Optimized Dockerfile
+- Docker Compose configuration
+- Development and production setups
+- CI/CD integration
+
+## Step 1: Analyze the Application
+
+First, have OpenHands analyze your app:
+
+```markdown
+Analyze this application and determine containerization requirements.
+
+Check:
+1. Language/runtime requirements
+2. Dependencies and build steps
+3. Environment variables needed
+4. Ports to expose
+5. External service dependencies (database, cache, etc.)
+6. Static files or assets
+
+Output a containerization plan.
+```
+
+## Step 2: Create the Dockerfile
+
+```markdown
+Create an optimized Dockerfile for this application.
+
+Requirements:
+- Multi-stage build for smaller image
+- Non-root user for security
+- Proper layer caching
+- Health check endpoint
+
+Application details:
+- Python 3.11 / Node 18 / etc.
+- Dependencies in requirements.txt / package.json
+- Entry point: [command]
+- Port: [port]
+
+Follow best practices:
+- Pin base image versions
+- Minimize layers
+- Copy requirements before source code
+- Use .dockerignore
+```
+
+### Example Output (Python)
+
+```dockerfile
+# Build stage
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
+
+# Production stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash app
+USER app
+
+# Install dependencies from wheels
+COPY --from=builder /app/wheels /wheels
+RUN pip install --no-cache-dir /wheels/*
+
+# Copy application code
+COPY --chown=app:app . .
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=3s \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+## Step 3: Create Docker Compose
+
+```markdown
+Create docker-compose.yml for local development.
+
+Include:
+- Application service
+- Database (PostgreSQL)
+- Redis (if used)
+- Volume mounts for hot reload
+- Environment file support
+
+Development features:
+- Source code mounted as volume
+- Debug mode enabled
+- Exposed ports for debugging
+```
+
+### Example Output
+
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://user:pass@db:5432/app
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - db
+      - redis
+    
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: app
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    
+  redis:
+    image: redis:7-alpine
+
+volumes:
+  postgres_data:
+```
+
+## Step 4: Add Production Configuration
+
+```markdown
+Create production docker-compose configuration.
+
+Differences from development:
+- No volume mounts (use built image)
+- Production environment variables
+- Resource limits
+- Restart policies
+- Logging configuration
+```
+
+## Step 5: Test the Container
+
+Verify the containerized application:
+
+```bash
+# Build
+docker-compose build
+
+# Run
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f app
+
+# Test health
+curl http://localhost:8000/health
+
+# Run tests in container
+docker-compose exec app pytest
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Multi-Stage Builds">
+    Keep production images small by separating build and runtime stages.
+  </Accordion>
+  <Accordion title="Don't Run as Root">
+    Create and use a non-root user for security.
+  </Accordion>
+  <Accordion title="Optimize Layer Caching">
+    Copy dependency files before source code for better caching.
+  </Accordion>
+  <Accordion title="Include Health Checks">
+    Enable orchestrators to monitor container health.
+  </Accordion>
+</AccordionGroup>
+
+## Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| Large image size | Use multi-stage builds, slim base images |
+| Slow builds | Optimize layer ordering for caching |
+| Permission errors | Check user permissions, file ownership |
+| Connection refused | Verify port mappings, network configuration |
+
+<Card title="More Tutorials" icon="graduation-cap" href="/use-cases/tutorials/getting-started">
+  Explore other tutorials
+</Card>
