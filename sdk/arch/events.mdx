@@ -142,7 +142,48 @@ Events for metadata, control flow, and user actions (not sent to LLM):
 | **ConversationStateUpdateEvent** | environment | State synchronization | `key` (field name), `value` (serialized data) |
 | **CondensationRequest** | environment | Trigger history compression | Signal to condenser when context window exceeded |
 | **Condensation** | environment | Compression result | `forgotten_event_ids`, `summary`, `summary_offset` |
-| **PauseEvent** | user | User pause action | Indicates agent execution was paused by user |
+
+## Invariants (Normative)
+
+### Event Immutability
+
+All events inherit from `Event` / `LLMConvertibleEvent` with Pydantic config `frozen=True` and `extra="forbid"`.
+
+Natural language invariant:
+
+- Once appended to the event log, an event must be treated as immutable. Mutations are represented as *new events*, not edits.
+
+OCL-like:
+
+- `context Event inv Frozen: self.model_config.frozen = true`
+
+### LLM-Convertible Stream Can Be Reconstructed Deterministically
+
+Natural language invariant:
+
+- `LLMConvertibleEvent.events_to_messages(events)` must produce the exact LLM message stream used for decision making, including batching of parallel tool calls.
+
+### Parallel Tool Calls are Batched by llm_response_id
+
+When multiple `ActionEvent`s share the same `llm_response_id`, they represent a single assistant turn with multiple tool calls.
+
+Natural language invariant:
+
+- In a batch, only the first `ActionEvent` may contain `thought`/reasoning; subsequent actions must have empty `thought`. This is asserted when combining events.
+
+### Condensation is a Pure View Transformation
+
+`Condensation.apply(events)` removes forgotten events and optionally inserts a synthetic `CondensationSummaryEvent` at `summary_offset`.
+
+Natural language invariants:
+
+- Condensation never mutates existing events; it returns a new list.
+- `forgotten_event_ids` must refer to events that exist in the input list (otherwise the operation is a no-op for those IDs).
+- If `summary` is present, `summary_offset` must also be present to insert the summary into the view; otherwise the summary is metadata only.
+
+OCL-like (conceptual):
+
+- `context Condensation inv SummaryOffsetPair: (self.summary <> null) implies (self.summary_offset <> null) or true -- insertion requires both; metadata-only summary allowed`
 
 **Source Types:**
 - **user**: Event originated from user input
