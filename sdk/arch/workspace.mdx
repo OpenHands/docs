@@ -159,6 +159,27 @@ Natural language invariant:
 
 This is compatible with the “swap workspaces without rewriting code” principle because most client code should only rely on the *core* workspace and conversation operations. Optional capabilities should be feature-detected or used conditionally.
 
+#### Discussion: `pause()` / `resume()` semantics (design tradeoff)
+
+There is a mild design smell here: the method names `pause()` / `resume()` suggest a strong guarantee (that work is actually suspended), but the SDK currently treats them as a **best-effort resource management hook**.
+
+- Locally, there is often nothing meaningful the workspace can suspend at the boundary (it is operating on the host OS), so `LocalWorkspace.pause()` is a no-op.
+- Some remote/container workspaces may be able to pause a container or VM, but others may not.
+
+This tension matters because it creates two different reasonable expectations:
+
+1. *Ergonomic expectation*: orchestration code can call `pause()` unconditionally and it will be safe.
+2. *Guarantee expectation*: calling `pause()` actually pauses resource usage.
+
+**Maybe it would make sense to** model this explicitly as an optional capability:
+
+- Add `supports_pause` (or a richer `pause_capability`) to `BaseWorkspace`, and
+- Make `pause()` / `resume()` no-ops everywhere by default (including remote) while letting pausable implementations override,
+- Keep a strict helper (e.g., `pause_or_raise()`) for callers who require a guarantee.
+
+This would make the default behavior unsurprising (safe to call), while still letting clients opt into fail-fast behavior when pausing is required.
+
+
 ### File Operations
 
 | Operation | Local Implementation | Remote Implementation |
