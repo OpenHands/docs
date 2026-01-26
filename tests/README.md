@@ -4,11 +4,10 @@ This directory contains tests to verify the consistency and accuracy of the docu
 
 ## Running Tests
 
-To run the tests, you need to have pytest and requests installed:
+To run the tests, we recommend using `uv` for one-off dependency management:
 
 ```bash
-pip install pytest requests
-pytest tests/
+uv run --with pytest --with requests pytest tests/
 ```
 
 ## Tests

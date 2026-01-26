@@ -46,14 +46,18 @@ mint broken-links
 
 This repo includes Python scripts that generate or validate parts of the docs.
 
-Install required packages as needed:
+This repo isn’t a Python package (no `pyproject.toml`), so for one-off runs we prefer **`uv`** to create an ephemeral environment:
 
 ```bash
-python -m pip install -U pip
-pip install sphinx sphinx-markdown-builder myst-parser
-# for tests:
-pip install pytest requests
+# Generate SDK API reference docs
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py
+
+# Run pytest-based checks
+uv run --with pytest --with requests pytest -q
 ```
+
+(You can still use `pip install ...` if you prefer a long-lived local environment.)
 
 ## Cross-repo sync automation (important)
 
@@ -97,8 +101,8 @@ Script: `scripts/generate-api-docs.py`
 Local run:
 
 ```bash
-pip install sphinx sphinx-markdown-builder myst-parser
-python scripts/generate-api-docs.py
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py
 ```
 
 CI: also run by `.github/workflows/sync-docs-code-blocks.yml`
@@ -136,8 +140,7 @@ There are *two* layers of protection for `openhands/usage/llms/openhands-llms.md
 Run locally:
 
 ```bash
-pip install pytest requests
-pytest -q
+uv run --with pytest --with requests pytest -q
 ```
 
 ## Related repos (source-of-truth)
