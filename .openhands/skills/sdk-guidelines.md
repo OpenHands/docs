@@ -9,7 +9,7 @@ Applicable files when modifying the agent SDK documentation:
 
 ```
 docs/
-├── .openhands/microagents/sdk-guidelines.md     # Guidelines for changing SDK documentation (this file)
+├── .openhands/skills/sdk-guidelines.md          # Guidelines for changing SDK documentation (this file)
 ├── .github/
 │   ├── scripts/
 │   │   └── sync_code_blocks.py # Code synchronization script
