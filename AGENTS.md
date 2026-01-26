@@ -145,8 +145,8 @@ uv run --with pytest --with requests pytest -q
 
 ## Related repos (source-of-truth)
 
-- OpenHands (Web/App): https://github.com/OpenHands/OpenHands
+- OpenHands Agent SDK: https://github.com/OpenHands/software-agent-sdk
 - OpenHands CLI: https://github.com/OpenHands/OpenHands-CLI
-- Agent SDK: https://github.com/OpenHands/software-agent-sdk
+- OpenHands (Web/App): https://github.com/OpenHands/OpenHands
 
 When updating SDK features or examples, expect to update this repo too (especially under `sdk/`).
