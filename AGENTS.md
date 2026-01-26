@@ -53,8 +53,8 @@ This repo isn’t a Python package (no `pyproject.toml`), so for one-off runs we
 uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
   python scripts/generate-api-docs.py
 
-# Run pytest-based checks
-uv run --with pytest --with requests pytest -q
+# Run pytest-based checks (only this repo's tests)
+uv run --with pytest --with requests pytest -q tests/
 ```
 
 (You can still use `pip install ...` if you prefer a long-lived local environment.)
@@ -140,7 +140,7 @@ There are *two* layers of protection for `openhands/usage/llms/openhands-llms.md
 Run locally:
 
 ```bash
-uv run --with pytest --with requests pytest -q
+uv run --with pytest --with requests pytest -q tests/
 ```
 
 ## Related repos (source-of-truth)

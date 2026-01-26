@@ -7,7 +7,7 @@ This directory contains tests to verify the consistency and accuracy of the docu
 To run the tests, we recommend using `uv` for one-off dependency management:
 
 ```bash
-uv run --with pytest --with requests pytest tests/
+uv run --with pytest --with requests pytest -q tests/
 ```
 
 ## Tests
