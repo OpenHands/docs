@@ -2,9 +2,9 @@
 
 This repo hosts the **unified documentation site** for the OpenHands ecosystem:
 
-- **OpenHands Web/App** (GUI + Cloud + REST API)
+- **OpenHands Agent SDK** (SDK + REST API)
 - **OpenHands CLI**
-- **OpenHands Agent SDK**
+- **OpenHands Web/App** (GUI + Cloud + REST API)
 
 The site is built with **Mintlify** and deployed automatically by Mintlify on pushes to `main`.
 
