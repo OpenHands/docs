@@ -194,17 +194,94 @@ For full list of implemented workspaces, see the [source code](https://github.co
 
 **Purpose:** FastAPI-based HTTP/WebSocket server for remote agent execution.
 
-**Features:**
-- REST API & WebSocket endpoints for conversations, bash, files, events, desktop, and VSCode
-- Service management with isolated per-user sessions
-- API key authentication and health checking
+**Source:** [`openhands-agent-server/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server)
 
-**Deployment:** Runs inside containers (via `DockerWorkspace`) or as standalone process (connected via `RemoteWorkspace`).
+**Deployment:** Runs inside containers (via `DockerWorkspace`) or as standalone process (connected via `RemoteWorkspace`). The agent server itself does not manage containers—containerization and lifecycle are handled by [workspace implementations](/sdk/arch/workspace).
 
 **Use Cases:** Multi-user web apps, SaaS products, distributed systems.
 
+#### Architecture
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 28, "rankSpacing": 40}} }%%
+flowchart TB
+    Client[Client / SDK] -->|HTTP/WS| API[FastAPI App]
+
+    subgraph Routers["Routers under /api"]
+        Conv[conversations]
+        Events[events]
+        Bash[bash]
+        File[file]
+        Git[git]
+        Tools[tools]
+    end
+
+    WS["WebSocket under /sockets"]
+
+    API --> Routers
+    API --> WS
+
+    subgraph Services[Services]
+        ConvSvc[ConversationService]
+        EventSvc[EventService]
+    end
+
+    Routers --> ConvSvc
+    Routers --> EventSvc
+    WS --> EventSvc
+
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+
+    class API primary
+    class Routers,WS secondary
+    class Services tertiary
+```
+
+#### Key Components
+
+| Component | Purpose | Source |
+|-----------|---------|--------|
+| **FastAPI App** | Main application with lifespan management | [api.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/api.py) |
+| **ConversationService** | Manages conversation state and execution | [conversation_service.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/conversation_service.py) |
+| **EventService** | Handles event storage and streaming | [event_service.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/event_service.py) |
+| **Request/Response Models** | Pydantic models for API payloads | [models.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/models.py) |
+
+#### API Endpoints
+
+**REST Endpoints (`/api`):**
+
+| Router | Endpoint | Description |
+|--------|----------|-------------|
+| **Conversations** | `POST /api/conversations` | Start new conversation |
+| | `POST /api/conversations/{id}/run` | Run agent loop |
+| | `POST /api/conversations/{id}/events` | Send message (optionally with `run: true`) |
+| **Events** | `GET /api/conversations/{id}/events/search` | List events |
+| | `GET /api/conversations/{id}/events/{event_id}` | Get specific event |
+| **Bash** | `POST /api/bash/start_bash_command` | Start background command |
+| | `GET /api/bash/bash_events/search` | List bash events |
+| **Files** | `POST /api/file/upload/{path}` | Upload file |
+| | `GET /api/file/download/{path}` | Download file |
+| **Tools** | `GET /api/tools/` | List registered tools |
+| **Server** | `GET /server_info` | Get uptime and idle time |
+
+**WebSocket Endpoints (`/sockets`):**
+
+| Endpoint | Description |
+|----------|-------------|
+| `/sockets/events/{conversation_id}` | Stream conversation events |
+| `/sockets/bash-events` | Stream bash command events |
+
+#### Authentication
+
+| Method | Authentication | Source |
+|--------|---------------|--------|
+| **HTTP** | `X-Session-API-Key` header | [dependencies.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/dependencies.py) |
+| **WebSocket** | `session_api_key` query parameter | [sockets.py](https://github.com/OpenHands/software-agent-sdk/blob/HEAD/openhands-agent-server/openhands/agent_server/sockets.py) |
+
 <Note>
-For implementation details, see the [source code](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server).
+For practical usage guides on deploying and connecting to agent servers, see the [Remote Agent Server Guide](/sdk/guides/agent-server/overview).
 </Note>
 
 ## How Components Work Together
