@@ -30,11 +30,14 @@ scripts/
 
 ### Required Python Packages
 
-Install the required dependencies:
+We recommend using **`uv`** to run the generator with an ephemeral environment (no global installs required):
 
 ```bash
-pip install sphinx sphinx-markdown-builder myst-parser
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py
 ```
+
+(Alternatively, you can install the same dependencies into your own venv with `uv pip install ...` or `pip install ...`.)
 
 ### System Requirements
 
@@ -48,20 +51,24 @@ Generate API documentation with default settings:
 
 ```bash
 cd docs
-python scripts/generate-api-docs.py
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py
 ```
 
 ### Advanced Usage
 
 ```bash
 # Clean previous build and regenerate everything
-python scripts/generate-api-docs.py --clean
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py --clean
 
 # Enable verbose output for debugging
-python scripts/generate-api-docs.py --verbose
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py --verbose
 
 # Combine options
-python scripts/generate-api-docs.py --clean --verbose
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py --clean --verbose
 ```
 
 ### Command Line Options
@@ -190,7 +197,7 @@ To document specific modules only, modify the `generate_rst_files()` method in t
    ```
    Error: Missing required packages: sphinx, sphinx_markdown_builder, myst_parser
    ```
-   **Solution**: Install the required packages with pip
+   **Solution**: Run the script via `uv run --with ...` (recommended), or install the required packages into your environment.
 
 2. **SDK Repository Not Found**
    ```
@@ -209,7 +216,8 @@ To document specific modules only, modify the `generate_rst_files()` method in t
 Use the `--verbose` flag to get detailed logging:
 
 ```bash
-python scripts/generate-api-docs.py --verbose
+uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+  python scripts/generate-api-docs.py --verbose
 ```
 
 This will show:
@@ -265,11 +273,12 @@ For custom CI/CD setups, the script is designed to be idempotent and safe:
 
 ```yaml
 # Example GitHub Actions step
+- uses: astral-sh/setup-uv@v7
 - name: Generate API Documentation
   run: |
     cd docs
-    pip install sphinx sphinx-markdown-builder myst-parser
-    python scripts/generate-api-docs.py --clean
+    uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+      python scripts/generate-api-docs.py --clean
 ```
 
 ### Manual Scheduled Updates
@@ -293,12 +302,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dependencies
-        run: pip install sphinx sphinx-markdown-builder myst-parser
+      - uses: astral-sh/setup-uv@v7
       - name: Generate documentation
         run: |
           cd docs
-          python scripts/generate-api-docs.py --clean
+          uv run --with sphinx --with sphinx-markdown-builder --with myst-parser \
+            python scripts/generate-api-docs.py --clean
       - name: Commit changes
         run: |
           git config --local user.email "action@github.com"
