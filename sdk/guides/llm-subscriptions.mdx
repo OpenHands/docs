@@ -1,0 +1,179 @@
+---
+title: LLM Subscriptions
+description: Use your ChatGPT Plus/Pro subscription to access Codex models without consuming API credits.
+---
+
+<Info>
+OpenAI subscription is the first provider we support. More subscription providers will be added in future releases.
+</Info>
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/34_subscription_login.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/34_subscription_login.py)
+</Note>
+
+Use your existing ChatGPT Plus or Pro subscription to access OpenAI's Codex models without consuming API credits. The SDK handles OAuth authentication, credential caching, and automatic token refresh.
+
+```python icon="python" expandable examples/01_standalone_sdk/34_subscription_login.py
+"""Example: Using ChatGPT subscription for Codex models.
+
+This example demonstrates how to use your ChatGPT Plus/Pro subscription
+to access OpenAI's Codex models without consuming API credits.
+
+The subscription_login() method handles:
+- OAuth PKCE authentication flow
+- Credential caching (~/.local/share/openhands/auth/)
+- Automatic token refresh
+
+Supported models:
+- gpt-5.2-codex (default)
+- gpt-5.2
+- gpt-5.1-codex-max
+- gpt-5.1-codex-mini
+
+Requirements:
+- Active ChatGPT Plus or Pro subscription
+- Browser access for initial OAuth login
+"""
+
+import os
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# First time: Opens browser for OAuth login
+# Subsequent calls: Reuses cached credentials (auto-refreshes if expired)
+llm = LLM.subscription_login(
+    model="gpt-5.2-codex",  # or "gpt-5.2", "gpt-5.1-codex-max", "gpt-5.1-codex-mini"
+)
+
+# Verify subscription mode is active
+print(f"Using subscription mode: {llm.is_subscription}")
+
+# Use the LLM with an agent as usual
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+)
+
+cwd = os.getcwd()
+conversation = Conversation(agent=agent, workspace=cwd)
+
+conversation.send_message("List the files in the current directory.")
+conversation.run()
+print("Done!")
+
+
+# Alternative: Force a fresh login (useful if credentials are stale)
+# llm = LLM.subscription_login(model="gpt-5.2-codex", force_login=True)
+
+# Alternative: Disable auto-opening browser (prints URL to console instead)
+# llm = LLM.subscription_login(model="gpt-5.2-codex", open_browser=False)
+```
+
+```bash Running the Example
+cd agent-sdk
+uv run python examples/01_standalone_sdk/34_subscription_login.py
+```
+
+## How It Works
+
+### 1. Call subscription_login()
+
+The `LLM.subscription_login()` class method handles the entire authentication flow:
+
+```python highlight={1-3}
+from openhands.sdk import LLM
+
+llm = LLM.subscription_login(model="gpt-5.2-codex")
+```
+
+On first run, this opens your browser for OAuth authentication with OpenAI. After successful login, credentials are cached locally for future use.
+
+### 2. OAuth PKCE Flow
+
+The SDK implements a secure OAuth PKCE (Proof Key for Code Exchange) flow:
+
+1. **Authorization Request**: Opens browser to OpenAI's auth page
+2. **User Authentication**: You log in with your ChatGPT account
+3. **Callback Handling**: Local server receives the authorization code
+4. **Token Exchange**: Code is exchanged for access and refresh tokens
+5. **Credential Storage**: Tokens are securely stored locally
+
+### 3. Automatic Token Management
+
+Once authenticated, the SDK automatically:
+
+- **Caches credentials** in `~/.local/share/openhands/auth/`
+- **Refreshes tokens** when they expire (before each request)
+- **Reuses valid tokens** on subsequent `subscription_login()` calls
+
+## Supported Models
+
+The following models are available via ChatGPT subscription:
+
+| Model | Description |
+|-------|-------------|
+| `gpt-5.2-codex` | Latest Codex model (default) |
+| `gpt-5.2` | GPT-5.2 base model |
+| `gpt-5.1-codex-max` | High-capacity Codex model |
+| `gpt-5.1-codex-mini` | Lightweight Codex model |
+
+## Configuration Options
+
+### Force Fresh Login
+
+If your cached credentials become stale or you want to switch accounts:
+
+```python
+llm = LLM.subscription_login(
+    model="gpt-5.2-codex",
+    force_login=True,  # Always perform fresh OAuth login
+)
+```
+
+### Disable Browser Auto-Open
+
+For headless environments or when you prefer to manually open the URL:
+
+```python
+llm = LLM.subscription_login(
+    model="gpt-5.2-codex",
+    open_browser=False,  # Prints URL to console instead
+)
+```
+
+### Check Subscription Mode
+
+Verify that the LLM is using subscription-based authentication:
+
+```python
+llm = LLM.subscription_login(model="gpt-5.2-codex")
+print(f"Using subscription: {llm.is_subscription}")  # True
+```
+
+## Requirements
+
+- **Active ChatGPT Plus or Pro subscription** - Required for accessing Codex models
+- **Browser access** - For initial OAuth login (subsequent calls use cached credentials)
+- **Network access** - To communicate with OpenAI's authentication servers
+
+## Credential Storage
+
+Credentials are stored securely in your local filesystem:
+
+- **Location**: `~/.local/share/openhands/auth/` (or `$XDG_DATA_HOME/openhands/auth/` if set)
+- **Format**: JSON files with restrictive permissions (owner read/write only)
+- **Contents**: Access token, refresh token, and expiration timestamp
+
+To clear cached credentials, simply delete the files in this directory.
+
+## Next Steps
+
+- **[LLM Registry](/sdk/guides/llm-registry)** - Manage multiple LLM configurations
+- **[LLM Streaming](/sdk/guides/llm-streaming)** - Stream responses token-by-token
+- **[LLM Reasoning](/sdk/guides/llm-reasoning)** - Access model reasoning traces
