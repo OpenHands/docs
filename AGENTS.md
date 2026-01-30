@@ -128,6 +128,138 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 
+### SDK Guides Format (`sdk/guides/`)
+
+SDK guide files follow a standardized structure to improve user experience. When creating or updating guides:
+
+#### Standard Structure
+
+```text
+1. Title (frontmatter)
+2. Description (frontmatter)
+3. Import shared snippets
+4. Quick link to ready-to-run example
+5. Introduction / Overview
+6. Explanations with small code examples
+7. Ready-to-run Example section
+   - Note with GitHub link
+   - Full expandable code block
+   - RunExampleCode shared snippet
+8. Next Steps (links to related guides)
+```
+
+#### Key Elements
+
+1. **Frontmatter**: Every guide starts with title and description:
+   ```yaml
+   ---
+   title: Guide Title
+   description: Brief description of what the guide covers.
+   ---
+   ```
+
+2. **Shared Snippet Import**: Import the run example snippet at the top:
+   ```mdx
+   import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+   ```
+
+3. **Quick Link**: Add a link to the ready-to-run example near the top:
+   ```mdx
+   > A ready-to-run example is available [here](#ready-to-run-example)!
+   ```
+
+4. **Code Block Formatting**: Use these attributes for code blocks:
+   - `icon="python"` or `icon="terminal"` - Shows language icon
+   - `focus={3-5}` - Highlights specific lines (replaces `highlight={...}`)
+   - `wrap` - Enables line wrapping for long lines
+   - `expandable` - Makes large code blocks collapsible
+
+   Example:
+   ```mdx
+   ```python icon="python" focus={3-5} wrap
+   # code here
+   ```
+   ```
+
+5. **Ready-to-run Example Section**: Structure as follows:
+   ```mdx
+   ## Ready-to-run Example
+
+   <Note>
+   This example is available on GitHub: [examples/...](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/...)
+   </Note>
+
+   ```python icon="python" expandable examples/path/to/example.py
+   # Full example code (auto-synced from software-agent-sdk)
+   ```
+
+   <RunExampleCode path_to_script="examples/path/to/example.py"/>
+   ```
+
+6. **Mintlify Components**: Use these components where appropriate:
+   - `<Steps>` / `<Step>` - For sequential instructions
+   - `<Tree>` - For directory structures
+   - `<Note>` - For important information
+   - `<Tip>` - For helpful suggestions
+   - `<Warning>` - For cautions
+   - `<Info>` - For general information
+   - `<CodeGroup>` - For multiple code variants
+
+#### Example Guide Template
+
+```mdx
+---
+title: Feature Name
+description: Brief description of the feature.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+Brief introduction to the feature and its use cases.
+
+## How It Works
+
+Explanation of the feature with small code examples:
+
+```python icon="python" focus={3-4}
+# Small focused example
+feature = configure_feature()
+result = feature.execute()
+```
+
+## Configuration Options
+
+<Steps>
+    <Step>
+        ### Step One
+        Description and code...
+    </Step>
+    <Step>
+        ### Step Two
+        Description and code...
+    </Step>
+</Steps>
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/...](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/...)
+</Note>
+
+```python icon="python" expandable examples/path/to/example.py
+# Full example code here
+```
+
+<RunExampleCode path_to_script="examples/path/to/example.py"/>
+
+## Next Steps
+
+- **[Related Guide 1](/sdk/guides/related-1)** - Description
+- **[Related Guide 2](/sdk/guides/related-2)** - Description
+```
+
 ## Validation
 
 ### LLM pricing table validation
