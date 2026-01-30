@@ -3,13 +3,133 @@ title: Custom Visualizer
 description: Customize conversation visualization by creating custom visualizers or configuring the default visualizer.
 ---
 
-<Note>
-This example is available on GitHub: [examples/01_standalone_sdk/26_custom_visualizer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/26_custom_visualizer.py)
-</Note>
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
 
 The SDK provides flexible visualization options. You can use the default rich-formatted visualizer, customize it with highlighting patterns, or build completely custom visualizers by subclassing `ConversationVisualizerBase`.
 
-## Basic Example
+## Visualizer Configuration Options
+
+The `visualizer` parameter in `Conversation` controls how events are displayed:
+
+```python icon="python" focus={4-5, 7-8, 10-11, 13, 18, 20, 25}
+from openhands.sdk import Conversation
+from openhands.sdk.conversation import DefaultConversationVisualizer, ConversationVisualizerBase
+
+# Option 1: Use default visualizer (enabled by default)
+conversation = Conversation(agent=agent, workspace=workspace)
+
+# Option 2: Disable visualization
+conversation = Conversation(agent=agent, workspace=workspace, visualizer=None)
+
+# Option 3: Pass a visualizer class (will be instantiated automatically)
+conversation = Conversation(agent=agent, workspace=workspace, visualizer=DefaultConversationVisualizer)
+
+# Option 4: Pass a configured visualizer instance
+custom_viz = DefaultConversationVisualizer(
+    name="MyAgent",
+    highlight_regex={r"^Reasoning:": "bold cyan"}
+)
+conversation = Conversation(agent=agent, workspace=workspace, visualizer=custom_viz)
+
+# Option 5: Use custom visualizer class
+class MyVisualizer(ConversationVisualizerBase):
+    def on_event(self, event):
+        print(f"Event: {event}")
+
+conversation = Conversation(agent=agent, workspace=workspace, visualizer=MyVisualizer())
+```
+
+## Customizing the Default Visualizer
+
+`DefaultConversationVisualizer` uses Rich panels and supports customization through configuration:
+
+```python icon="python" focus={3-14, 19}
+from openhands.sdk.conversation import DefaultConversationVisualizer
+
+# Configure highlighting patterns using regex
+custom_visualizer = DefaultConversationVisualizer(
+    name="MyAgent",                       # Prefix panel titles with agent name
+    highlight_regex={
+        r"^Reasoning:": "bold cyan",      # Lines starting with "Reasoning:"
+        r"^Thought:": "bold green",       # Lines starting with "Thought:"
+        r"^Action:": "bold yellow",       # Lines starting with "Action:"
+        r"\[ERROR\]": "bold red",         # Error markers anywhere
+        r"\*\*(.*?)\*\*": "bold",         # Markdown bold **text**
+    },
+    skip_user_messages=False,             # Show user messages
+)
+
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    visualizer=custom_visualizer
+)
+```
+
+**When to use**: Perfect for customizing colors and highlighting without changing the panel-based layout.
+
+## Creating Custom Visualizers
+
+For complete control over visualization, subclass `ConversationVisualizerBase`:
+
+```python icon="python" focus={4, 11, 28}
+from openhands.sdk.conversation import ConversationVisualizerBase
+from openhands.sdk.event import ActionEvent, ObservationEvent, AgentErrorEvent, Event
+
+class MinimalVisualizer(ConversationVisualizerBase):
+    """A minimal visualizer that prints raw event information."""
+    
+    def __init__(self, name: str | None = None):
+        super().__init__(name=name)
+        self.step_count = 0
+    
+    def on_event(self, event: Event) -> None:
+        """Handle each event."""
+        if isinstance(event, ActionEvent):
+            self.step_count += 1
+            tool_name = event.tool_name or "unknown"
+            print(f"Step {self.step_count}: {tool_name}")
+            
+        elif isinstance(event, ObservationEvent):
+            print(f"  → Result received")
+                
+        elif isinstance(event, AgentErrorEvent):
+            print(f"❌ Error: {event.error}")
+
+# Use your custom visualizer
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    visualizer=MinimalVisualizer(name="Agent")
+)
+```
+
+### Key Methods
+
+**`__init__(self, name: str | None = None)`**
+- Initialize your visualizer with optional configuration
+- `name` parameter is available from the base class for agent identification
+- Call `super().__init__(name=name)` to initialize the base class
+
+**`initialize(self, state: ConversationStateProtocol)`**
+- Called automatically by `Conversation` after state is created
+- Provides access to conversation state and statistics via `self._state`
+- Override if you need custom initialization, but call `super().initialize(state)`
+
+**`on_event(self, event: Event)`** *(required)*
+- Called for each conversation event
+- Implement your visualization logic here
+- Access conversation stats via `self.conversation_stats` property
+
+**When to use**: When you need a completely different output format, custom state tracking, or integration with external systems.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/26_custom_visualizer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/26_custom_visualizer.py)
+</Note>
 
 ```python icon="python" expandable examples/01_standalone_sdk/26_custom_visualizer.py
 """Custom Visualizer Example
@@ -82,127 +202,7 @@ cost = llm.metrics.accumulated_cost
 print(f"EXAMPLE_COST: {cost:.4f}")
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/01_standalone_sdk/26_custom_visualizer.py
-```
-
-## Visualizer Configuration Options
-
-The `visualizer` parameter in `Conversation` controls how events are displayed:
-
-```python
-from openhands.sdk import Conversation
-from openhands.sdk.conversation import DefaultConversationVisualizer, ConversationVisualizerBase
-
-# Option 1: Use default visualizer (enabled by default)
-conversation = Conversation(agent=agent, workspace=workspace)
-
-# Option 2: Disable visualization
-conversation = Conversation(agent=agent, workspace=workspace, visualizer=None)
-
-# Option 3: Pass a visualizer class (will be instantiated automatically)
-conversation = Conversation(agent=agent, workspace=workspace, visualizer=DefaultConversationVisualizer)
-
-# Option 4: Pass a configured visualizer instance
-custom_viz = DefaultConversationVisualizer(
-    name="MyAgent",
-    highlight_regex={r"^Reasoning:": "bold cyan"}
-)
-conversation = Conversation(agent=agent, workspace=workspace, visualizer=custom_viz)
-
-# Option 5: Use custom visualizer class
-class MyVisualizer(ConversationVisualizerBase):
-    def on_event(self, event):
-        print(f"Event: {event}")
-
-conversation = Conversation(agent=agent, workspace=workspace, visualizer=MyVisualizer())
-```
-
-## Customizing the Default Visualizer
-
-`DefaultConversationVisualizer` uses Rich panels and supports customization through configuration:
-
-```python
-from openhands.sdk.conversation import DefaultConversationVisualizer
-
-# Configure highlighting patterns using regex
-custom_visualizer = DefaultConversationVisualizer(
-    name="MyAgent",                       # Prefix panel titles with agent name
-    highlight_regex={
-        r"^Reasoning:": "bold cyan",      # Lines starting with "Reasoning:"
-        r"^Thought:": "bold green",       # Lines starting with "Thought:"
-        r"^Action:": "bold yellow",       # Lines starting with "Action:"
-        r"\[ERROR\]": "bold red",         # Error markers anywhere
-        r"\*\*(.*?)\*\*": "bold",         # Markdown bold **text**
-    },
-    skip_user_messages=False,             # Show user messages
-)
-
-conversation = Conversation(
-    agent=agent,
-    workspace=workspace,
-    visualizer=custom_visualizer
-)
-```
-
-**When to use**: Perfect for customizing colors and highlighting without changing the panel-based layout.
-
-## Creating Custom Visualizers
-
-For complete control over visualization, subclass `ConversationVisualizerBase`:
-
-```python
-from openhands.sdk.conversation import ConversationVisualizerBase
-from openhands.sdk.event import ActionEvent, ObservationEvent, AgentErrorEvent, Event
-
-class MinimalVisualizer(ConversationVisualizerBase):
-    """A minimal visualizer that prints raw event information."""
-    
-    def __init__(self, name: str | None = None):
-        super().__init__(name=name)
-        self.step_count = 0
-    
-    def on_event(self, event: Event) -> None:
-        """Handle each event."""
-        if isinstance(event, ActionEvent):
-            self.step_count += 1
-            tool_name = event.tool_name or "unknown"
-            print(f"Step {self.step_count}: {tool_name}")
-            
-        elif isinstance(event, ObservationEvent):
-            print(f"  → Result received")
-                
-        elif isinstance(event, AgentErrorEvent):
-            print(f"❌ Error: {event.error}")
-
-# Use your custom visualizer
-conversation = Conversation(
-    agent=agent,
-    workspace=workspace,
-    visualizer=MinimalVisualizer(name="Agent")
-)
-```
-
-### Key Methods
-
-**`__init__(self, name: str | None = None)`**
-- Initialize your visualizer with optional configuration
-- `name` parameter is available from the base class for agent identification
-- Call `super().__init__(name=name)` to initialize the base class
-
-**`initialize(self, state: ConversationStateProtocol)`**
-- Called automatically by `Conversation` after state is created
-- Provides access to conversation state and statistics via `self._state`
-- Override if you need custom initialization, but call `super().initialize(state)`
-
-**`on_event(self, event: Event)`** *(required)*
-- Called for each conversation event
-- Implement your visualization logic here
-- Access conversation stats via `self.conversation_stats` property
-
-**When to use**: When you need a completely different output format, custom state tracking, or integration with external systems.
+<RunExampleCode path_to_script="examples/01_standalone_sdk/26_custom_visualizer.py"/>
 
 ## Next Steps
 
