@@ -1,0 +1,93 @@
+---
+title: Async/Deferred Tools
+description: Create tools that return immediately but schedule future actions, enabling patterns like reminders and human-in-the-loop interactions.
+---
+
+## Overview
+
+Sometimes you need tools that can schedule actions to happen in the future without blocking the agent. The SDK supports this through **deferred tool execution** - the tool returns an observation immediately, but spawns a background task that can inject messages into the conversation later.
+
+This pattern is useful for:
+- **Reminders** - Schedule messages to be sent after a delay
+- **Human-in-the-loop** - Allow external input to be injected into conversations
+- **Async operations** - Start long-running tasks without blocking the agent
+
+## Example: Remind Tool
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/33_remind_tool.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/33_remind_tool.py)
+</Note>
+
+The remind tool demonstrates how to create a deferred action tool:
+
+```python icon="python" expandable examples/01_standalone_sdk/33_remind_tool.py
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+cd agent-sdk
+uv run python examples/01_standalone_sdk/33_remind_tool.py
+```
+
+## Key Implementation Details
+
+### 1. The Executor Receives the Conversation
+
+The key to deferred tools is that the executor receives the `conversation` parameter in its `__call__` method:
+
+```python
+class RemindExecutor(ToolExecutor[RemindAction, RemindObservation]):
+    def __call__(
+        self, action: RemindAction, conversation: "LocalConversation | None" = None
+    ) -> RemindObservation:
+        # conversation is available here for deferred actions
+```
+
+### 2. Background Thread for Deferred Action
+
+The executor spawns a background thread that sleeps for the specified delay, then uses `conversation.send_message()` to inject the reminder:
+
+```python
+def send_reminder():
+    time.sleep(action.delay_seconds)
+    reminder_text = f"[REMINDER]: {action.message}"
+    conversation.send_message(reminder_text)
+
+thread = threading.Thread(target=send_reminder, daemon=True)
+thread.start()
+```
+
+### 3. Immediate Return
+
+The tool returns immediately with an observation confirming the reminder was scheduled, allowing the agent to continue working:
+
+```python
+return RemindObservation(
+    scheduled=True,
+    message=action.message,
+    delay_seconds=action.delay_seconds,
+)
+```
+
+## Use Cases
+
+### Human-in-the-Loop
+
+This pattern enables human-in-the-loop interactions where external input can be injected into a conversation at any time. For example, you could create a tool that:
+
+1. Registers a callback with an external system
+2. Returns immediately to let the agent continue
+3. Injects messages when the external system responds
+
+### Long-Running Operations
+
+For operations that take significant time (like API calls to slow services), you can:
+
+1. Start the operation in a background thread
+2. Return a "processing" observation immediately
+3. Inject the results when they're ready
+
+## Next Steps
+
+- **[Custom Tools](/sdk/guides/custom-tools)** - Learn the fundamentals of creating custom tools
+- **[Send Messages While Running](/sdk/guides/convo-send-message-while-running)** - Inject messages into running conversations
