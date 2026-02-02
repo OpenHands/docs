@@ -3,9 +3,7 @@ title: Plugins
 description: Plugins bundle skills, hooks, MCP servers, agents, and commands into reusable packages that extend agent capabilities.
 ---
 
-<Note>
-This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
-</Note>
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 Plugins provide a way to package and distribute multiple agent components together. A single plugin can include:
 
@@ -17,7 +15,190 @@ Plugins provide a way to package and distribute multiple agent components togeth
 
 The plugin format is compatible with the [Claude Code plugin structure](https://github.com/anthropics/claude-code/tree/main/plugins).
 
-## Loading Plugins
+## Plugin Structure
+
+<Note>
+See the [example_plugins directory](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/05_skills_and_plugins/02_loading_plugins/example_plugins) for a complete working plugin structure.
+</Note>
+
+A plugin follows this directory structure:
+
+<Tree>
+    <Tree.Folder name={"plugin-name"} defaultOpen>
+        <Tree.Folder name=".plugin" defaultOpen>
+            <Tree.File name="plugin.json" />
+        </Tree.Folder>
+        <Tree.Folder name="skills" defaultOpen>
+        <Tree.Folder name="skill-name">
+          <Tree.File name="SKILL.md" />
+        </Tree.Folder>
+        </Tree.Folder>
+        <Tree.Folder name="hooks" defaultOpen>
+            <Tree.File name="hooks.json" />
+        </Tree.Folder>
+        <Tree.Folder name="agents" defaultOpen>
+            <Tree.File name="agent-name.md" />
+        </Tree.Folder>
+        <Tree.Folder name="commands" defaultOpen>
+            <Tree.File name="command-name.md" />
+        </Tree.Folder>
+        <Tree.File name=".mcp.json" />
+        <Tree.File name="README.md" />
+    </Tree.Folder>
+</Tree>
+
+Note that the plugin metadata, i.e., `plugin-name/.plugin/plugin.json`, is required.
+
+### Plugin Manifest
+
+The manifest file `plugin-name/.plugin/plugin.json` defines plugin metadata:
+
+```json icon="file-code" wrap
+{
+  "name": "code-quality",
+  "version": "1.0.0",
+  "description": "Code quality tools and workflows",
+  "author": "openhands",
+  "license": "MIT",
+  "repository": "https://github.com/example/code-quality-plugin"
+}
+```
+
+### Skills
+
+Skills are defined in markdown files with YAML frontmatter:
+
+```markdown icon="file-code"
+---
+name: python-linting
+description: Instructions for linting Python code
+trigger:
+  type: keyword
+  keywords:
+    - lint
+    - linting
+    - code quality
+---
+
+# Python Linting Skill
+
+Run ruff to check for issues:
+
+\`\`\`bash
+ruff check .
+\`\`\`
+```
+
+### Hooks
+
+Hooks are defined in `hooks/hooks.json`:
+
+```json icon="file-code" wrap
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "file_editor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'File edited: $OPENHANDS_TOOL_NAME'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### MCP Configuration
+
+MCP servers are configured in `.mcp.json`:
+
+```json wrap icon="file-code"
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    }
+  }
+}
+```
+
+## Using Plugin Components
+
+> The ready-to-run example is available [here](#ready-to-run-example)!
+
+Brief explanation on how to use a plugin with an agent.
+
+<Steps>
+    <Step>
+        ### Loading a Plugin
+        First, load the desired plugins.
+
+        ```python icon="python"
+        from openhands.sdk.plugin import Plugin
+
+        # Load a single plugin
+        plugin = Plugin.load("/path/to/plugin")
+
+        # Load all plugins from a directory
+        plugins = Plugin.load_all("/path/to/plugins")
+        ```
+    </Step>
+    <Step>
+        ### Accessing Components
+        You can access the different plugin components to see which ones are available.
+
+        ```python icon="python"
+        # Skills
+        for skill in plugin.skills:
+            print(f"Skill: {skill.name}")
+
+        # Hooks configuration
+        if plugin.hooks:
+            print(f"Hooks configured: {plugin.hooks}")
+
+        # MCP servers
+        if plugin.mcp_config:
+            servers = plugin.mcp_config.get("mcpServers", {})
+            print(f"MCP servers: {list(servers.keys())}")
+        ```
+    </Step>
+    <Step>
+        ### Using with an Agent
+        You can now feed your agent with your preferred plugin.
+
+        ```python focus={3,10,17} icon="python"
+        # Create agent context with plugin skills
+        agent_context = AgentContext(
+            skills=plugin.skills,
+        )
+
+        # Create agent with plugin MCP config
+        agent = Agent(
+            llm=llm,
+            tools=tools,
+            mcp_config=plugin.mcp_config or {},
+            agent_context=agent_context,
+        )
+
+        # Create conversation with plugin hooks
+        conversation = Conversation(
+            agent=agent,
+            hook_config=plugin.hooks,
+        )
+        ```
+    </Step>
+</Steps>
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
+</Note>
 
 ```python icon="python" expandable examples/05_skills_and_plugins/02_loading_plugins/main.py
 """Example: Loading Plugins
@@ -91,10 +272,23 @@ for skill in plugin.skills:
         print(f"    Triggers: {skill.trigger}")
 
 # Hooks
-print(f"\nHooks: {'Configured' if plugin.hooks else 'None'}")
-if plugin.hooks:
-    for event_type, matchers in plugin.hooks.hooks.items():
-        print(f"  - {event_type}: {len(matchers)} matcher(s)")
+hook_config = plugin.hooks
+has_hooks = hook_config is not None and not hook_config.is_empty()
+print(f"\nHooks: {'Configured' if has_hooks else 'None'}")
+if has_hooks:
+    assert hook_config is not None
+    if hook_config.pre_tool_use:
+        print(f"  - PreToolUse: {len(hook_config.pre_tool_use)} matcher(s)")
+    if hook_config.post_tool_use:
+        print(f"  - PostToolUse: {len(hook_config.post_tool_use)} matcher(s)")
+    if hook_config.user_prompt_submit:
+        print(f"  - UserPromptSubmit: {len(hook_config.user_prompt_submit)} matcher(s)")
+    if hook_config.session_start:
+        print(f"  - SessionStart: {len(hook_config.session_start)} matcher(s)")
+    if hook_config.session_end:
+        print(f"  - SessionEnd: {len(hook_config.session_end)} matcher(s)")
+    if hook_config.stop:
+        print(f"  - Stop: {len(hook_config.stop)} matcher(s)")
 
 # MCP Config
 print(f"\nMCP Config: {'Configured' if plugin.mcp_config else 'None'}")
@@ -138,6 +332,7 @@ if not api_key:
     print("Skipping agent demo (LLM_API_KEY not set)")
     print("\nTo run the full demo, set the LLM_API_KEY environment variable:")
     print("  export LLM_API_KEY=your-api-key")
+    print("EXAMPLE_COST: 0")
     sys.exit(0)
 
 # Configure LLM
@@ -146,6 +341,7 @@ llm = LLM(
     usage_id="plugin-demo",
     model=model,
     api_key=SecretStr(api_key),
+    base_url=os.getenv("LLM_BASE_URL"),
 )
 
 # Create agent context with plugin skills
@@ -212,170 +408,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
         print("No hook log file found (hooks may not have executed)")
 
     print(f"\nTotal cost: ${llm.metrics.accumulated_cost:.4f}")
+    print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/05_skills_and_plugins/02_loading_plugins/main.py
-```
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/02_loading_plugins/main.py"/>
 
-## Plugin Structure
-
-<Note>
-See the [example_plugins directory](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/05_skills_and_plugins/02_loading_plugins/example_plugins) for a complete working plugin structure.
-</Note>
-
-A plugin follows this directory structure:
-
-```
-plugin-name/
-├── .plugin/
-│   └── plugin.json          # Plugin metadata (required)
-├── skills/                   # Skills directory (optional)
-│   └── skill-name/
-│       └── SKILL.md         # Skill definition
-├── hooks/                    # Hooks directory (optional)
-│   └── hooks.json           # Hook definitions
-├── agents/                   # Agents directory (optional)
-│   └── agent-name.md        # Agent definition
-├── commands/                 # Commands directory (optional)
-│   └── command-name.md      # Command definition
-├── .mcp.json                 # MCP server config (optional)
-└── README.md                 # Plugin documentation
-```
-
-### Plugin Manifest (plugin.json)
-
-The manifest file defines plugin metadata:
-
-```json
-{
-  "name": "code-quality",
-  "version": "1.0.0",
-  "description": "Code quality tools and workflows",
-  "author": "openhands",
-  "license": "MIT",
-  "repository": "https://github.com/example/code-quality-plugin"
-}
-```
-
-### Skills
-
-Skills are defined in markdown files with YAML frontmatter:
-
-```markdown
----
-name: python-linting
-description: Instructions for linting Python code
-trigger:
-  type: keyword
-  keywords:
-    - lint
-    - linting
-    - code quality
----
-
-# Python Linting Skill
-
-Run ruff to check for issues:
-
-\`\`\`bash
-ruff check .
-\`\`\`
-```
-
-### Hooks
-
-Hooks are defined in `hooks/hooks.json`:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "file_editor",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'File edited: $OPENHANDS_TOOL_NAME'",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### MCP Configuration
-
-MCP servers are configured in `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "fetch": {
-      "command": "uvx",
-      "args": ["mcp-server-fetch"]
-    }
-  }
-}
-```
-
-## Using Plugin Components
-
-### Loading a Plugin
-
-```python
-from openhands.sdk.plugin import Plugin
-
-# Load a single plugin
-plugin = Plugin.load("/path/to/plugin")
-
-# Load all plugins from a directory
-plugins = Plugin.load_all("/path/to/plugins")
-```
-
-### Accessing Components
-
-```python
-# Skills
-for skill in plugin.skills:
-    print(f"Skill: {skill.name}")
-
-# Hooks configuration
-if plugin.hooks:
-    print(f"Hooks configured: {plugin.hooks}")
-
-# MCP servers
-if plugin.mcp_config:
-    servers = plugin.mcp_config.get("mcpServers", {})
-    print(f"MCP servers: {list(servers.keys())}")
-```
-
-### Using with an Agent
-
-```python highlight={3,10,17}
-# Create agent context with plugin skills
-agent_context = AgentContext(
-    skills=plugin.skills,
-)
-
-# Create agent with plugin MCP config
-agent = Agent(
-    llm=llm,
-    tools=tools,
-    mcp_config=plugin.mcp_config or {},
-    agent_context=agent_context,
-)
-
-# Create conversation with plugin hooks
-conversation = Conversation(
-    agent=agent,
-    hook_config=plugin.hooks,
-)
-```
 
 ## Next Steps
 

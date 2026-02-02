@@ -1,17 +1,75 @@
 ---
-title: Critic-Based Evaluation
-description: Configure agents with critics to evaluate action quality in real-time.
+title: Critic (Experimental)
+description: Real-time evaluation of agent actions using an LLM-based critic model.
 ---
 
 <Warning>
-This feature is **EXPERIMENTAL** and may change in future releases.
+**This feature is highly experimental** and subject to change. The API, configuration, and behavior may evolve significantly based on feedback and testing.
 </Warning>
 
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+
+## What is a Critic?
+
+A **critic** is an evaluator that analyzes agent actions and conversation history to predict the quality or success probability of agent decisions. The critic runs alongside the agent and provides:
+
+- **Quality scores**: Probability scores between 0.0 and 1.0 indicating predicted success
+- **Real-time feedback**: Scores computed during agent execution, not just at completion
+
+You can use critic scores to build automated workflows, such as triggering the agent to reflect on and fix its previous solution when the critic indicates poor task performance.
+
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/34_critic_example.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/34_critic_example.py)
+This critic is a more advanced extension of the approach described in our blog post [SOTA on SWE-Bench Verified with Inference-Time Scaling and Critic Model](https://openhands.dev/blog/sota-on-swe-bench-verified-with-inference-time-scaling-and-critic-model). A technical report with detailed evaluation metrics is forthcoming.
 </Note>
 
-Use a critic to evaluate agent actions in real-time. The critic scores are displayed in the conversation visualizer, helping you understand the quality of agent decisions.
+## Quick Start
+
+When using the OpenHands LLM Provider (`llm-proxy.*.all-hands.dev`), the critic is **automatically configured** - no additional setup required.
+
+## Understanding Critic Results
+
+Critic evaluations produce scores and feedback:
+
+- **`score`**: Float between 0.0 and 1.0 representing predicted success probability
+- **`message`**: Optional feedback with detailed probabilities
+- **`success`**: Boolean property (True if score >= 0.5)
+
+Results are automatically displayed in the conversation visualizer:
+
+![Critic results in SDK visualizer](./screenshots/critic-sdk-visualizer.png)
+
+### Accessing Results Programmatically
+
+```python icon="python" focus={4-7}
+from openhands.sdk import Event, ActionEvent, MessageEvent
+
+def callback(event: Event):
+    if isinstance(event, (ActionEvent, MessageEvent)):
+        if event.critic_result is not None:
+            print(f"Critic score: {event.critic_result.score:.3f}")
+            print(f"Success: {event.critic_result.success}")
+
+conversation = Conversation(agent=agent, callbacks=[callback])
+```
+
+## Troubleshooting
+
+### Critic Evaluations Not Appearing
+
+- Verify the critic is properly configured and passed to the Agent
+- Ensure you're using the OpenHands LLM Provider (`llm-proxy.*.all-hands.dev`)
+
+### API Authentication Errors
+
+- Verify `LLM_API_KEY` is set correctly
+- Check that the API key has not expired
+
+## Ready-to-run Example
+
+<Note>
+The critic model is hosted by the OpenHands LLM Provider and is currently free to use. This example is available on GitHub: [examples/01_standalone_sdk/34_critic_example.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/34_critic_example.py)
+</Note>
 
 ```python icon="python" expandable examples/01_standalone_sdk/34_critic_example.py
 """Example demonstrating critic-based evaluation of agent actions.
@@ -112,105 +170,15 @@ conversation.send_message(
 )
 conversation.run()
 
-# Report cost
-cost = llm.metrics.accumulated_cost
-print(f"EXAMPLE_COST: {cost:.4f}")
-
 print("\nAll done! Check the output above for 'Critic Score' in the visualizer.")
 ```
 
-```bash Running the Example
-cd agent-sdk
-export LLM_API_KEY="your-api-key"
-# For All-Hands LLM proxy, critic is auto-configured
-export LLM_BASE_URL="https://llm-proxy.eval.all-hands.dev"
+```bash Running the Example icon="terminal"
 uv run python examples/01_standalone_sdk/34_critic_example.py
-```
-
-## How It Works
-
-### 1. Create a Critic
-
-The SDK provides `APIBasedCritic` for evaluating agent actions via an API endpoint:
-
-```python
-from openhands.sdk.critic import APIBasedCritic
-
-critic = APIBasedCritic(
-    server_url="https://your-critic-server.com/vllm",
-    api_key="your-api-key",
-    model_name="critic",
-)
-```
-
-### 2. Attach Critic to Agent
-
-Pass the critic when creating your agent:
-
-```python
-agent = Agent(
-    llm=llm,
-    tools=[...],
-    critic=critic,  # Add critic for action evaluation
-)
-```
-
-### 3. View Scores in Visualizer
-
-When the agent runs, critic scores are displayed in the conversation visualizer, showing the quality assessment for each action.
-
-## Auto-Configuration for All-Hands LLM Proxy
-
-When using the All-Hands LLM proxy (`llm-proxy.*.all-hands.dev`), the critic can be auto-configured:
-
-```python
-def get_default_critic(llm: LLM) -> CriticBase | None:
-    """Auto-configure critic for All-Hands LLM proxy."""
-    base_url = llm.base_url
-    api_key = llm.api_key
-    if base_url is None or api_key is None:
-        return None
-
-    # Match: llm-proxy.{env}.all-hands.dev
-    pattern = r"^https?://llm-proxy\.[^./]+\.all-hands\.dev"
-    if not re.match(pattern, base_url):
-        return None
-
-    return APIBasedCritic(
-        server_url=f"{base_url.rstrip('/')}/vllm",
-        api_key=api_key,
-        model_name="critic",
-    )
-```
-
-## Configuration Options
-
-### Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `LLM_API_KEY` | API key for the LLM | Yes |
-| `LLM_MODEL` | Model to use (default: `anthropic/claude-sonnet-4-5-20250929`) | No |
-| `LLM_BASE_URL` | Base URL for LLM API | No |
-| `CRITIC_SERVER_URL` | Critic server URL (if not using auto-config) | Conditional |
-| `CRITIC_API_KEY` | Critic API key (if not using auto-config) | Conditional |
-| `CRITIC_MODEL_NAME` | Critic model name (if not using auto-config) | Conditional |
-
-### Custom Critic Implementation
-
-You can implement your own critic by extending `CriticBase`:
-
-```python
-from openhands.sdk.critic.base import CriticBase
-
-class MyCustomCritic(CriticBase):
-    def evaluate(self, action, context) -> float:
-        # Your evaluation logic here
-        return score  # Return a score between 0 and 1
 ```
 
 ## Next Steps
 
-- **[Iterative Refinement](/sdk/guides/iterative-refinement)** - Use critics in iterative improvement workflows
-- **[Agent Delegation](/sdk/guides/agent-delegation)** - Combine critics with multi-agent systems
-- **[Observability](/sdk/guides/observability)** - Monitor agent performance with external tools
+- **[Observability](/sdk/guides/observability)** - Monitor and log agent behavior
+- **[Metrics](/sdk/guides/metrics)** - Collect performance metrics
+- **[Stuck Detector](/sdk/guides/agent-stuck-detector)** - Detect unproductive agent patterns
