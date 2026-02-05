@@ -192,6 +192,213 @@ llm = LLM(
 
 For a complete example, see the [image input example](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/17_image_input.py) in the SDK repository.
 
+## How do I handle MessageEvent in evaluation pipelines?
+
+**The SDK provides utilities to automatically respond to agent messages during evaluations.**
+
+When running evaluations, some models may send a `MessageEvent` (proposing an action or asking for confirmation) instead of directly using tools. This causes `conversation.run()` to return, even though the agent hasn't finished the task. The OpenHands benchmarks repository includes a utility function to handle this scenario.
+
+<Accordion title="Understanding the Problem" icon="circle-question">
+
+When an agent sends a message to the user (via `MessageEvent`) instead of using the `finish` tool, the conversation ends because it's waiting for user input. In evaluation pipelines, there's no human to respond, so the task appears incomplete even though the agent was moving in the right direction.
+
+**Key event types:**
+- `ActionEvent`: Agent uses a tool (terminal, file editor, etc.)
+- `MessageEvent`: Agent sends a text message (waiting for user response)
+- `FinishAction`: Agent explicitly signals task completion
+
+The solution is to automatically send a "fake user response" when the agent sends a message, prompting it to continue working.
+
+</Accordion>
+
+<Accordion title="Solution: Using run_conversation_with_fake_user_response" icon="code">
+
+The [`run_conversation_with_fake_user_response`](https://github.com/OpenHands/benchmarks/blob/main/benchmarks/utils/fake_user_response.py) function wraps your conversation execution and automatically handles agent messages:
+
+```python
+from openhands.sdk import Agent, Conversation, LLM
+from openhands.sdk.conversation.state import ConversationExecutionStatus
+from openhands.sdk.event import ActionEvent, Event, MessageEvent
+from openhands.sdk.tool.builtins.finish import FinishAction
+
+
+def fake_user_response(conversation) -> str:
+    """Generate a fake user response to keep the agent working."""
+    msg = (
+        "Please continue working on the task on whatever approach you think is suitable.\n"
+        "When you think you have solved the question, please use the finish tool and "
+        "include your final answer in the message parameter of the finish tool.\n"
+        "IMPORTANT: YOU SHOULD NEVER ASK FOR HUMAN HELP.\n"
+    )
+
+    # After multiple attempts, let the agent know it can give up
+    events = list(conversation.state.events)
+    user_msgs = [
+        e for e in events
+        if isinstance(e, MessageEvent) and e.source == "user"
+    ]
+    if len(user_msgs) >= 2:
+        msg += 'If you want to give up, use the "finish" tool to finish the interaction.\n'
+
+    return msg
+
+
+def _agent_finished_with_finish_action(events: list[Event]) -> bool:
+    """Check if the agent finished by calling the finish tool."""
+    for event in reversed(events):
+        if isinstance(event, ActionEvent):
+            if event.action is not None and isinstance(event.action, FinishAction):
+                return True
+            return False
+    return False
+
+
+def _agent_sent_message(events: list[Event]) -> bool:
+    """Check if the agent's last event was a message (not a tool call)."""
+    for event in reversed(events):
+        if isinstance(event, MessageEvent) and event.source == "agent":
+            return True
+        if isinstance(event, ActionEvent):
+            return False
+    return False
+
+
+def run_conversation_with_fake_user_response(
+    conversation,
+    fake_user_response_fn=fake_user_response,
+    max_fake_responses: int = 10,
+) -> None:
+    """
+    Run a conversation with automatic fake user responses.
+
+    Args:
+        conversation: The Conversation instance to run.
+        fake_user_response_fn: Function that generates responses.
+        max_fake_responses: Maximum responses before stopping (prevents infinite loops).
+    """
+    fake_response_count = 0
+
+    while True:
+        # Run the conversation
+        conversation.run()
+
+        status = conversation.state.execution_status
+
+        # If not finished normally, stop
+        if status != ConversationExecutionStatus.FINISHED:
+            break
+
+        # Check if agent used finish tool (proper completion)
+        events = list(conversation.state.events)
+        if _agent_finished_with_finish_action(events):
+            break
+
+        # Check if agent sent a message (needs fake response)
+        if not _agent_sent_message(events):
+            break
+
+        # Check max responses limit
+        if fake_response_count >= max_fake_responses:
+            break
+
+        # Send fake response and continue
+        response = fake_user_response_fn(conversation)
+        if response == "/exit":
+            break
+
+        conversation.send_message(response)
+        fake_response_count += 1
+```
+
+</Accordion>
+
+<Accordion title="Usage Example" icon="play">
+
+Here's how to use this in your evaluation pipeline:
+
+```python
+from openhands.sdk import Agent, Conversation, LLM
+from openhands.workspace import DockerWorkspace
+from openhands.tools.preset.default import get_default_tools
+
+# Set up your agent
+llm = LLM(model="anthropic/claude-sonnet-4-20250514", api_key="...")
+agent = Agent(llm=llm, tools=get_default_tools())
+
+# Create workspace and conversation
+workspace = DockerWorkspace()
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    max_iteration_per_run=100,
+)
+
+# Send the task
+conversation.send_message("Fix the bug in src/utils.py")
+
+# Run with automatic fake user responses
+run_conversation_with_fake_user_response(
+    conversation,
+    max_fake_responses=10,  # Prevent infinite loops
+)
+
+# Extract results from conversation.state.events
+```
+
+</Accordion>
+
+<Accordion title="Alternative: Simple While Loop" icon="rotate">
+
+For simpler cases, you can implement a basic while loop:
+
+```python
+max_retries = 10
+retry_count = 0
+
+conversation.send_message("Your task instruction here")
+
+while retry_count < max_retries:
+    conversation.run()
+
+    events = list(conversation.state.events)
+
+    # Check if agent finished properly
+    for event in reversed(events):
+        if isinstance(event, ActionEvent):
+            if isinstance(event.action, FinishAction):
+                break  # Done!
+            break  # Used a tool, conversation ended for other reason
+
+    # Check if agent sent a message
+    last_agent_msg = None
+    for event in reversed(events):
+        if isinstance(event, MessageEvent) and event.source == "agent":
+            last_agent_msg = event
+            break
+        if isinstance(event, ActionEvent):
+            break
+
+    if last_agent_msg is None:
+        break  # No message to respond to
+
+    # Send continuation prompt
+    conversation.send_message(
+        "Please continue. Use the finish tool when done."
+    )
+    retry_count += 1
+```
+
+</Accordion>
+
+<Tip>
+**Pro tip:** As a simpler alternative, you can add a hint to your task prompt:
+> "If you're 100% done with the task, send a message that just says DONE. Otherwise, keep going until you're finished."
+
+This encourages the agent to use the finish tool rather than asking for confirmation.
+</Tip>
+
+For the full implementation used in OpenHands benchmarks, see the [fake_user_response.py](https://github.com/OpenHands/benchmarks/blob/main/benchmarks/utils/fake_user_response.py) module.
+
 ## More questions?
 
 If you have additional questions:
