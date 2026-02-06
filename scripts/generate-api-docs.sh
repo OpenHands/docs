@@ -22,9 +22,9 @@ fi
 
 # Check if required packages are installed
 echo "Checking dependencies..."
-python3 -c "import sphinx, sphinx_markdown_builder, myst_parser" 2>/dev/null || {
+python3 -c "import sphinx" 2>/dev/null || {
     echo "Error: Required packages not installed."
-    echo "Please install them with: pip install sphinx sphinx-markdown-builder myst-parser"
+    echo "Please install them with: pip install sphinx sphinx-napoleon"
     exit 1
 }
 

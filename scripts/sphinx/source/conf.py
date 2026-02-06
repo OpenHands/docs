@@ -1,6 +1,4 @@
-
-import os
-import sys
+import os, sys
 sys.path.insert(0, os.path.abspath('../../../agent-sdk/openhands-sdk'))
 
 project = 'OpenHands SDK'
@@ -10,7 +8,6 @@ author = 'OpenHands'
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
-    'sphinx_markdown_builder',
 ]
 
 autodoc_default_options = {
@@ -24,5 +21,3 @@ napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
 napoleon_include_private_with_doc = False
-
-html_theme = 'sphinx_rtd_theme'

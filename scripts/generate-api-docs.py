@@ -1,766 +1,982 @@
 #!/usr/bin/env python3
 """
-Simple API documentation generator for OpenHands SDK.
+API documentation generator for OpenHands SDK using Sphinx JSON builder.
 
-This script generates clean, parser-friendly markdown documentation
-by extracting docstrings and presenting them in a simple format.
+Uses ``sphinx-build -b json`` to produce structured HTML, then parses it
+into clean, Mintlify-compatible MDX files.  This approach replaces the
+former markdown builder + regex-cleanup pipeline with a more reliable
+HTML-tree-based conversion.
 """
 
-import os
-import re
-import json
-import shutil
-import logging
-import subprocess
-from pathlib import Path
-from typing import Dict, List, Any
+from __future__ import annotations
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import json
+import logging
+import re
+import shutil
+import subprocess
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Any, Optional
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-class SimpleAPIDocGenerator:
-    def __init__(self, docs_dir: Path):
+# ── Minimal HTML DOM ─────────────────────────────────────────────────────
+
+VOID_TAGS = frozenset(
+    {
+        "area", "base", "br", "col", "embed", "hr", "img",
+        "input", "link", "meta", "source", "track", "wbr",
+    }
+)
+
+
+class El:
+    """Lightweight DOM node."""
+
+    __slots__ = ("tag", "attrs", "children")
+
+    def __init__(self, tag: str, attrs: dict[str, str]):
+        self.tag = tag
+        self.attrs = attrs
+        self.children: list["El | str"] = []
+
+    @property
+    def classes(self) -> list[str]:
+        return self.attrs.get("class", "").split()
+
+    @property
+    def id(self) -> str:
+        return self.attrs.get("id", "")
+
+    def text(self) -> str:
+        parts: list[str] = []
+        for c in self.children:
+            parts.append(c if isinstance(c, str) else c.text())
+        return "".join(parts)
+
+    def find(self, tag: str | None = None, *, cls: str | None = None) -> "El | None":
+        for r in self._iter(tag, cls):
+            return r
+        return None
+
+    def find_all(
+        self, tag: str | None = None, *, cls: str | None = None
+    ) -> list["El"]:
+        return list(self._iter(tag, cls))
+
+    def direct(self, tag: str | None = None) -> list["El"]:
+        return [
+            c
+            for c in self.children
+            if isinstance(c, El) and (tag is None or c.tag == tag)
+        ]
+
+    def _iter(self, tag: str | None, cls: str | None):
+        for c in self.children:
+            if not isinstance(c, El):
+                continue
+            ok = True
+            if tag and c.tag != tag:
+                ok = False
+            if cls and cls not in c.classes:
+                ok = False
+            if ok:
+                yield c
+            yield from c._iter(tag, cls)
+
+    def __repr__(self) -> str:
+        return f"<{self.tag} class={' '.join(self.classes)!r}>"
+
+
+class _TreeBuilder(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = El("root", {})
+        self._stack: list[El] = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        el = El(tag, {k: (v or "") for k, v in attrs})
+        self._stack[-1].children.append(el)
+        if tag not in VOID_TAGS:
+            self._stack.append(el)
+
+    def handle_endtag(self, tag: str) -> None:
+        for i in range(len(self._stack) - 1, 0, -1):
+            if self._stack[i].tag == tag:
+                del self._stack[i:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        self._stack[-1].children.append(data)
+
+
+def _parse(html: str) -> El:
+    b = _TreeBuilder()
+    b.feed(html)
+    return b.root
+
+
+# ── Sphinx HTML → MDX converter ─────────────────────────────────────────
+
+
+class _Converter:
+    """Walk Sphinx autodoc HTML and emit Mintlify-compatible MDX."""
+
+    CLASS_MODULE: dict[str, str] = {
+        "Agent": "agent", "AgentBase": "agent", "AgentContext": "agent",
+        "BaseConversation": "conversation", "Conversation": "conversation",
+        "LocalConversation": "conversation", "RemoteConversation": "conversation",
+        "ConversationState": "conversation", "ConversationStats": "conversation",
+        "ConversationExecutionStatus": "conversation",
+        "ConversationVisualizerBase": "conversation",
+        "DefaultConversationVisualizer": "conversation",
+        "EventLog": "conversation", "EventsListBase": "conversation",
+        "SecretRegistry": "conversation", "StuckDetector": "conversation",
+        "Event": "event", "LLMConvertibleEvent": "event",
+        "MessageEvent": "event", "ActionEvent": "event",
+        "ObservationEvent": "event", "ObservationBaseEvent": "event",
+        "AgentErrorEvent": "event", "PauseEvent": "event",
+        "SystemPromptEvent": "event", "TokenEvent": "event",
+        "UserRejectObservation": "event",
+        "Condensation": "event", "CondensationRequest": "event",
+        "CondensationSummaryEvent": "event",
+        "ConversationStateUpdateEvent": "event",
+        "LLMCompletionLogEvent": "event",
+        "LLM": "llm", "LLMRegistry": "llm", "LLMResponse": "llm",
+        "Message": "llm", "ImageContent": "llm", "TextContent": "llm",
+        "ThinkingBlock": "llm", "RedactedThinkingBlock": "llm",
+        "Metrics": "llm", "MetricsSnapshot": "llm",
+        "RegistryEvent": "llm", "RouterLLM": "llm",
+        "ReasoningItemModel": "llm", "MessageToolCall": "llm",
+        "SecurityRisk": "security", "SecurityManager": "security",
+        "Tool": "tool", "ToolDefinition": "tool", "ToolAnnotations": "tool",
+        "Action": "tool", "Observation": "tool",
+        "ToolExecutor": "tool", "ExecutableTool": "tool",
+        "FinishTool": "tool", "ThinkTool": "tool",
+        "Workspace": "workspace", "BaseWorkspace": "workspace",
+        "LocalWorkspace": "workspace", "RemoteWorkspace": "workspace",
+        "CommandResult": "workspace", "FileOperationResult": "workspace",
+    }
+
+    def __init__(self, module: str) -> None:
+        self.module = module
+        self.module_short = module.split(".")[-1]
+        self._out: list[str] = []
+
+    # ── public API ───────────────────────────────────────────────────
+
+    def convert(self, html_body: str) -> str:
+        root = _parse(html_body)
+        self._out = []
+        self._walk_root(root)
+        body = "\n".join(self._out)
+        return (
+            f"---\n"
+            f"title: {self.module}\n"
+            f"description: API reference for {self.module} module\n"
+            f"---\n\n{body}\n"
+        )
+
+    # ── root walker ──────────────────────────────────────────────────
+
+    def _emit(self, line: str = "") -> None:
+        self._out.append(line)
+
+    def _walk_root(self, root: El) -> None:
+        for child in root.children:
+            if isinstance(child, str):
+                t = child.strip()
+                if t:
+                    self._emit(t)
+                continue
+            if child.tag in ("section", "div"):
+                self._walk_root(child)
+            elif child.tag == "dl":
+                self._handle_dl(child, level=3)
+            elif child.tag == "p":
+                t = self._inline(child).strip()
+                if t:
+                    self._emit(t)
+                    self._emit()
+
+    def _handle_dl(self, dl: El, level: int) -> None:
+        css = dl.classes
+        if "class" in css and "py" in css:
+            self._handle_class(dl, level)
+        elif "function" in css and "py" in css:
+            self._handle_function(dl, level)
+
+    # ── classes ───────────────────────────────────────────────────────
+
+    def _handle_class(self, dl: El, level: int) -> None:
+        dts = dl.direct("dt")
+        dds = dl.direct("dd")
+        if not dts:
+            return
+        dt = dts[0]
+        name = self._sig_name(dt)
+        self._emit(f"\n{'#' * level} class {name}")
+        self._emit()
+        if not dds:
+            return
+        dd = dds[0]
+
+        bases_line = ""
+        desc: list[str] = []
+        example_lines: list[str] = []
+        properties: list[dict[str, Any]] = []
+        methods: list[list[str]] = []
+        nested_classes: list[El] = []
+
+        for child in dd.children:
+            if not isinstance(child, El):
+                continue
+            if child.tag == "p":
+                txt = self._inline(child).strip()
+                if txt.startswith("Bases:"):
+                    bases_line = txt
+                elif txt:
+                    desc.append(txt)
+            elif child.tag == "div" and "admonition" in child.classes:
+                title_el = child.find("p", cls="admonition-title")
+                title_text = title_el.text().strip() if title_el else ""
+                if title_text.lower() == "example":
+                    example_lines = self._extract_example(child)
+                else:
+                    # NOTE / other admonitions go into methods bucket
+                    methods.append(self._format_admonition(child, level + 1))
+            elif child.tag == "dl" and "py" in child.classes:
+                if "class" in child.classes:
+                    nested_classes.append(child)
+                else:
+                    self._classify_member(child, level + 1, properties, methods)
+
+        # Emit bases
+        if bases_line:
+            self._emit(bases_line)
+            self._emit()
+        # Emit description
+        for p in desc:
+            self._emit(p)
+            self._emit()
+        # Emit example
+        if example_lines:
+            self._emit(f"{'#' * (level + 1)} Example")
+            self._emit()
+            for ln in example_lines:
+                self._emit(ln)
+            self._emit()
+        # Emit properties
+        if properties:
+            self._emit()
+            self._emit(f"{'#' * (level + 1)} Properties")
+            self._emit()
+            for prop in properties:
+                self._emit(prop["header"])
+                for d in prop.get("desc", []):
+                    self._emit(f"  {d}")
+        # Emit methods
+        if methods:
+            self._emit()
+            self._emit(f"{'#' * (level + 1)} Methods")
+            self._emit()
+            for m_lines in methods:
+                for ln in m_lines:
+                    self._emit(ln)
+        # Nested classes
+        for nc in nested_classes:
+            self._emit()
+            self._handle_class(nc, level)
+
+    def _classify_member(
+        self,
+        dl: El,
+        level: int,
+        properties: list[dict[str, Any]],
+        methods: list[list[str]],
+    ) -> None:
+        css = dl.classes
+        dt = dl.find("dt")
+        dd = dl.find("dd")
+        if not dt:
+            return
+
+        is_prop = "property" in css
+        is_attr = "attribute" in css
+
+        if is_prop or (is_attr and self._has_type_annotation(dt)):
+            prop = self._extract_property(dt, dd)
+            if prop:
+                properties.append(prop)
+        else:
+            m = self._extract_method_or_attr(dt, dd, level)
+            if m:
+                methods.append(m)
+
+    def _has_type_annotation(self, dt: El) -> bool:
+        for em in dt.find_all("em", cls="property"):
+            t = em.text()
+            if ":" in t and "class" not in t:
+                return True
+        full = dt.text()
+        name = self._sig_name(dt)
+        after = full.split(name, 1)[-1] if name in full else full
+        if re.match(r"\s*:\s*\S", after):
+            return True
+        return False
+
+    def _extract_property(self, dt: El, dd: El | None) -> dict[str, Any] | None:
+        name = self._sig_name(dt)
+        if not name:
+            return None
+        type_str = self._extract_type(dt)
+        value_str = self._extract_value(dt)
+        if type_str:
+            header = f"- `{name}`: {type_str}"
+        elif value_str:
+            header = f"- `{name}`: {value_str}"
+        else:
+            header = f"- `{name}`"
+        desc: list[str] = []
+        if dd:
+            for child in dd.children:
+                if isinstance(child, El) and child.tag == "p":
+                    t = self._inline(child).strip()
+                    if t:
+                        desc.append(t)
+                elif isinstance(child, El) and child.tag == "dl":
+                    desc.extend(self._format_field_list(child))
+        return {"header": header, "desc": desc}
+
+    def _extract_method_or_attr(
+        self, dt: El, dd: El | None, level: int
+    ) -> list[str] | None:
+        name = self._sig_name(dt)
+        if not name:
+            return None
+        lines: list[str] = []
+        has_paren = bool(dt.find("span", cls="sig-paren"))
+        prefix = self._method_prefix(dt)
+        value = self._extract_value(dt)
+        if has_paren:
+            hdr = f"{'#' * level} "
+            if prefix:
+                hdr += f"{prefix} "
+            hdr += f"{name}()"
+            lines.append(hdr)
+        elif value:
+            lines.append(f"{'#' * level} {name} = {value}")
+        else:
+            lines.append(f"{'#' * level} {name}")
+        lines.append("")
+        if dd:
+            lines.extend(self._format_body(dd))
+        return lines
+
+    # ── module-level functions ────────────────────────────────────────
+
+    def _handle_function(self, dl: El, level: int) -> None:
+        dts = dl.direct("dt")
+        dds = dl.direct("dd")
+        if not dts:
+            return
+        dt = dts[0]
+        dd = dds[0] if dds else None
+        name = self._sig_name(dt)
+        self._emit(f"\n{'#' * level} {name}()")
+        self._emit()
+        if dd:
+            for ln in self._format_body(dd):
+                self._emit(ln)
+
+    # ── body / field-list formatting ─────────────────────────────────
+
+    def _format_body(self, dd: El) -> list[str]:
+        lines: list[str] = []
+        for child in dd.children:
+            if not isinstance(child, El):
+                continue
+            if child.tag == "p":
+                t = self._inline(child).strip()
+                if t:
+                    lines.append(t)
+            elif child.tag == "dl":
+                lines.extend(self._format_field_list(child))
+            elif child.tag in ("ul", "ol"):
+                lines.extend(self._format_list(child))
+            elif child.tag == "div" and "admonition" in child.classes:
+                lines.extend(self._format_admonition(child, 4))
+            elif child.tag == "blockquote":
+                lines.extend(self._format_blockquote(child))
+            elif child.tag == "div" and child.find("pre"):
+                pre = child.find("pre")
+                if pre:
+                    code = pre.text().strip()
+                    lines.append("```python")
+                    lines.append(code)
+                    lines.append("```")
+            elif child.tag == "pre":
+                code = child.text().strip()
+                lines.append("```python")
+                lines.append(code)
+                lines.append("```")
+        if lines:
+            lines.append("")
+        return lines
+
+    def _format_field_list(self, dl: El) -> list[str]:
+        lines: list[str] = []
+        dts = dl.direct("dt")
+        dds = dl.direct("dd")
+        for dt, dd in zip(dts, dds):
+            label = dt.text().strip().rstrip(":")
+            if label in (
+                "Parameters", "Params", "Parameter", "Keyword Arguments"
+            ):
+                lines.append("* Parameters:")
+                ul = dd.find("ul")
+                if ul:
+                    for li in ul.direct("li"):
+                        t = self._format_param(li)
+                        lines.append(f"  * {t}")
+                else:
+                    for p in dd.direct("p"):
+                        t = self._format_param(p)
+                        if t:
+                            lines.append(f"  {t}")
+            elif label == "Returns":
+                lines.append("* Returns:")
+                t = self._inline(dd).strip()
+                if t:
+                    lines.append(f"  {t}")
+            elif label == "Return type":
+                lines.append("* Return type:")
+                t = self._inline(dd).strip()
+                if t:
+                    lines.append(f"  {t}")
+            elif label in ("Raises", "Raise"):
+                lines.append("* Raises:")
+                ul = dd.find("ul")
+                if ul:
+                    for li in ul.direct("li"):
+                        t = self._inline(li).strip()
+                        lines.append(f"  {t}")
+                else:
+                    t = self._inline(dd).strip()
+                    if t:
+                        lines.append(f"  {t}")
+            elif label == "Type":
+                lines.append("* Type:")
+                t = self._inline(dd).strip()
+                if t:
+                    lines.append(f"  {t}")
+            else:
+                lines.append(f"* {label}:")
+                t = self._inline(dd).strip()
+                if t:
+                    lines.append(f"  {t}")
+        return lines
+
+    def _format_param(self, el: El) -> str:
+        """Format a parameter list item, converting <strong> names to backticks."""
+        text = self._inline(el).strip()
+        # Pattern: "name – description" or "name (type) – description"
+        m = re.match(r"^(\w+)\s*(\([^)]*\))?\s*[–\-]\s*(.+)$", text, re.DOTALL)
+        if m:
+            name = m.group(1)
+            desc = m.group(3).strip()
+            return f"`{name}` – {desc}"
+        return text
+
+    def _format_list(self, ul: El) -> list[str]:
+        lines: list[str] = []
+        ordered = ul.tag == "ol"
+        start = int(ul.attrs.get("start", "1"))
+        for i, li in enumerate(ul.direct("li"), start):
+            t = self._inline(li).strip()
+            nested: list[str] = []
+            for child in li.children:
+                if isinstance(child, El) and child.tag in ("ul", "ol"):
+                    nested.extend(self._format_list(child))
+            if ordered:
+                lines.append(f"{i}. {t}")
+            else:
+                lines.append(f"- {t}")
+            for nl in nested:
+                lines.append(f"  {nl}")
+        return lines
+
+    def _format_blockquote(self, bq: El) -> list[str]:
+        lines: list[str] = []
+        for child in bq.children:
+            if isinstance(child, El) and child.tag == "p":
+                t = self._inline(child).strip()
+                if t:
+                    lines.append(f"  {t}")
+            elif isinstance(child, El) and child.tag in ("ul", "ol"):
+                for ln in self._format_list(child):
+                    lines.append(f"  {ln}")
+        return lines
+
+    def _format_admonition(self, div: El, level: int) -> list[str]:
+        lines: list[str] = []
+        title_el = div.find("p", cls="admonition-title")
+        title = title_el.text().strip() if title_el else ""
+        if title:
+            lines.append(f"{'#' * level} {title}")
+        for child in div.children:
+            if (
+                isinstance(child, El)
+                and child.tag == "p"
+                and "admonition-title" not in child.classes
+            ):
+                t = self._inline(child).strip()
+                if t:
+                    lines.append(t)
+        lines.append("")
+        return lines
+
+    # ── example extraction ───────────────────────────────────────────
+
+    def _extract_example(self, div: El) -> list[str]:
+        lines: list[str] = []
+        for child in div.children:
+            if not isinstance(child, El):
+                continue
+            if "admonition-title" in child.classes:
+                continue
+            if child.tag == "div" and child.find("pre"):
+                pre = child.find("pre")
+                if pre:
+                    code = pre.text().strip()
+                    lines.append("```pycon")
+                    lines.append(code)
+                    lines.append("```")
+            elif child.tag == "pre":
+                code = child.text().strip()
+                lines.append("```pycon")
+                lines.append(code)
+                lines.append("```")
+            elif child.tag == "p":
+                t = self._inline(child).strip()
+                if t:
+                    lines.append(t)
+        return lines
+
+    # ── inline text conversion ───────────────────────────────────────
+
+    def _inline(self, el: El) -> str:
+        parts: list[str] = []
+        for c in el.children:
+            if isinstance(c, str):
+                parts.append(self._clean_text(c))
+            elif c.tag == "a":
+                link_text = c.text().strip()
+                href = c.attrs.get("href", "")
+                parts.append(self._resolve_ref(link_text, href))
+            elif c.tag == "code":
+                parts.append(f"`{c.text()}`")
+            elif c.tag in ("em", "i"):
+                if "property" in c.classes:
+                    txt = c.text().strip()
+                    if txt == "class":
+                        continue
+                    parts.append(txt)
+                else:
+                    parts.append(c.text())
+            elif c.tag in ("strong", "b"):
+                parts.append(c.text())
+            elif c.tag == "br":
+                parts.append("\n")
+            elif c.tag == "cite":
+                parts.append(f"`{c.text()}`")
+            elif c.tag == "pre":
+                # inline code block – shouldn't happen normally
+                parts.append(f"`{c.text()}`")
+            elif c.tag == "dl":
+                field_lines = self._format_field_list(c)
+                if field_lines:
+                    parts.append("\n".join(field_lines))
+            elif c.tag in ("ul", "ol"):
+                list_lines = self._format_list(c)
+                if list_lines:
+                    parts.append("\n".join(list_lines))
+            else:
+                parts.append(self._inline(c))
+        return "".join(parts)
+
+    def _clean_text(self, t: str) -> str:
+        if "{" in t and "}" in t:
+            t = re.sub(r"\{[^}]*\}", "(configuration object)", t)
+        t = re.sub(r"\$\{[^}]+\}", "(variable)", t)
+        # Escape HTML-like tags so MDX doesn't treat them as JSX components
+        # e.g. <secret-hidden> → `<secret-hidden>`
+        t = re.sub(r"<(/?[a-zA-Z][a-zA-Z0-9_-]*)>", r"`<\1>`", t)
+        return t
+
+    def _resolve_ref(self, text: str, href: str) -> str:
+        if not href or href.startswith("http"):
+            if href:
+                return f"[{text}]({href})"
+            return text
+        class_name = text.strip()
+        target_module = self.CLASS_MODULE.get(class_name)
+        if target_module == self.module_short:
+            anchor = f"class-{class_name.lower()}"
+            return f"[{class_name}](#{anchor})"
+        return class_name
+
+    # ── extraction helpers ───────────────────────────────────────────
+
+    def _sig_name(self, dt: El) -> str:
+        el = dt.find("span", cls="sig-name") or dt.find("span", cls="descname")
+        if el:
+            return el.text().strip()
+        eid = dt.id
+        return eid.split(".")[-1] if eid else dt.text().strip().split("(")[0].strip()
+
+    def _method_prefix(self, dt: El) -> str:
+        for em in dt.find_all("em", cls="property"):
+            t = em.text().strip()
+            for keyword in (
+                "abstractmethod classmethod",
+                "abstract classmethod",
+                "classmethod abstractmethod",
+                "abstractmethod",
+                "classmethod",
+                "staticmethod",
+                "static",
+                "final",
+            ):
+                if keyword in t:
+                    return keyword
+        return ""
+
+    def _extract_type(self, dt: El) -> str:
+        # Strategy: collect everything after the name that forms the type
+        # annotation.  In Sphinx HTML, the type info may span multiple
+        # sibling elements (em for ":", a for the type name, spans, etc.)
+        name = self._sig_name(dt)
+        full = dt.text()
+        if name and name in full:
+            after = full.split(name, 1)[1]
+            # Match ": <type>" possibly followed by "= <value>"
+            m = re.match(r"\s*:\s*(.+?)(?:\s*=.*)?$", after)
+            if m:
+                raw_type = m.group(1).strip()
+                # Now rebuild the type with proper link resolution by
+                # finding all elements after the sig-name in the dt.
+                type_parts = self._collect_type_parts(dt, name)
+                if type_parts:
+                    return type_parts
+                return self._clean_text(raw_type)
+        return ""
+
+    def _collect_type_parts(self, dt: El, sig_name: str) -> str:
+        """Collect type annotation parts from dt, resolving links."""
+        # Find the position after sig-name and ":"
+        found_name = False
+        found_colon = False
+        parts: list[str] = []
+        for c in dt.children:
+            if not found_name:
+                if isinstance(c, El):
+                    txt = c.text().strip()
+                    if sig_name in txt:
+                        found_name = True
+                continue
+            if not found_colon:
+                if isinstance(c, El) and "property" in c.classes:
+                    txt = c.text().strip()
+                    if ":" in txt:
+                        found_colon = True
+                        # Grab any type text after the colon within this em
+                        after_colon = txt.split(":", 1)[1].strip()
+                        if after_colon and after_colon != "=":
+                            parts.append(after_colon)
+                elif isinstance(c, str) and ":" in c:
+                    found_colon = True
+                    after_colon = c.split(":", 1)[1].strip()
+                    if after_colon:
+                        parts.append(after_colon)
+                continue
+            # After the colon — collect type tokens
+            if isinstance(c, str):
+                txt = c.strip()
+                if txt.startswith("="):
+                    break  # Hit the value assignment
+                if txt:
+                    parts.append(self._clean_text(txt))
+            elif isinstance(c, El):
+                txt = c.text().strip()
+                if txt.startswith("="):
+                    break
+                if c.tag == "a":
+                    parts.append(self._resolve_ref(txt, c.attrs.get("href", "")))
+                elif c.tag == "code":
+                    parts.append(f"`{txt}`")
+                else:
+                    inline = self._inline(c).strip()
+                    if inline and inline != "=" and not inline.startswith("="):
+                        parts.append(inline)
+        return " ".join(parts).strip() if parts else ""
+
+    def _extract_value(self, dt: El) -> str:
+        full = dt.text()
+        m = re.search(r"=\s*(.+)$", full)
+        if m:
+            val = m.group(1).strip()
+            if "{" in val:
+                val = "(configuration object)"
+            return val
+        return ""
+
+
+# ── Main generator ───────────────────────────────────────────────────────
+
+
+class SphinxJSONDocGenerator:
+    def __init__(self, docs_dir: Path) -> None:
         self.docs_dir = docs_dir
         self.agent_sdk_dir = docs_dir / "agent-sdk"
         self.output_dir = docs_dir / "sdk" / "api-reference"
         self.sphinx_dir = docs_dir / "scripts" / "sphinx"
-        
-    def run(self):
+
+    def run(self) -> None:
         """Main execution method."""
-        logger.info("Starting simple API documentation generation...")
-        
-        # Step 1: Setup agent-sdk repository
+        logger.info("Starting API documentation generation (Sphinx JSON)...")
         self.setup_agent_sdk()
-        
-        # Step 2: Fix MDX syntax issues in agent-sdk files
         self.fix_agent_sdk_mdx_syntax()
-        
-        # Step 3: Install the SDK
         self.install_sdk()
-        
-        # Step 4: Generate documentation using Sphinx
         self.generate_sphinx_docs()
-        
-        # Step 5: Clean and simplify the generated markdown
-        self.clean_generated_docs()
-        
-        # Step 6: Update navigation
+        self.convert_json_to_mdx()
         self.update_navigation()
-        
         logger.info("API documentation generation completed successfully!")
-        
-    def setup_agent_sdk(self):
+
+    # ── step 1: clone / update agent-sdk ─────────────────────────────
+
+    def setup_agent_sdk(self) -> None:
         """Clone or update the agent-sdk repository."""
         if self.agent_sdk_dir.exists():
             logger.info("Updating existing agent-sdk repository...")
-            self.run_command(["git", "fetch", "origin"], cwd=self.agent_sdk_dir)
-            self.run_command(["git", "reset", "--hard", "origin/main"], cwd=self.agent_sdk_dir)
+            self._cmd(["git", "fetch", "origin"], cwd=self.agent_sdk_dir)
+            self._cmd(
+                ["git", "reset", "--hard", "origin/main"], cwd=self.agent_sdk_dir
+            )
         else:
             logger.info("Cloning agent-sdk repository...")
-            self.run_command([
-                "git", "clone", 
-                "https://github.com/OpenHands/software-agent-sdk.git",
-                str(self.agent_sdk_dir)
-            ])
-            
-    def install_sdk(self):
-        """Install the SDK package."""
-        logger.info("Installing openhands-sdk package...")
-        sdk_path = self.agent_sdk_dir / "openhands-sdk"
-        self.run_command([
-            "python", "-m", "pip", "install", "-e", str(sdk_path)
-        ])
-        
-    def fix_agent_sdk_mdx_syntax(self):
+            self._cmd(
+                [
+                    "git", "clone",
+                    "https://github.com/OpenHands/software-agent-sdk.git",
+                    str(self.agent_sdk_dir),
+                ]
+            )
+
+    # ── step 2: fix MDX syntax in agent-sdk files ────────────────────
+
+    def fix_agent_sdk_mdx_syntax(self) -> None:
         """Fix MDX syntax issues in agent-sdk files to prevent Mintlify parsing errors."""
         logger.info("Fixing MDX syntax issues in agent-sdk files...")
-        
-        # Fix email addresses in AGENTS.md
         agents_md = self.agent_sdk_dir / "AGENTS.md"
         if agents_md.exists():
             content = agents_md.read_text()
-            # Fix unescaped @ symbols in email addresses
-            content = re.sub(r'<([^<>]*@[^<>]*)>', r'&lt;\1&gt;', content)
+            content = re.sub(r"<([^<>]*@[^<>]*)>", r"&lt;\1&gt;", content)
             agents_md.write_text(content)
-            
-        # Fix README.md
         readme_md = self.agent_sdk_dir / "README.md"
         if readme_md.exists():
             content = readme_md.read_text()
-            # Convert HTML comments to JSX format
-            content = re.sub(r'<!--\s*(.*?)\s*-->', r'{/* \1 */}', content, flags=re.DOTALL)
-            # Fix self-closing tags
-            content = re.sub(r'<(img|br|hr)([^>]*?)(?<!/)>', r'<\1\2 />', content)
+            content = re.sub(
+                r"<!--\s*(.*?)\s*-->", r"{/* \1 */}", content, flags=re.DOTALL
+            )
+            content = re.sub(
+                r"<(img|br|hr)([^>]*?)(?<!/)>", r"<\1\2 />", content
+            )
             readme_md.write_text(content)
-        
-    def generate_sphinx_docs(self):
-        """Generate documentation using Sphinx."""
-        logger.info("Generating documentation with Sphinx...")
-        
-        # Create Sphinx configuration
-        self.create_sphinx_config()
-        
-        # Generate RST files
-        self.create_rst_files()
-        
-        # Build documentation
-        self.build_sphinx_docs()
-        
-    def create_sphinx_config(self):
-        """Create a simple Sphinx configuration."""
-        sphinx_source = self.sphinx_dir / "source"
-        sphinx_source.mkdir(parents=True, exist_ok=True)
-        
-        conf_py = sphinx_source / "conf.py"
-        conf_py.write_text('''
-import os
-import sys
-sys.path.insert(0, os.path.abspath('../../../agent-sdk/openhands-sdk'))
 
-project = 'OpenHands SDK'
-copyright = '2024, OpenHands'
-author = 'OpenHands'
+    # ── step 3: install SDK ──────────────────────────────────────────
 
-extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.napoleon',
-    'sphinx_markdown_builder',
-]
+    def install_sdk(self) -> None:
+        """Install the SDK package."""
+        logger.info("Installing openhands-sdk package...")
+        sdk_path = self.agent_sdk_dir / "openhands-sdk"
+        self._cmd(["python", "-m", "pip", "install", "-e", str(sdk_path)])
 
-autodoc_default_options = {
-    'members': True,
-    'undoc-members': True,
-    'show-inheritance': True,
-    'special-members': '__init__',
-}
+    # ── step 4: generate Sphinx docs (JSON builder) ──────────────────
 
-napoleon_google_docstring = True
-napoleon_numpy_docstring = True
-napoleon_include_init_with_doc = False
-napoleon_include_private_with_doc = False
+    def generate_sphinx_docs(self) -> None:
+        """Generate documentation using Sphinx JSON builder."""
+        logger.info("Generating documentation with Sphinx (JSON builder)...")
+        self._create_sphinx_config()
+        self._create_rst_files()
+        self._build_sphinx_docs()
 
-html_theme = 'sphinx_rtd_theme'
-''')
-        
-    def create_rst_files(self):
-        """Create RST files for the main SDK modules."""
-        sphinx_source = self.sphinx_dir / "source"
-        
-        # Main index file
-        index_rst = sphinx_source / "index.rst"
-        index_rst.write_text('''
-OpenHands SDK API Reference
-===========================
+    def _create_sphinx_config(self) -> None:
+        src = self.sphinx_dir / "source"
+        src.mkdir(parents=True, exist_ok=True)
+        (src / "conf.py").write_text(
+            "import os, sys\n"
+            "sys.path.insert(0, os.path.abspath("
+            "'../../../agent-sdk/openhands-sdk'))\n"
+            "\n"
+            "project = 'OpenHands SDK'\n"
+            "copyright = '2024, OpenHands'\n"
+            "author = 'OpenHands'\n"
+            "\n"
+            "extensions = [\n"
+            "    'sphinx.ext.autodoc',\n"
+            "    'sphinx.ext.napoleon',\n"
+            "]\n"
+            "\n"
+            "autodoc_default_options = {\n"
+            "    'members': True,\n"
+            "    'undoc-members': True,\n"
+            "    'show-inheritance': True,\n"
+            "    'special-members': '__init__',\n"
+            "}\n"
+            "\n"
+            "napoleon_google_docstring = True\n"
+            "napoleon_numpy_docstring = True\n"
+            "napoleon_include_init_with_doc = False\n"
+            "napoleon_include_private_with_doc = False\n"
+        )
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
-   openhands.sdk
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
-''')
-        
-        # Main SDK module
-        sdk_rst = sphinx_source / "openhands.sdk.rst"
-        sdk_rst.write_text('''
-openhands.sdk package
-=====================
-
-.. automodule:: openhands.sdk
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Submodules
-----------
-
-.. toctree::
-   :maxdepth: 1
-
-   openhands.sdk.agent
-   openhands.sdk.conversation
-   openhands.sdk.event
-   openhands.sdk.llm
-   openhands.sdk.tool
-   openhands.sdk.workspace
-   openhands.sdk.security
-   openhands.sdk.utils
-''')
-        
-        # Generate RST files for each major module
+    def _create_rst_files(self) -> None:
+        src = self.sphinx_dir / "source"
+        (src / "index.rst").write_text(
+            "OpenHands SDK API Reference\n"
+            "===========================\n"
+            "\n"
+            ".. toctree::\n"
+            "   :maxdepth: 2\n"
+            "   :caption: Contents:\n"
+            "\n"
+            "   openhands.sdk\n"
+        )
         modules = [
-            'agent', 'conversation', 'event', 'llm', 
-            'tool', 'workspace', 'security', 'utils'
+            "agent", "conversation", "event", "llm",
+            "tool", "workspace", "security", "utils",
         ]
-        
-        for module in modules:
-            module_rst = sphinx_source / f"openhands.sdk.{module}.rst"
-            module_rst.write_text(f'''
-openhands.sdk.{module} module
-{'=' * (len(f'openhands.sdk.{module} module'))}
+        toctree = "\n".join(f"   openhands.sdk.{m}" for m in modules)
+        (src / "openhands.sdk.rst").write_text(
+            "openhands.sdk package\n"
+            "=====================\n"
+            "\n"
+            ".. automodule:: openhands.sdk\n"
+            "   :members:\n"
+            "   :undoc-members:\n"
+            "   :show-inheritance:\n"
+            "\n"
+            "Submodules\n"
+            "----------\n"
+            "\n"
+            ".. toctree::\n"
+            "   :maxdepth: 1\n"
+            "\n"
+            f"{toctree}\n"
+        )
+        for mod in modules:
+            title = f"openhands.sdk.{mod} module"
+            (src / f"openhands.sdk.{mod}.rst").write_text(
+                f"{title}\n{'=' * len(title)}\n\n"
+                f".. automodule:: openhands.sdk.{mod}\n"
+                f"   :members:\n"
+                f"   :undoc-members:\n"
+                f"   :show-inheritance:\n"
+            )
 
-.. automodule:: openhands.sdk.{module}
-   :members:
-   :undoc-members:
-   :show-inheritance:
-''')
-            
-    def build_sphinx_docs(self):
-        """Build the Sphinx documentation."""
-        build_dir = self.sphinx_dir / "build"
-        source_dir = self.sphinx_dir / "source"
-        
-        # Clean previous build
-        if build_dir.exists():
-            shutil.rmtree(build_dir)
-            
-        # Build markdown documentation
-        self.run_command([
-            "sphinx-build", "-b", "markdown", 
-            str(source_dir), str(build_dir)
-        ])
-        
-    def clean_generated_docs(self):
-        """Clean and simplify the generated markdown files."""
-        logger.info("Cleaning generated documentation...")
-        
-        build_dir = self.sphinx_dir / "build"
-        
-        # Remove old output directory
+    def _build_sphinx_docs(self) -> None:
+        build = self.sphinx_dir / "build"
+        src = self.sphinx_dir / "source"
+        if build.exists():
+            shutil.rmtree(build)
+        self._cmd(["sphinx-build", "-b", "json", str(src), str(build)])
+
+    # ── step 5: convert JSON → MDX ──────────────────────────────────
+
+    def convert_json_to_mdx(self) -> None:
+        """Parse Sphinx JSON output and produce MDX files."""
+        logger.info("Converting Sphinx JSON to MDX...")
+        build = self.sphinx_dir / "build"
         if self.output_dir.exists():
             shutil.rmtree(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Process each markdown file
-        for md_file in build_dir.glob("*.md"):
-            if md_file.name == "index.md":
+
+        for fjson in sorted(build.glob("openhands.sdk.*.fjson")):
+            stem = fjson.stem
+            if stem == "openhands.sdk":
+                logger.info(f"Skipping {fjson.name} (top-level duplicate)")
                 continue
-            
-            # Skip the top-level openhands.sdk.md file as it duplicates content
-            if md_file.name == "openhands.sdk.md":
-                logger.info(f"Skipping {md_file.name} (top-level duplicate)")
-                continue
-                
-            logger.info(f"Processing {md_file.name}")
-            content = md_file.read_text()
-            
-            # Clean the content
-            cleaned_content = self.clean_markdown_content(content, md_file.name)
-            
-            # Write to output directory with .mdx extension
-            output_filename = md_file.name.replace('.md', '.mdx')
-            output_file = self.output_dir / output_filename
-            output_file.write_text(cleaned_content)
-            
-    def clean_multiline_dictionaries(self, content: str) -> str:
-        """Clean multi-line dictionary patterns that cause parsing issues."""
-        import re
-        
-        # Handle the specific problematic pattern that keeps appearing
-        # Pattern: For example: {"Reasoning:": "bold blue",\n    "Thought:": "bold green"}
-        pattern1 = r'For example: \{"[^"]*":\s*"[^"]*",\s*\n\s*"[^"]*":\s*"[^"]*"\}'
-        content = re.sub(pattern1, 'For example: (configuration dictionary)', content, flags=re.DOTALL)
-        
-        # More general multi-line dictionary patterns
-        pattern2 = r'\{"[^"]*":\s*"[^"]*",\s*\n\s*"[^"]*":\s*"[^"]*"\}'
-        content = re.sub(pattern2, '(configuration dictionary)', content, flags=re.DOTALL)
-        
-        # Handle any remaining multi-line patterns with curly braces
-        pattern3 = r'\{[^{}]*\n[^{}]*\}'
-        content = re.sub(pattern3, '(configuration object)', content, flags=re.DOTALL)
-        
-        return content
+            logger.info(f"Processing {fjson.name}")
+            data = json.loads(fjson.read_text())
+            html_body = data.get("body", "")
+            converter = _Converter(stem)
+            mdx = converter.convert(html_body)
+            out = self.output_dir / f"{stem}.mdx"
+            out.write_text(mdx)
 
-    def fix_header_hierarchy(self, content: str) -> str:
-        """Fix header hierarchy to ensure proper nesting under class headers."""
-        import re
-        
-        lines = content.split('\n')
-        result_lines = []
-        in_class_section = False
-        
-        for line in lines:
-            # Check if we're entering a class section
-            if re.match(r'^### class ', line):
-                in_class_section = True
-                result_lines.append(line)
-            # Check if we're leaving a class section (another class or module header)
-            elif line.startswith('### ') and not line.startswith('### class '):
-                # This is a non-class h3 header within a class section - convert to h4
-                if in_class_section:
-                    line = '#' + line  # Convert ### to ####
-                result_lines.append(line)
-            # Check if we hit another class or end of content
-            elif re.match(r'^### class ', line) or line.startswith('# '):
-                in_class_section = line.startswith('### class ')
-                result_lines.append(line)
-            else:
-                result_lines.append(line)
-        
-        return '\n'.join(result_lines)
+    # ── step 6: update navigation ────────────────────────────────────
 
-    def reorganize_class_content(self, content: str) -> str:
-        """Reorganize class content to separate properties from methods."""
-        import re
-        
-        lines = content.split('\n')
-        result_lines = []
-        i = 0
-        
-        while i < len(lines):
-            line = lines[i]
-            
-            # Check if this is a class header
-            if re.match(r'^### \*class\*', line):
-                # Process this class
-                class_lines, i = self.process_class_section(lines, i)
-                result_lines.extend(class_lines)
-            else:
-                result_lines.append(line)
-                i += 1
-        
-        return '\n'.join(result_lines)
-    
-    def process_class_section(self, lines: list[str], start_idx: int) -> tuple[list[str], int]:
-        """Process a single class section, separating properties from methods."""
-        import re
-        
-        result = []
-        i = start_idx
-        
-        # Add the class header and description (including any ### Example sections)
-        while i < len(lines):
-            line = lines[i]
-            # Stop when we hit the first #### (class member) or another class
-            if line.startswith('####') or (line.startswith('### *class*') and i > start_idx):
-                break
-            # Fix Example headers to be h4 instead of h3
-            if line.startswith('### ') and not line.startswith('### *class*'):
-                line = '#' + line  # Convert ### to ####
-            result.append(line)
-            i += 1
-        
-        # Collect all class members
-        properties = []
-        methods = []
-        
-        while i < len(lines):
-            line = lines[i]
-            
-            # Stop if we hit another class or module (but not ### Example sections)
-            if line.startswith('### *class*'):
-                break
-                
-            if line.startswith('####'):
-                # Determine if this is a property or method
-                member_lines, i = self.extract_member_section(lines, i)
-                
-                if self.is_property(member_lines[0]):
-                    properties.extend(member_lines)
-                else:
-                    methods.extend(member_lines)
-            else:
-                i += 1
-        
-        # Add properties section if we have any
-        if properties:
-            result.append('')
-            result.append('#### Properties')
-            result.append('')
-            
-            # Convert property headers to list items
-            for prop_line in properties:
-                if prop_line.startswith('####'):
-                    # Extract property name and type
-                    prop_match = re.match(r'^####\s*([^*:]+)\s*\*?:?\s*(.*)$', prop_line)
-                    if prop_match:
-                        prop_name = prop_match.group(1).strip()
-                        prop_type = prop_match.group(2).strip()
-                        # Clean up the type annotation
-                        prop_type = re.sub(r'^\*\s*', '', prop_type)  # Remove leading *
-                        prop_type = re.sub(r'\s*\*$', '', prop_type)  # Remove trailing *
-                        if prop_type:
-                            result.append(f'- `{prop_name}`: {prop_type}')
-                        else:
-                            result.append(f'- `{prop_name}`')
-                elif prop_line.strip() and not prop_line.startswith('####'):
-                    # Add description lines indented
-                    result.append(f'  {prop_line}')
-        
-        # Add methods section if we have any
-        if methods:
-            if properties:  # Add spacing if we had properties
-                result.append('')
-            result.append('#### Methods')
-            result.append('')
-            result.extend(methods)
-        
-        return result, i
-    
-    def extract_member_section(self, lines: list[str], start_idx: int) -> tuple[list[str], int]:
-        """Extract all lines belonging to a single class member."""
-        result = []
-        i = start_idx
-        
-        # Add the header line
-        result.append(lines[i])
-        i += 1
-        
-        # Add all following lines until we hit another header or class
-        while i < len(lines):
-            line = lines[i]
-            if line.startswith('####') or line.startswith('###'):
-                break
-            result.append(line)
-            i += 1
-        
-        return result, i
-    
-    def is_property(self, header_line: str) -> bool:
-        """Determine if a class member is a property or method."""
-        import re
-        
-        # Properties typically have type annotations with *: type* pattern
-        if re.search(r'\*:\s*[^*]+\*', header_line):
-            return True
-        
-        # Methods have parentheses
-        if '(' in header_line and ')' in header_line:
-            return False
-        
-        # Properties often have : followed by type info
-        if ':' in header_line and not '(' in header_line:
-            return True
-        
-        # Default to method if unclear
-        return False
-
-    def clean_markdown_content(self, content: str, filename: str) -> str:
-        """Clean markdown content to be parser-friendly."""
-        # First handle multi-line dictionary patterns
-        content = self.clean_multiline_dictionaries(content)
-        
-        # Reorganize class content to separate properties from methods
-        content = self.reorganize_class_content(content)
-        
-        # Fix header hierarchy (Example sections should be h4 under class headers)
-        content = self.fix_header_hierarchy(content)
-        
-        lines = content.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            # Skip empty lines and sphinx-specific content
-            if not line.strip():
-                cleaned_lines.append(line)
-                continue
-                
-            # Clean headers - remove complex signatures, keep just names
-            if line.startswith('#'):
-                line = self.clean_header(line)
-                
-                # Skip module headers that duplicate the title
-                if line.startswith('# ') and ' module' in line:
-                    continue
-                
-            # Remove problematic patterns
-            line = self.remove_problematic_patterns(line)
-            
-            cleaned_lines.append(line)
-            
-        # Add frontmatter
-        module_name = filename.replace('.md', '')
-        frontmatter = f'''---
-title: {module_name}
-description: API reference for {module_name} module
----
-
-'''
-        
-        return frontmatter + '\n'.join(cleaned_lines)
-        
-    def clean_header(self, line: str) -> str:
-        """Clean header lines to contain only class/method names."""
-        # Extract just the class or method name from complex signatures
-        
-        # Pattern for class headers: "### *class* ClassName(...)" or "### class ClassName(...)"
-        class_match = re.match(r'^(#+)\s*\*?class\*?\s+([^(]+)', line)
-        if class_match:
-            level, class_name = class_match.groups()
-            # Extract just the class name (last part after the last dot) for readability
-            simple_class_name = class_name.strip().split('.')[-1]
-            return f"{level} class {simple_class_name}"
-            
-        # Pattern for method headers: "#### method_name(...)"
-        method_match = re.match(r'^(#+)\s*([^(]+)\(', line)
-        if method_match:
-            level, method_name = method_match.groups()
-            # Clean up the method name
-            method_name = method_name.strip().split('.')[-1]  # Get just the method name
-            # Remove any decorators or prefixes
-            method_name = re.sub(r'^(static|class|abstract|property)\s+', '', method_name)
-            return f"{level} {method_name}()"
-            
-        # Pattern for property headers: "#### property property_name"
-        prop_match = re.match(r'^(#+)\s*property\s+([^:]+)', line)
-        if prop_match:
-            level, prop_name = prop_match.groups()
-            prop_name = prop_name.strip()
-            return f"{level} {prop_name}"
-            
-        # For other headers, just clean up basic formatting
-        line = re.sub(r'\*([^*]+)\*', r'\1', line)  # Remove emphasis
-        return line
-        
-    def remove_problematic_patterns(self, line: str) -> str:
-        """Remove patterns that cause parsing issues."""
-        # Remove all emphasis and bold formatting
-        line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)  # Remove bold
-        line = re.sub(r'\*([^*]+)\*', r'\1', line)      # Remove emphasis
-        
-        # Fix HTML-like tags (only actual HTML tags, not all < > characters)
-        # Only replace if it looks like an HTML tag: <tagname> or </tagname>
-        line = re.sub(r'<(/?\w+[^>]*)>', r'`<\1>`', line)
-        
-        # Fix Sphinx-generated blockquote markers that should be list continuations
-        if line.startswith('> ') and not line.startswith('> **'):
-            # This is likely a continuation of a bullet point, not a blockquote
-            line = '  ' + line[2:]  # Replace '> ' with proper indentation
-        
-        # Remove escaped characters that cause issues
-        line = line.replace('\\*', '*')
-        line = line.replace('\\', '')
-        
-        # Fix dictionary/object literals that cause parsing issues
-        # Pattern: = {'key': 'value', 'key2': 'value2'} or = {}
-        if ' = {' in line and '}' in line:
-            # Replace with a simple description
-            line = re.sub(r' = \{[^}]*\}', ' = (configuration object)', line)
-        
-        # Fix JSON-like patterns that cause parsing issues
-        # Pattern: { "type": "function", "name": …, "description": …, "parameters": … }
-        if line.strip().startswith('{') and line.strip().endswith('}'):
-            # Replace with a simple description
-            line = '(JSON configuration object)'
-        
-        # Fix specific problematic dictionary patterns
-        if '{"Reasoning:": "bold blue",' in line or '"Thought:": "bold green"}' in line:
-            # Replace the entire line with a simple description
-            line = re.sub(r'.*\{"[^"]*":[^}]*\}.*', '    For example: (configuration dictionary)', line)
-        
-        # Fix ClassVar patterns
-        line = re.sub(r'ClassVar\[([^\]]+)\]', r'ClassVar[\1]', line)
-        
-        # Fix template string patterns like ${variable}
-        line = re.sub(r'\$\{[^}]+\}', '(variable)', line)
-        
-        # Fix asterisk in type annotations like "property name *: Type"
-        line = re.sub(r' \*:', ':', line)
-        
-        # Fix any remaining curly braces that cause parsing issues
-        if '{' in line and '}' in line:
-            line = re.sub(r'\{[^}]*\}', '(configuration object)', line)
-        
-        # Note: All cross-reference link conversion logic removed - we now just strip links entirely
-        class_to_module = {
-            'Agent': 'agent',
-            'AgentBase': 'agent', 
-            'AgentContext': 'agent',
-            'Conversation': 'conversation',
-            'BaseConversation': 'conversation',
-            'LocalConversation': 'conversation',
-            'RemoteConversation': 'conversation',
-            'ConversationState': 'conversation',
-            'ConversationStats': 'conversation',
-            'Event': 'event',
-            'LLMConvertibleEvent': 'event',
-            'MessageEvent': 'event',
-            'LLM': 'llm',
-            'LLMRegistry': 'llm',
-            'LLMResponse': 'llm',
-            'Message': 'llm',
-            'ImageContent': 'llm',
-            'TextContent': 'llm',
-            'ThinkingBlock': 'llm',
-            'RedactedThinkingBlock': 'llm',
-            'Metrics': 'llm',
-            'RegistryEvent': 'llm',
-            'SecurityManager': 'security',
-            'Tool': 'tool',
-            'ToolDefinition': 'tool',
-            'Action': 'tool',
-            'Observation': 'tool',
-            'Workspace': 'workspace',
-            'BaseWorkspace': 'workspace',
-            'LocalWorkspace': 'workspace',
-            'RemoteWorkspace': 'workspace',
-            'WorkspaceFile': 'workspace',
-            'WorkspaceFileEdit': 'workspace',
-            'WorkspaceFileEditResult': 'workspace',
-            'WorkspaceFileReadResult': 'workspace',
-            'WorkspaceFileWriteResult': 'workspace',
-            'WorkspaceListResult': 'workspace',
-            'WorkspaceSearchResult': 'workspace',
-            'WorkspaceSearchResultItem': 'workspace',
-            'WorkspaceUploadResult': 'workspace',
-            'WorkspaceWriteResult': 'workspace',
-        }
-
-        # Fix anchor links - convert full module path anchors to simple class format
-        # Pattern: openhands.sdk.module.mdx#openhands.sdk.module.ClassName -> openhands.sdk.module#class-classname
-        def convert_anchor(match):
-            module_path = match.group(1)
-            full_class_path = match.group(2)
-            class_name = full_class_path.split('.')[-1].lower()
-            return f'openhands.sdk.{module_path}#class-{class_name}'
-        
-        line = re.sub(r'openhands\.sdk\.([^)#]+)\.mdx#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
-        
-        # Also handle the .md# pattern before converting to .mdx
-        line = re.sub(r'openhands\.sdk\.([^)#]+)\.md#openhands\.sdk\.\1\.([^)]+)', convert_anchor, line)
-
-        # Fix links pointing to the removed top-level openhands.sdk.md page
-        # Pattern: openhands.sdk.md#openhands.sdk.ClassName -> openhands.sdk.module#class-classname
-        def convert_toplevel_anchor(match):
-            full_class_path = match.group(1)
-            class_name = full_class_path.split('.')[-1]
-            
-            # Find the correct module for this class
-            if class_name in class_to_module:
-                module = class_to_module[class_name]
-                class_name_lower = class_name.lower()
-                return f'openhands.sdk.{module}#class-{class_name_lower}'
-            else:
-                # Fallback: try to guess module from class name
-                class_name_lower = class_name.lower()
-                return f'openhands.sdk.{class_name_lower}#class-{class_name_lower}'
-
-        line = re.sub(r'openhands\.sdk\.md#openhands\.sdk\.([^)]+)', convert_toplevel_anchor, line)
-
-        # Fix same-file anchor references (e.g., #openhands.sdk.llm.LLM -> #class-llm)
-        def convert_same_file_anchor(match):
-            full_class_path = match.group(1)
-            class_name = full_class_path.split('.')[-1].lower()
-            return f'#class-{class_name}'
-
-        line = re.sub(r'#openhands\.sdk\.[^.]+\.([^)]+)', convert_same_file_anchor, line)
-        
-        # Fix invalid http:// links
-        line = re.sub(r'\[http://\]\(http://\)', 'http://', line)
-        
-        # Remove Python console prompt prefixes from examples
-        line = re.sub(r'^>`>`>` ', '', line)
-        
-        # Remove all cross-reference links - just keep the class names as plain text
-        # Pattern: [ClassName](openhands.sdk.module#class-classname) -> ClassName
-        line = re.sub(r'\[([^\]]+)\]\(openhands\.sdk\.[^)]+\)', r'\1', line)
-
-        # Clean up malformed property entries with empty names
-        if '- ``:' in line and 'property ' in line:
-            # Extract the property name and type from malformed entries like:
-            # - ``: property service_to_llm : dict[str, [LLM](#openhands.sdk.llm.LLM)]
-            # - ``: abstract property conversation_stats : ConversationStats
-            match = re.search(r'- ``: (?:abstract )?property (\w+) : (.+)', line)
-            if match:
-                prop_name = match.group(1)
-                prop_type = match.group(2)
-                line = f'- `{prop_name}`: {prop_type}'
-        
-        # Format parameter names in backticks for parameter lists
-        # Pattern: "  parameter_name – Description" -> "  `parameter_name` – Description"
-        if line.strip().startswith('* ') or (line.startswith('  ') and ' – ' in line):
-            # This looks like a parameter line in a parameter list
-            # Match pattern: "  * parameter_name – description" or "  parameter_name – description"
-            param_match = re.match(r'^(\s*\*?\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*–\s*(.+)$', line)
-            if param_match:
-                indent = param_match.group(1)
-                param_name = param_match.group(2)
-                description = param_match.group(3)
-                line = f'{indent}`{param_name}` – {description}'
-        
-        return line
-        
-    def update_navigation(self):
+    def update_navigation(self) -> None:
         """Update the navigation configuration."""
         logger.info("Updating navigation configuration...")
-        
-        # Generate navigation entries for all API files
-        api_files = list(self.output_dir.glob("*.mdx"))
-        nav_entries = []
-        
-        for api_file in sorted(api_files):
-            module_name = api_file.stem
-            nav_entries.append(f'"sdk/api-reference/{module_name}"')
-            
-        # Create navigation snippet
-        nav_config = {
-            "navigation": [
-                {
-                    "group": "API Reference",
-                    "pages": [entry.strip('"') for entry in nav_entries]
-                }
-            ]
+        api_files = sorted(self.output_dir.glob("*.mdx"))
+        nav_entries = [f"sdk/api-reference/{f.stem}" for f in api_files]
+        snippet = {
+            "navigation": [{"group": "API Reference", "pages": nav_entries}]
         }
-        
-        # Save navigation snippet
-        nav_file = self.docs_dir / "scripts" / "mint-config-snippet.json"
-        nav_file.write_text(json.dumps(nav_config, indent=2))
+        (self.docs_dir / "scripts" / "mint-config-snippet.json").write_text(
+            json.dumps(snippet, indent=2)
+        )
+        self._update_docs_json(nav_entries)
+        logger.info(
+            f"Generated navigation for {len(nav_entries)} API reference files"
+        )
 
-        # Also update the main docs.json file
-        self.update_main_docs_json([entry.strip('"') for entry in nav_entries])
-        
-        logger.info(f"Generated navigation for {len(nav_entries)} API reference files")
-
-    def update_main_docs_json(self, nav_entries):
-        """Update the main docs.json file with the new API reference navigation."""
-        docs_json_path = self.docs_dir / "docs.json"
-        
-        if not docs_json_path.exists():
+    def _update_docs_json(self, nav_entries: list[str]) -> None:
+        docs_json = self.docs_dir / "docs.json"
+        if not docs_json.exists():
             logger.warning("docs.json not found, skipping main navigation update")
             return
-        
         try:
-            with open(docs_json_path, 'r') as f:
-                docs_config = json.load(f)
-            
-            # Find and update the API Reference section
+            cfg = json.loads(docs_json.read_text())
             updated = False
-            for tab in docs_config.get("navigation", {}).get("tabs", []):
+            for tab in cfg.get("navigation", {}).get("tabs", []):
                 if tab.get("tab") == "SDK":
                     for page in tab.get("pages", []):
-                        if isinstance(page, dict) and page.get("group") == "API Reference":
+                        if (
+                            isinstance(page, dict)
+                            and page.get("group") == "API Reference"
+                        ):
                             page["pages"] = nav_entries
                             updated = True
-                            logger.info("Updated API Reference navigation in docs.json")
                             break
                     if updated:
                         break
-            
             if updated:
-                with open(docs_json_path, 'w') as f:
-                    json.dump(docs_config, f, indent=2)
+                docs_json.write_text(json.dumps(cfg, indent=2))
+                logger.info("Updated API Reference navigation in docs.json")
             else:
-                logger.warning("Could not find API Reference section in docs.json to update")
-                
+                logger.warning(
+                    "Could not find API Reference section in docs.json to update"
+                )
         except Exception as e:
             logger.error(f"Error updating docs.json: {e}")
-        
-    def run_command(self, cmd: List[str], cwd: Path = None):
-        """Run a shell command with error handling."""
+
+    # ── utility ──────────────────────────────────────────────────────
+
+    def _cmd(self, cmd: list[str], cwd: Path | None = None) -> None:
         try:
             result = subprocess.run(
-                cmd, 
+                cmd,
                 cwd=cwd or self.docs_dir,
-                capture_output=True, 
-                text=True, 
-                check=True
+                capture_output=True,
+                text=True,
+                check=True,
             )
             if result.stdout:
                 logger.debug(f"STDOUT: {result.stdout}")
@@ -774,11 +990,10 @@ description: API reference for {module_name} module
             raise
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     docs_dir = Path(__file__).parent.parent
-    generator = SimpleAPIDocGenerator(docs_dir)
-    generator.run()
+    SphinxJSONDocGenerator(docs_dir).run()
 
 
 if __name__ == "__main__":
