@@ -1,10 +1,9 @@
 ---
 title: openhands.sdk.conversation
-description: API reference for openhands.sdk.conversation module
+description: API reference for openhands.sdk.conversation
 ---
 
-
-### class BaseConversation
+## class BaseConversation
 
 Bases: `ABC`
 
@@ -14,52 +13,113 @@ This class defines the interface that all conversation implementations must foll
 Conversations manage the interaction between users and agents, handling message
 exchange, execution control, and state management.
 
+### Properties
 
-#### Properties
-
-- `confirmation_policy_active`: bool
+- `id`: ConversationID
+- `state`: ConversationStateProtocol
 - `conversation_stats`: ConversationStats
-- `id`: UUID
+- `confirmation_policy_active`: bool
 - `is_confirmation_mode_active`: bool
   Check if confirmation mode is active.
-  Returns True if BOTH conditions are met:
-  1. The conversation state has a security analyzer set (not None)
-  2. The confirmation policy is active
-- `state`: ConversationStateProtocol
 
-#### Methods
+Returns True if BOTH conditions are met:
+1. The conversation state has a security analyzer set (not None)
+2. The confirmation policy is active
 
-#### __init__()
+### Methods
+
+**__init__() -> None**
 
 Initialize the base conversation with span tracking.
 
-#### abstractmethod ask_agent()
+**abstractmethod send_message(message: str | Message, sender: str | None = None) -> None**
+
+Send a message to the agent.
+
+**Parameters:**
+
+- `message` *str | Message* – Either a string (which will be converted to a user message)
+    or a Message object
+- `sender` *str | None* – Optional identifier of the sender. Can be used to track
+   message origin in multi-agent scenarios. For example, when
+   one agent delegates to another, the sender can be set to
+   identify which agent is sending the message.
+
+**abstractmethod run() -> None**
+
+Execute the agent to process messages and perform actions.
+
+This method runs the agent until it finishes processing the current
+message or reaches the maximum iteration limit.
+
+**abstractmethod set_confirmation_policy(policy: ConfirmationPolicyBase) -> None**
+
+Set the confirmation policy for the conversation.
+
+**abstractmethod set_security_analyzer(analyzer: SecurityAnalyzerBase | None) -> None**
+
+Set the security analyzer for the conversation.
+
+**abstractmethod reject_pending_actions(reason: str = 'User rejected the action') -> None**
+
+**abstractmethod pause() -> None**
+
+**abstractmethod update_secrets(secrets: Mapping[str, SecretValue]) -> None**
+
+**abstractmethod close() -> None**
+
+**abstractmethod generate_title(llm: LLM | None = None, max_length: int = 50) -> str**
+
+Generate a title for the conversation based on the first user message.
+
+**Parameters:**
+
+- `llm` *LLM | None* – Optional LLM to use for title generation. If not provided,
+ uses the agent's LLM.
+- `max_length` *int* – Maximum length of the generated title.
+
+**Returns:**
+
+- *str* A generated title for the conversation.
+
+**Raises:**
+
+- `ValueError` – If no user messages are found in the conversation.
+
+**get_persistence_dir(persistence_base_dir: str | Path, conversation_id: ConversationID) -> str**
+
+Get the persistence directory for the conversation.
+
+**Parameters:**
+
+- `persistence_base_dir` *str | Path* – Base directory for persistence. Can be a string
+path or Path object.
+- `conversation_id` *ConversationID* – Unique conversation ID.
+
+**Returns:**
+
+- *str* String path to the conversation-specific persistence directory.
+- *str* Always returns a normalized string path even if a Path was provided.
+
+**abstractmethod ask_agent(question: str) -> str**
 
 Ask the agent a simple, stateless question and get a direct LLM response.
 
-This bypasses the normal conversation flow and does not modify, persist,
+This bypasses the normal conversation flow and does **not** modify, persist,
 or become part of the conversation state. The request is not remembered by
 the main agent, no events are recorded, and execution status is untouched.
-It is also thread-safe and may be called while conversation.run() is
+It is also thread-safe and may be called while `conversation.run()` is
 executing in another thread.
 
-* Parameters:
-  `question` – A simple string question to ask the agent
-* Returns:
-  A string response from the agent
+**Parameters:**
 
-#### abstractmethod close()
+- `question` *str* – A simple string question to ask the agent
 
-#### static compose_callbacks()
+**Returns:**
 
-Compose multiple callbacks into a single callback function.
+- *str* A string response from the agent
 
-* Parameters:
-  `callbacks` – An iterable of callback functions
-* Returns:
-  A single callback function that calls all provided callbacks
-
-#### abstractmethod condense()
+**abstractmethod condense() -> None**
 
 Force condensation of the conversation history.
 
@@ -70,73 +130,55 @@ and forces the agent to take a single step to process it.
 The condensation will be applied immediately and will modify the conversation
 state by adding a condensation event to the history.
 
-* Raises:
-  `ValueError` – If no condenser is configured or the condenser doesn’t
-      handle condensation requests.
+**Raises:**
 
-#### abstractmethod generate_title()
+- `ValueError` – If no condenser is configured or the condenser doesn't
+       handle condensation requests.
 
-Generate a title for the conversation based on the first user message.
+**abstractmethod execute_tool(tool_name: str, action: Action) -> Observation**
 
-* Parameters:
-  * `llm` – Optional LLM to use for title generation. If not provided,
-    uses the agent’s LLM.
-  * `max_length` – Maximum length of the generated title.
-* Returns:
-  A generated title for the conversation.
-* Raises:
-  `ValueError` – If no user messages are found in the conversation.
+Execute a tool directly without going through the agent loop.
 
-#### static get_persistence_dir()
+This method allows executing tools before or outside of the normal
+conversation.run() flow. It handles agent initialization automatically,
+so tools can be executed before the first run() call.
 
-Get the persistence directory for the conversation.
+Note: This method bypasses the agent loop, including confirmation
+policies and security analyzer checks. Callers are responsible for
+applying any safeguards before executing potentially destructive tools.
 
-* Parameters:
-  * `persistence_base_dir` – Base directory for persistence. Can be a string
-    path or Path object.
-  * `conversation_id` – Unique conversation ID.
-* Returns:
-  String path to the conversation-specific persistence directory.
-  Always returns a normalized string path even if a Path was provided.
+This is useful for:
+- Pre-run setup operations (e.g., indexing repositories)
+- Manual tool execution for environment setup
+- Testing tool behavior outside the agent loop
 
-#### abstractmethod pause()
+**Parameters:**
 
-#### abstractmethod reject_pending_actions()
+- `tool_name` *str* – The name of the tool to execute (e.g., "sleeptime_compute")
+- `action` *Action* – The action to pass to the tool executor
 
-#### abstractmethod run()
+**Returns:**
 
-Execute the agent to process messages and perform actions.
+- *Observation* The observation returned by the tool execution
 
-This method runs the agent until it finishes processing the current
-message or reaches the maximum iteration limit.
+**Raises:**
 
-#### abstractmethod send_message()
+- `KeyError` – If the tool is not found in the agent's tools
+- `NotImplementedError` – If the tool has no executor
 
-Send a message to the agent.
+**compose_callbacks(callbacks: Iterable[CallbackType]) -> CallbackType**
 
-* Parameters:
-  * `message` – Either a string (which will be converted to a user message)
-    or a Message object
-  * `sender` – Optional identifier of the sender. Can be used to track
-    message origin in multi-agent scenarios. For example, when
-    one agent delegates to another, the sender can be set to
-    identify which agent is sending the message.
+Compose multiple callbacks into a single callback function.
 
-#### abstractmethod set_confirmation_policy()
+**Parameters:**
 
-Set the confirmation policy for the conversation.
+- `callbacks` *Iterable[CallbackType]* – An iterable of callback functions
 
-#### abstractmethod set_security_analyzer()
+**Returns:**
 
-Set the security analyzer for the conversation.
+- *CallbackType* A single callback function that calls all provided callbacks
 
-#### abstractmethod update_secrets()
-
-### class Conversation
-
-### class Conversation
-
-Bases: `object`
+## class Conversation
 
 Factory class for creating conversation instances with OpenHands agents.
 
@@ -144,439 +186,183 @@ This factory automatically creates either a LocalConversation or RemoteConversat
 based on the workspace type provided. LocalConversation runs the agent locally,
 while RemoteConversation connects to a remote agent server.
 
-* Returns:
-  LocalConversation if workspace is local, RemoteConversation if workspace
-  is remote.
+**Returns:**
 
-#### Example
+- LocalConversation if workspace is local, RemoteConversation if workspace
+- is remote.
 
-```pycon
->>> from openhands.sdk import LLM, Agent, Conversation
->>> llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("key"))
->>> agent = Agent(llm=llm, tools=[])
->>> conversation = Conversation(agent=agent, workspace="./workspace")
->>> conversation.send_message("Hello!")
->>> conversation.run()
-```
+## class EventLog
 
-### class ConversationExecutionStatus
-
-Bases: `str`, `Enum`
-
-Enum representing the current execution state of the conversation.
-
-#### Methods
-
-#### DELETING = 'deleting'
-
-#### ERROR = 'error'
-
-#### FINISHED = 'finished'
-
-#### IDLE = 'idle'
-
-#### PAUSED = 'paused'
-
-#### RUNNING = 'running'
-
-#### STUCK = 'stuck'
-
-#### WAITING_FOR_CONFIRMATION = 'waiting_for_confirmation'
-
-### class ConversationState
-
-Bases: `OpenHandsModel`
-
-
-#### Properties
-
-- `activated_knowledge_skills`: list[str]
-- `agent`: AgentBase
-- `blocked_actions`: dict[str, str]
-- `blocked_messages`: dict[str, str]
-- `confirmation_policy`: ConfirmationPolicyBase
-- `env_observation_persistence_dir`: str | None
-  Directory for persisting environment observation files.
-- `events`: [EventLog](#class-eventlog)
-- `execution_status`: [ConversationExecutionStatus](#class-conversationexecutionstatus)
-- `id`: UUID
-- `max_iterations`: int
-- `persistence_dir`: str | None
-- `secret_registry`: [SecretRegistry](#class-secretregistry)
-- `security_analyzer`: SecurityAnalyzerBase | None
-- `stats`: ConversationStats
-- `stuck_detection`: bool
-- `workspace`: BaseWorkspace
-
-#### Methods
-
-#### acquire()
-
-Acquire the lock.
-
-* Parameters:
-  * `blocking` – If True, block until lock is acquired. If False, return
-    immediately.
-  * `timeout` – Maximum time to wait for lock (ignored if blocking=False).
-    -1 means wait indefinitely.
-* Returns:
-  True if lock was acquired, False otherwise.
-
-#### block_action()
-
-Persistently record a hook-blocked action.
-
-#### block_message()
-
-Persistently record a hook-blocked user message.
-
-#### classmethod create()
-
-Create a new conversation state or resume from persistence.
-
-This factory method handles both new conversation creation and resumption
-from persisted state.
-
-New conversation:
-The provided Agent is used directly. Pydantic validation happens via the
-cls() constructor.
-
-Restored conversation:
-The provided Agent is validated against the persisted agent using
-agent.load(). Tools must match (they may have been used in conversation
-history), but all other configuration can be freely changed: LLM,
-agent_context, condenser, system prompts, etc.
-
-* Parameters:
-  * `id` – Unique conversation identifier
-  * `agent` – The Agent to use (tools must match persisted on restore)
-  * `workspace` – Working directory for agent operations
-  * `persistence_dir` – Directory for persisting state and events
-  * `max_iterations` – Maximum iterations per run
-  * `stuck_detection` – Whether to enable stuck detection
-  * `cipher` – Optional cipher for encrypting/decrypting secrets in
-    persisted state. If provided, secrets are encrypted when
-    saving and decrypted when loading. If not provided, secrets
-    are redacted (lost) on serialization.
-* Returns:
-  ConversationState ready for use
-* Raises:
-  * `ValueError` – If conversation ID or tools mismatch on restore
-  * `ValidationError` – If agent or other fields fail Pydantic validation
-
-#### static get_unmatched_actions()
-
-Find actions in the event history that don’t have matching observations.
-
-This method identifies ActionEvents that don’t have corresponding
-ObservationEvents or UserRejectObservations, which typically indicates
-actions that are pending confirmation or execution.
-
-* Parameters:
-  `events` – List of events to search through
-* Returns:
-  List of ActionEvent objects that don’t have corresponding observations,
-  in chronological order
-
-#### locked()
-
-Return True if the lock is currently held by any thread.
-
-#### model_config = (configuration object)
-
-Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-
-#### model_post_init()
-
-This function is meant to behave like a BaseModel method to initialise private attributes.
-
-It takes context as an argument since that’s what pydantic-core passes when calling it.
-
-* Parameters:
-  * `self` – The BaseModel instance.
-  * `context` – The context.
-
-#### owned()
-
-Return True if the lock is currently held by the calling thread.
-
-#### pop_blocked_action()
-
-Remove and return a hook-blocked action reason, if present.
-
-#### pop_blocked_message()
-
-Remove and return a hook-blocked message reason, if present.
-
-#### release()
-
-Release the lock.
-
-* Raises:
-  `RuntimeError` – If the current thread doesn’t own the lock.
-
-#### set_on_state_change()
-
-Set a callback to be called when state changes.
-
-* Parameters:
-  `callback` – A function that takes an Event (ConversationStateUpdateEvent)
-  or None to remove the callback
-
-### class ConversationVisualizerBase
-
-Bases: `ABC`
-
-Base class for conversation visualizers.
-
-This abstract base class defines the interface that all conversation visualizers
-must implement. Visualizers can be created before the Conversation is initialized
-and will be configured with the conversation state automatically.
-
-The typical usage pattern:
-1. Create a visualizer instance:
-
-  viz = MyVisualizer()
-1. Pass it to Conversation: conv = Conversation(agent, visualizer=viz)
-2. Conversation automatically calls viz.initialize(state) to attach the state
-
-You can also pass the uninstantiated class if you don’t need extra args
-: for initialization, and Conversation will create it:
-  : conv = Conversation(agent, visualizer=MyVisualizer)
-
-Conversation will then calls MyVisualizer() followed by initialize(state)
-
-
-#### Properties
-
-- `conversation_stats`: ConversationStats | None
-  Get conversation stats from the state.
-
-#### Methods
-
-#### __init__()
-
-Initialize the visualizer base.
-
-#### create_sub_visualizer()
-
-Create a visualizer for a sub-agent during delegation.
-
-Override this method to support sub-agent visualization in multi-agent
-delegation scenarios. The sub-visualizer will be used to display events
-from the spawned sub-agent.
-
-By default, returns None which means sub-agents will not have visualization.
-Subclasses that support delegation (like DelegationVisualizer) should
-override this method to create appropriate sub-visualizers.
-
-* Parameters:
-  `agent_id` – The identifier of the sub-agent being spawned
-* Returns:
-  A visualizer instance for the sub-agent, or None if sub-agent
-  visualization is not supported
-
-#### final initialize()
-
-Initialize the visualizer with conversation state.
-
-This method is called by Conversation after the state is created,
-allowing the visualizer to access conversation stats and other
-state information.
-
-Subclasses should not override this method, to ensure the state is set.
-
-* Parameters:
-  `state` – The conversation state object
-
-#### abstractmethod on_event()
-
-Handle a conversation event.
-
-This method is called for each event in the conversation and should
-implement the visualization logic.
-
-* Parameters:
-  `event` – The event to visualize
-
-### class DefaultConversationVisualizer
-
-Bases: [`ConversationVisualizerBase`](#class-conversationvisualizerbase)
-
-Handles visualization of conversation events with Rich formatting.
-
-Provides Rich-formatted output with semantic dividers and complete content display.
-
-#### Methods
-
-#### __init__()
-
-Initialize the visualizer.
-
-* Parameters:
-  * `highlight_regex` – Dictionary mapping regex patterns to Rich color styles
-    for highlighting keywords in the visualizer.
-    For example: (configuration object)
-  * `skip_user_messages` – If True, skip displaying user messages. Useful for
-    scenarios where user input is not relevant to show.
-
-#### on_event()
-
-Main event handler that displays events with Rich formatting.
-
-### class EventLog
-
-Bases: [`EventsListBase`](#class-eventslistbase)
+Bases: `EventsListBase`
 
 Persistent event log with locking for concurrent writes.
 
 This class provides thread-safe and process-safe event storage using
-the FileStore’s locking mechanism. Events are persisted to disk and
+the FileStore's locking mechanism. Events are persisted to disk and
 can be accessed by index or event ID.
 
-#### Methods
+### Methods
 
-#### NOTE
-For LocalFileStore, file locking via flock() does NOT work reliably
-on NFS mounts or network filesystems. Users deploying with shared
-storage should use alternative coordination mechanisms.
+**__init__(fs: FileStore, dir_path: str = EVENTS_DIR) -> None**
 
-#### __init__()
-
-#### append()
-
-Append an event with locking for thread/process safety.
-
-* Raises:
-  * `TimeoutError` – If the lock cannot be acquired within LOCK_TIMEOUT_SECONDS.
-  * `ValueError` – If an event with the same ID already exists.
-
-#### get_id()
-
-Return the event_id for a given index.
-
-#### get_index()
+**get_index(event_id: EventID) -> int**
 
 Return the integer index for a given event_id.
 
-### class EventsListBase
+**get_id(idx: int) -> EventID**
 
-Bases: `Sequence`[`Event`], `ABC`
+Return the event_id for a given index.
+
+**append(event: Event) -> None**
+
+Append an event with locking for thread/process safety.
+
+**Raises:**
+
+- `TimeoutError` – If the lock cannot be acquired within LOCK_TIMEOUT_SECONDS.
+- `ValueError` – If an event with the same ID already exists.
+
+## class EventsListBase
+
+Bases: `Sequence[Event]`, `ABC`
 
 Abstract base class for event lists that can be appended to.
 
 This provides a common interface for both local EventLog and remote
 RemoteEventsList implementations, avoiding circular imports in protocols.
 
-#### Methods
+### Methods
 
-#### abstractmethod append()
+**abstractmethod append(event: Event) -> None**
 
 Add a new event to the list.
 
-### class LocalConversation
+## class WebSocketConnectionError
 
-Bases: [`BaseConversation`](#class-baseconversation)
+Bases: `RuntimeError`
 
+Raised when WebSocket connection fails to establish within the timeout.
 
-#### Properties
+### Properties
+
+- `conversation_id`
+- `timeout`
+
+### Methods
+
+**__init__(conversation_id: ConversationID, timeout: float, message: str | None = None) -> None**
+
+## class LocalConversation
+
+Bases: `BaseConversation`
+
+### Properties
 
 - `agent`: AgentBase
-- `id`: UUID
-  Get the unique ID of the conversation.
-- `llm_registry`: LLMRegistry
-- `max_iteration_per_run`: int
-- `state`: [ConversationState](#class-conversationstate)
-  Get the conversation state.
-  It returns a protocol that has a subset of ConversationState methods
-  and properties. We will have the ability to access the same properties
-  of ConversationState on a remote conversation object.
-  But we won’t be able to access methods that mutate the state.
-- `stuck_detector`: [StuckDetector](#class-stuckdetector) | None
-  Get the stuck detector instance if enabled.
 - `workspace`: LocalWorkspace
+- `max_iteration_per_run`: int
+- `llm_registry`: LLMRegistry
+- `delete_on_close`: bool
+- `id`: ConversationID
+  Get the unique ID of the conversation.
+- `state`: ConversationState
+  Get the conversation state.
 
-#### Methods
+It returns a protocol that has a subset of ConversationState methods
+and properties. We will have the ability to access the same properties
+of ConversationState on a remote conversation object.
+But we won't be able to access methods that mutate the state.
+- `conversation_stats`
+- `stuck_detector`: StuckDetector | None
+  Get the stuck detector instance if enabled.
+- `resolved_plugins`: list[ResolvedPluginSource] | None
+  Get the resolved plugin sources after plugins are loaded.
 
-#### __init__()
+Returns None if plugins haven't been loaded yet, or if no plugins
+were specified. Use this for persistence to ensure conversation
+resume uses the exact same plugin versions.
+
+### Methods
+
+**__init__(agent: AgentBase, workspace: str | Path | LocalWorkspace, plugins: list[PluginSource] | None = None, persistence_dir: str | Path | None = None, conversation_id: ConversationID | None = None, callbacks: list[ConversationCallbackType] | None = None, token_callbacks: list[ConversationTokenCallbackType] | None = None, hook_config: HookConfig | None = None, max_iteration_per_run: int = 500, stuck_detection: bool = True, stuck_detection_thresholds: StuckDetectionThresholds | Mapping[str, int] | None = None, visualizer: type[ConversationVisualizerBase] | ConversationVisualizerBase | None = DefaultConversationVisualizer, secrets: Mapping[str, SecretValue] | None = None, delete_on_close: bool = True, cipher: Cipher | None = None, _: object = \{\})**
 
 Initialize the conversation.
 
-* Parameters:
-  * `agent` – The agent to use for the conversation
-  * `workspace` – Working directory for agent operations and tool execution.
-    Can be a string path, Path object, or LocalWorkspace instance.
-  * `persistence_dir` – Directory for persisting conversation state and events.
-    Can be a string path or Path object.
-  * `conversation_id` – Optional ID for the conversation. If provided, will
-    be used to identify the conversation. The user might want to
-    suffix their persistent filestore with this ID.
-  * `callbacks` – Optional list of callback functions to handle events
-  * `token_callbacks` – Optional list of callbacks invoked for streaming deltas
-  * `hook_config` – Optional hook configuration to auto-wire session hooks
-  * `max_iteration_per_run` – Maximum number of iterations per run
-  * `visualizer` –  
+**Parameters:**
 
-    Visualization configuration. Can be:
-    - ConversationVisualizerBase subclass: Class to instantiate
-    > (default: ConversationVisualizer)
-    - ConversationVisualizerBase instance: Use custom visualizer
-    - None: No visualization
-  * `stuck_detection` – Whether to enable stuck detection
-  * `stuck_detection_thresholds` – Optional configuration for stuck detection
-    thresholds. Can be a StuckDetectionThresholds instance or
-    a dict with keys: ‘action_observation’, ‘action_error’,
-    ‘monologue’, ‘alternating_pattern’. Values are integers
-    representing the number of repetitions before triggering.
-  * `cipher` – Optional cipher for encrypting/decrypting secrets in persisted
-    state. If provided, secrets are encrypted when saving and
-    decrypted when loading. If not provided, secrets are redacted
-    (lost) on serialization.
+- `agent` *AgentBase* – The agent to use for the conversation.
+- `workspace` *str | Path | LocalWorkspace* – Working directory for agent operations and tool execution.
+Can be a string path, Path object, or LocalWorkspace instance.
+- `plugins` *list[PluginSource] | None* – Optional list of plugins to load. Each plugin is specified
+with a source (github:owner/repo, git URL, or local path),
+optional ref (branch/tag/commit), and optional repo_path for
+monorepos. Plugins are loaded in order with these merge
+semantics: skills override by name (last wins), MCP config
+override by key (last wins), hooks concatenate (all run).
+- `persistence_dir` *str | Path | None* – Directory for persisting conversation state and events.
+Can be a string path or Path object.
+- `conversation_id` *ConversationID | None* – Optional ID for the conversation. If provided, will
+      be used to identify the conversation. The user might want to
+      suffix their persistent filestore with this ID.
+- `callbacks` *list[ConversationCallbackType] | None* – Optional list of callback functions to handle events
+- `token_callbacks` *list[ConversationTokenCallbackType] | None* – Optional list of callbacks invoked for streaming deltas
+- `hook_config` *HookConfig | None* – Optional hook configuration to auto-wire session hooks.
+If plugins are loaded, their hooks are combined with this config.
+- `max_iteration_per_run` *int* – Maximum number of iterations per run
+- `visualizer` *type[ConversationVisualizerBase] | ConversationVisualizerBase | None* – Visualization configuration. Can be:
+       - ConversationVisualizerBase subclass: Class to instantiate
+         (default: ConversationVisualizer)
+       - ConversationVisualizerBase instance: Use custom visualizer
+       - None: No visualization
+- `stuck_detection` *bool* – Whether to enable stuck detection
+- `stuck_detection_thresholds` *StuckDetectionThresholds | Mapping[str, int] | None* – Optional configuration for stuck detection
+      thresholds. Can be a StuckDetectionThresholds instance or
+      a dict with keys: 'action_observation', 'action_error',
+      'monologue', 'alternating_pattern'. Values are integers
+      representing the number of repetitions before triggering.
+- `cipher` *Cipher | None* – Optional cipher for encrypting/decrypting secrets in persisted
+   state. If provided, secrets are encrypted when saving and
+   decrypted when loading. If not provided, secrets are redacted
+   (lost) on serialization.
 
-#### ask_agent()
+**send_message(message: str | Message, sender: str | None = None) -> None**
 
-Ask the agent a simple, stateless question and get a direct LLM response.
+Send a message to the agent.
 
-This bypasses the normal conversation flow and does not modify, persist,
-or become part of the conversation state. The request is not remembered by
-the main agent, no events are recorded, and execution status is untouched.
-It is also thread-safe and may be called while conversation.run() is
-executing in another thread.
+**Parameters:**
 
-* Parameters:
-  `question` – A simple string question to ask the agent
-* Returns:
-  A string response from the agent
+- `message` *str | Message* – Either a string (which will be converted to a user message)
+    or a Message object
+- `sender` *str | None* – Optional identifier of the sender. Can be used to track
+   message origin in multi-agent scenarios. For example, when
+   one agent delegates to another, the sender can be set to
+   identify which agent is sending the message.
 
-#### close()
+**run() -> None**
 
-Close the conversation and clean up all tool executors.
+Runs the conversation until the agent finishes.
 
-#### condense()
+In confirmation mode:
+- First call: creates actions but doesn't execute them, stops and waits
+- Second call: executes pending actions (implicit confirmation)
 
-Synchronously force condense the conversation history.
+In normal mode:
+- Creates and executes actions immediately
 
-If the agent is currently running, condense() will wait for the
-ongoing step to finish before proceeding.
+Can be paused between steps
 
-Raises ValueError if no compatible condenser exists.
+**set_confirmation_policy(policy: ConfirmationPolicyBase) -> None**
 
-#### property conversation_stats
+Set the confirmation policy and store it in conversation state.
 
-#### generate_title()
+**reject_pending_actions(reason: str = 'User rejected the action') -> None**
 
-Generate a title for the conversation based on the first user message.
+Reject all pending actions from the agent.
 
-* Parameters:
-  * `llm` – Optional LLM to use for title generation. If not provided,
-    uses self.agent.llm.
-  * `max_length` – Maximum length of the generated title.
-* Returns:
-  A generated title for the conversation.
-* Raises:
-  `ValueError` – If no user messages are found in the conversation.
+This is a non-invasive method to reject actions between run() calls.
+Also clears the agent_waiting_for_confirmation flag.
 
-#### pause()
+**pause() -> None**
 
 Pause agent execution.
 
@@ -587,121 +373,211 @@ of the run loop (between agent steps).
 Note: If called during an LLM completion, the pause will not take
 effect until the current LLM call completes.
 
-#### reject_pending_actions()
-
-Reject all pending actions from the agent.
-
-This is a non-invasive method to reject actions between run() calls.
-Also clears the agent_waiting_for_confirmation flag.
-
-#### run()
-
-Runs the conversation until the agent finishes.
-
-In confirmation mode:
-- First call: creates actions but doesn’t execute them, stops and waits
-- Second call: executes pending actions (implicit confirmation)
-
-In normal mode:
-- Creates and executes actions immediately
-
-Can be paused between steps
-
-#### send_message()
-
-Send a message to the agent.
-
-* Parameters:
-  * `message` – Either a string (which will be converted to a user message)
-    or a Message object
-  * `sender` – Optional identifier of the sender. Can be used to track
-    message origin in multi-agent scenarios. For example, when
-    one agent delegates to another, the sender can be set to
-    identify which agent is sending the message.
-
-#### set_confirmation_policy()
-
-Set the confirmation policy and store it in conversation state.
-
-#### set_security_analyzer()
-
-Set the security analyzer for the conversation.
-
-#### update_secrets()
+**update_secrets(secrets: Mapping[str, SecretValue]) -> None**
 
 Add secrets to the conversation.
 
-* Parameters:
-  `secrets` – Dictionary mapping secret keys to values or no-arg callables.
-  SecretValue = str | Callable[[], str]. Callables are invoked lazily
-  when a command references the secret key.
+**Parameters:**
 
-### class RemoteConversation
+- `secrets` *Mapping[str, SecretValue]* – Dictionary mapping secret keys to values or no-arg callables.
+     SecretValue = str | Callable[[], str]. Callables are invoked lazily
+     when a command references the secret key.
 
-Bases: [`BaseConversation`](#class-baseconversation)
+**set_security_analyzer(analyzer: SecurityAnalyzerBase | None) -> None**
 
+Set the security analyzer for the conversation.
 
-#### Properties
+**close() -> None**
 
-- `agent`: AgentBase
-- `id`: UUID
-- `max_iteration_per_run`: int
-- `state`: RemoteState
-  Access to remote conversation state.
-- `workspace`: RemoteWorkspace
+Close the conversation and clean up all tool executors.
 
-#### Methods
-
-#### __init__()
-
-Remote conversation proxy that talks to an agent server.
-
-* Parameters:
-  * `agent` – Agent configuration (will be sent to the server)
-  * `workspace` – The working directory for agent operations and tool execution.
-  * `conversation_id` – Optional existing conversation id to attach to
-  * `callbacks` – Optional callbacks to receive events (not yet streamed)
-  * `max_iteration_per_run` – Max iterations configured on server
-  * `stuck_detection` – Whether to enable stuck detection on server
-  * `stuck_detection_thresholds` – Optional configuration for stuck detection
-    thresholds. Can be a StuckDetectionThresholds instance or
-    a dict with keys: ‘action_observation’, ‘action_error’,
-    ‘monologue’, ‘alternating_pattern’. Values are integers
-    representing the number of repetitions before triggering.
-  * `hook_config` – Optional hook configuration for session hooks
-  * `visualizer` –  
-
-    Visualization configuration. Can be:
-    - ConversationVisualizerBase subclass: Class to instantiate
-    > (default: ConversationVisualizer)
-    - ConversationVisualizerBase instance: Use custom visualizer
-    - None: No visualization
-  * `secrets` – Optional secrets to initialize the conversation with
-
-#### ask_agent()
+**ask_agent(question: str) -> str**
 
 Ask the agent a simple, stateless question and get a direct LLM response.
 
-This bypasses the normal conversation flow and does not modify, persist,
+This bypasses the normal conversation flow and does **not** modify, persist,
 or become part of the conversation state. The request is not remembered by
 the main agent, no events are recorded, and execution status is untouched.
-It is also thread-safe and may be called while conversation.run() is
+It is also thread-safe and may be called while `conversation.run()` is
 executing in another thread.
 
-* Parameters:
-  `question` – A simple string question to ask the agent
-* Returns:
-  A string response from the agent
+**Parameters:**
 
-#### close()
+- `question` *str* – A simple string question to ask the agent
 
-Close the conversation and clean up resources.
+**Returns:**
 
-Note: We don’t close self._client here because it’s shared with the workspace.
-The workspace owns the client and will close it during its own cleanup.
-Closing it here would prevent the workspace from making cleanup API calls.
+- *str* A string response from the agent
 
-#### condense()
+**generate_title(llm: LLM | None = None, max_length: int = 50) -> str**
+
+Generate a title for the conversation based on the first user message.
+
+**Parameters:**
+
+- `llm` *LLM | None* – Optional LLM to use for title generation. If not provided,
+ uses self.agent.llm.
+- `max_length` *int* – Maximum length of the generated title.
+
+**Returns:**
+
+- *str* A generated title for the conversation.
+
+**Raises:**
+
+- `ValueError` – If no user messages are found in the conversation.
+
+**condense() -> None**
+
+Synchronously force condense the conversation history.
+
+If the agent is currently running, `condense()` will wait for the
+ongoing step to finish before proceeding.
+
+Raises ValueError if no compatible condenser exists.
+
+**execute_tool(tool_name: str, action: Action) -> Observation**
+
+Execute a tool directly without going through the agent loop.
+
+This method allows executing tools before or outside of the normal
+conversation.run() flow. It handles agent initialization automatically,
+so tools can be executed before the first run() call.
+
+Note: This method bypasses the agent loop, including confirmation
+policies and security analyzer checks. Callers are responsible for
+applying any safeguards before executing potentially destructive tools.
+
+This is useful for:
+- Pre-run setup operations (e.g., indexing repositories)
+- Manual tool execution for environment setup
+- Testing tool behavior outside the agent loop
+
+**Parameters:**
+
+- `tool_name` *str* – The name of the tool to execute (e.g., "sleeptime_compute")
+- `action` *Action* – The action to pass to the tool executor
+
+**Returns:**
+
+- *Observation* The observation returned by the tool execution
+
+**Raises:**
+
+- `KeyError` – If the tool is not found in the agent's tools
+- `NotImplementedError` – If the tool has no executor
+
+## class RemoteConversation
+
+Bases: `BaseConversation`
+
+### Properties
+
+- `agent`: AgentBase
+- `max_iteration_per_run`: int
+- `workspace`: RemoteWorkspace
+- `delete_on_close`: bool
+- `id`: ConversationID
+- `state`: RemoteState
+  Access to remote conversation state.
+- `conversation_stats`
+- `stuck_detector`
+  Stuck detector for compatibility.
+Not implemented for remote conversations.
+
+### Methods
+
+**__init__(agent: AgentBase, workspace: RemoteWorkspace, plugins: list | None = None, conversation_id: ConversationID | None = None, callbacks: list[ConversationCallbackType] | None = None, max_iteration_per_run: int = 500, stuck_detection: bool = True, stuck_detection_thresholds: StuckDetectionThresholds | Mapping[str, int] | None = None, hook_config: HookConfig | None = None, visualizer: type[ConversationVisualizerBase] | ConversationVisualizerBase | None = DefaultConversationVisualizer, secrets: Mapping[str, SecretValue] | None = None, delete_on_close: bool = False, _: object = \{\}) -> None**
+
+Remote conversation proxy that talks to an agent server.
+
+**Parameters:**
+
+- `agent` *AgentBase* – Agent configuration (will be sent to the server)
+- `workspace` *RemoteWorkspace* – The working directory for agent operations and tool execution.
+- `plugins` *list | None* – Optional list of plugins to load on the server. Each plugin
+    is a PluginSource specifying source, ref, and repo_path.
+- `conversation_id` *ConversationID | None* – Optional existing conversation id to attach to
+- `callbacks` *list[ConversationCallbackType] | None* – Optional callbacks to receive events (not yet streamed)
+- `max_iteration_per_run` *int* – Max iterations configured on server
+- `stuck_detection` *bool* – Whether to enable stuck detection on server
+- `stuck_detection_thresholds` *StuckDetectionThresholds | Mapping[str, int] | None* – Optional configuration for stuck detection
+      thresholds. Can be a StuckDetectionThresholds instance or
+      a dict with keys: 'action_observation', 'action_error',
+      'monologue', 'alternating_pattern'. Values are integers
+      representing the number of repetitions before triggering.
+- `hook_config` *HookConfig | None* – Optional hook configuration for session hooks
+- `visualizer` *type[ConversationVisualizerBase] | ConversationVisualizerBase | None* – Visualization configuration. Can be:
+       - ConversationVisualizerBase subclass: Class to instantiate
+         (default: ConversationVisualizer)
+       - ConversationVisualizerBase instance: Use custom visualizer
+       - None: No visualization
+- `secrets` *Mapping[str, SecretValue] | None* – Optional secrets to initialize the conversation with
+
+**send_message(message: str | Message, sender: str | None = None) -> None**
+
+**run(blocking: bool = True, poll_interval: float = 1.0, timeout: float = 3600.0) -> None**
+
+Trigger a run on the server.
+
+**Parameters:**
+
+- `blocking` *bool* – If True (default), wait for the run to complete by polling
+the server. If False, return immediately after triggering the run.
+- `poll_interval` *float* – Time in seconds between status polls (only used when
+blocking=True). Default is 1.0 second.
+- `timeout` *float* – Maximum time in seconds to wait for the run to complete
+(only used when blocking=True). Default is 3600 seconds.
+
+**Raises:**
+
+- `ConversationRunError` – If the run fails or times out.
+
+**set_confirmation_policy(policy: ConfirmationPolicyBase) -> None**
+
+**set_security_analyzer(analyzer: SecurityAnalyzerBase | None) -> None**
+
+Set the security analyzer for the remote conversation.
+
+**reject_pending_actions(reason: str = 'User rejected the action') -> None**
+
+**pause() -> None**
+
+**update_secrets(secrets: Mapping[str, SecretValue]) -> None**
+
+**ask_agent(question: str) -> str**
+
+Ask the agent a simple, stateless question and get a direct LLM response.
+
+This bypasses the normal conversation flow and does **not** modify, persist,
+or become part of the conversation state. The request is not remembered by
+the main agent, no events are recorded, and execution status is untouched.
+It is also thread-safe and may be called while `conversation.run()` is
+executing in another thread.
+
+**Parameters:**
+
+- `question` *str* – A simple string question to ask the agent
+
+**Returns:**
+
+- *str* A string response from the agent
+
+**generate_title(llm: LLM | None = None, max_length: int = 50) -> str**
+
+Generate a title for the conversation based on the first user message.
+
+**Parameters:**
+
+- `llm` *LLM | None* – Optional LLM to use for title generation. If provided, its usage_id
+ will be sent to the server. If not provided, uses the agent's LLM.
+- `max_length` *int* – Maximum length of the generated title.
+
+**Returns:**
+
+- *str* A generated title for the conversation.
+
+**condense() -> None**
 
 Force condensation of the conversation history.
 
@@ -712,68 +588,53 @@ condensation if a condenser is configured and handles condensation requests.
 The condensation will be applied on the server side and will modify the
 conversation state by adding a condensation event to the history.
 
-* Raises:
-  `HTTPError` – If the server returns an error (e.g., no condenser configured).
+**Raises:**
 
-#### property conversation_stats
+- `HTTPError` – If the server returns an error (e.g., no condenser configured).
 
-#### generate_title()
+**execute_tool(tool_name: str, action: Action) -> Observation**
 
-Generate a title for the conversation based on the first user message.
+Execute a tool directly without going through the agent loop.
 
-* Parameters:
-  * `llm` – Optional LLM to use for title generation. If provided, its usage_id
-    will be sent to the server. If not provided, uses the agent’s LLM.
-  * `max_length` – Maximum length of the generated title.
-* Returns:
-  A generated title for the conversation.
+Note: This method is not yet supported for RemoteConversation.
+Tool execution for remote conversations happens on the server side
+during the normal agent loop.
 
-#### pause()
+**Parameters:**
 
-#### reject_pending_actions()
+- `tool_name` *str* – The name of the tool to execute
+- `action` *Action* – The action to pass to the tool executor
 
-#### run()
+**Raises:**
 
-Trigger a run on the server.
+- `NotImplementedError` – Always, as this feature is not yet supported
+for remote conversations.
 
-* Parameters:
-  * `blocking` – If True (default), wait for the run to complete by polling
-    the server. If False, return immediately after triggering the run.
-  * `poll_interval` – Time in seconds between status polls (only used when
-    blocking=True). Default is 1.0 second.
-  * `timeout` – Maximum time in seconds to wait for the run to complete
-    (only used when blocking=True). Default is 3600 seconds.
-* Raises:
-  `ConversationRunError` – If the run fails or times out.
+**close() -> None**
 
-#### send_message()
+Close the conversation and clean up resources.
 
-Send a message to the agent.
+Note: We don't close self._client here because it's shared with the workspace.
+The workspace owns the client and will close it during its own cleanup.
+Closing it here would prevent the workspace from making cleanup API calls.
 
-* Parameters:
-  * `message` – Either a string (which will be converted to a user message)
-    or a Message object
-  * `sender` – Optional identifier of the sender. Can be used to track
-    message origin in multi-agent scenarios. For example, when
-    one agent delegates to another, the sender can be set to
-    identify which agent is sending the message.
+**get_agent_final_response(events: Sequence[Event]) -> str**
 
-#### set_confirmation_policy()
+Extract the final response from the agent.
 
-Set the confirmation policy for the conversation.
+An agent can end a conversation in two ways:
+1. By calling the finish tool
+2. By returning a text message with no tool calls
 
-#### set_security_analyzer()
+**Parameters:**
 
-Set the security analyzer for the remote conversation.
+- `events` *Sequence[Event]* – List of conversation events to search through.
 
-#### property stuck_detector
+**Returns:**
 
-Stuck detector for compatibility.
-Not implemented for remote conversations.
+- *str* The final response message from the agent, or empty string if not found.
 
-#### update_secrets()
-
-### class SecretRegistry
+## class SecretRegistry
 
 Bases: `OpenHandsModel`
 
@@ -786,75 +647,252 @@ environment variables.
 
 Secret sources will redact / encrypt their sensitive values as appropriate when
 serializing, depending on the content of the context. If a context is present
-and contains a ‘cipher’ object, this is used for encryption. If it contains a
-boolean ‘expose_secrets’ flag set to True, secrets are dunped in plain text.
+and contains a 'cipher' object, this is used for encryption. If it contains a
+boolean 'expose_secrets' flag set to True, secrets are dunped in plain text.
 Otherwise secrets are redacted.
 
 Additionally, it tracks the latest exported values to enable consistent masking
 even when callable secrets fail on subsequent calls.
 
-
-#### Properties
+### Properties
 
 - `secret_sources`: dict[str, SecretSource]
 
-#### Methods
+### Methods
 
-#### find_secrets_in_text()
+**update_secrets(secrets: Mapping[str, SecretValue]) -> None**
+
+Add or update secrets in the manager.
+
+**Parameters:**
+
+- `secrets` *Mapping[str, SecretValue]* – Dictionary mapping secret keys to either string values
+    or callable functions that return string values
+
+**find_secrets_in_text(text: str) -> set[str]**
 
 Find all secret keys mentioned in the given text.
 
-* Parameters:
-  `text` – The text to search for secret keys
-* Returns:
-  Set of secret keys found in the text
+**Parameters:**
 
-#### get_secrets_as_env_vars()
+- `text` *str* – The text to search for secret keys
+
+**Returns:**
+
+- *set[str]* Set of secret keys found in the text
+
+**get_secrets_as_env_vars(command: str) -> dict[str, str]**
 
 Get secrets that should be exported as environment variables for a command.
 
-* Parameters:
-  `command` – The bash command to check for secret references
-* Returns:
-  Dictionary of environment variables to export (key -> value)
+**Parameters:**
 
-#### mask_secrets_in_output()
+- `command` *str* – The bash command to check for secret references
+
+**Returns:**
+
+- *dict[str, str]* Dictionary of environment variables to export (key -> value)
+
+**mask_secrets_in_output(text: str) -> str**
 
 Mask secret values in the given text.
 
 This method uses both the current exported values and attempts to get
 fresh values from callables to ensure comprehensive masking.
 
-* Parameters:
-  `text` – The text to mask secrets in
-* Returns:
-  Text with secret values replaced by `<secret-hidden>`
+**Parameters:**
 
-#### model_config = (configuration object)
+- `text` *str* – The text to mask secrets in
 
-Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+**Returns:**
 
-#### model_post_init()
+- *str* Text with secret values replaced by `<secret-hidden>`
 
-This function is meant to behave like a BaseModel method to initialise private attributes.
+## class ConversationExecutionStatus
 
-It takes context as an argument since that’s what pydantic-core passes when calling it.
+Bases: `str`, `Enum`
 
-* Parameters:
-  * `self` – The BaseModel instance.
-  * `context` – The context.
+Enum representing the current execution state of the conversation.
 
-#### update_secrets()
+### Properties
 
-Add or update secrets in the manager.
+- `IDLE`
+- `RUNNING`
+- `PAUSED`
+- `WAITING_FOR_CONFIRMATION`
+- `FINISHED`
+- `ERROR`
+- `STUCK`
+- `DELETING`
 
-* Parameters:
-  `secrets` – Dictionary mapping secret keys to either string values
-  or callable functions that return string values
+### Methods
 
-### class StuckDetector
+**is_terminal() -> bool**
 
-Bases: `object`
+Check if this status represents a terminal state.
+
+Terminal states indicate the run has completed and the agent is no longer
+actively processing. These are: FINISHED, ERROR, STUCK.
+
+Note: IDLE is NOT a terminal state - it's the initial state of a conversation
+before any run has started. Including IDLE would cause false positives when
+the WebSocket delivers the initial state update during connection.
+
+**Returns:**
+
+- *bool* True if this is a terminal status, False otherwise.
+
+## class ConversationState
+
+Bases: `OpenHandsModel`
+
+### Properties
+
+- `id`: ConversationID
+  Unique conversation ID
+- `agent`: AgentBase
+  The agent running in the conversation. This is persisted to allow resuming conversations and check agent configuration to handle e.g., tool changes, LLM changes, etc.
+- `workspace`: BaseWorkspace
+  Workspace used by the agent to execute commands and read/write files. Not the process working directory.
+- `persistence_dir`: str | None
+  Directory for persisting conversation state and events. If None, conversation will not be persisted.
+- `max_iterations`: int
+  Maximum number of iterations the agent can perform in a single run.
+- `stuck_detection`: bool
+  Whether to enable stuck detection for the agent.
+- `execution_status`: ConversationExecutionStatus
+- `confirmation_policy`: ConfirmationPolicyBase
+- `security_analyzer`: SecurityAnalyzerBase | None
+  Optional security analyzer to evaluate action risks.
+- `activated_knowledge_skills`: list[str]
+  List of activated knowledge skills name
+- `blocked_actions`: dict[str, str]
+  Actions blocked by PreToolUse hooks, keyed by action ID
+- `blocked_messages`: dict[str, str]
+  Messages blocked by UserPromptSubmit hooks, keyed by message ID
+- `stats`: ConversationStats
+  Conversation statistics for tracking LLM metrics
+- `secret_registry`: SecretRegistry
+  Registry for handling secrets and sensitive data
+- `events`: EventLog
+- `env_observation_persistence_dir`: str | None
+  Directory for persisting environment observation files.
+
+### Methods
+
+**set_on_state_change(callback: ConversationCallbackType | None) -> None**
+
+Set a callback to be called when state changes.
+
+**Parameters:**
+
+- `callback` *ConversationCallbackType | None* – A function that takes an Event (ConversationStateUpdateEvent)
+     or None to remove the callback
+
+**create(id: ConversationID, agent: AgentBase, workspace: BaseWorkspace, persistence_dir: str | None = None, max_iterations: int = 500, stuck_detection: bool = True, cipher: Cipher | None = None) -> ConversationState**
+
+Create a new conversation state or resume from persistence.
+
+This factory method handles both new conversation creation and resumption
+from persisted state.
+
+**New conversation:**
+The provided Agent is used directly. Pydantic validation happens via the
+cls() constructor.
+
+**Restored conversation:**
+The provided Agent is validated against the persisted agent using
+agent.load(). Tools must match (they may have been used in conversation
+history), but all other configuration can be freely changed: LLM,
+agent_context, condenser, system prompts, etc.
+
+**Parameters:**
+
+- `id` *ConversationID* – Unique conversation identifier
+- `agent` *AgentBase* – The Agent to use (tools must match persisted on restore)
+- `workspace` *BaseWorkspace* – Working directory for agent operations
+- `persistence_dir` *str | None* – Directory for persisting state and events
+- `max_iterations` *int* – Maximum iterations per run
+- `stuck_detection` *bool* – Whether to enable stuck detection
+- `cipher` *Cipher | None* – Optional cipher for encrypting/decrypting secrets in
+    persisted state. If provided, secrets are encrypted when
+    saving and decrypted when loading. If not provided, secrets
+    are redacted (lost) on serialization.
+
+**Returns:**
+
+- *ConversationState* ConversationState ready for use
+
+**Raises:**
+
+- `ValueError` – If conversation ID or tools mismatch on restore
+- `ValidationError` – If agent or other fields fail Pydantic validation
+
+**block_action(action_id: str, reason: str) -> None**
+
+Persistently record a hook-blocked action.
+
+**pop_blocked_action(action_id: str) -> str | None**
+
+Remove and return a hook-blocked action reason, if present.
+
+**block_message(message_id: str, reason: str) -> None**
+
+Persistently record a hook-blocked user message.
+
+**pop_blocked_message(message_id: str) -> str | None**
+
+Remove and return a hook-blocked message reason, if present.
+
+**get_unmatched_actions(events: Sequence[Event]) -> list[ActionEvent]**
+
+Find actions in the event history that don't have matching observations.
+
+This method identifies ActionEvents that don't have corresponding
+ObservationEvents or UserRejectObservations, which typically indicates
+actions that are pending confirmation or execution.
+
+**Parameters:**
+
+- `events` *Sequence[Event]* – List of events to search through
+
+**Returns:**
+
+- *list[ActionEvent]* List of ActionEvent objects that don't have corresponding observations,
+- *list[ActionEvent]* in chronological order
+
+**acquire(blocking: bool = True, timeout: float = -1) -> bool**
+
+Acquire the lock.
+
+**Parameters:**
+
+- `blocking` *bool* – If True, block until lock is acquired. If False, return
+     immediately.
+- `timeout` *float* – Maximum time to wait for lock (ignored if blocking=False).
+    -1 means wait indefinitely.
+
+**Returns:**
+
+- *bool* True if lock was acquired, False otherwise.
+
+**release() -> None**
+
+Release the lock.
+
+**Raises:**
+
+- `RuntimeError` – If the current thread doesn't own the lock.
+
+**locked() -> bool**
+
+Return True if the lock is currently held by any thread.
+
+**owned() -> bool**
+
+Return True if the lock is currently held by the calling thread.
+
+## class StuckDetector
 
 Detects when an agent is stuck in repetitive or unproductive patterns.
 
@@ -865,20 +903,129 @@ This detector analyzes the conversation history to identify various stuck patter
 4. Repeating alternating action-observation patterns
 5. Context window errors indicating memory issues
 
+### Properties
 
-#### Properties
-
-- `action_error_threshold`: int
-- `action_observation_threshold`: int
-- `alternating_pattern_threshold`: int
-- `monologue_threshold`: int
-- `state`: [ConversationState](#class-conversationstate)
+- `state`: ConversationState
 - `thresholds`: StuckDetectionThresholds
+- `action_observation_threshold`: int
+- `action_error_threshold`: int
+- `monologue_threshold`: int
+- `alternating_pattern_threshold`: int
 
-#### Methods
+### Methods
 
-#### __init__()
+**__init__(state: ConversationState, thresholds: StuckDetectionThresholds | None = None)**
 
-#### is_stuck()
+**is_stuck() -> bool**
 
 Check if the agent is currently stuck.
+
+Note: To avoid materializing potentially large file-backed event histories,
+only the last MAX_EVENTS_TO_SCAN_FOR_STUCK_DETECTION events are analyzed.
+If a user message exists within this window, only events after it are checked.
+Otherwise, all events in the window are analyzed.
+
+## class ConversationVisualizerBase
+
+Bases: `ABC`
+
+Base class for conversation visualizers.
+
+This abstract base class defines the interface that all conversation visualizers
+must implement. Visualizers can be created before the Conversation is initialized
+and will be configured with the conversation state automatically.
+
+The typical usage pattern:
+1. Create a visualizer instance:
+   `viz = MyVisualizer()`
+2. Pass it to Conversation: `conv = Conversation(agent, visualizer=viz)`
+3. Conversation automatically calls `viz.initialize(state)` to attach the state
+
+You can also pass the uninstantiated class if you don't need extra args
+    for initialization, and Conversation will create it:
+     `conv = Conversation(agent, visualizer=MyVisualizer)`
+Conversation will then calls `MyVisualizer()` followed by `initialize(state)`
+
+### Properties
+
+- `conversation_stats`: ConversationStats | None
+  Get conversation stats from the state.
+
+### Methods
+
+**__init__()**
+
+Initialize the visualizer base.
+
+**initialize(state: ConversationStateProtocol) -> None**
+
+Initialize the visualizer with conversation state.
+
+This method is called by Conversation after the state is created,
+allowing the visualizer to access conversation stats and other
+state information.
+
+Subclasses should not override this method, to ensure the state is set.
+
+**Parameters:**
+
+- `state` *ConversationStateProtocol* – The conversation state object
+
+**abstractmethod on_event(event: Event) -> None**
+
+Handle a conversation event.
+
+This method is called for each event in the conversation and should
+implement the visualization logic.
+
+**Parameters:**
+
+- `event` *Event* – The event to visualize
+
+**create_sub_visualizer(agent_id: str) -> ConversationVisualizerBase | None**
+
+Create a visualizer for a sub-agent during delegation.
+
+Override this method to support sub-agent visualization in multi-agent
+delegation scenarios. The sub-visualizer will be used to display events
+from the spawned sub-agent.
+
+By default, returns None which means sub-agents will not have visualization.
+Subclasses that support delegation (like DelegationVisualizer) should
+override this method to create appropriate sub-visualizers.
+
+**Parameters:**
+
+- `agent_id` *str* – The identifier of the sub-agent being spawned
+
+**Returns:**
+
+- *ConversationVisualizerBase | None* A visualizer instance for the sub-agent, or None if sub-agent
+- *ConversationVisualizerBase | None* visualization is not supported
+
+## class DefaultConversationVisualizer
+
+Bases: `ConversationVisualizerBase`
+
+Handles visualization of conversation events with Rich formatting.
+
+Provides Rich-formatted output with semantic dividers and complete content display.
+
+### Methods
+
+**__init__(highlight_regex: dict[str, str] | None = DEFAULT_HIGHLIGHT_REGEX, skip_user_messages: bool = False)**
+
+Initialize the visualizer.
+
+**Parameters:**
+
+- `highlight_regex` *dict[str, str] | None* – Dictionary mapping regex patterns to Rich color styles
+           for highlighting keywords in the visualizer.
+           For example: \{"Reasoning:": "bold blue",
+           "Thought:": "bold green"\}
+- `skip_user_messages` *bool* – If True, skip displaying user messages. Useful for
+                scenarios where user input is not relevant to show.
+
+**on_event(event: Event) -> None**
+
+Main event handler that displays events with Rich formatting.
