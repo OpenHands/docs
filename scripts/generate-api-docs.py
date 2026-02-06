@@ -10,18 +10,18 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-
+from typing import Final
 import griffe
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-DOCS_DIR = Path(__file__).parent.parent
-AGENT_SDK_DIR = DOCS_DIR / "agent-sdk"
-SDK_SRC = AGENT_SDK_DIR / "openhands-sdk"
-OUTPUT_DIR = DOCS_DIR / "sdk" / "api-reference"
+DOCS_DIR: Final[Path] = Path(__file__).parent.parent
+AGENT_SDK_DIR: Final[Path] = DOCS_DIR / "agent-sdk"
+SDK_SRC: Final[Path] = AGENT_SDK_DIR / "openhands-sdk"
+OUTPUT_DIR: Final[Path] = DOCS_DIR / "sdk" / "api-reference"
 
-MODULES = [
+MODULES: Final[list[str]] = [
     "openhands.sdk.agent",
     "openhands.sdk.conversation",
     "openhands.sdk.event",
@@ -332,7 +332,7 @@ def generate_module_mdx(module_path: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+def main() -> None:
     setup_agent_sdk()
     install_sdk()
 
