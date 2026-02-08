@@ -128,6 +128,19 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 
+## LLM API Key Options
+
+The SDK documentation maintains three ways for users to obtain LLM access:
+
+1. **Direct Provider** - Bring your own API key from providers like Anthropic, OpenAI, etc.
+2. **OpenHands Cloud** - Use OpenHands Cloud API keys (recommended for verified models)
+3. **Third-party Subscription Login** - Authenticate with existing subscriptions (e.g., ChatGPT Plus/Pro via `LLM.subscription_login()`)
+
+When documenting LLM setup or examples, ensure all three options are mentioned where appropriate:
+- `sdk/getting-started.mdx` - Main getting started page with AccordionGroup
+- `sdk/shared-snippets/how-to-run-example.mdx` - Shared snippet for running examples
+- `sdk/guides/llm-subscriptions.mdx` - Dedicated guide for subscription login
+
 ## Validation
 
 ### LLM pricing table validation
