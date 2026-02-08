@@ -22,7 +22,7 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `scripts/` — automation for generating SDK API reference docs
 - `.github/workflows/` — CI workflows (broken link checks, sync jobs)
 - `.github/scripts/` — helper scripts used by CI
-- `.openhands/skills/` — prompt extensions for agents editing this repo (repo-specific “skills”; formerly `microagents`)
+- `.agents/skills/` — prompt extensions for agents editing this repo (legacy: `.openhands/skills/`; formerly `microagents`)
 - `tests/` — pytest checks for docs consistency (notably LLM pricing docs)
 
 ## Local development
