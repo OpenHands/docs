@@ -68,56 +68,14 @@ Choose between two review styles:
           github.event.label.name == 'review-this' ||
           github.event.requested_reviewer.login == 'openhands-agent'
         runs-on: ubuntu-latest
-        env:
-          LLM_MODEL: anthropic/claude-sonnet-4-5-20250929
-          # Review style: 'standard' for pragmatic review, 'roasted' for Linus-style
-          REVIEW_STYLE: standard
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
-          PR_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
-          REPO_NAME: ${{ github.repository }}
         steps:
-          - name: Checkout software-agent-sdk repository
-            uses: actions/checkout@v5
+          - name: Run PR Review
+            uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
             with:
-              repository: OpenHands/software-agent-sdk
-              path: software-agent-sdk
-
-          - name: Checkout PR repository
-            uses: actions/checkout@v5
-            with:
-              repository: ${{ github.event.pull_request.head.repo.full_name }}
-              ref: ${{ github.event.pull_request.head.ref }}
-              fetch-depth: 0
-              persist-credentials: false
-              path: pr-repo
-
-          - name: Set up Python
-            uses: actions/setup-python@v6
-            with:
-              python-version: '3.12'
-
-          - name: Install uv
-            uses: astral-sh/setup-uv@v7
-            with:
-              enable-cache: true
-
-          - name: Install GitHub CLI
-            run: sudo apt-get update && sudo apt-get install -y gh
-
-          - name: Install OpenHands dependencies
-            run: |
-              uv pip install --system ./software-agent-sdk/openhands-sdk ./software-agent-sdk/openhands-tools
-
-          - name: Run PR review
-            env:
-              LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-              GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            run: |
-              cd pr-repo
-              uv run python ../software-agent-sdk/examples/03_github_workflows/02_pr_review/agent_script.py
+              llm-model: anthropic/claude-sonnet-4-5-20250929
+              review-style: standard
+              llm-api-key: ${{ secrets.LLM_API_KEY }}
+              github-token: ${{ secrets.GITHUB_TOKEN }}
     ```
   </Step>
 
@@ -140,6 +98,31 @@ Choose between two review styles:
     - Request `openhands-agent` as a reviewer
   </Step>
 </Steps>
+
+## Composite Action
+
+The workflow uses a reusable composite action from the Software Agent SDK that handles all the setup automatically:
+
+- Checking out the SDK at the specified version
+- Setting up Python and dependencies
+- Running the PR review agent
+- Uploading logs as artifacts
+
+### Action Inputs
+
+| Input | Description | Required | Default |
+|-------|-------------|----------|---------|
+| `llm-model` | LLM model to use | No | `anthropic/claude-sonnet-4-5-20250929` |
+| `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
+| `review-style` | Review style: `standard` or `roasted` | No | `roasted` |
+| `sdk-version` | Git ref for SDK (tag, branch, or commit SHA) | No | `main` |
+| `sdk-repo` | SDK repository (owner/repo) | No | `OpenHands/software-agent-sdk` |
+| `llm-api-key` | LLM API key | Yes | - |
+| `github-token` | GitHub token for API access | Yes | - |
+
+<Note>
+Use `sdk-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features.
+</Note>
 
 ## Customization
 
@@ -195,18 +178,23 @@ The skill file must use `/codereview` as the trigger to override the default rev
 
 ### Workflow Configuration
 
-Customize the workflow by modifying the `env` section:
+Customize the workflow by modifying the action inputs:
 
 ```yaml
-env:
-  # Change the LLM model
-  LLM_MODEL: anthropic/claude-sonnet-4-5-20250929
-  
-  # Use a custom LLM endpoint
-  LLM_BASE_URL: https://your-llm-proxy.example.com
-  
-  # Switch to "roasted" style for brutally honest reviews
-  REVIEW_STYLE: roasted
+- name: Run PR Review
+  uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
+  with:
+    # Change the LLM model
+    llm-model: anthropic/claude-sonnet-4-5-20250929
+    # Use a custom LLM endpoint
+    llm-base-url: https://your-llm-proxy.example.com
+    # Switch to "roasted" style for brutally honest reviews
+    review-style: roasted
+    # Pin to a specific SDK version for stability
+    sdk-version: main
+    # Secrets
+    llm-api-key: ${{ secrets.LLM_API_KEY }}
+    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 ### Trigger Customization
