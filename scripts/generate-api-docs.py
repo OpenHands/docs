@@ -13,13 +13,15 @@ from pathlib import Path
 from typing import Final
 import griffe
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 DOCS_DIR: Final[Path] = Path(__file__).parent.parent
 AGENT_SDK_DIR: Final[Path] = DOCS_DIR / "agent-sdk"
 SDK_SRC: Final[Path] = AGENT_SDK_DIR / "openhands-sdk"
 OUTPUT_DIR: Final[Path] = DOCS_DIR / "sdk" / "api-reference"
+
+SOURCE_CODE_BASE: Final[str] = "https://github.com/OpenHands/software-agent-sdk"
 
 MODULES: Final[list[str]] = [
     "openhands.sdk.agent",
@@ -216,6 +218,11 @@ def _render_function(func: griffe.Function, level: int = 4) -> list[str]:
     hdr = "#" * level
     lines: list[str] = []
 
+    """
+    <ParamField path="param" type="string" required>
+        An example of a parameter field
+    </ParamField>
+    """
     # Build parameter signature
     params: list[str] = []
     for p in func.parameters:
@@ -226,24 +233,31 @@ def _render_function(func: griffe.Function, level: int = 4) -> list[str]:
             s += f": {_fmt(p.annotation)}"
         if p.default is not None:
             s += f" = {p.default}"
-        params.append(s)
+        params.append(
+            f"""
+            <ParamField path="{p.name}" type="{_fmt(p.annotation)}" {'required' if p.required else ''}>
+                {p.docstring}
+            </ParamField>
+            """
+        )
 
-    sig = ", ".join(params)
+    # sig = ", ".join(params)
+    sig = ""
     ret = f" -> {_fmt(func.returns)}" if func.returns else ""
     abstract = "abstractmethod " if _has_decorator(func, "abstractmethod") else ""
 
     lines.append(f"**{abstract}{func.name}({sig}){ret}**")
     lines.append("")
+    lines.append(f"[source]({func.source_link})")
+    lines.append("")
     lines.extend(_render_docstring(func.docstring))
+    lines.extend(params)
     return lines
-
 
 def _render_class(cls: griffe.Class) -> list[str]:
     """Render a class as markdown."""
-    lines: list[str] = []
+    lines: list[str] = [f"## class {cls.name}", ""]
 
-    lines.append(f"## class {cls.name}")
-    lines.append("")
     if cls.bases:
         bases = ", ".join(f"`{b}`" for b in cls.bases)
         lines.append(f"Bases: {bases}")
@@ -307,7 +321,7 @@ def generate_module_mdx(module_path: str) -> str:
     lines = [
         "---",
         f"title: {module_path}",
-        f"description: API reference for {module_path}",
+        f"description: API reference for {module_path} module",
         "---",
         "",
     ]
