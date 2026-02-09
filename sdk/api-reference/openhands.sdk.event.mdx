@@ -3,129 +3,130 @@ title: openhands.sdk.event
 description: API reference for openhands.sdk.event module
 ---
 
+## class Event
 
-### class ActionEvent
+Bases: `DiscriminatedUnionMixin`, `ABC`
 
-Bases: [`LLMConvertibleEvent`](#class-llmconvertibleevent)
+Base class for all events.
 
+### Properties
 
-#### Properties
-
-- `action`: Action | None
-- `critic_result`: CriticResult | None
-- `llm_response_id`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `reasoning_content`: str | None
-- `responses_reasoning_item`: ReasoningItemModel | None
-- `security_risk`: SecurityRisk
-- `source`: Literal['agent', 'user', 'environment']
-- `summary`: str | None
-- `thinking_blocks`: list[ThinkingBlock | RedactedThinkingBlock]
-- `thought`: Sequence[TextContent]
-- `tool_call`: MessageToolCall
-- `tool_call_id`: str
-- `tool_name`: str
+- `model_config`: ConfigDict
+- `id`: EventID
+  Unique event id (ULID/UUID)
+- `timestamp`: str
+  Event timestamp
+- `source`: SourceType
+  The source of this event
 - `visualize`: Text
-  Return Rich Text representation of this action event.
+  Return Rich Text representation of this event.
 
-#### Methods
+This is a fallback implementation for unknown event types.
+Subclasses should override this method to provide specific visualization.
 
-#### to_llm_message()
+## class LLMConvertibleEvent
 
-Individual message - may be incomplete for multi-action batches
+Bases: `Event`, `ABC`
 
-### class AgentErrorEvent
+Base class for events that can be converted to LLM messages.
 
-Bases: [`ObservationBaseEvent`](#class-observationbaseevent)
+### Methods
 
-Error triggered by the agent.
+**abstractmethod to_llm_message() -> Message**
 
-Note: This event should not contain model “thought” or “reasoning_content”. It
-represents an error produced by the agent/scaffold, not model output.
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/base.py#L61-L63)
+
+**events_to_messages() -> list[Message]**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/base.py#L90-L126)
+
+Convert event stream to LLM message stream, handling multi-action batches
 
 
-#### Properties
+            <ParamField path="events" type="list[LLMConvertibleEvent]" required>
+                None
+            </ParamField>
+            
+## class Condensation
 
-- `error`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
-- `visualize`: Text
-  Return Rich Text representation of this agent error event.
-
-#### Methods
-
-#### to_llm_message()
-
-### class Condensation
-
-Bases: [`Event`](#class-event)
+Bases: `Event`
 
 This action indicates a condensation of the conversation history is happening.
 
+### Properties
 
-#### Properties
-
-- `forgotten_event_ids`: list[str]
-- `llm_response_id`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
+- `forgotten_event_ids`: list[EventID]
+  The IDs of the events that are being forgotten (removed from the `View` given to the LLM).
 - `summary`: str | None
+  An optional summary of the events being forgotten.
 - `summary_offset`: int | None
+  An optional offset to the start of the resulting view (after forgotten events have been removed) indicating where the summary should be inserted. If not provided, the summary will not be inserted into the view.
+- `llm_response_id`: EventID
+  Completion or Response ID of the LLM response that generated this event
+- `source`: SourceType
 - `visualize`: Text
-  Return Rich Text representation of this event.
-  This is a fallback implementation for unknown event types.
-  Subclasses should override this method to provide specific visualization.
-### class CondensationRequest
+- `summary_event`: CondensationSummaryEvent
+  Generates a CondensationSummaryEvent.
 
-Bases: [`Event`](#class-event)
+Since summary events are not part of the main event store and are generated
+dynamically, this property ensures the created event has a unique and consistent
+ID based on the condensation event's ID.
+
+Raises:
+    ValueError: If no summary is present.
+- `has_summary_metadata`: bool
+  Checks if both summary and summary_offset are present.
+
+### Methods
+
+**apply() -> list[LLMConvertibleEvent]**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/condenser.py#L83-L96)
+
+Applies the condensation to a list of events.
+
+This method removes events that are marked to be forgotten and returns a new
+list of events. If the summary metadata is present (both summary and offset),
+the corresponding CondensationSummaryEvent will be inserted at the specified
+offset _after_ the forgotten events have been removed.
+
+
+            <ParamField path="events" type="list[LLMConvertibleEvent]" required>
+                None
+            </ParamField>
+            
+## class CondensationRequest
+
+Bases: `Event`
 
 This action is used to request a condensation of the conversation history.
 
+### Properties
 
-#### Properties
-
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
+- `source`: SourceType
 - `visualize`: Text
-  Return Rich Text representation of this event.
-  This is a fallback implementation for unknown event types.
-  Subclasses should override this method to provide specific visualization.
 
-#### Methods
+## class CondensationSummaryEvent
 
-#### action
-
-The action type, namely ActionType.CONDENSATION_REQUEST.
-
-* Type:
-  str
-
-### class CondensationSummaryEvent
-
-Bases: [`LLMConvertibleEvent`](#class-llmconvertibleevent)
+Bases: `LLMConvertibleEvent`
 
 This event represents a summary generated by a condenser.
 
+### Properties
 
-#### Properties
-
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
 - `summary`: str
   The summary text.
+- `source`: SourceType
 
-#### Methods
+### Methods
 
-#### to_llm_message()
+**to_llm_message() -> Message**
 
-### class ConversationStateUpdateEvent
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/condenser.py#L128-L132)
 
-Bases: [`Event`](#class-event)
+## class ConversationStateUpdateEvent
+
+Bases: `Event`
 
 Event that contains conversation state updates.
 
@@ -135,54 +136,64 @@ allowing remote clients to stay in sync without making REST API calls.
 All fields are serialized versions of the corresponding ConversationState fields
 to ensure compatibility with websocket transmission.
 
+### Properties
 
-#### Properties
-
+- `source`: SourceType
 - `key`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
+  Unique key for this state update event
 - `value`: Any
+  Serialized conversation state updates
 
-#### Methods
+### Methods
 
-#### classmethod from_conversation_state()
+**validate_key()**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/conversation_state.py#L38-L48)
+
+
+            <ParamField path="key" type="" required>
+                None
+            </ParamField>
+            
+**validate_value()**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/conversation_state.py#L50-L79)
+
+
+            <ParamField path="value" type="" required>
+                None
+            </ParamField>
+            
+
+            <ParamField path="info" type="" required>
+                None
+            </ParamField>
+            
+**from_conversation_state() -> ConversationStateUpdateEvent**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/conversation_state.py#L81-L101)
 
 Create a state update event from a ConversationState object.
 
 This creates an event containing a snapshot of important state fields.
 
-* Parameters:
-  * `state` – The ConversationState to serialize
-  * `conversation_id` – The conversation ID for the event
-* Returns:
-  A ConversationStateUpdateEvent with serialized state data
+**Parameters:**
 
-#### classmethod validate_key()
+- `state` *ConversationState* – The ConversationState to serialize
+- `conversation_id` – The conversation ID for the event
 
-#### classmethod validate_value()
+**Returns:**
 
-### class Event
-
-Bases: `DiscriminatedUnionMixin`, `ABC`
-
-Base class for all events.
+- *ConversationStateUpdateEvent* A ConversationStateUpdateEvent with serialized state data
 
 
-#### Properties
+            <ParamField path="state" type="ConversationState" required>
+                None
+            </ParamField>
+            
+## class LLMCompletionLogEvent
 
-- `id`: str
-- `model_config`: ClassVar[ConfigDict] = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
-- `timestamp`: str
-- `visualize`: Text
-  Return Rich Text representation of this event.
-  This is a fallback implementation for unknown event types.
-  Subclasses should override this method to provide specific visualization.
-### class LLMCompletionLogEvent
-
-Bases: [`Event`](#class-event)
+Bases: `Event`
 
 Event containing LLM completion log data.
 
@@ -190,165 +201,219 @@ When an LLM is configured with log_completions=True in a remote conversation,
 this event streams the completion log data back to the client through WebSocket
 instead of writing it to a file inside the Docker container.
 
+### Properties
 
-#### Properties
-
+- `source`: SourceType
 - `filename`: str
+  The intended filename for this log (relative to log directory)
 - `log_data`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+  The JSON-encoded log data to be written to the file
 - `model_name`: str
-- `source`: Literal['agent', 'user', 'environment']
+  The model name for context
 - `usage_id`: str
-### class LLMConvertibleEvent
+  The LLM usage_id that produced this log
 
-Bases: [`Event`](#class-event), `ABC`
+## class ActionEvent
 
-Base class for events that can be converted to LLM messages.
+Bases: `LLMConvertibleEvent`
 
+### Properties
 
-#### Properties
+- `source`: SourceType
+- `thought`: Sequence[TextContent]
+  The thought process of the agent before taking this action
+- `reasoning_content`: str | None
+  Intermediate reasoning/thinking content from reasoning models
+- `thinking_blocks`: list[ThinkingBlock | RedactedThinkingBlock]
+  Anthropic thinking blocks from the LLM response
+- `responses_reasoning_item`: ReasoningItemModel | None
+  OpenAI Responses reasoning item from model output
+- `action`: Action | None
+  Single tool call returned by LLM (None when non-executable)
+- `tool_name`: str
+  The name of the tool being called
+- `tool_call_id`: ToolCallID
+  The unique id returned by LLM API for this tool call
+- `tool_call`: MessageToolCall
+  The tool call received from the LLM response. We keep a copy of it so it is easier to construct it into LLM messageThis could be different from `action`: e.g., `tool_call` may contain `security_risk` field predicted by LLM when LLM risk analyzer is enabled, while `action` does not.
+- `llm_response_id`: EventID
+  Completion or Response ID of the LLM response that generated this eventE.g., Can be used to group related actions from same LLM response. This helps in tracking and managing results of parallel function calling from the same LLM response.
+- `security_risk`: risk.SecurityRisk
+  The LLM
+- `critic_result`: CriticResult | None
+  Optional critic evaluation of this action and preceding history.
+- `summary`: str | None
+  A concise summary (approximately 10 words) of what this action does, provided by the LLM for explainability and debugging. Examples of good summaries: 
+- `visualize`: Text
+  Return Rich Text representation of this action event.
 
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+### Methods
 
-#### Methods
+**to_llm_message() -> Message**
 
-#### static events_to_messages()
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/llm_convertible/action.py#L140-L149)
 
-Convert event stream to LLM message stream, handling multi-action batches
+Individual message - may be incomplete for multi-action batches
 
-#### abstractmethod to_llm_message()
+## class AgentErrorEvent
 
-### class MessageEvent
+Bases: `ObservationBaseEvent`
 
-Bases: [`LLMConvertibleEvent`](#class-llmconvertibleevent)
+Error triggered by the agent.
+
+Note: This event should not contain model "thought" or "reasoning_content". It
+represents an error produced by the agent/scaffold, not model output.
+
+### Properties
+
+- `source`: SourceType
+- `error`: str
+  The error message from the scaffold
+- `visualize`: Text
+  Return Rich Text representation of this agent error event.
+
+### Methods
+
+**to_llm_message() -> Message**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/llm_convertible/observation.py#L123-L131)
+
+## class MessageEvent
+
+Bases: `LLMConvertibleEvent`
 
 Message from either agent or user.
 
-This is originally the “MessageAction”, but it suppose not to be tool call.
+This is originally the "MessageAction", but it suppose not to be tool call.
 
+### Properties
 
-#### Properties
-
-- `activated_skills`: list[str]
-- `critic_result`: CriticResult | None
-- `extended_content`: list[TextContent]
+- `model_config`: ConfigDict
+- `source`: SourceType
 - `llm_message`: Message
-- `llm_response_id`: str | None
-- `model_config`: ClassVar[ConfigDict] = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `reasoning_content`: str
+  The exact LLM message for this message event
+- `llm_response_id`: EventID | None
+  Completion or Response ID of the LLM response that generated this eventIf the source != 
+- `activated_skills`: list[str]
+  List of activated skill name
+- `extended_content`: list[TextContent]
+  List of content added by agent context
 - `sender`: str | None
-- `source`: Literal['agent', 'user', 'environment']
+  Optional identifier of the sender. Can be used to track message origin in multi-agent scenarios.
+- `critic_result`: CriticResult | None
+  Optional critic evaluation of this message and preceding history.
+- `reasoning_content`: str
 - `thinking_blocks`: Sequence[ThinkingBlock | RedactedThinkingBlock]
   Return the Anthropic thinking blocks from the LLM message.
 - `visualize`: Text
   Return Rich Text representation of this message event.
 
-#### Methods
+### Methods
 
-#### to_llm_message()
+**to_llm_message() -> Message**
 
-### class ObservationBaseEvent
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/llm_convertible/message.py#L116-L119)
 
-Bases: [`LLMConvertibleEvent`](#class-llmconvertibleevent)
+## class ObservationBaseEvent
+
+Bases: `LLMConvertibleEvent`
 
 Base class for anything as a response to a tool call.
 
 Examples include tool execution, error, user reject.
 
+### Properties
 
-#### Properties
-
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
-- `tool_call_id`: str
+- `source`: SourceType
 - `tool_name`: str
-### class ObservationEvent
+  The tool name that this observation is responding to
+- `tool_call_id`: ToolCallID
+  The tool call id that this observation is responding to
 
-Bases: [`ObservationBaseEvent`](#class-observationbaseevent)
+## class ObservationEvent
 
+Bases: `ObservationBaseEvent`
 
-#### Properties
+### Properties
 
-- `action_id`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 - `observation`: Observation
+  The observation (tool call) sent to LLM
+- `action_id`: EventID
+  The action id that this observation is responding to
 - `visualize`: Text
   Return Rich Text representation of this observation event.
 
-#### Methods
+### Methods
 
-#### to_llm_message()
+**to_llm_message() -> Message**
 
-### class PauseEvent
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/llm_convertible/observation.py#L45-L51)
 
-Bases: [`Event`](#class-event)
+## class SystemPromptEvent
 
-Event indicating that the agent execution was paused by user request.
-
-
-#### Properties
-
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
-- `visualize`: Text
-  Return Rich Text representation of this pause event.
-### class SystemPromptEvent
-
-Bases: [`LLMConvertibleEvent`](#class-llmconvertibleevent)
+Bases: `LLMConvertibleEvent`
 
 System prompt added by the agent.
 
+### Properties
 
-#### Properties
-
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `source`: Literal['agent', 'user', 'environment']
+- `source`: SourceType
 - `system_prompt`: TextContent
+  The system prompt text
 - `tools`: list[ToolDefinition]
+  List of tools as ToolDefinition objects
 - `visualize`: Text
   Return Rich Text representation of this system prompt event.
 
-#### Methods
+### Methods
 
-#### to_llm_message()
+**to_llm_message() -> Message**
 
-### class TokenEvent
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/llm_convertible/system.py#L47-L48)
 
-Bases: [`Event`](#class-event)
+## class UserRejectObservation
 
-Event from VLLM representing token IDs used in LLM interaction.
-
-
-#### Properties
-
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `prompt_token_ids`: list[int]
-- `response_token_ids`: list[int]
-- `source`: Literal['agent', 'user', 'environment']
-### class UserRejectObservation
-
-Bases: [`ObservationBaseEvent`](#class-observationbaseevent)
+Bases: `ObservationBaseEvent`
 
 Observation when user rejects an action in confirmation mode.
 
+### Properties
 
-#### Properties
-
-- `action_id`: str
-- `model_config`: = (configuration object)
-  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 - `rejection_reason`: str
+  Reason for rejecting the action
+- `action_id`: EventID
+  The action id that this observation is responding to
 - `visualize`: Text
   Return Rich Text representation of this user rejection event.
 
-#### Methods
+### Methods
 
-#### to_llm_message()
+**to_llm_message() -> Message**
+
+[source](https://github.com/OpenHands/software-agent-sdk/blob/30e22095607254194ab1f4d8859f658abe5628a1/openhands-sdk/openhands/sdk/event/llm_convertible/observation.py#L86-L92)
+
+## class TokenEvent
+
+Bases: `Event`
+
+Event from VLLM representing token IDs used in LLM interaction.
+
+### Properties
+
+- `source`: SourceType
+- `prompt_token_ids`: list[int]
+  The exact prompt token IDs for this message event
+- `response_token_ids`: list[int]
+  The exact response token IDs for this message event
+
+## class PauseEvent
+
+Bases: `Event`
+
+Event indicating that the agent execution was paused by user request.
+
+### Properties
+
+- `source`: SourceType
+- `visualize`: Text
+  Return Rich Text representation of this pause event.
