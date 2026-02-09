@@ -1,391 +1,148 @@
 ---
-title: TODO-Spark Migrations
+title: Spark Migrations
 description: Migrating Apache Spark applications with OpenHands
 ---
 
-Apache Spark is constantly evolving, and keeping your data pipelines up to date is essential for performance, security, and access to new features. OpenHands can help you migrate Spark applications across versions, frameworks, and cloud platforms.
+Apache Spark is constantly evolving, and keeping your data pipelines up to date is essential for performance, security, and access to new features. OpenHands can help you analyze, migrate, and validate Spark applications.
 
 ## Overview
 
-OpenHands assists with Spark migrations in several ways:
+Spark version upgrades are deceptively difficult. The [Spark 3.0 migration guide](https://spark.apache.org/docs/latest/migration-guide.html) alone documents hundreds of behavioral changes, deprecated APIs, and removed features, and many of these changes are _semantic_. That means the same code compiles and runs but produces different results across different Spark versions: for example, a date parsing expression that worked correctly in Spark 2.4 may silently return different values in Spark 3.x due to the switch from the Julian calendar to the Gregorian calendar.
 
-- **Version upgrades**: Migrate from Spark 2.x to 3.x, or between 3.x versions
-- **API modernization**: Update deprecated APIs to current best practices
-- **Framework migrations**: Convert from MapReduce, Hive, or other frameworks to Spark
-- **Cloud migrations**: Move Spark workloads between cloud providers or to cloud-native services
+Version upgrades are also made difficult due to the scale of typical enterprise Spark codebases. When you have dozens of jobs across ETL, reporting, and ML pipelines, each with its own combination of DataFrame operations, UDFs, and configuration, manual migration stops scaling well and becomes prone to subtle regressions.
 
-## Migration Scenarios
+Spark migration requires careful analysis, targeted code changes, and thorough validation to ensure that migrated pipelines produce identical results. The migration needs to be driven by an experienced data engineering team, but even that isn't sufficient to ensure the job is done quickly or without regressions. This is where OpenHands comes in.
 
-### Spark Version Upgrades
+Such migrations need to be driven by experienced data engineering teams that understand how your Spark pipelines interact, but even that isn't sufficient to ensure the job is done quickly or without regression. This is where OpenHands comes in. OpenHands assists in migrating Spark applications along every step of the process:
 
-Upgrading Spark versions often requires code changes due to API deprecations and behavioral differences.
+1. **Understanding**: Analyze the existing codebase to identify what needs to change and why
+2. **Migration**: Apply targeted code transformations that address API changes and behavioral differences
+3. **Validation**: Verify that migrated pipelines produce identical results to the originals
 
-**Spark 2.x to 3.x Migration:**
+In this document, we will explore how OpenHands contributes to Spark migrations, with example prompts and techniques to use in your own efforts. While the examples focus on Spark 2.x to 3.x upgrades, the same principles apply to cloud platform migrations, framework conversions (MapReduce, Hive, Pig to Spark), and upgrades between Spark 3.x minor versions.
 
-```
-Migrate my Spark 2.4 application to Spark 3.5:
+## Understanding
 
-1. Identify all deprecated API usages in src/main/scala/
-2. Update DataFrame operations that changed behavior
-3. Migrate from SparkSession.builder() patterns if needed
-4. Update date/time handling for the new defaults
-5. Check and update all UDF registrations
-6. Update the build.sbt dependencies
+Before changin any code, it helps to build a clear picture of what is affected and where the risk is concentrated. Spark migrations touch a large surface area, between API deprecations, behavioral changes, configuration defaults, and dependency versions, and the interactions between them are hard to reason about manually.
 
-List all changes made with before/after comparisons.
-```
+Apache releases detailed lists of changes between each major and minor version of Spark. OpenHands can utilize this list of changes while scanning your codebase to produce a structured inventory of everything that needs attention. This inventory becomes the foundation for the migration itself, helping you prioritize work and track progress.
 
-**Common migration areas:**
-
-| Spark 2.x | Spark 3.x | Action Required |
-|-----------|-----------|-----------------|
-| `SQLContext` | `SparkSession` | Replace with SparkSession |
-| `HiveContext` | `SparkSession` with Hive | Update initialization |
-| `Dataset.unionAll()` | `Dataset.union()` | Rename method calls |
-| `DataFrame.explode()` | `functions.explode()` | Use SQL functions |
-| Legacy date parsing | Proleptic Gregorian calendar | Review date handling |
-
-### Migration from Other Big Data Frameworks
-
-**MapReduce to Spark:**
+If your Spark project is in `/src` and you're migrating from 2.4 to 3.0, the following prompt will generate this inventory:
 
 ```
-Convert our MapReduce jobs to Spark:
+Analyze the Spark application in `/src` for a migration from Spark 2.4 to Spark 3.0.
 
-1. Analyze the MapReduce job in src/mapreduce/WordCount.java
-2. Identify the mapper and reducer logic
-3. Convert to equivalent Spark transformations
-4. Preserve the same input/output formats
-5. Create a test that compares outputs from both versions
-```
+Examine the migration guidelines at https://spark.apache.org/docs/latest/migration-guide.html.
 
-**Hive to Spark SQL:**
+Then, for each source file, identify
 
-```
-Migrate our Hive ETL pipeline to Spark:
+1. Deprecated or removed API usages (e.g., `registerTempTable`, `unionAll`, `SQLContext`)
+2. Behavioral changes that could affect output (e.g., date/time parsing, CSV parsing, CAST semantics)
+3. Configuration properties that have changed defaults or been renamed
+4. Dependencies that need version updates
 
-1. Convert the Hive scripts in etl/hive/ to Spark SQL
-2. Replace Hive UDFs with Spark SQL functions where possible
-3. For custom UDFs, create Spark UDF equivalents
-4. Maintain compatibility with our existing Hive metastore
-5. Benchmark the performance difference
-```
+Save the results in `migration_inventory.json` in the following format:
 
-**Pig to Spark:**
-
-```
-Convert our Pig Latin scripts to PySpark:
-
-1. Analyze the Pig scripts in pipelines/pig/
-2. Map Pig operations to equivalent Spark transformations
-3. Convert Pig UDFs to Python functions
-4. Preserve the data flow and dependencies
-5. Document any behavioral differences
-```
-
-### Cloud Platform Migrations
-
-**On-premises to Cloud:**
-
-<Tabs>
-  <Tab title="AWS EMR">
-    ```
-    Migrate our Spark application to AWS EMR:
-    
-    1. Update file paths from HDFS to S3
-    2. Configure AWS credentials handling
-    3. Update cluster configuration for EMR
-    4. Modify logging to use CloudWatch
-    5. Create EMR step definitions for our jobs
-    6. Update the CI/CD pipeline for EMR deployment
-    ```
-  </Tab>
-  <Tab title="Databricks">
-    ```
-    Migrate our Spark jobs to Databricks:
-    
-    1. Convert batch jobs to Databricks notebooks
-    2. Update file I/O to use DBFS or Unity Catalog
-    3. Configure cluster policies and instance pools
-    4. Set up Databricks Jobs for scheduling
-    5. Migrate secrets to Databricks secret scopes
-    6. Update monitoring to use Databricks metrics
-    ```
-  </Tab>
-  <Tab title="Google Dataproc">
-    ```
-    Migrate our Spark workloads to Dataproc:
-    
-    1. Update storage paths to use GCS
-    2. Configure service account authentication
-    3. Create Dataproc workflow templates
-    4. Set up Cloud Logging and Monitoring
-    5. Update dependencies for GCP libraries
-    6. Configure autoscaling policies
-    ```
-  </Tab>
-</Tabs>
-
-**Between Cloud Providers:**
-
-```
-Migrate our Spark application from EMR to Databricks:
-
-1. Inventory all EMR-specific configurations
-2. Map S3 paths to DBFS equivalents
-3. Convert EMR bootstrap scripts to init scripts
-4. Update IAM roles to Databricks service principals
-5. Migrate Step Functions orchestration to Databricks Workflows
-6. Create a parallel testing strategy
-```
-
-## Code Transformation
-
-### API Updates
-
-OpenHands can automatically update deprecated APIs:
-
-```
-Update all deprecated Spark APIs in our codebase:
-
-1. Scan for deprecated method usages
-2. Replace with recommended alternatives
-3. Update import statements as needed
-4. Add comments noting the changes for review
-5. Run the test suite to verify no regressions
-```
-
-**Common API updates:**
-
-```scala
-// Before (Spark 2.x)
-val df = spark.read.format("json").load(path)
-df.registerTempTable("temp")
-
-// After (Spark 3.x)
-val df = spark.read.format("json").load(path)
-df.createOrReplaceTempView("temp")
-```
-
-### Performance Optimization
-
-Improve performance during migration:
-
-```
-Optimize our Spark jobs during the migration:
-
-1. Replace `collect()` with `take()` or `foreach()` where appropriate
-2. Convert repeated DataFrame operations to use caching
-3. Optimize shuffle operations with appropriate partitioning
-4. Replace narrow transformations grouped after wide ones
-5. Update broadcast join hints for large dimension tables
-6. Profile before and after with Spark UI metrics
-```
-
-**Key optimization patterns:**
-
-| Anti-pattern | Optimization | Impact |
-|--------------|--------------|--------|
-| Multiple `count()` calls | Cache and count once | Reduces recomputation |
-| Small file output | Coalesce before write | Fewer files, faster reads |
-| Skewed joins | Salting or broadcast | Eliminates stragglers |
-| UDFs for simple ops | Built-in functions | Catalyst optimization |
-
-### Best Practices Application
-
-Apply modern Spark best practices:
-
-```
-Refactor our Spark application to follow best practices:
-
-1. Replace RDD operations with DataFrame/Dataset where possible
-2. Use Spark SQL functions instead of UDFs
-3. Implement proper error handling with try-catch
-4. Add schema validation for input data
-5. Implement idempotent writes for recovery
-6. Add structured logging for debugging
-```
-
-## Testing and Validation
-
-### Job Testing
-
-Create comprehensive tests for migrated jobs:
-
-```
-Create a test suite for our migrated Spark jobs:
-
-1. Unit tests for transformation logic using local SparkSession
-2. Integration tests with sample data files
-3. Schema validation tests for input and output
-4. Property-based tests for key business logic
-5. Test fixtures that work with both Spark versions
-```
-
-**Example test structure:**
-
-```scala
-class MigrationTest extends AnyFunSuite with SparkSessionTestWrapper {
-  test("transformed output matches expected schema") {
-    val input = spark.read.json("src/test/resources/input.json")
-    val result = MyTransformations.process(input)
-    
-    assert(result.schema === expectedSchema)
-  }
-  
-  test("business logic produces same results as legacy") {
-    val input = loadTestData()
-    val newResult = NewPipeline.run(input)
-    val legacyResult = loadLegacyOutput()
-    
-    assertDataFrameEquals(newResult, legacyResult)
-  }
+{
+  ...,
+  "src/main/scala/etl/TransformJob.scala": {
+    "deprecated_apis": [
+      {"line": 42, "current": "df.registerTempTable(\"temp\")", "replacement": "df.createOrReplaceTempView(\"temp\")"}
+    ],
+    "behavioral_changes": [
+      {"line": 78, "description": "to_date() uses proleptic Gregorian calendar in Spark 3.x; verify date handling with test data"}
+    ],
+    "config_changes": [],
+    "risk": "medium"
+  },
+  ...
 }
 ```
 
-### Performance Benchmarking
+Tools like `grep` and `find` (both used by OpenHands) are helpful for identifying where APIs are used, but the real value comes from OpenHands' ability to understand the _context_ around each usage. A simple `registerTempTable` call is migrated via a rename, but a date parsing expression requires understanding how the surrounding pipeline uses the result. This contextual analysis helps developers distinguish between mechanical fixes and changes that need careful testing.
 
-Compare performance between versions:
+## Migration
 
-```
-Create performance benchmarks for our migration:
+With a clear inventory of what needs to change, the next step is applying the transformations. Spark migrations involve a mix of straightforward API renames and subtler behavioral adjustments, and it's important to handle them differently.
 
-1. Set up identical test datasets of 1GB, 10GB, and 100GB
-2. Measure job completion time for both versions
-3. Compare resource utilization (CPU, memory, shuffle)
-4. Track stage-level metrics from Spark UI
-5. Generate a comparison report with recommendations
-```
+To handle simple renames, we prompt OpenHands to use tools like `grep` and `ast-grep` instead of manually manipulating source code. This saves tokens and also simplifies future migrations, as agents can reliably re-run the tools via a script.
 
-**Benchmark metrics to track:**
+The main risk in migration is that many Spark 3.x behavioral changes are _silent_. The migrated code will compile and run without errors, but may produce different results. Date and timestamp handling is the most common source of these silent failures: Spark 3.x switched to the Gregorian calendar by default, which changes how dates before 1582-10-15 are interpreted. CSV and JSON parsing also became stricter in Spark 3.x, rejecting malformed inputs that Spark 2.x would silently accept.
 
-- Job duration (wall clock time)
-- Shuffle read/write bytes
-- Peak executor memory
-- Task distribution (min/max/median)
-- Garbage collection time
-
-### Data Validation
-
-Ensure data correctness after migration:
+An example prompt is below:
 
 ```
-Validate that our migrated pipeline produces correct output:
+Migrate the Spark application in `/src` from Spark 2.4 to Spark 3.0.
 
-1. Run both pipelines on the same input dataset
-2. Compare row counts between outputs
-3. Perform checksum comparison on key columns
-4. Validate aggregations match exactly
-5. Check for NULL handling differences
-6. Generate a data quality report
-```
+Use `migration_inventory.json` to guide the changes.
 
-**Validation approaches:**
-
-<Tabs>
-  <Tab title="Row-Level">
-    ```python
-    # Compare outputs row by row
-    old_df = spark.read.parquet("output/v2/")
-    new_df = spark.read.parquet("output/v3/")
-    
-    diff = old_df.exceptAll(new_df)
-    assert diff.count() == 0, f"Found {diff.count()} differences"
-    ```
-  </Tab>
-  <Tab title="Aggregate">
-    ```python
-    # Compare key metrics
-    old_stats = old_df.agg(
-        count("*"), sum("amount"), avg("quantity")
-    ).collect()[0]
-    
-    new_stats = new_df.agg(
-        count("*"), sum("amount"), avg("quantity")
-    ).collect()[0]
-    
-    assert old_stats == new_stats
-    ```
-  </Tab>
-  <Tab title="Schema">
-    ```python
-    # Compare schemas
-    assert old_df.schema == new_df.schema, \
-        f"Schema mismatch: {old_df.schema} vs {new_df.schema}"
-    ```
-  </Tab>
-</Tabs>
-
-## Examples
-
-### Complete Spark 2 to 3 Migration
-
-```
-Migrate our Spark 2.4 ETL pipeline to Spark 3.5:
-
-Project structure:
-- src/main/scala/etl/
-  - ExtractJob.scala
-  - TransformJob.scala
-  - LoadJob.scala
-- src/main/resources/
-  - application.conf
+For all low-risk changes (minor syntax changes, updated APIs, etc.), use tools like `grep` or `ast-grep`. Make sure you write the invocations to a `migration.sh` script for future use.
 
 Requirements:
-1. Update all deprecated APIs
-2. Migrate from legacy date parsing
-3. Update to new Catalog API for Hive tables
-4. Preserve all business logic exactly
-5. Update build.sbt with new dependencies
-6. Create a test suite comparing old and new outputs
-7. Document all breaking changes found
+1. Replace all deprecated APIs with their Spark 3.0 equivalents
+2. For behavioral changes (especially date handling and CSV parsing), add explicit configuration to preserve Spark 2.4 behavior where needed (e.g., spark.sql.legacy.timeParserPolicy=LEGACY)
+3. Update build.sbt / pom.xml dependencies to Spark 3.0 compatible versions
+4. Replace RDD-based operations with DataFrame/Dataset equivalents where practical
+5. Replace UDFs with built-in Spark SQL functions where a direct equivalent exists
+6. Update import statements for any relocated classes
+7. Preserve all existing business logic and output schemas
 ```
 
-### Hive to Spark SQL Migration
+Note the inclusion of the _known problems_ in requirement 2. We plan to catch the silent failures associated with these systems in the validation step, but including them explicitly while migrating helps avoid them altogether.
+
+## Validation
+
+Spark migrations are particularly prone to silent regressions: jobs appear to run successfully but produce subtly different output. Jobs dealing with dates, CSVs, or using CAST semantics are all vulnerable, especially when migrating between major versions of Spark.
+
+The most reliable way to ensure silent regressions do not exist is by _data-level comparison_, where both the new and old pipelines are run on the same input data and their outputs directly compared. This catches subtle errors that unit tests might miss, especially in complex pipelines where a behavioral change in one stage propagates through downstream transformations.
+
+An example prompt for data-level comparison:
 
 ```
-Convert our Hive data warehouse queries to Spark SQL:
+Validate the migrated Spark application in `/src` against the original.
 
-Hive scripts to migrate:
-- daily_aggregation.hql
-- customer_segments.hql
-- revenue_report.hql
+1. For each job, run both the Spark 2.4 and 3.0 versions on the test data in `/test_data`
+2. Compare outputs:
+   - Row counts must match exactly
+   - Perform column-level comparison using checksums for numeric columns and exact match for string/date columns
+   - Flag any NULL handling differences
+3. For any discrepancies, trace them back to specific migration changes using the MIGRATION comments
+4. Generate a performance comparison: job duration, shuffle bytes, and peak executor memory
 
-Requirements:
-1. Convert HiveQL to Spark SQL
-2. Replace Hive UDFs with Spark equivalents
-3. Optimize for Spark execution
-4. Maintain Hive metastore compatibility
-5. Create performance comparison benchmarks
+Save the results in `validation_report.json` in the following format:
+
+{
+  "jobs": [
+    {
+      "name": "daily_etl",
+      "data_match": true,
+      "row_count": {"v2": 1000000, "v3": 1000000},
+      "column_diffs": [],
+      "performance": {
+        "duration_seconds": {"v2": 340, "v3": 285},
+        "shuffle_bytes": {"v2": "2.1GB", "v3": "1.8GB"}
+      }
+    },
+    ...
+  ]
+}
 ```
 
-### EMR to Databricks Migration
+Note this prompt relies on existing data in `/test_data`. This can be generated by standard fuzzing tools, but in a pinch OpenHands can also help construct synthetic data that stresses the potential corner cases in the relevant systems.
 
-```
-Migrate our EMR Spark pipeline to Databricks:
+Every migration is unique, and developer experience is crucial to ensure the testing strategy covers your organization's requirements. Pay particular attention to jobs that involve date arithmetic, decimal precision in financial calculations, or custom UDFs that may depend on Spark internals. A solid validation suite not only ensures the migrated code works as expected, but also builds the organizational confidence needed to deploy the new version to production.
 
-Current setup:
-- EMR 6.x with Spark 3.1
-- S3 for data storage
-- Step Functions for orchestration
-- CloudWatch for monitoring
+## Beyond Version Upgrades
 
-Target:
-- Databricks on AWS
-- Unity Catalog for data governance
-- Databricks Workflows for orchestration
-- Built-in Databricks monitoring
+While this document focuses on Spark version upgrades, the same Understanding → Migration → Validation workflow applies to other Spark migration scenarios:
 
-Deliverables:
-1. Converted notebook or job definitions
-2. Updated storage configurations
-3. Workflow definitions
-4. IAM/service principal mappings
-5. Migration runbook
-```
+- **Cloud platform migrations** (e.g., EMR to Databricks, on-premises to Dataproc): The "understanding" step inventories platform-specific code (S3 paths, IAM roles, EMR bootstrap scripts), the migration step converts them to the target platform's equivalents, and validation confirms that jobs produce identical output in the new environment.
+- **Framework migrations** (MapReduce, Hive, or Pig to Spark): The "understanding" step maps the existing framework's operations to Spark equivalents, the migration step performs the conversion, and validation compares outputs between the old and new frameworks.
+
+In each case, the key principle is the same: build a structured inventory of what needs to change, apply targeted transformations, and validate rigorously before deploying.
 
 ## Related Resources
 
-- [Repository Setup](/openhands/usage/customization/repository) - Configure your Spark repository for OpenHands
-- [Key Features](/openhands/usage/key-features) - OpenHands capabilities overview
+- [OpenHands SDK Repository](https://github.com/OpenHands/software-agent-sdk) - Build custom AI agents
+- [Spark 3.x Migration Guide](https://spark.apache.org/docs/latest/migration-guide.html) - Official Spark migration documentation
 - [Prompting Best Practices](/openhands/usage/tips/prompting-best-practices) - Write effective prompts
