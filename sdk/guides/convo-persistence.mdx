@@ -65,10 +65,82 @@ The conversation state includes information that allows seamless restoration:
 - **Workspace Context**: Working directory and file system state
 - **Activated Skills**: [Skills](/sdk/guides/skill) that have been enabled during the conversation
 - **Secrets**: Managed credentials and API keys
+- **Agent State**: Custom runtime state stored by agents (see [Agent State](#agent-state) below)
 
 <Tip>
     For the complete implementation details, see the [ConversationState class](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/state.py) in the source code.
 </Tip>
+
+## How State Persistence Works
+
+The SDK uses an **automatic persistence** system that saves state changes immediately when they occur. This ensures that conversation state is always recoverable, even if the process crashes unexpectedly.
+
+### Auto-Save Mechanism
+
+When you modify any public field on `ConversationState`, the SDK automatically:
+
+1. Detects the field change via a custom `__setattr__` implementation
+2. Serializes the entire base state to `base_state.json`
+3. Triggers any registered state change callbacks
+
+This happens transparently—you don't need to call any save methods manually.
+
+```python
+# These changes are automatically persisted:
+conversation.state.execution_status = ConversationExecutionStatus.RUNNING
+conversation.state.max_iterations = 100
+```
+
+### Events vs Base State
+
+The persistence system separates data into two categories:
+
+| Category | Storage | Contents |
+|----------|---------|----------|
+| **Base State** | `base_state.json` | Agent configuration, execution status, statistics, secrets, agent_state |
+| **Events** | `events/event-*.json` | Message history, tool calls, observations, all conversation events |
+
+Events are appended incrementally (one file per event), while base state is overwritten on each change. This design optimizes for:
+- **Fast event appends**: No need to rewrite the entire history
+- **Atomic state updates**: Base state is always consistent
+- **Efficient restoration**: Events can be loaded lazily
+
+## Agent State
+
+The `agent_state` field provides a flexible dictionary for storing custom runtime state that persists across iterations. This is useful for agents that need to track feature-specific data.
+
+### Using Agent State
+
+```python
+# Store custom state
+conversation.state.agent_state = {
+    **conversation.state.agent_state,
+    "retry_count": 3,
+    "last_checkpoint": "step_5",
+}
+
+# Read state
+retry_count = conversation.state.agent_state.get("retry_count", 0)
+```
+
+<Warning>
+**Important**: To trigger auto-save, you must reassign the entire dictionary. In-place modifications (like `state.agent_state["key"] = value`) will NOT trigger persistence.
+
+```python
+# ❌ This does NOT trigger auto-save:
+conversation.state.agent_state["key"] = "value"
+
+# ✅ This DOES trigger auto-save:
+conversation.state.agent_state = {**conversation.state.agent_state, "key": "value"}
+```
+</Warning>
+
+### Common Use Cases
+
+- **Iteration tracking**: Store retry counts or iteration numbers for iterative refinement workflows
+- **Checkpointing**: Save progress markers for long-running tasks
+- **Feature flags**: Track which features have been activated during the conversation
+- **Custom metrics**: Store agent-specific metrics that aren't covered by the built-in statistics
 
 
 ## Persistence Directory Structure
