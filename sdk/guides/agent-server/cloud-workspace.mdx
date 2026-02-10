@@ -5,9 +5,12 @@ description: Connect to OpenHands Cloud for fully managed sandbox environments.
 
 > A ready-to-run example is available [here](#ready-to-run-example)!
 
-The [OpenHands Cloud](https://app.all-hands.dev) provides fully managed sandbox environments for agent execution.
+The [OpenHands Cloud](https://app.all-hands.dev) provides fully managed sandbox environments for agent execution. There are two ways to use it:
 
-The `OpenHandsCloudWorkspace` connects to OpenHands Cloud to provision sandboxes, allowing you to run agents with your own LLM configuration in a managed cloud environment.
+1. **OpenHandsCloudWorkspace** - SDK integration for running agents with your own LLM configuration
+2. **Cloud API Direct** - Launch one-off tasks that use your cloud-configured LLM and credentials
+
+This guide covers both approaches.
 
 ## Key Concepts
 
@@ -203,25 +206,131 @@ cd agent-sdk
 uv run python examples/02_remote_agent_server/07_convo_with_cloud_workspace.py
 ```
 
-## Using in GitHub Actions
+## Launching One-Off Tasks via Cloud API
 
-The `OpenHandsCloudWorkspace` can be used in GitHub Actions for CI/CD workflows. See the [PR Review Workflow](/sdk/guides/github-workflows/pr-review) for a complete example that demonstrates running code reviews in cloud mode:
+For scenarios where you want to launch a task and let it run asynchronously in the cloud (without waiting for completion), you can use the OpenHands Cloud API directly. This is particularly useful for:
+
+- **CI/CD workflows** - Trigger code reviews or automated tasks without blocking pipelines
+- **Background processing** - Launch long-running tasks and check results later
+- **Minimal configuration** - Only need an API key; LLM and GitHub credentials come from your cloud account
+
+### Key Benefits
+
+| Aspect | OpenHandsCloudWorkspace | Cloud API Direct |
+|--------|------------------------|------------------|
+| LLM Configuration | You provide `LLM_API_KEY` | Uses your cloud-configured LLM |
+| GitHub Access | You provide `GITHUB_TOKEN` | Uses your cloud-configured credentials |
+| Execution Model | Blocking (waits for completion) | Non-blocking (fire and forget) |
+| Best For | Interactive scripts, testing | CI/CD, automated workflows |
+
+### How It Works
+
+The Cloud API creates a conversation that:
+1. Uses your account's configured LLM (no API key needed in the request)
+2. Has access to your GitHub credentials (if configured in your cloud account)
+3. Runs asynchronously - you get a conversation URL to track progress
+4. Can be viewed in the OpenHands Cloud UI
+
+### Example: PR Review Workflow
+
+This example from the [PR Review GitHub Action](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/02_pr_review) demonstrates launching a code review task via the Cloud API:
+
+```python icon="python"
+import json
+import urllib.request
+
+def start_cloud_conversation(
+    cloud_api_url: str,
+    cloud_api_key: str,
+    initial_message: str,
+) -> tuple[str, str]:
+    """Start a conversation via OpenHands Cloud API.
+
+    This creates a conversation directly through the Cloud API, which:
+    - Uses the user's cloud-configured LLM (no LLM credentials needed)
+    - Uses the user's cloud-configured GitHub credentials
+    - Provisions a sandbox automatically
+    - Returns a conversation URL for tracking in the UI
+
+    Args:
+        cloud_api_url: OpenHands Cloud API URL (e.g., https://app.all-hands.dev)
+        cloud_api_key: API key for OpenHands Cloud
+        initial_message: The initial prompt to send to the agent
+
+    Returns:
+        Tuple of (conversation_id, conversation_url)
+    """
+    url = f"{cloud_api_url}/api/conversations"
+
+    payload = {"initial_user_msg": initial_message}
+
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=data, method="POST")
+    request.add_header("Authorization", f"Bearer {cloud_api_key}")
+    request.add_header("Content-Type", "application/json")
+
+    with urllib.request.urlopen(request, timeout=120) as response:
+        result = json.loads(response.read().decode("utf-8"))
+
+    conversation_id = result.get("conversation_id")
+    conversation_url = f"{cloud_api_url}/conversations/{conversation_id}"
+    return conversation_id, conversation_url
+
+
+# Example usage for PR review
+prompt = """
+Review the PR and identify issues that need to be addressed.
+
+## Pull Request Information
+- **Repository**: OpenHands/software-agent-sdk
+- **PR Number**: 1234
+- **Title**: Add new feature
+
+## Instructions
+1. Fetch the PR diff using: gh pr diff 1234 --repo OpenHands/software-agent-sdk
+2. Analyze the changes thoroughly
+3. Post your review using the GitHub API (GITHUB_TOKEN is available)
+"""
+
+conversation_id, conversation_url = start_cloud_conversation(
+    cloud_api_url="https://app.all-hands.dev",
+    cloud_api_key="your-api-key",
+    initial_message=prompt,
+)
+
+print(f"Review started: {conversation_url}")
+# The workflow can exit immediately - review continues in the cloud
+```
+
+### Using in GitHub Actions
+
+The PR Review workflow demonstrates a complete implementation:
 
 ```yaml icon="yaml"
 - name: Run PR Review (Cloud Mode)
   uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
   with:
       mode: cloud
-      llm-model: anthropic/claude-sonnet-4-5-20250929
       review-style: roasted
-      llm-api-key: ${{ secrets.LLM_API_KEY }}
-      github-token: ${{ secrets.GITHUB_TOKEN }}
+      # Only the cloud API key is needed - LLM and GitHub access
+      # come from your OpenHands Cloud account configuration
       openhands-cloud-api-key: ${{ secrets.OPENHANDS_CLOUD_API_KEY }}
 ```
 
 <Note>
 See the full PR Review example: [examples/03_github_workflows/02_pr_review](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/02_pr_review)
 </Note>
+
+### When to Use Each Approach
+
+| Use Case | Recommended Approach |
+|----------|---------------------|
+| Interactive development | `OpenHandsCloudWorkspace` |
+| Unit tests with cloud sandbox | `OpenHandsCloudWorkspace` |
+| CI/CD code reviews | Cloud API Direct |
+| Background automation | Cloud API Direct |
+| Need custom LLM config | `OpenHandsCloudWorkspace` |
+| Want simplest setup | Cloud API Direct |
 
 ## Next Steps
 
