@@ -1,0 +1,291 @@
+---
+title: Plugins
+description: Plugins bundle skills, hooks, MCP servers, agents, and commands into reusable packages that extend agent capabilities.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+Plugins provide a way to package and distribute multiple agent components together. A single plugin can include:
+
+- **Skills**: Specialized knowledge and workflows
+- **Hooks**: Event handlers for tool lifecycle
+- **MCP Config**: External tool server configurations
+- **Agents**: Specialized agent definitions
+- **Commands**: Slash commands
+
+The plugin format is compatible with the [Claude Code plugin structure](https://github.com/anthropics/claude-code/tree/main/plugins).
+
+## Plugin Structure
+
+<Note>
+See the [example_plugins directory](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/05_skills_and_plugins/02_loading_plugins/example_plugins) for a complete working plugin structure.
+</Note>
+
+A plugin follows this directory structure:
+
+<Tree>
+    <Tree.Folder name={"plugin-name"} defaultOpen>
+        <Tree.Folder name=".plugin" defaultOpen>
+            <Tree.File name="plugin.json" />
+        </Tree.Folder>
+        <Tree.Folder name="skills" defaultOpen>
+        <Tree.Folder name="skill-name">
+          <Tree.File name="SKILL.md" />
+        </Tree.Folder>
+        </Tree.Folder>
+        <Tree.Folder name="hooks" defaultOpen>
+            <Tree.File name="hooks.json" />
+        </Tree.Folder>
+        <Tree.Folder name="agents" defaultOpen>
+            <Tree.File name="agent-name.md" />
+        </Tree.Folder>
+        <Tree.Folder name="commands" defaultOpen>
+            <Tree.File name="command-name.md" />
+        </Tree.Folder>
+        <Tree.File name=".mcp.json" />
+        <Tree.File name="README.md" />
+    </Tree.Folder>
+</Tree>
+
+Note that the plugin metadata, i.e., `plugin-name/.plugin/plugin.json`, is required.
+
+### Plugin Manifest
+
+The manifest file `plugin-name/.plugin/plugin.json` defines plugin metadata:
+
+```json icon="file-code" wrap
+{
+  "name": "code-quality",
+  "version": "1.0.0",
+  "description": "Code quality tools and workflows",
+  "author": "openhands",
+  "license": "MIT",
+  "repository": "https://github.com/example/code-quality-plugin"
+}
+```
+
+### Skills
+
+Skills are defined in markdown files with YAML frontmatter:
+
+```markdown icon="file-code"
+---
+name: python-linting
+description: Instructions for linting Python code
+trigger:
+  type: keyword
+  keywords:
+    - lint
+    - linting
+    - code quality
+---
+
+# Python Linting Skill
+
+Run ruff to check for issues:
+
+\`\`\`bash
+ruff check .
+\`\`\`
+```
+
+### Hooks
+
+Hooks are defined in `hooks/hooks.json`:
+
+```json icon="file-code" wrap
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "file_editor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'File edited: $OPENHANDS_TOOL_NAME'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### MCP Configuration
+
+MCP servers are configured in `.mcp.json`:
+
+```json wrap icon="file-code"
+{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    }
+  }
+}
+```
+
+## Using Plugin Components
+
+> The ready-to-run example is available [here](#ready-to-run-example)!
+
+Brief explanation on how to use a plugin with an agent.
+
+<Steps>
+    <Step>
+        ### Loading a Plugin
+        First, load the desired plugins.
+
+        ```python icon="python"
+        from openhands.sdk.plugin import Plugin
+
+        # Load a single plugin
+        plugin = Plugin.load("/path/to/plugin")
+
+        # Load all plugins from a directory
+        plugins = Plugin.load_all("/path/to/plugins")
+        ```
+    </Step>
+    <Step>
+        ### Accessing Components
+        You can access the different plugin components to see which ones are available.
+
+        ```python icon="python"
+        # Skills
+        for skill in plugin.skills:
+            print(f"Skill: {skill.name}")
+
+        # Hooks configuration
+        if plugin.hooks:
+            print(f"Hooks configured: {plugin.hooks}")
+
+        # MCP servers
+        if plugin.mcp_config:
+            servers = plugin.mcp_config.get("mcpServers", {})
+            print(f"MCP servers: {list(servers.keys())}")
+        ```
+    </Step>
+    <Step>
+        ### Using with an Agent
+        You can now feed your agent with your preferred plugin.
+
+        ```python focus={3,10,17} icon="python"
+        # Create agent context with plugin skills
+        agent_context = AgentContext(
+            skills=plugin.skills,
+        )
+
+        # Create agent with plugin MCP config
+        agent = Agent(
+            llm=llm,
+            tools=tools,
+            mcp_config=plugin.mcp_config or {},
+            agent_context=agent_context,
+        )
+
+        # Create conversation with plugin hooks
+        conversation = Conversation(
+            agent=agent,
+            hook_config=plugin.hooks,
+        )
+        ```
+    </Step>
+</Steps>
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/02_loading_plugins/main.py
+"""Example: Loading Plugins via Conversation
+
+Demonstrates the recommended way to load plugins using the `plugins` parameter
+on Conversation. Plugins bundle skills, hooks, and MCP config together.
+
+For full documentation, see: https://docs.all-hands.dev/sdk/guides/plugins
+"""
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation
+from openhands.sdk.plugin import PluginSource
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# Locate example plugin directory
+script_dir = Path(__file__).parent
+plugin_path = script_dir / "example_plugins" / "code-quality"
+
+# Define plugins to load
+# Supported sources: local path, "github:owner/repo", or git URL
+# Optional: ref (branch/tag/commit), repo_path (for monorepos)
+plugins = [
+    PluginSource(source=str(plugin_path)),
+    # PluginSource(source="github:org/security-plugin", ref="v2.0.0"),
+    # PluginSource(source="github:org/monorepo", repo_path="plugins/logging"),
+]
+
+# Check for API key
+api_key = os.getenv("LLM_API_KEY")
+if not api_key:
+    print("Set LLM_API_KEY to run this example")
+    print("EXAMPLE_COST: 0")
+    sys.exit(0)
+
+# Configure LLM and Agent
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+llm = LLM(
+    usage_id="plugin-demo",
+    model=model,
+    api_key=SecretStr(api_key),
+    base_url=os.getenv("LLM_BASE_URL"),
+)
+agent = Agent(
+    llm=llm, tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)]
+)
+
+# Create conversation with plugins - skills, MCP config, and hooks are merged
+# Note: Plugins are loaded lazily on first send_message() or run() call
+with tempfile.TemporaryDirectory() as tmpdir:
+    conversation = Conversation(
+        agent=agent,
+        workspace=tmpdir,
+        plugins=plugins,
+    )
+
+    # Test: The "lint" keyword triggers the python-linting skill
+    # This first send_message() call triggers lazy plugin loading
+    conversation.send_message("How do I lint Python code? Brief answer please.")
+
+    # Verify skills were loaded from the plugin (after lazy loading)
+    skills = (
+        conversation.agent.agent_context.skills
+        if conversation.agent.agent_context
+        else []
+    )
+    print(f"Loaded {len(skills)} skill(s) from plugins")
+
+    conversation.run()
+
+    print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
+```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/02_loading_plugins/main.py"/>
+
+
+## Next Steps
+
+- **[Skills](/sdk/guides/skill)** - Learn more about skills and triggers
+- **[Hooks](/sdk/guides/hooks)** - Understand hook event types
+- **[MCP Integration](/sdk/guides/mcp)** - Configure external tool servers

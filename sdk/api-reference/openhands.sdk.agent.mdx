@@ -6,13 +6,14 @@ description: API reference for openhands.sdk.agent module
 
 ### class Agent
 
-Bases: [`AgentBase`](#class-agentbase)
+Bases: `CriticMixin`, [`AgentBase`](#class-agentbase)
 
 Main agent implementation for OpenHands.
 
 The Agent class provides the core functionality for running AI agents that can
 interact with tools, process messages, and execute actions. It inherits from
-AgentBase and implements the agent execution logic.
+AgentBase and implements the agent execution logic. Critic-related functionality
+is provided by CriticMixin.
 
 #### Example
 
@@ -26,33 +27,35 @@ AgentBase and implements the agent execution logic.
 
 #### Properties
 
-- `agent_context`: AgentContext | None
-- `condenser`: CondenserBase | None
-- `filter_tools_regex`: str | None
-- `kind`: Literal['Agent']
-- `llm`: LLM
-- `mcp_config`: dict[str, Any]
-- `model_config`: ClassVar[ConfigDict] = (configuration object)
+- `model_config`: = (configuration object)
   Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
-- `system_prompt_filename`: str
-- `system_prompt_kwargs`: dict[str, object]
-- `tools`: list[Tool]
 
 #### Methods
 
 #### init_state()
 
-Initialize the empty conversation state to prepare the agent for user
-messages.
+Initialize conversation state.
 
-Typically this involves adding system message
+Invariants enforced by this method:
+- If a SystemPromptEvent is already present, it must be within the first 3
 
-NOTE: state will be mutated in-place.
+  events (index 0 or 1 in practice; index 2 is included in the scan window
+  to detect a user message appearing before the system prompt).
+- A user MessageEvent should not appear before the SystemPromptEvent.
+
+These invariants keep event ordering predictable for downstream components
+(condenser, UI, etc.) and also prevent accidentally materializing the full
+event history during initialization.
 
 #### model_post_init()
 
-Override this method to perform additional initialization after __init__ and model_construct.
-This is useful if you want to do some validation that requires the entire model to be initialized.
+This function is meant to behave like a BaseModel method to initialise private attributes.
+
+It takes context as an argument since that’s what pydantic-core passes when calling it.
+
+* Parameters:
+  * `self` – The BaseModel instance.
+  * `context` – The context.
 
 #### step()
 
@@ -88,16 +91,18 @@ agent implementations must follow.
 
 - `agent_context`: AgentContext | None
 - `condenser`: CondenserBase | None
+- `critic`: CriticBase | None
 - `filter_tools_regex`: str | None
-- `kind`: str
+- `include_default_tools`: list[str]
 - `llm`: LLM
 - `mcp_config`: dict[str, Any]
-- `model_config`: ClassVar[ConfigDict] = (configuration object)
+- `model_config`: = (configuration object)
   Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
 - `name`: str
   Returns the name of the Agent.
 - `prompt_dir`: str
   Returns the directory where this class’s module file is located.
+- `security_policy_filename`: str
 - `system_message`: str
   Compute system message on-demand to maintain statelessness.
 - `system_prompt_filename`: str
@@ -134,13 +139,13 @@ Like model_dump, but excludes None fields by default.
 
 #### model_post_init()
 
-Override this method to perform additional initialization after __init__ and model_construct.
-This is useful if you want to do some validation that requires the entire model to be initialized.
+This function is meant to behave like a BaseModel method to initialise private attributes.
 
-#### resolve_diff_from_deserialized()
+It takes context as an argument since that’s what pydantic-core passes when calling it.
 
-Return a new AgentBase instance equivalent to persisted but with
-explicitly whitelisted fields (e.g. api_key) taken from self.
+* Parameters:
+  * `self` – The BaseModel instance.
+  * `context` – The context.
 
 #### abstractmethod step()
 
@@ -160,3 +165,30 @@ If the underlying LLM supports streaming, partial deltas are forwarded to
 `on_token` before the full response is returned.
 
 NOTE: state will be mutated in-place.
+
+#### verify()
+
+Verify that we can resume this agent from persisted state.
+
+We do not merge configuration between persisted and runtime Agent
+instances. Instead, we verify compatibility requirements and then
+continue with the runtime-provided Agent.
+
+Compatibility requirements:
+- Agent class/type must match.
+- Tools must match exactly (same tool names).
+
+Tools are part of the system prompt and cannot be changed mid-conversation.
+To use different tools, start a new conversation or use conversation forking
+(see [https://github.com/OpenHands/OpenHands/issues/8560](https://github.com/OpenHands/OpenHands/issues/8560)).
+
+All other configuration (LLM, agent_context, condenser, etc.) can be
+freely changed between sessions.
+
+* Parameters:
+  * `persisted` – The agent loaded from persisted state.
+  * `events` – Unused, kept for API compatibility.
+* Returns:
+  This runtime agent (self) if verification passes.
+* Raises:
+  `ValueError` – If agent class or tools don’t match.
