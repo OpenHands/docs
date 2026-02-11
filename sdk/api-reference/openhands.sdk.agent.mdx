@@ -6,13 +6,14 @@ description: API reference for openhands.sdk.agent module
 
 ### class Agent
 
-Bases: [`AgentBase`](#class-agentbase)
+Bases: `CriticMixin`, [`AgentBase`](#class-agentbase)
 
 Main agent implementation for OpenHands.
 
 The Agent class provides the core functionality for running AI agents that can
 interact with tools, process messages, and execute actions. It inherits from
-AgentBase and implements the agent execution logic.
+AgentBase and implements the agent execution logic. Critic-related functionality
+is provided by CriticMixin.
 
 #### Example
 
@@ -33,12 +34,18 @@ AgentBase and implements the agent execution logic.
 
 #### init_state()
 
-Initialize the empty conversation state to prepare the agent for user
-messages.
+Initialize conversation state.
 
-Typically this involves adding system message
+Invariants enforced by this method:
+- If a SystemPromptEvent is already present, it must be within the first 3
 
-NOTE: state will be mutated in-place.
+  events (index 0 or 1 in practice; index 2 is included in the scan window
+  to detect a user message appearing before the system prompt).
+- A user MessageEvent should not appear before the SystemPromptEvent.
+
+These invariants keep event ordering predictable for downstream components
+(condenser, UI, etc.) and also prevent accidentally materializing the full
+event history during initialization.
 
 #### model_post_init()
 
@@ -163,25 +170,24 @@ NOTE: state will be mutated in-place.
 
 Verify that we can resume this agent from persisted state.
 
-This PR’s goal is to not reconcile configuration between persisted and
-runtime Agent instances. Instead, we verify compatibility requirements
-and then continue with the runtime-provided Agent.
+We do not merge configuration between persisted and runtime Agent
+instances. Instead, we verify compatibility requirements and then
+continue with the runtime-provided Agent.
 
 Compatibility requirements:
 - Agent class/type must match.
-- Tools:
+- Tools must match exactly (same tool names).
 
-  - If events are provided, only tools that were actually used in history
-    must exist in runtime.
-  - If events are not provided, tool names must match exactly.
+Tools are part of the system prompt and cannot be changed mid-conversation.
+To use different tools, start a new conversation or use conversation forking
+(see [https://github.com/OpenHands/OpenHands/issues/8560](https://github.com/OpenHands/OpenHands/issues/8560)).
 
-All other configuration (LLM, agent_context, condenser, system prompts,
-etc.) can be freely changed between sessions.
+All other configuration (LLM, agent_context, condenser, etc.) can be
+freely changed between sessions.
 
 * Parameters:
   * `persisted` – The agent loaded from persisted state.
-  * `events` – Optional event sequence to scan for used tools if tool names
-    don’t match.
+  * `events` – Unused, kept for API compatibility.
 * Returns:
   This runtime agent (self) if verification passes.
 * Raises:

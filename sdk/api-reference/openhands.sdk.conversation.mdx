@@ -74,6 +74,32 @@ state by adding a condensation event to the history.
   `ValueError` – If no condenser is configured or the condenser doesn’t
       handle condensation requests.
 
+#### abstractmethod execute_tool()
+
+Execute a tool directly without going through the agent loop.
+
+This method allows executing tools before or outside of the normal
+conversation.run() flow. It handles agent initialization automatically,
+so tools can be executed before the first run() call.
+
+Note: This method bypasses the agent loop, including confirmation
+policies and security analyzer checks. Callers are responsible for
+applying any safeguards before executing potentially destructive tools.
+
+This is useful for:
+- Pre-run setup operations (e.g., indexing repositories)
+- Manual tool execution for environment setup
+- Testing tool behavior outside the agent loop
+
+* Parameters:
+  * `tool_name` – The name of the tool to execute (e.g., “sleeptime_compute”)
+  * `action` – The action to pass to the tool executor
+* Returns:
+  The observation returned by the tool execution
+* Raises:
+  * `KeyError` – If the tool is not found in the agent’s tools
+  * `NotImplementedError` – If the tool has no executor
+
 #### abstractmethod generate_title()
 
 Generate a title for the conversation based on the first user message.
@@ -152,9 +178,14 @@ while RemoteConversation connects to a remote agent server.
 
 ```pycon
 >>> from openhands.sdk import LLM, Agent, Conversation
+>>> from openhands.sdk.plugin import PluginSource
 >>> llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("key"))
 >>> agent = Agent(llm=llm, tools=[])
->>> conversation = Conversation(agent=agent, workspace="./workspace")
+>>> conversation = Conversation(
+...     agent=agent,
+...     workspace="./workspace",
+...     plugins=[PluginSource(source="github:org/security-plugin", ref="v1.0")],
+... )
 >>> conversation.send_message("Hello!")
 >>> conversation.run()
 ```
@@ -183,6 +214,20 @@ Enum representing the current execution state of the conversation.
 
 #### WAITING_FOR_CONFIRMATION = 'waiting_for_confirmation'
 
+#### is_terminal()
+
+Check if this status represents a terminal state.
+
+Terminal states indicate the run has completed and the agent is no longer
+actively processing. These are: FINISHED, ERROR, STUCK.
+
+Note: IDLE is NOT a terminal state - it’s the initial state of a conversation
+before any run has started. Including IDLE would cause false positives when
+the WebSocket delivers the initial state update during connection.
+
+* Returns:
+  True if this is a terminal status, False otherwise.
+
 ### class ConversationState
 
 Bases: `OpenHandsModel`
@@ -192,6 +237,7 @@ Bases: `OpenHandsModel`
 
 - `activated_knowledge_skills`: list[str]
 - `agent`: AgentBase
+- `agent_state`: dict[str, Any]
 - `blocked_actions`: dict[str, str]
 - `blocked_messages`: dict[str, str]
 - `confirmation_policy`: ConfirmationPolicyBase
@@ -482,10 +528,16 @@ Bases: [`BaseConversation`](#class-baseconversation)
 #### Properties
 
 - `agent`: AgentBase
+- `delete_on_close`: bool = True
 - `id`: UUID
   Get the unique ID of the conversation.
 - `llm_registry`: LLMRegistry
 - `max_iteration_per_run`: int
+- `resolved_plugins`: list[ResolvedPluginSource] | None
+  Get the resolved plugin sources after plugins are loaded.
+  Returns None if plugins haven’t been loaded yet, or if no plugins
+  were specified. Use this for persistence to ensure conversation
+  resume uses the exact same plugin versions.
 - `state`: [ConversationState](#class-conversationstate)
   Get the conversation state.
   It returns a protocol that has a subset of ConversationState methods
@@ -503,9 +555,15 @@ Bases: [`BaseConversation`](#class-baseconversation)
 Initialize the conversation.
 
 * Parameters:
-  * `agent` – The agent to use for the conversation
+  * `agent` – The agent to use for the conversation.
   * `workspace` – Working directory for agent operations and tool execution.
     Can be a string path, Path object, or LocalWorkspace instance.
+  * `plugins` – Optional list of plugins to load. Each plugin is specified
+    with a source (github:owner/repo, git URL, or local path),
+    optional ref (branch/tag/commit), and optional repo_path for
+    monorepos. Plugins are loaded in order with these merge
+    semantics: skills override by name (last wins), MCP config
+    override by key (last wins), hooks concatenate (all run).
   * `persistence_dir` – Directory for persisting conversation state and events.
     Can be a string path or Path object.
   * `conversation_id` – Optional ID for the conversation. If provided, will
@@ -513,7 +571,8 @@ Initialize the conversation.
     suffix their persistent filestore with this ID.
   * `callbacks` – Optional list of callback functions to handle events
   * `token_callbacks` – Optional list of callbacks invoked for streaming deltas
-  * `hook_config` – Optional hook configuration to auto-wire session hooks
+  * `hook_config` – Optional hook configuration to auto-wire session hooks.
+    If plugins are loaded, their hooks are combined with this config.
   * `max_iteration_per_run` – Maximum number of iterations per run
   * `visualizer` –  
 
@@ -562,6 +621,32 @@ ongoing step to finish before proceeding.
 Raises ValueError if no compatible condenser exists.
 
 #### property conversation_stats
+
+#### execute_tool()
+
+Execute a tool directly without going through the agent loop.
+
+This method allows executing tools before or outside of the normal
+conversation.run() flow. It handles agent initialization automatically,
+so tools can be executed before the first run() call.
+
+Note: This method bypasses the agent loop, including confirmation
+policies and security analyzer checks. Callers are responsible for
+applying any safeguards before executing potentially destructive tools.
+
+This is useful for:
+- Pre-run setup operations (e.g., indexing repositories)
+- Manual tool execution for environment setup
+- Testing tool behavior outside the agent loop
+
+* Parameters:
+  * `tool_name` – The name of the tool to execute (e.g., “sleeptime_compute”)
+  * `action` – The action to pass to the tool executor
+* Returns:
+  The observation returned by the tool execution
+* Raises:
+  * `KeyError` – If the tool is not found in the agent’s tools
+  * `NotImplementedError` – If the tool has no executor
 
 #### generate_title()
 
@@ -644,6 +729,7 @@ Bases: [`BaseConversation`](#class-baseconversation)
 #### Properties
 
 - `agent`: AgentBase
+- `delete_on_close`: bool = False
 - `id`: UUID
 - `max_iteration_per_run`: int
 - `state`: RemoteState
@@ -659,6 +745,8 @@ Remote conversation proxy that talks to an agent server.
 * Parameters:
   * `agent` – Agent configuration (will be sent to the server)
   * `workspace` – The working directory for agent operations and tool execution.
+  * `plugins` – Optional list of plugins to load on the server. Each plugin
+    is a PluginSource specifying source, ref, and repo_path.
   * `conversation_id` – Optional existing conversation id to attach to
   * `callbacks` – Optional callbacks to receive events (not yet streamed)
   * `max_iteration_per_run` – Max iterations configured on server
@@ -716,6 +804,21 @@ conversation state by adding a condensation event to the history.
   `HTTPError` – If the server returns an error (e.g., no condenser configured).
 
 #### property conversation_stats
+
+#### execute_tool()
+
+Execute a tool directly without going through the agent loop.
+
+Note: This method is not yet supported for RemoteConversation.
+Tool execution for remote conversations happens on the server side
+during the normal agent loop.
+
+* Parameters:
+  * `tool_name` – The name of the tool to execute
+  * `action` – The action to pass to the tool executor
+* Raises:
+  `NotImplementedError` – Always, as this feature is not yet supported
+      for remote conversations.
 
 #### generate_title()
 
@@ -882,3 +985,10 @@ This detector analyzes the conversation history to identify various stuck patter
 #### is_stuck()
 
 Check if the agent is currently stuck.
+
+Note: To avoid materializing potentially large file-backed event histories,
+only the last MAX_EVENTS_TO_SCAN_FOR_STUCK_DETECTION events are analyzed.
+If a user message exists within this window, only events after it are checked.
+Otherwise, all events in the window are analyzed.
+
+#### __init__()
