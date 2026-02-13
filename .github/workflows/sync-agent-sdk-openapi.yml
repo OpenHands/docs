@@ -113,27 +113,34 @@ jobs:
 
             **Note**: This is an automated pull request. Please review the changes to ensure they are correct before merging.
 
+      # Auto-approve using GITHUB_TOKEN (github-actions[bot]) when PR was created
+      # by a different identity (DOCS_SYNC_TOKEN). GitHub does not allow self-approval,
+      # so we need different identities for PR creation vs approval.
       - name: Auto-approve PR
         if: steps.cpr.outputs.pull-request-url
         env:
-          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          HAS_SYNC_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN != '' }}
         run: |
-          if [ -n "$GH_TOKEN" ]; then
+          # Only approve if DOCS_SYNC_TOKEN was used to create the PR (different identity).
+          # If DOCS_SYNC_TOKEN is not set, the PR was created by github-actions[bot],
+          # and we cannot self-approve.
+          if [ "$HAS_SYNC_TOKEN" = "true" ]; then
             gh pr review "${{ steps.cpr.outputs.pull-request-url }}" \
               --approve \
               --body "Auto-approving automated OpenAPI sync PR."
+          else
+            echo "Skipping auto-approve: DOCS_SYNC_TOKEN not set, cannot self-approve."
           fi
 
       - name: Enable auto-merge (squash)
         if: steps.cpr.outputs.pull-request-url
         env:
-          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$GH_TOKEN" ]; then
-            PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
+          PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
 
-            # Prefer auto-merge (merges when required checks finish).
-            # If auto-merge isn't enabled for the repo, fall back to attempting an immediate merge.
-            gh pr merge "$PR_URL" --auto --delete-branch --squash \
-              || gh pr merge "$PR_URL" --delete-branch --squash
-          fi
+          # Prefer auto-merge (merges when required checks finish).
+          # If auto-merge isn't enabled for the repo, fall back to attempting an immediate merge.
+          gh pr merge "$PR_URL" --auto --delete-branch --squash \
+            || gh pr merge "$PR_URL" --delete-branch --squash
