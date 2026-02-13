@@ -13,6 +13,11 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Needed to approve & enable auto-merge via the GitHub CLI with GITHUB_TOKEN
+  # https://docs.github.com/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token
+  # https://cli.github.com/manual/gh_pr_review
+  # https://cli.github.com/manual/gh_pr_merge
+  issues: read
 
 concurrency:
   group: sync-agent-sdk-openapi
@@ -116,24 +121,20 @@ jobs:
       - name: Auto-approve PR
         if: steps.cpr.outputs.pull-request-url
         env:
-          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN || github.token }}
         run: |
-          if [ -n "$GH_TOKEN" ]; then
-            gh pr review "${{ steps.cpr.outputs.pull-request-url }}" \
-              --approve \
-              --body "Auto-approving automated OpenAPI sync PR."
-          fi
+          gh pr review "${{ steps.cpr.outputs.pull-request-url }}" \
+            --approve \
+            --body "Auto-approving automated OpenAPI sync PR."
 
       - name: Enable auto-merge (squash)
         if: steps.cpr.outputs.pull-request-url
         env:
-          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN || github.token }}
         run: |
-          if [ -n "$GH_TOKEN" ]; then
-            PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
+          PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
 
-            # Prefer auto-merge (merges when required checks finish).
-            # If auto-merge isn't enabled for the repo, fall back to attempting an immediate merge.
-            gh pr merge "$PR_URL" --auto --delete-branch --squash \
-              || gh pr merge "$PR_URL" --delete-branch --squash
-          fi
+          # Prefer auto-merge (merges when required checks finish).
+          # If auto-merge isn't enabled for the repo, fall back to attempting an immediate merge.
+          gh pr merge "$PR_URL" --auto --delete-branch --squash \
+            || gh pr merge "$PR_URL" --delete-branch --squash
