@@ -13,6 +13,30 @@ The OpenHands PR Review workflow is a GitHub Actions workflow that:
 - **Analyzes code changes** in the context of your entire repository
 - **Posts inline comments** directly on specific lines of code in the PR
 - **Provides fast feedback** - typically within 2-3 minutes
+- **Supports two modes** - SDK (local) or Cloud (asynchronous)
+
+## Review Modes
+
+The workflow supports two execution modes:
+
+| Mode | Description | Required Secrets | Best For |
+|------|-------------|-----------------|----------|
+| **SDK Mode** (default) | Runs the agent locally in GitHub Actions | `LLM_API_KEY`, `GITHUB_TOKEN` | Full control over LLM configuration |
+| **Cloud Mode** | Runs asynchronously in OpenHands Cloud | `OPENHANDS_CLOUD_API_KEY`, `GITHUB_TOKEN` | No LLM setup, faster CI |
+
+### Cloud Mode Benefits
+
+- **No LLM setup** - Uses your OpenHands Cloud account's configured LLM
+- **Faster CI completion** - Workflow exits immediately; review runs in background
+- **Track progress** - Posts a comment on the PR with a link to the conversation URL
+
+### Cloud Mode Prerequisites
+
+<Warning>
+The OpenHands Cloud account that owns the `OPENHANDS_CLOUD_API_KEY` must have GitHub access to the repository you want to review. The agent running in cloud uses your account's GitHub credentials to fetch the PR diff and post review comments.
+
+Follow the [GitHub Installation Guide](/openhands/usage/cloud/github-installation) to connect your GitHub account to OpenHands Cloud.
+</Warning>
 
 ## How It Works
 
@@ -44,60 +68,126 @@ Choose between two review styles:
 
 ## Quick Start
 
-<Steps>
-  <Step title="Copy the workflow file">
-    Create `.github/workflows/pr-review-by-openhands.yml` in your repository:
+<Tabs>
+  <Tab title="SDK Mode (Default)">
+    <Steps>
+      <Step title="Copy the workflow file">
+        Create `.github/workflows/pr-review-by-openhands.yml` in your repository:
 
-    ```yaml
-    name: PR Review by OpenHands
+        ```yaml
+        name: PR Review by OpenHands
 
-    on:
-      pull_request_target:
-        types: [opened, ready_for_review, labeled, review_requested]
+        on:
+          pull_request_target:
+            types: [opened, ready_for_review, labeled, review_requested]
 
-    permissions:
-      contents: read
-      pull-requests: write
-      issues: write
+        permissions:
+          contents: read
+          pull-requests: write
+          issues: write
 
-    jobs:
-      pr-review:
-        if: |
-          (github.event.action == 'opened' && github.event.pull_request.draft == false) ||
-          github.event.action == 'ready_for_review' ||
-          github.event.label.name == 'review-this' ||
-          github.event.requested_reviewer.login == 'openhands-agent'
-        runs-on: ubuntu-latest
-        steps:
-          - name: Run PR Review
-            uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
-            with:
-              llm-model: anthropic/claude-sonnet-4-5-20250929
-              review-style: standard
-              llm-api-key: ${{ secrets.LLM_API_KEY }}
-              github-token: ${{ secrets.GITHUB_TOKEN }}
-    ```
-  </Step>
+        jobs:
+          pr-review:
+            if: |
+              (github.event.action == 'opened' && github.event.pull_request.draft == false) ||
+              github.event.action == 'ready_for_review' ||
+              github.event.label.name == 'review-this' ||
+              github.event.requested_reviewer.login == 'openhands-agent'
+            runs-on: ubuntu-latest
+            steps:
+              - name: Run PR Review
+                uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
+                with:
+                  llm-model: anthropic/claude-sonnet-4-5-20250929
+                  review-style: standard
+                  llm-api-key: ${{ secrets.LLM_API_KEY }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+        ```
+      </Step>
 
-  <Step title="Add your LLM API key">
-    Go to your repository's **Settings → Secrets and variables → Actions** and add:
-    - **`LLM_API_KEY`**: Your LLM API key (get one from [OpenHands LLM Provider](/openhands/usage/llms/openhands-llms))
-  </Step>
+      <Step title="Add your LLM API key">
+        Go to your repository's **Settings → Secrets and variables → Actions** and add:
+        - **`LLM_API_KEY`**: Your LLM API key (get one from [OpenHands LLM Provider](/openhands/usage/llms/openhands-llms))
+      </Step>
 
-  <Step title="Create the review label">
-    Create a `review-this` label in your repository:
-    1. Go to **Issues → Labels**
-    2. Click **New label**
-    3. Name: `review-this`
-    4. Description: `Trigger OpenHands PR review`
-  </Step>
+      <Step title="Create the review label">
+        Create a `review-this` label in your repository:
+        1. Go to **Issues → Labels**
+        2. Click **New label**
+        3. Name: `review-this`
+        4. Description: `Trigger OpenHands PR review`
+      </Step>
 
-  <Step title="Trigger a review">
-    Open a PR and either:
-    - Add the `review-this` label, OR
-    - Request `openhands-agent` as a reviewer
-  </Step>
-</Steps>
+      <Step title="Trigger a review">
+        Open a PR and either:
+        - Add the `review-this` label, OR
+        - Request `openhands-agent` as a reviewer
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Cloud Mode">
+    <Steps>
+      <Step title="Copy the workflow file">
+        Create `.github/workflows/pr-review-by-openhands.yml` in your repository:
+
+        ```yaml
+        name: PR Review by OpenHands (Cloud)
+
+        on:
+          pull_request_target:
+            types: [opened, ready_for_review, labeled, review_requested]
+
+        permissions:
+          contents: read
+          pull-requests: write
+          issues: write
+
+        jobs:
+          pr-review:
+            if: |
+              (github.event.action == 'opened' && github.event.pull_request.draft == false) ||
+              github.event.action == 'ready_for_review' ||
+              github.event.label.name == 'review-this' ||
+              github.event.requested_reviewer.login == 'openhands-agent'
+            runs-on: ubuntu-latest
+            steps:
+              - name: Run PR Review
+                uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
+                with:
+                  mode: cloud
+                  review-style: standard
+                  openhands-cloud-api-key: ${{ secrets.OPENHANDS_CLOUD_API_KEY }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+        ```
+      </Step>
+
+      <Step title="Add your OpenHands Cloud API key">
+        Go to your repository's **Settings → Secrets and variables → Actions** and add:
+        - **`OPENHANDS_CLOUD_API_KEY`**: See [Obtaining an API Key](/openhands/usage/cloud/cloud-api#obtaining-an-api-key)
+        
+        <Note>
+        Make sure you have an LLM configured in your [OpenHands Cloud account](https://app.all-hands.dev) and have connected your GitHub account.
+        </Note>
+      </Step>
+
+      <Step title="Create the review label">
+        Create a `review-this` label in your repository:
+        1. Go to **Issues → Labels**
+        2. Click **New label**
+        3. Name: `review-this`
+        4. Description: `Trigger OpenHands PR review`
+      </Step>
+
+      <Step title="Trigger a review">
+        Open a PR and either:
+        - Add the `review-this` label, OR
+        - Request `openhands-agent` as a reviewer
+        
+        The workflow posts a comment with a link to track progress, then exits. The agent runs asynchronously in the cloud.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
 
 ## Composite Action
 
@@ -112,16 +202,23 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `llm-model` | LLM model to use | Yes | - |
-| `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
+| `mode` | Review mode: `sdk` or `cloud` | No | `sdk` |
+| `llm-model` | LLM model (SDK mode only) | SDK mode | `anthropic/claude-sonnet-4-5-20250929` |
+| `llm-base-url` | LLM base URL (SDK mode only) | No | `''` |
 | `review-style` | Review style: `standard` or `roasted` | No | `roasted` |
 | `sdk-version` | Git ref for SDK (tag, branch, or commit SHA) | No | `main` |
 | `sdk-repo` | SDK repository (owner/repo) | No | `OpenHands/software-agent-sdk` |
-| `llm-api-key` | LLM API key | Yes | - |
+| `llm-api-key` | LLM API key (SDK mode only) | SDK mode | - |
 | `github-token` | GitHub token for API access | Yes | - |
+| `openhands-cloud-api-key` | OpenHands Cloud API key (cloud mode only) | Cloud mode | - |
+| `openhands-cloud-api-url` | OpenHands Cloud API URL | No | `https://app.all-hands.dev` |
 
 <Note>
 Use `sdk-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features.
+</Note>
+
+<Note>
+In **cloud mode**, the workflow posts a comment with a link to track progress, then exits immediately. The agent runs asynchronously in OpenHands Cloud using your configured LLM.
 </Note>
 
 ## Customization
@@ -262,6 +359,7 @@ See real automated reviews in action on the OpenHands Software Agent SDK reposit
 
 - [PR Review Workflow Reference](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/02_pr_review) - Full workflow example and agent script
 - [Composite Action](https://github.com/OpenHands/software-agent-sdk/blob/main/.github/actions/pr-review/action.yml) - Reusable GitHub Action for PR reviews
+- [Cloud Workspace Guide](/sdk/guides/agent-server/cloud-workspace) - Learn about launching one-off tasks via Cloud API
 - [Software Agent SDK](/sdk/index) - Build your own AI-powered workflows
 - [GitHub Integration](/openhands/usage/cloud/github-installation) - Set up GitHub integration for OpenHands Cloud
 - [Skills Documentation](/overview/skills) - Learn more about OpenHands skills
