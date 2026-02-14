@@ -1,0 +1,143 @@
+---
+title: Deprecation & API Stability
+description: How the SDK manages deprecations, version bumps, and backward compatibility.
+---
+
+The OpenHands SDK enforces a structured deprecation lifecycle to keep the public
+API stable while allowing it to evolve. Two CI checks run automatically on every
+release to enforce these policies.
+
+## Public API Surface
+
+Each published package defines its public API via `__all__` in its top-level
+`__init__.py`. The following packages are currently covered:
+
+| Package | Distribution | `__all__` |
+|---------|-------------|-----------|
+| `openhands.sdk` | `openhands-sdk` | ✅ |
+| `openhands.workspace` | `openhands-workspace` | ✅ |
+
+<Note>
+`openhands-tools` does not yet define `__all__` and is not covered by the
+automated breakage checks. This is tracked in
+[#2074](https://github.com/OpenHands/software-agent-sdk/issues/2074).
+</Note>
+
+## Deprecation Helpers
+
+The SDK provides two canonical ways to mark something as deprecated, both in
+[`openhands.sdk.utils.deprecation`](/sdk/api-reference/openhands.sdk.utils):
+
+### `@deprecated` decorator
+
+Use on classes and functions that will be removed in a future release:
+
+```python
+from openhands.sdk.utils.deprecation import deprecated
+
+@deprecated(deprecated_in="1.10.0", removed_in="1.12.0")
+class OldThing:
+    ...
+```
+
+### `warn_deprecated()` function
+
+Use for runtime deprecation warnings on dynamic access paths (e.g., property
+accessors, conditional branches):
+
+```python
+from openhands.sdk.utils.deprecation import warn_deprecated
+
+class MyModel:
+    @property
+    def old_field(self):
+        warn_deprecated("MyModel.old_field", deprecated_in="1.10.0", removed_in="1.12.0")
+        return self._new_field
+```
+
+Both helpers emit a `DeprecationWarning` so users see the message during
+development, and record metadata that CI tooling can detect.
+
+## Policy 1: Deprecation Before Removal
+
+**Any symbol removed from a package's `__all__` must have been marked as
+deprecated for at least one release before removal.**
+
+This is enforced by `check_sdk_api_breakage.py`, which AST-scans the
+*previous* PyPI release looking for `@deprecated` decorators or
+`warn_deprecated()` calls. If a removed symbol was never deprecated,
+CI flags it as an error.
+
+<Steps>
+<Step title="Mark the symbol as deprecated">
+Add `@deprecated(...)` or `warn_deprecated(...)` in the current release.
+The symbol stays in `__all__` and continues to work — users just see a warning.
+</Step>
+<Step title="Release with the deprecation marker">
+The deprecation is now recorded in the published package on PyPI.
+</Step>
+<Step title="Remove the symbol in a subsequent release">
+Remove it from `__all__` (and the code). CI will verify the prior release had
+the deprecation marker and allow the removal.
+</Step>
+</Steps>
+
+## Policy 2: MINOR Version Bump for Breaking Changes
+
+**Any breaking change — removal of an exported symbol or structural change to a
+public class/function — requires at least a MINOR version bump** (e.g.,
+`1.11.x` → `1.12.0`).
+
+This applies to all structural breakages detected by
+[Griffe](https://mkdocstrings.github.io/griffe/), including:
+- Removed symbols from `__all__`
+- Removed attributes from exported classes
+- Changed function signatures
+
+A PATCH bump (e.g., `1.11.3` → `1.11.4`) with breaking changes will fail CI.
+
+## Event Field Deprecation (Special Case)
+
+Event types (Pydantic models used in event serialization) have an additional
+constraint: **old events must always load without error**, because production
+systems may resume conversations containing events from older SDK versions.
+
+When removing a field from an event type:
+
+1. **Never use `extra="forbid"` without a deprecation handler** — old events
+   containing removed fields would fail to deserialize.
+2. **Add a permanent model validator** using `handle_deprecated_model_fields`:
+
+```python
+from openhands.sdk.utils.deprecation import handle_deprecated_model_fields
+
+class MyEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    _DEPRECATED_FIELDS: ClassVar[tuple[str, ...]] = ("old_field_name",)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_deprecated_fields(cls, data: Any) -> Any:
+        return handle_deprecated_model_fields(data, cls._DEPRECATED_FIELDS)
+```
+
+<Warning>
+Deprecated field handlers on events are **permanent** and must never be removed.
+They ensure old conversations can always be loaded regardless of when they were
+created.
+</Warning>
+
+## CI Checks
+
+Two scripts enforce these policies automatically:
+
+| Script | Runs on | What it checks |
+|--------|---------|---------------|
+| `check_sdk_api_breakage.py` | Release PRs (`rel-*` branches) | Deprecation-before-removal + MINOR bump |
+| `check_deprecations.py` | Every PR | Deprecation deadline enforcement |
+
+Together they ensure that:
+- Users always get advance warning before APIs are removed
+- Breaking changes are properly versioned
+- Deprecated code is eventually cleaned up
