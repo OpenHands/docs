@@ -1,0 +1,217 @@
+---
+title: LLM Fallback Strategy
+description: Automatically try alternate LLMs when the primary model fails with a transient error.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+`FallbackStrategy` gives your agent automatic resilience: when the primary LLM fails with a transient error (rate limit, timeout, connection issue), the SDK tries alternate LLMs in order. Fallback is **per-call** — each new request always starts with the primary model.
+
+## Basic Usage
+
+Attach a `FallbackStrategy` to your primary `LLM`. The fallback LLMs are referenced by name from an [LLM Profile Store](/sdk/guides/llm-profile-store):
+
+```python icon="python" wrap focus={16, 17, 21, 22, 23}
+from pydantic import SecretStr
+from openhands.sdk import LLM, LLMProfileStore
+from openhands.sdk.llm import FallbackStrategy
+
+# Menage persisted LLM profiles
+# default store directory: .openhands/profiles
+store = LLMProfileStore()
+
+fallback_llm = LLM(
+    usage_id="fallback-1",
+    model="openai/gpt-4o",
+    api_key=SecretStr("your-openai-key"),
+)
+store.save("fallback-1", fallback_llm, include_secrets=True)
+
+# Configure an LLM with a fallback strategy
+primary_llm = LLM(
+    usage_id="agent-primary",
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=SecretStr("your-api-key"),
+    fallback_strategy=FallbackStrategy(
+        fallback_llms=["fallback-1"],
+    ),
+)
+```
+
+## How It Works
+
+1. The primary LLM handles the request as normal
+2. If the call fails with a **transient error**, the `FallbackStrategy` kicks in and tries each fallback LLM in order
+3. The first successful fallback response is returned to the caller
+4. If all fallbacks fail, the original primary error is raised
+5. Token usage and cost from fallback calls are **merged into the primary LLM's metrics**, so you get a unified view of total spend by model
+
+<Warning>
+Only transient errors trigger fallback.
+Non-transient errors (e.g., authentication failures, bad requests) are raised immediately without trying fallbacks.
+For a complete list of supported transient errors see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/978dd7d1e3268331b7f8af514e7a7930f98eb8af/openhands-sdk/openhands/sdk/llm/fallback_strategy.py#L29)
+</Warning>
+
+## Multiple Fallback Levels
+
+Chain as many fallback LLMs as you need. They are tried in list order:
+
+```python icon="python" wrap focus={5-7}
+llm = LLM(
+    usage_id="agent-primary",
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=SecretStr(api_key),
+    fallback_strategy=FallbackStrategy(
+        fallback_llms=["fallback-1", "fallback-2"],
+    ),
+)
+```
+
+If the primary fails, `fallback-1` is tried. If that also fails, `fallback-2` is tried. If all fail, the primary error is raised.
+
+## Custom Profile Store Directory
+
+By default, fallback profiles are loaded from `.openhands/profiles`. You can point to a different directory:
+
+```python icon="python" wrap focus={3}
+FallbackStrategy(
+    fallback_llms=["fallback-1", "fallback-2"],
+    profile_store_dir="/path/to/my/profiles",
+)
+```
+
+## Metrics
+
+Fallback costs are automatically merged into the primary LLM's metrics. After a conversation, you can inspect exactly which models were used:
+
+```python icon="python" wrap
+# After running a conversation
+metrics = llm.metrics
+print(f"Total cost (including fallbacks): ${metrics.accumulated_cost:.6f}")
+
+for usage in metrics.token_usages:
+    print(f"  model={usage.model}  prompt={usage.prompt_tokens}  completion={usage.completion_tokens}")
+```
+
+Individual `token_usage` records carry the fallback model name, so you can distinguish which LLM produced each usage record.
+
+## Use Cases
+
+- **Rate limit handling** — When one provider throttles you, seamlessly switch to another
+- **High availability** — Keep your agent running during provider outages
+- **Cost optimization** — Try a cheaper model first and fall back to a more capable one on failure
+- **Cross-provider redundancy** — Spread risk across Anthropic, OpenAI, Google, etc.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/39_llm_fallback.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/39_llm_fallback.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/39_llm_fallback.py
+"""Example: Using FallbackStrategy for LLM resilience.
+
+When the primary LLM fails with a transient error (rate limit, timeout, etc.),
+FallbackStrategy automatically tries alternate LLMs in order.  Fallback is
+per-call: each new request starts with the primary model.  Token usage and
+cost from fallback calls are merged into the primary LLM's metrics.
+
+This example:
+  1. Saves two fallback LLM profiles to a temporary store.
+  2. Configures a primary LLM with a FallbackStrategy pointing at those profiles.
+  3. Runs a conversation — if the primary model is unavailable, the agent
+     transparently falls back to the next available model.
+"""
+
+import os
+import tempfile
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation, LLMProfileStore, Tool
+from openhands.sdk.llm import FallbackStrategy
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# Read configuration from environment
+api_key = os.getenv("LLM_API_KEY", None)
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+base_url = os.getenv("LLM_BASE_URL")
+primary_model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+
+# Use a temporary directory so this example doesn't pollute your home folder.
+# In real usage you can omit base_dir to use the default (~/.openhands/profiles).
+profile_store_dir = tempfile.mkdtemp()
+store = LLMProfileStore(base_dir=profile_store_dir)
+
+fallback_1 = LLM(
+    usage_id="fallback-1",
+    model=os.getenv("LLM_FALLBACK_MODEL_1", "openai/gpt-4o"),
+    api_key=SecretStr(os.getenv("LLM_FALLBACK_API_KEY_1", api_key)),
+    base_url=os.getenv("LLM_FALLBACK_BASE_URL_1", base_url),
+)
+store.save("fallback-1", fallback_1, include_secrets=True)
+
+fallback_2 = LLM(
+    usage_id="fallback-2",
+    model=os.getenv("LLM_FALLBACK_MODEL_2", "openai/gpt-4o-mini"),
+    api_key=SecretStr(os.getenv("LLM_FALLBACK_API_KEY_2", api_key)),
+    base_url=os.getenv("LLM_FALLBACK_BASE_URL_2", base_url),
+)
+store.save("fallback-2", fallback_2, include_secrets=True)
+
+print(f"Saved fallback profiles: {store.list()}")
+
+
+# Configure the primary LLM with a FallbackStrategy
+primary_llm = LLM(
+    usage_id="agent-primary",
+    model=primary_model,
+    api_key=SecretStr(api_key),
+    base_url=base_url,
+    fallback_strategy=FallbackStrategy(
+        fallback_llms=["fallback-1", "fallback-2"],
+        profile_store_dir=profile_store_dir,
+    ),
+)
+
+
+# Run a conversation
+agent = Agent(
+    llm=primary_llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+)
+
+conversation = Conversation(agent=agent, workspace=os.getcwd())
+conversation.send_message("Write a haiku about resilience into HAIKU.txt.")
+conversation.run()
+
+
+# Inspect metrics (includes any fallback usage)
+metrics = primary_llm.metrics
+print(f"Total cost (including fallbacks): ${metrics.accumulated_cost:.6f}")
+print(f"Token usage records: {len(metrics.token_usages)}")
+for usage in metrics.token_usages:
+    print(
+        f"  model={usage.model}"
+        f"  prompt={usage.prompt_tokens}"
+        f"  completion={usage.completion_tokens}"
+    )
+
+print(f"EXAMPLE_COST: {metrics.accumulated_cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/39_llm_fallback.py"/>
+
+## Next Steps
+
+- **[LLM Profile Store](/sdk/guides/llm-profile-store)** — Save and load LLM configurations as reusable profiles
+- **[Model Routing](/sdk/guides/llm-routing)** — Route requests based on content (e.g., multimodal vs text-only)
+- **[Exception Handling](/sdk/guides/llm-error-handling)** — Handle LLM errors in your application
+- **[LLM Metrics](/sdk/guides/metrics)** — Track token usage and costs across models
