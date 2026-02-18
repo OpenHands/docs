@@ -12,6 +12,7 @@
           "Server Details"
         ],
         "summary": "Alive",
+        "description": "Basic liveness check - returns OK if the server process is running.",
         "operationId": "alive_alive_get",
         "responses": {
           "200": {
@@ -31,6 +32,7 @@
           "Server Details"
         ],
         "summary": "Health",
+        "description": "Basic health check - returns OK if the server process is running.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -40,6 +42,32 @@
                 "schema": {
                   "type": "string",
                   "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "Server Details"
+        ],
+        "summary": "Ready",
+        "description": "Readiness check - returns OK only if the server has completed initialization.\n\nThis endpoint should be used by Kubernetes readiness probes to determine\nwhen the pod is ready to receive traffic. Returns 503 during initialization.",
+        "operationId": "ready_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Ready Ready Get"
                 }
               }
             }
@@ -1560,6 +1588,24 @@
             }
           },
           {
+            "name": "order__gt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter to events with order greater than this value",
+              "description": "Only returns BashOutput events with order > this value. Useful for polling to fetch only new events since the last poll."
+            },
+            "description": "Only returns BashOutput events with order > this value. Useful for polling to fetch only new events since the last poll."
+          },
+          {
             "name": "sort_order",
             "in": "query",
             "required": false,
@@ -2195,6 +2241,112 @@
         }
       }
     },
+    "/api/skills": {
+      "post": {
+        "tags": [
+          "Skills"
+        ],
+        "summary": "Get Skills",
+        "description": "Load and merge skills from all configured sources.\n\nSkills are loaded from multiple sources and merged with the following\nprecedence (later overrides earlier for duplicate names):\n1. Sandbox skills (lowest) - Exposed URLs from sandbox\n2. Public skills - From GitHub OpenHands/skills repository\n3. User skills - From ~/.openhands/skills/\n4. Organization skills - From {org}/.openhands or equivalent\n5. Project skills (highest) - From {workspace}/.openhands/skills/\n\nArgs:\n    request: SkillsRequest containing configuration for which sources to load.\n\nReturns:\n    SkillsResponse containing merged skills and source counts.",
+        "operationId": "get_skills_api_skills_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/skills/sync": {
+      "post": {
+        "tags": [
+          "Skills"
+        ],
+        "summary": "Sync Skills",
+        "description": "Force refresh of public skills from GitHub repository.\n\nThis triggers a git pull on the cached skills repository to get\nthe latest skills from the OpenHands/skills repository.\n\nReturns:\n    SyncResponse indicating success or failure.",
+        "operationId": "sync_skills_api_skills_sync_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/hooks": {
+      "post": {
+        "tags": [
+          "Hooks"
+        ],
+        "summary": "Get Hooks",
+        "description": "Load hooks from the workspace .openhands/hooks.json file.\n\nThis endpoint reads the hooks configuration from the project's\n.openhands/hooks.json file if it exists.\n\nArgs:\n    request: HooksRequest containing the project directory path.\n\nReturns:\n    HooksResponse containing the hook configuration or None.",
+        "operationId": "get_hooks_api_hooks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HooksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HooksResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "get": {
         "summary": "Get Server Info",
@@ -2216,6 +2368,325 @@
   },
   "components": {
     "schemas": {
+      "APIBasedCritic-Input": {
+        "properties": {
+          "server_url": {
+            "type": "string",
+            "title": "Server Url",
+            "description": "Base URL of the vLLM classification service",
+            "default": "https://all-hands-ai--critic-qwen3-4b-serve.modal.run"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string",
+                "format": "password",
+                "writeOnly": true
+              }
+            ],
+            "title": "Api Key",
+            "description": "API key for authenticating with the vLLM service"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "Name of the model to use",
+            "default": "critic-qwen3-4b"
+          },
+          "tokenizer_name": {
+            "type": "string",
+            "title": "Tokenizer Name",
+            "description": "HuggingFace tokenizer name for loading chat template",
+            "default": "Qwen/Qwen3-4B-Instruct-2507"
+          },
+          "pass_tools_definitions": {
+            "type": "boolean",
+            "title": "Pass Tools Definitions",
+            "description": "Whether to pass tool definitions to the model",
+            "default": true
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "title": "Timeout Seconds",
+            "description": "Timeout for requests to the model",
+            "default": 300.0
+          },
+          "has_success_label": {
+            "type": "boolean",
+            "title": "Has Success Label",
+            "description": "Whether the model predicts success label at index 0",
+            "default": true
+          },
+          "sentiment_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sentiment Labels",
+            "default": [
+              "sentiment_positive",
+              "sentiment_neutral",
+              "sentiment_negative"
+            ]
+          },
+          "agent_issue_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Agent Issue Labels",
+            "default": [
+              "misunderstood_intention",
+              "did_not_follow_instruction",
+              "insufficient_analysis",
+              "insufficient_clarification",
+              "improper_tool_use_or_setup",
+              "loop_behavior",
+              "insufficient_testing",
+              "insufficient_debugging",
+              "incomplete_implementation",
+              "file_management_errors",
+              "scope_creep",
+              "risky_actions_or_permission",
+              "other_agent_issue"
+            ]
+          },
+          "infra_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Infra Labels",
+            "default": [
+              "infrastructure_external_issue",
+              "infrastructure_agent_caused_issue"
+            ]
+          },
+          "user_followup_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "User Followup Labels",
+            "default": [
+              "clarification_or_restatement",
+              "correction",
+              "direction_change",
+              "vcs_update_requests",
+              "progress_or_scope_concern",
+              "frustration_or_complaint",
+              "removal_or_reversion_request",
+              "other_user_issue"
+            ]
+          },
+          "sentiment_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Sentiment Map",
+            "default": {
+              "Positive": "sentiment_positive",
+              "Neutral": "sentiment_neutral",
+              "Negative": "sentiment_negative"
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "APIBasedCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "api_key"
+        ],
+        "title": "APIBasedCritic"
+      },
+      "APIBasedCritic-Output": {
+        "properties": {
+          "server_url": {
+            "type": "string",
+            "title": "Server Url",
+            "description": "Base URL of the vLLM classification service",
+            "default": "https://all-hands-ai--critic-qwen3-4b-serve.modal.run"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string",
+                "format": "password",
+                "writeOnly": true
+              }
+            ],
+            "title": "Api Key",
+            "description": "API key for authenticating with the vLLM service"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "Name of the model to use",
+            "default": "critic-qwen3-4b"
+          },
+          "tokenizer_name": {
+            "type": "string",
+            "title": "Tokenizer Name",
+            "description": "HuggingFace tokenizer name for loading chat template",
+            "default": "Qwen/Qwen3-4B-Instruct-2507"
+          },
+          "pass_tools_definitions": {
+            "type": "boolean",
+            "title": "Pass Tools Definitions",
+            "description": "Whether to pass tool definitions to the model",
+            "default": true
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "title": "Timeout Seconds",
+            "description": "Timeout for requests to the model",
+            "default": 300.0
+          },
+          "has_success_label": {
+            "type": "boolean",
+            "title": "Has Success Label",
+            "description": "Whether the model predicts success label at index 0",
+            "default": true
+          },
+          "sentiment_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sentiment Labels",
+            "default": [
+              "sentiment_positive",
+              "sentiment_neutral",
+              "sentiment_negative"
+            ]
+          },
+          "agent_issue_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Agent Issue Labels",
+            "default": [
+              "misunderstood_intention",
+              "did_not_follow_instruction",
+              "insufficient_analysis",
+              "insufficient_clarification",
+              "improper_tool_use_or_setup",
+              "loop_behavior",
+              "insufficient_testing",
+              "insufficient_debugging",
+              "incomplete_implementation",
+              "file_management_errors",
+              "scope_creep",
+              "risky_actions_or_permission",
+              "other_agent_issue"
+            ]
+          },
+          "infra_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Infra Labels",
+            "default": [
+              "infrastructure_external_issue",
+              "infrastructure_agent_caused_issue"
+            ]
+          },
+          "user_followup_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "User Followup Labels",
+            "default": [
+              "clarification_or_restatement",
+              "correction",
+              "direction_change",
+              "vcs_update_requests",
+              "progress_or_scope_concern",
+              "frustration_or_complaint",
+              "removal_or_reversion_request",
+              "other_user_issue"
+            ]
+          },
+          "sentiment_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Sentiment Map",
+            "default": {
+              "Positive": "sentiment_positive",
+              "Neutral": "sentiment_neutral",
+              "Negative": "sentiment_negative"
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "APIBasedCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "api_key",
+          "kind"
+        ],
+        "title": "APIBasedCritic"
+      },
       "Action": {
         "oneOf": [
           {
@@ -2259,6 +2730,12 @@
           },
           {
             "$ref": "#/components/schemas/BrowserSetStorageAction"
+          },
+          {
+            "$ref": "#/components/schemas/BrowserStartRecordingAction"
+          },
+          {
+            "$ref": "#/components/schemas/BrowserStopRecordingAction"
           },
           {
             "$ref": "#/components/schemas/BrowserSwitchTabAction"
@@ -2314,6 +2791,8 @@
             "openhands__tools__browser_use__definition__BrowserNavigateAction-Output__1": "#/components/schemas/BrowserNavigateAction",
             "openhands__tools__browser_use__definition__BrowserScrollAction-Output__1": "#/components/schemas/BrowserScrollAction",
             "openhands__tools__browser_use__definition__BrowserSetStorageAction-Output__1": "#/components/schemas/BrowserSetStorageAction",
+            "openhands__tools__browser_use__definition__BrowserStartRecordingAction-Output__1": "#/components/schemas/BrowserStartRecordingAction",
+            "openhands__tools__browser_use__definition__BrowserStopRecordingAction-Output__1": "#/components/schemas/BrowserStopRecordingAction",
             "openhands__tools__browser_use__definition__BrowserSwitchTabAction-Output__1": "#/components/schemas/BrowserSwitchTabAction",
             "openhands__tools__browser_use__definition__BrowserTypeAction-Output__1": "#/components/schemas/BrowserTypeAction",
             "openhands__tools__file_editor__definition__FileEditorAction-Output__1": "#/components/schemas/FileEditorAction",
@@ -2431,6 +2910,17 @@
             "$ref": "#/components/schemas/SecurityRisk",
             "description": "The LLM's assessment of the safety risk of this action.",
             "default": "UNKNOWN"
+          },
+          "critic_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CriticResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional critic evaluation of this action and preceding history."
           },
           "summary": {
             "anyOf": [
@@ -2626,6 +3116,22 @@
               }
             ]
           },
+          "critic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CriticBase-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "EXPERIMENTAL: Optional critic to evaluate agent actions and messages in real-time. API and behavior may change without notice. May impact performance, especially in 'all_actions' mode.",
+            "examples": [
+              {
+                "kind": "AgentFinishedCritic"
+              }
+            ]
+          },
           "kind": {
             "type": "string",
             "const": "Agent",
@@ -2637,7 +3143,7 @@
           "llm"
         ],
         "title": "Agent",
-        "description": "Main agent implementation for OpenHands.\n\nThe Agent class provides the core functionality for running AI agents that can\ninteract with tools, process messages, and execute actions. It inherits from\nAgentBase and implements the agent execution logic.\n\nExample:\n    >>> from openhands.sdk import LLM, Agent, Tool\n    >>> llm = LLM(model=\"claude-sonnet-4-20250514\", api_key=SecretStr(\"key\"))\n    >>> tools = [Tool(name=\"TerminalTool\"), Tool(name=\"FileEditorTool\")]\n    >>> agent = Agent(llm=llm, tools=tools)"
+        "description": "Main agent implementation for OpenHands.\n\nThe Agent class provides the core functionality for running AI agents that can\ninteract with tools, process messages, and execute actions. It inherits from\nAgentBase and implements the agent execution logic. Critic-related functionality\nis provided by CriticMixin.\n\nExample:\n    >>> from openhands.sdk import LLM, Agent, Tool\n    >>> llm = LLM(model=\"claude-sonnet-4-20250514\", api_key=SecretStr(\"key\"))\n    >>> tools = [Tool(name=\"TerminalTool\"), Tool(name=\"FileEditorTool\")]\n    >>> agent = Agent(llm=llm, tools=tools)"
       },
       "Agent-Output": {
         "properties": {
@@ -2803,6 +3309,22 @@
               }
             ]
           },
+          "critic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CriticBase-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "EXPERIMENTAL: Optional critic to evaluate agent actions and messages in real-time. API and behavior may change without notice. May impact performance, especially in 'all_actions' mode.",
+            "examples": [
+              {
+                "kind": "AgentFinishedCritic"
+              }
+            ]
+          },
           "kind": {
             "type": "string",
             "const": "Agent",
@@ -2815,7 +3337,7 @@
           "kind"
         ],
         "title": "Agent",
-        "description": "Main agent implementation for OpenHands.\n\nThe Agent class provides the core functionality for running AI agents that can\ninteract with tools, process messages, and execute actions. It inherits from\nAgentBase and implements the agent execution logic.\n\nExample:\n    >>> from openhands.sdk import LLM, Agent, Tool\n    >>> llm = LLM(model=\"claude-sonnet-4-20250514\", api_key=SecretStr(\"key\"))\n    >>> tools = [Tool(name=\"TerminalTool\"), Tool(name=\"FileEditorTool\")]\n    >>> agent = Agent(llm=llm, tools=tools)"
+        "description": "Main agent implementation for OpenHands.\n\nThe Agent class provides the core functionality for running AI agents that can\ninteract with tools, process messages, and execute actions. It inherits from\nAgentBase and implements the agent execution logic. Critic-related functionality\nis provided by CriticMixin.\n\nExample:\n    >>> from openhands.sdk import LLM, Agent, Tool\n    >>> llm = LLM(model=\"claude-sonnet-4-20250514\", api_key=SecretStr(\"key\"))\n    >>> tools = [Tool(name=\"TerminalTool\"), Tool(name=\"FileEditorTool\")]\n    >>> agent = Agent(llm=llm, tools=tools)"
       },
       "AgentBase-Input": {
         "$ref": "#/components/schemas/Agent-Input"
@@ -2890,6 +3412,22 @@
             ],
             "title": "Secrets",
             "description": "Dictionary mapping secret keys to values or secret sources. Secrets are used for authentication and sensitive data handling. Values can be either strings or SecretSource instances (str | SecretSource)."
+          },
+          "current_datetime": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Datetime",
+            "description": "Current date and time information to provide to the agent. Can be a datetime object (which will be formatted as ISO 8601) or a pre-formatted string. When provided, this information is included in the system prompt to give the agent awareness of the current time context. Defaults to the current datetime."
           }
         },
         "type": "object",
@@ -2963,6 +3501,22 @@
             ],
             "title": "Secrets",
             "description": "Dictionary mapping secret keys to values or secret sources. Secrets are used for authentication and sensitive data handling. Values can be either strings or SecretSource instances (str | SecretSource)."
+          },
+          "current_datetime": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Datetime",
+            "description": "Current date and time information to provide to the agent. Can be a datetime object (which will be formatted as ISO 8601) or a pre-formatted string. When provided, this information is included in the system prompt to give the agent awareness of the current time context. Defaults to the current datetime."
           }
         },
         "type": "object",
@@ -3022,6 +3576,75 @@
         ],
         "title": "AgentErrorEvent",
         "description": "Error triggered by the agent.\n\nNote: This event should not contain model \"thought\" or \"reasoning_content\". It\nrepresents an error produced by the agent/scaffold, not model output."
+      },
+      "AgentFinishedCritic-Input": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "AgentFinishedCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "title": "AgentFinishedCritic",
+        "description": "Critic that evaluates whether an agent properly finished a task.\n\nThis critic checks two main criteria:\n1. The agent's last action was a FinishAction (proper completion)\n2. The generated git patch is non-empty (actual changes were made)"
+      },
+      "AgentFinishedCritic-Output": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "AgentFinishedCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "AgentFinishedCritic",
+        "description": "Critic that evaluates whether an agent properly finished a task.\n\nThis critic checks two main criteria:\n1. The agent's last action was a FinishAction (proper completion)\n2. The generated git patch is non-empty (actual changes were made)"
       },
       "AlwaysConfirm-Input": {
         "properties": {
@@ -4240,6 +4863,166 @@
         "title": "BrowserSetStorageTool",
         "description": "Tool for setting browser storage."
       },
+      "BrowserStartRecordingAction": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "BrowserStartRecordingAction",
+            "title": "Kind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "BrowserStartRecordingAction",
+        "description": "Schema for starting browser session recording."
+      },
+      "BrowserStartRecordingTool": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type"
+          },
+          "observation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Type"
+          },
+          "annotations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/openhands__sdk__tool__tool__ToolAnnotations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "kind": {
+            "type": "string",
+            "const": "BrowserStartRecordingTool",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "description",
+          "action_type",
+          "kind",
+          "title"
+        ],
+        "title": "BrowserStartRecordingTool",
+        "description": "Tool for starting browser session recording."
+      },
+      "BrowserStopRecordingAction": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "BrowserStopRecordingAction",
+            "title": "Kind"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "BrowserStopRecordingAction",
+        "description": "Schema for stopping browser session recording."
+      },
+      "BrowserStopRecordingTool": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type"
+          },
+          "observation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Type"
+          },
+          "annotations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/openhands__sdk__tool__tool__ToolAnnotations"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "kind": {
+            "type": "string",
+            "const": "BrowserStopRecordingTool",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "description",
+          "action_type",
+          "kind",
+          "title"
+        ],
+        "title": "BrowserStopRecordingTool",
+        "description": "Tool for stopping browser session recording."
+      },
       "BrowserSwitchTabAction": {
         "properties": {
           "tab_id": {
@@ -4615,7 +5398,7 @@
               }
             ],
             "title": "Summary Offset",
-            "description": "An optional offset to the start of the resulting view indicating where the summary should be inserted."
+            "description": "An optional offset to the start of the resulting view (after forgotten events have been removed) indicating where the summary should be inserted. If not provided, the summary will not be inserted into the view."
           },
           "llm_response_id": {
             "type": "string",
@@ -5019,6 +5802,12 @@
             "$ref": "#/components/schemas/SecretRegistry-Output",
             "description": "Registry for handling secrets and sensitive data"
           },
+          "agent_state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Agent State",
+            "description": "Dictionary for agent-specific runtime state that persists across iterations. Agents can store feature-specific state using string keys. To trigger autosave, always reassign: state.agent_state = {**state.agent_state, key: value}. See https://docs.openhands.dev/sdk/guides/convo-persistence#how-state-persistence-works"
+          },
           "title": {
             "anyOf": [
               {
@@ -5186,6 +5975,99 @@
           "cost"
         ],
         "title": "Cost"
+      },
+      "CriticBase-Input": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AgentFinishedCritic-Input"
+          },
+          {
+            "$ref": "#/components/schemas/APIBasedCritic-Input"
+          },
+          {
+            "$ref": "#/components/schemas/EmptyPatchCritic-Input"
+          },
+          {
+            "$ref": "#/components/schemas/PassCritic-Input"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "openhands__sdk__critic__impl__agent_finished__AgentFinishedCritic-Input__1": "#/components/schemas/AgentFinishedCritic-Input",
+            "openhands__sdk__critic__impl__api__critic__APIBasedCritic-Input__1": "#/components/schemas/APIBasedCritic-Input",
+            "openhands__sdk__critic__impl__empty_patch__EmptyPatchCritic-Input__1": "#/components/schemas/EmptyPatchCritic-Input",
+            "openhands__sdk__critic__impl__pass_critic__PassCritic-Input__1": "#/components/schemas/PassCritic-Input"
+          }
+        }
+      },
+      "CriticBase-Output": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AgentFinishedCritic-Output"
+          },
+          {
+            "$ref": "#/components/schemas/APIBasedCritic-Output"
+          },
+          {
+            "$ref": "#/components/schemas/EmptyPatchCritic-Output"
+          },
+          {
+            "$ref": "#/components/schemas/PassCritic-Output"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "openhands__sdk__critic__impl__agent_finished__AgentFinishedCritic-Output__1": "#/components/schemas/AgentFinishedCritic-Output",
+            "openhands__sdk__critic__impl__api__critic__APIBasedCritic-Output__1": "#/components/schemas/APIBasedCritic-Output",
+            "openhands__sdk__critic__impl__empty_patch__EmptyPatchCritic-Output__1": "#/components/schemas/EmptyPatchCritic-Output",
+            "openhands__sdk__critic__impl__pass_critic__PassCritic-Output__1": "#/components/schemas/PassCritic-Output"
+          }
+        }
+      },
+      "CriticResult": {
+        "properties": {
+          "score": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "description": "A predicted probability of success between 0 and 1."
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "An optional message explaining the score."
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "Optional metadata about the critic evaluation. Can include event_ids and categorized_features for visualization."
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "message"
+        ],
+        "title": "CriticResult",
+        "description": "A critic result is a score and a message."
       },
       "DesktopUrlResponse": {
         "properties": {
@@ -5398,6 +6280,75 @@
         "title": "EditTool",
         "description": "Tool for editing files via find/replace."
       },
+      "EmptyPatchCritic-Input": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "EmptyPatchCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "title": "EmptyPatchCritic",
+        "description": "Critic that only evaluates whether a git patch is non-empty.\n\nThis critic checks only one criterion:\n- The generated git patch is non-empty (actual changes were made)\n\nUnlike AgentFinishedCritic, this critic does not check for proper\nagent completion with FinishAction."
+      },
+      "EmptyPatchCritic-Output": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "EmptyPatchCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "EmptyPatchCritic",
+        "description": "Critic that only evaluates whether a git patch is non-empty.\n\nThis critic checks only one criterion:\n- The generated git patch is non-empty (actual changes were made)\n\nUnlike AgentFinishedCritic, this critic does not check for proper\nagent completion with FinishAction."
+      },
       "Event": {
         "oneOf": [
           {
@@ -5530,6 +6481,30 @@
           "command"
         ],
         "title": "ExecuteBashRequest"
+      },
+      "ExposedUrl": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "url",
+          "port"
+        ],
+        "title": "ExposedUrl",
+        "description": "Represents an exposed URL from the sandbox."
       },
       "FileEditorAction": {
         "properties": {
@@ -6211,6 +7186,157 @@
         "title": "GlobTool",
         "description": "A ToolDefinition subclass that automatically initializes a GlobExecutor."
       },
+      "GraySwanAnalyzer-Input": {
+        "properties": {
+          "history_limit": {
+            "type": "integer",
+            "title": "History Limit",
+            "description": "Number of recent events to include as context",
+            "default": 20
+          },
+          "max_message_chars": {
+            "type": "integer",
+            "title": "Max Message Chars",
+            "description": "Max characters for conversation processing",
+            "default": 30000
+          },
+          "timeout": {
+            "type": "number",
+            "title": "Timeout",
+            "description": "Request timeout in seconds",
+            "default": 30.0
+          },
+          "low_threshold": {
+            "type": "number",
+            "title": "Low Threshold",
+            "description": "Risk threshold for LOW classification (score <= threshold)",
+            "default": 0.3
+          },
+          "medium_threshold": {
+            "type": "number",
+            "title": "Medium Threshold",
+            "description": "Risk threshold for MEDIUM classification (score <= threshold)",
+            "default": 0.7
+          },
+          "api_url": {
+            "type": "string",
+            "title": "Api Url",
+            "description": "GraySwan Cygnal API endpoint",
+            "default": "https://api.grayswan.ai/cygnal/monitor"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "GraySwan API key (via GRAYSWAN_API_KEY env var)"
+          },
+          "policy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Id",
+            "description": "GraySwan policy ID (via GRAYSWAN_POLICY_ID env var)"
+          },
+          "kind": {
+            "type": "string",
+            "const": "GraySwanAnalyzer",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "title": "GraySwanAnalyzer",
+        "description": "Security analyzer using GraySwan's Cygnal API for AI safety monitoring.\n\nThis analyzer sends conversation history and pending actions to the GraySwan\nCygnal API for security analysis. The API returns a violation score which is\nmapped to SecurityRisk levels.\n\nEnvironment Variables:\n    GRAYSWAN_API_KEY: Required API key for GraySwan authentication\n    GRAYSWAN_POLICY_ID: Optional policy ID for custom GraySwan policy\n\nExample:\n    >>> from openhands.sdk.security.grayswan import GraySwanAnalyzer\n    >>> analyzer = GraySwanAnalyzer()\n    >>> risk = analyzer.security_risk(action_event)"
+      },
+      "GraySwanAnalyzer-Output": {
+        "properties": {
+          "history_limit": {
+            "type": "integer",
+            "title": "History Limit",
+            "description": "Number of recent events to include as context",
+            "default": 20
+          },
+          "max_message_chars": {
+            "type": "integer",
+            "title": "Max Message Chars",
+            "description": "Max characters for conversation processing",
+            "default": 30000
+          },
+          "timeout": {
+            "type": "number",
+            "title": "Timeout",
+            "description": "Request timeout in seconds",
+            "default": 30.0
+          },
+          "low_threshold": {
+            "type": "number",
+            "title": "Low Threshold",
+            "description": "Risk threshold for LOW classification (score <= threshold)",
+            "default": 0.3
+          },
+          "medium_threshold": {
+            "type": "number",
+            "title": "Medium Threshold",
+            "description": "Risk threshold for MEDIUM classification (score <= threshold)",
+            "default": 0.7
+          },
+          "api_url": {
+            "type": "string",
+            "title": "Api Url",
+            "description": "GraySwan Cygnal API endpoint",
+            "default": "https://api.grayswan.ai/cygnal/monitor"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "password",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "GraySwan API key (via GRAYSWAN_API_KEY env var)"
+          },
+          "policy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Id",
+            "description": "GraySwan policy ID (via GRAYSWAN_POLICY_ID env var)"
+          },
+          "kind": {
+            "type": "string",
+            "const": "GraySwanAnalyzer",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "GraySwanAnalyzer",
+        "description": "Security analyzer using GraySwan's Cygnal API for AI safety monitoring.\n\nThis analyzer sends conversation history and pending actions to the GraySwan\nCygnal API for security analysis. The API returns a violation score which is\nmapped to SecurityRisk levels.\n\nEnvironment Variables:\n    GRAYSWAN_API_KEY: Required API key for GraySwan authentication\n    GRAYSWAN_POLICY_ID: Optional policy ID for custom GraySwan policy\n\nExample:\n    >>> from openhands.sdk.security.grayswan import GraySwanAnalyzer\n    >>> analyzer = GraySwanAnalyzer()\n    >>> risk = analyzer.security_risk(action_event)"
+      },
       "GrepAction": {
         "properties": {
           "pattern": {
@@ -6410,6 +7536,225 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HookConfig-Input": {
+        "properties": {
+          "pre_tool_use": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Input"
+            },
+            "type": "array",
+            "title": "Pre Tool Use",
+            "description": "Hooks that run before tool execution"
+          },
+          "post_tool_use": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Input"
+            },
+            "type": "array",
+            "title": "Post Tool Use",
+            "description": "Hooks that run after tool execution"
+          },
+          "user_prompt_submit": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Input"
+            },
+            "type": "array",
+            "title": "User Prompt Submit",
+            "description": "Hooks that run when user submits a prompt"
+          },
+          "session_start": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Input"
+            },
+            "type": "array",
+            "title": "Session Start",
+            "description": "Hooks that run when a session starts"
+          },
+          "session_end": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Input"
+            },
+            "type": "array",
+            "title": "Session End",
+            "description": "Hooks that run when a session ends"
+          },
+          "stop": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Input"
+            },
+            "type": "array",
+            "title": "Stop",
+            "description": "Hooks that run when the agent attempts to stop"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "HookConfig",
+        "description": "Configuration for all hooks.\n\nHooks can be configured either by loading from `.openhands/hooks.json` or\nby directly instantiating with typed fields:\n\n    # Direct instantiation with typed fields (recommended):\n    config = HookConfig(\n        pre_tool_use=[\n            HookMatcher(\n                matcher=\"terminal\",\n                hooks=[HookDefinition(command=\"block_dangerous.sh\")]\n            )\n        ]\n    )\n\n    # Load from JSON file:\n    config = HookConfig.load(\".openhands/hooks.json\")"
+      },
+      "HookConfig-Output": {
+        "properties": {
+          "pre_tool_use": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Output"
+            },
+            "type": "array",
+            "title": "Pre Tool Use",
+            "description": "Hooks that run before tool execution"
+          },
+          "post_tool_use": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Output"
+            },
+            "type": "array",
+            "title": "Post Tool Use",
+            "description": "Hooks that run after tool execution"
+          },
+          "user_prompt_submit": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Output"
+            },
+            "type": "array",
+            "title": "User Prompt Submit",
+            "description": "Hooks that run when user submits a prompt"
+          },
+          "session_start": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Output"
+            },
+            "type": "array",
+            "title": "Session Start",
+            "description": "Hooks that run when a session starts"
+          },
+          "session_end": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Output"
+            },
+            "type": "array",
+            "title": "Session End",
+            "description": "Hooks that run when a session ends"
+          },
+          "stop": {
+            "items": {
+              "$ref": "#/components/schemas/HookMatcher-Output"
+            },
+            "type": "array",
+            "title": "Stop",
+            "description": "Hooks that run when the agent attempts to stop"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "HookConfig",
+        "description": "Configuration for all hooks.\n\nHooks can be configured either by loading from `.openhands/hooks.json` or\nby directly instantiating with typed fields:\n\n    # Direct instantiation with typed fields (recommended):\n    config = HookConfig(\n        pre_tool_use=[\n            HookMatcher(\n                matcher=\"terminal\",\n                hooks=[HookDefinition(command=\"block_dangerous.sh\")]\n            )\n        ]\n    )\n\n    # Load from JSON file:\n    config = HookConfig.load(\".openhands/hooks.json\")"
+      },
+      "HookDefinition": {
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/HookType",
+            "default": "command"
+          },
+          "command": {
+            "type": "string",
+            "title": "Command"
+          },
+          "timeout": {
+            "type": "integer",
+            "title": "Timeout",
+            "default": 60
+          }
+        },
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "HookDefinition",
+        "description": "A single hook definition."
+      },
+      "HookMatcher-Input": {
+        "properties": {
+          "matcher": {
+            "type": "string",
+            "title": "Matcher",
+            "default": "*"
+          },
+          "hooks": {
+            "items": {
+              "$ref": "#/components/schemas/HookDefinition"
+            },
+            "type": "array",
+            "title": "Hooks"
+          }
+        },
+        "type": "object",
+        "title": "HookMatcher",
+        "description": "Matches events to hooks based on patterns.\n\nSupports exact match, wildcard (*), and regex (auto-detected or /pattern/)."
+      },
+      "HookMatcher-Output": {
+        "properties": {
+          "matcher": {
+            "type": "string",
+            "title": "Matcher",
+            "default": "*"
+          },
+          "hooks": {
+            "items": {
+              "$ref": "#/components/schemas/HookDefinition"
+            },
+            "type": "array",
+            "title": "Hooks"
+          }
+        },
+        "type": "object",
+        "title": "HookMatcher",
+        "description": "Matches events to hooks based on patterns.\n\nSupports exact match, wildcard (*), and regex (auto-detected or /pattern/)."
+      },
+      "HookType": {
+        "type": "string",
+        "enum": [
+          "command",
+          "prompt"
+        ],
+        "title": "HookType",
+        "description": "Types of hooks that can be executed."
+      },
+      "HooksRequest": {
+        "properties": {
+          "project_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Dir",
+            "description": "Workspace directory path for project hooks"
+          }
+        },
+        "type": "object",
+        "title": "HooksRequest",
+        "description": "Request body for loading hooks."
+      },
+      "HooksResponse": {
+        "properties": {
+          "hook_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookConfig-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hook configuration loaded from the workspace, or None if not found"
+          }
+        },
+        "type": "object",
+        "title": "HooksResponse",
+        "description": "Response containing hooks configuration."
+      },
       "Icon": {
         "properties": {
           "src": {
@@ -6497,6 +7842,28 @@
         ],
         "title": "InputMetadata",
         "description": "Metadata for task skill inputs."
+      },
+      "IterativeRefinementConfig": {
+        "properties": {
+          "success_threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Success Threshold",
+            "description": "Score threshold (0-1) to consider task successful.",
+            "default": 0.6
+          },
+          "max_iterations": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Max Iterations",
+            "description": "Maximum number of iterations before giving up.",
+            "default": 3
+          }
+        },
+        "type": "object",
+        "title": "IterativeRefinementConfig",
+        "description": "Configuration for iterative refinement based on critic feedback.\n\nWhen attached to a CriticBase, the Conversation.run() method will\nautomatically retry the task if the critic score is below the threshold.\n\nExample:\n    critic = APIBasedCritic(\n        server_url=\"...\",\n        api_key=\"...\",\n        model_name=\"critic\",\n        iterative_refinement=IterativeRefinementConfig(\n            success_threshold=0.7,\n            max_iterations=3,\n        ),\n    )\n    agent = Agent(llm=llm, tools=tools, critic=critic)\n    conversation = Conversation(agent=agent, workspace=workspace)\n    conversation.send_message(\"Create a calculator module...\")\n    conversation.run()  # Will automatically retry if critic score < 0.7"
       },
       "KeywordTrigger": {
         "properties": {
@@ -6984,7 +8351,7 @@
               }
             ],
             "title": "Safety Settings",
-            "description": "Safety settings for models that support them (like Mistral AI and Gemini)"
+            "description": "Deprecated: Safety settings for models that support them (like Mistral AI and Gemini). This field is deprecated in 1.10.0 and will be removed in 1.15.0. Safety settings are designed for consumer-facing content moderation, which is not relevant for coding agents."
           },
           "usage_id": {
             "type": "string",
@@ -7118,6 +8485,19 @@
             "title": "Keep First",
             "default": 2
           },
+          "hard_context_reset_max_retries": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Hard Context Reset Max Retries",
+            "default": 5
+          },
+          "hard_context_reset_context_scaling": {
+            "type": "number",
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Hard Context Reset Context Scaling",
+            "default": 0.8
+          },
           "kind": {
             "type": "string",
             "const": "LLMSummarizingCondenser",
@@ -7158,6 +8538,19 @@
             "minimum": 0.0,
             "title": "Keep First",
             "default": 2
+          },
+          "hard_context_reset_max_retries": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Hard Context Reset Max Retries",
+            "default": 5
+          },
+          "hard_context_reset_context_scaling": {
+            "type": "number",
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Hard Context Reset Context Scaling",
+            "default": 0.8
           },
           "kind": {
             "type": "string",
@@ -7612,21 +9005,6 @@
             "type": "array",
             "title": "Content"
           },
-          "cache_enabled": {
-            "type": "boolean",
-            "title": "Cache Enabled",
-            "default": false
-          },
-          "vision_enabled": {
-            "type": "boolean",
-            "title": "Vision Enabled",
-            "default": false
-          },
-          "function_calling_enabled": {
-            "type": "boolean",
-            "title": "Function Calling Enabled",
-            "default": false
-          },
           "tool_calls": {
             "anyOf": [
               {
@@ -7662,18 +9040,6 @@
               }
             ],
             "title": "Name"
-          },
-          "force_string_serializer": {
-            "type": "boolean",
-            "title": "Force String Serializer",
-            "description": "Force using string content serializer when sending to LLM API. Useful for providers that do not support list content, like HuggingFace and Groq.",
-            "default": false
-          },
-          "send_reasoning_content": {
-            "type": "boolean",
-            "title": "Send Reasoning Content",
-            "description": "Whether to include the full reasoning content when sending to the LLM. Useful for models that support extended reasoning, like Kimi-K2-thinking.",
-            "default": false
           },
           "reasoning_content": {
             "anyOf": [
@@ -7784,6 +9150,17 @@
             ],
             "title": "Sender",
             "description": "Optional identifier of the sender. Can be used to track message origin in multi-agent scenarios."
+          },
+          "critic_result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CriticResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional critic evaluation of this message and preceding history."
           },
           "kind": {
             "type": "string",
@@ -8123,6 +9500,108 @@
         ],
         "title": "ObservationEvent"
       },
+      "OrgConfig": {
+        "properties": {
+          "repository": {
+            "type": "string",
+            "title": "Repository",
+            "description": "Selected repository (e.g., 'owner/repo')"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "Git provider type: github, gitlab, azure, bitbucket"
+          },
+          "org_repo_url": {
+            "type": "string",
+            "title": "Org Repo Url",
+            "description": "Pre-authenticated Git URL for the organization repository. Contains sensitive credentials - handle with care and avoid logging."
+          },
+          "org_name": {
+            "type": "string",
+            "title": "Org Name",
+            "description": "Organization name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "repository",
+          "provider",
+          "org_repo_url",
+          "org_name"
+        ],
+        "title": "OrgConfig",
+        "description": "Configuration for loading organization-level skills."
+      },
+      "PassCritic-Input": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "PassCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "title": "PassCritic",
+        "description": "Critic that always returns success.\n\nThis critic can be used when no evaluation is needed or when\nall instances should be considered successful regardless of their output."
+      },
+      "PassCritic-Output": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "finish_and_message",
+              "all_actions"
+            ],
+            "title": "Mode",
+            "description": "When to run critic evaluation:\n- 'finish_and_message': Evaluate on FinishAction and agent MessageEvent (default, minimal performance impact)\n- 'all_actions': Evaluate after every agent action (WARNING: significantly slower due to API calls on each action)",
+            "default": "finish_and_message"
+          },
+          "iterative_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IterativeRefinementConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional configuration for iterative refinement. When set, Conversation.run() will automatically retry the task if the critic score is below the success_threshold, up to max_iterations."
+          },
+          "kind": {
+            "type": "string",
+            "const": "PassCritic",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "PassCritic",
+        "description": "Critic that always returns success.\n\nThis critic can be used when no evaluation is needed or when\nall instances should be considered successful regardless of their output."
+      },
       "PauseEvent": {
         "properties": {
           "id": {
@@ -8459,6 +9938,45 @@
         "title": "PlanningFileEditorTool",
         "description": "A planning file editor tool with read-all, edit-PLAN.md-only access."
       },
+      "PluginSource": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Plugin source: 'github:owner/repo', any git URL, or local path"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref",
+            "description": "Optional branch, tag, or commit (only for git sources)"
+          },
+          "repo_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Path",
+            "description": "Subdirectory path within the git repository (e.g., 'plugins/my-plugin' for monorepos). Only relevant for git sources, not local paths."
+          }
+        },
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "PluginSource",
+        "description": "Specification for a plugin to load.\n\nThis model describes where to find a plugin and is used by load_plugins()\nto fetch and load plugins from various sources.\n\nExamples:\n    >>> # GitHub repository\n    >>> PluginSource(source=\"github:owner/repo\", ref=\"v1.0.0\")\n\n    >>> # Plugin from monorepo subdirectory\n    >>> PluginSource(\n    ...     source=\"github:owner/monorepo\",\n    ...     repo_path=\"plugins/my-plugin\"\n    ... )\n\n    >>> # Local path\n    >>> PluginSource(source=\"/path/to/plugin\")"
+      },
       "ReadFileAction": {
         "properties": {
           "file_path": {
@@ -8766,6 +10284,24 @@
             "title": "Api Key",
             "description": "API key for authenticating with the remote host."
           },
+          "read_timeout": {
+            "type": "number",
+            "title": "Read Timeout",
+            "description": "Timeout in seconds for reading operations of httpx.Client.",
+            "default": 600.0
+          },
+          "max_connections": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Connections",
+            "description": "Maximum number of connections for httpx.Client. None means no limit, useful for running many conversations in parallel."
+          },
           "kind": {
             "type": "string",
             "const": "RemoteWorkspace",
@@ -8803,6 +10339,24 @@
             ],
             "title": "Api Key",
             "description": "API key for authenticating with the remote host."
+          },
+          "read_timeout": {
+            "type": "number",
+            "title": "Read Timeout",
+            "description": "Timeout in seconds for reading operations of httpx.Client.",
+            "default": 600.0
+          },
+          "max_connections": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Connections",
+            "description": "Maximum number of connections for httpx.Client. None means no limit, useful for running many conversations in parallel."
           },
           "kind": {
             "type": "string",
@@ -8844,6 +10398,21 @@
         ],
         "title": "ResponseLatency",
         "description": "Metric tracking the round-trip time per completion call."
+      },
+      "SandboxConfig": {
+        "properties": {
+          "exposed_urls": {
+            "items": {
+              "$ref": "#/components/schemas/ExposedUrl"
+            },
+            "type": "array",
+            "title": "Exposed Urls",
+            "description": "List of exposed URLs from the sandbox"
+          }
+        },
+        "type": "object",
+        "title": "SandboxConfig",
+        "description": "Configuration for loading sandbox-specific skills."
       },
       "SecretRegistry-Input": {
         "properties": {
@@ -8908,10 +10477,38 @@
         }
       },
       "SecurityAnalyzerBase-Input": {
-        "$ref": "#/components/schemas/LLMSecurityAnalyzer-Input"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/GraySwanAnalyzer-Input"
+          },
+          {
+            "$ref": "#/components/schemas/LLMSecurityAnalyzer-Input"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "openhands__sdk__security__grayswan__analyzer__GraySwanAnalyzer-Input__1": "#/components/schemas/GraySwanAnalyzer-Input",
+            "openhands__sdk__security__llm_analyzer__LLMSecurityAnalyzer-Input__1": "#/components/schemas/LLMSecurityAnalyzer-Input"
+          }
+        }
       },
       "SecurityAnalyzerBase-Output": {
-        "$ref": "#/components/schemas/LLMSecurityAnalyzer-Output"
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/GraySwanAnalyzer-Output"
+          },
+          {
+            "$ref": "#/components/schemas/LLMSecurityAnalyzer-Output"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "kind",
+          "mapping": {
+            "openhands__sdk__security__grayswan__analyzer__GraySwanAnalyzer-Output__1": "#/components/schemas/GraySwanAnalyzer-Output",
+            "openhands__sdk__security__llm_analyzer__LLMSecurityAnalyzer-Output__1": "#/components/schemas/LLMSecurityAnalyzer-Output"
+          }
+        }
       },
       "SecurityRisk": {
         "type": "string",
@@ -8980,7 +10577,7 @@
           "version": {
             "type": "string",
             "title": "Version",
-            "default": "1.8.2"
+            "default": "1.11.4"
           },
           "docs": {
             "type": "string",
@@ -9196,6 +10793,69 @@
         "title": "Skill",
         "description": "A skill provides specialized knowledge or functionality.\n\nSkill behavior depends on format (is_agentskills_format) and trigger:\n\nAgentSkills format (SKILL.md files):\n- Always listed in <available_skills> with name, description, location\n- Agent reads full content on demand (progressive disclosure)\n- If has triggers: content is ALSO auto-injected when triggered\n\nLegacy OpenHands format:\n- With triggers: Listed in <available_skills>, content injected on trigger\n- Without triggers (None): Full content in <REPO_CONTEXT>, always active\n\nThis model supports both OpenHands-specific fields and AgentSkills standard\nfields (https://agentskills.io/specification) for cross-platform compatibility."
       },
+      "SkillInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "repo",
+              "knowledge",
+              "agentskills"
+            ],
+            "title": "Type"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "triggers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Triggers"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "is_agentskills_format": {
+            "type": "boolean",
+            "title": "Is Agentskills Format",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "type",
+          "content"
+        ],
+        "title": "SkillInfo",
+        "description": "Skill information returned by the API."
+      },
       "SkillResources": {
         "properties": {
           "skill_root": {
@@ -9234,6 +10894,96 @@
         ],
         "title": "SkillResources",
         "description": "Resource directories for a skill (AgentSkills standard).\n\nPer the AgentSkills specification, skills can include:\n- scripts/: Executable scripts the agent can run\n- references/: Reference documentation and examples\n- assets/: Static assets (images, data files, etc.)"
+      },
+      "SkillsRequest": {
+        "properties": {
+          "load_public": {
+            "type": "boolean",
+            "title": "Load Public",
+            "description": "Load public skills from OpenHands/skills repo",
+            "default": true
+          },
+          "load_user": {
+            "type": "boolean",
+            "title": "Load User",
+            "description": "Load user skills from ~/.openhands/skills/",
+            "default": true
+          },
+          "load_project": {
+            "type": "boolean",
+            "title": "Load Project",
+            "description": "Load project skills from workspace",
+            "default": true
+          },
+          "load_org": {
+            "type": "boolean",
+            "title": "Load Org",
+            "description": "Load organization-level skills",
+            "default": true
+          },
+          "project_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Dir",
+            "description": "Workspace directory path for project skills"
+          },
+          "org_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OrgConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Organization skills configuration"
+          },
+          "sandbox_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SandboxConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sandbox skills configuration"
+          }
+        },
+        "type": "object",
+        "title": "SkillsRequest",
+        "description": "Request body for loading skills."
+      },
+      "SkillsResponse": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillInfo"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "sources": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Sources",
+            "description": "Count of skills loaded from each source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills"
+        ],
+        "title": "SkillsResponse",
+        "description": "Response containing all available skills."
       },
       "StartConversationRequest": {
         "properties": {
@@ -9303,6 +11053,32 @@
             "type": "object",
             "title": "Tool Module Qualnames",
             "description": "Mapping of tool names to their module qualnames from the client's registry. These modules will be dynamically imported on the server to register the tools for this conversation."
+          },
+          "plugins": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PluginSource"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugins",
+            "description": "List of plugins to load for this conversation. Plugins are loaded and their skills/MCP config are merged into the agent. Hooks are extracted and stored for runtime execution."
+          },
+          "hook_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookConfig-Input"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional hook configuration for this conversation. Hooks are shell scripts that run at key lifecycle events (PreToolUse, PostToolUse, UserPromptSubmit, Stop, etc.). If both hook_config and plugins are provided, they are merged with explicit hooks running before plugin hooks."
           }
         },
         "type": "object",
@@ -9401,6 +11177,29 @@
         "type": "object",
         "title": "Success"
       },
+      "SyncResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "error"
+            ],
+            "title": "Status"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "message"
+        ],
+        "title": "SyncResponse",
+        "description": "Response from skill sync operation."
+      },
       "SystemPromptEvent": {
         "properties": {
           "id": {
@@ -9435,6 +11234,17 @@
             "title": "Tools",
             "description": "List of tools as ToolDefinition objects"
           },
+          "dynamic_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextContent"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional dynamic per-conversation context (runtime info, repo context, secrets). When provided, this is included as a second content block in the system message (not cached)."
+          },
           "kind": {
             "type": "string",
             "const": "SystemPromptEvent",
@@ -9449,7 +11259,7 @@
           "kind"
         ],
         "title": "SystemPromptEvent",
-        "description": "System prompt added by the agent."
+        "description": "System prompt added by the agent.\n\nThe system prompt can optionally include dynamic context that varies between\nconversations. When ``dynamic_context`` is provided, it is included as a\nsecond content block in the same system message. Cache markers are NOT\napplied here - they are applied by ``LLM._apply_prompt_caching()`` when\ncaching is enabled, ensuring provider-specific cache control is only added\nwhen appropriate.\n\nAttributes:\n    system_prompt: The static system prompt text (cacheable across conversations)\n    tools: List of available tools\n    dynamic_context: Optional per-conversation context (hosts, repo info, etc.)\n        Sent as a second TextContent block inside the system message."
       },
       "TaskItem": {
         "properties": {
@@ -9869,11 +11679,6 @@
           "text": {
             "type": "string",
             "title": "Text"
-          },
-          "enable_truncation": {
-            "type": "boolean",
-            "title": "Enable Truncation",
-            "default": true
           }
         },
         "additionalProperties": false,
@@ -10232,6 +12037,12 @@
             "$ref": "#/components/schemas/BrowserSetStorageTool"
           },
           {
+            "$ref": "#/components/schemas/BrowserStartRecordingTool"
+          },
+          {
+            "$ref": "#/components/schemas/BrowserStopRecordingTool"
+          },
+          {
             "$ref": "#/components/schemas/BrowserSwitchTabTool"
           },
           {
@@ -10287,6 +12098,8 @@
             "openhands__tools__browser_use__definition__BrowserNavigateTool-Output__1": "#/components/schemas/BrowserNavigateTool",
             "openhands__tools__browser_use__definition__BrowserScrollTool-Output__1": "#/components/schemas/BrowserScrollTool",
             "openhands__tools__browser_use__definition__BrowserSetStorageTool-Output__1": "#/components/schemas/BrowserSetStorageTool",
+            "openhands__tools__browser_use__definition__BrowserStartRecordingTool-Output__1": "#/components/schemas/BrowserStartRecordingTool",
+            "openhands__tools__browser_use__definition__BrowserStopRecordingTool-Output__1": "#/components/schemas/BrowserStopRecordingTool",
             "openhands__tools__browser_use__definition__BrowserSwitchTabTool-Output__1": "#/components/schemas/BrowserSwitchTabTool",
             "openhands__tools__browser_use__definition__BrowserToolSet-Output__1": "#/components/schemas/BrowserToolSet",
             "openhands__tools__browser_use__definition__BrowserTypeTool-Output__1": "#/components/schemas/BrowserTypeTool",
@@ -10376,6 +12189,16 @@
             "description": "Reason for rejecting the action",
             "default": "User rejected the action"
           },
+          "rejection_source": {
+            "type": "string",
+            "enum": [
+              "user",
+              "hook"
+            ],
+            "title": "Rejection Source",
+            "description": "Source of the rejection: 'user' for confirmation mode rejections, 'hook' for PreToolUse hook blocks",
+            "default": "user"
+          },
           "action_id": {
             "type": "string",
             "title": "Action Id",
@@ -10396,7 +12219,7 @@
           "kind"
         ],
         "title": "UserRejectObservation",
-        "description": "Observation when user rejects an action in confirmation mode."
+        "description": "Observation when an action is rejected by user or hook.\n\nThis event is emitted when:\n- User rejects an action during confirmation mode (rejection_source=\"user\")\n- A PreToolUse hook blocks an action (rejection_source=\"hook\")"
       },
       "VSCodeUrlResponse": {
         "properties": {

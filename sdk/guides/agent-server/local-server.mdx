@@ -3,15 +3,109 @@ title: Local Agent Server
 description: Run agents through a local HTTP server with RemoteConversation for client-server architecture.
 ---
 
-The Local Agent Server demonstrates how to run a remote agent server locally and connect to it using RemoteConversation. This pattern is useful for local development, testing, and scenarios where you want to separate the client code from the agent execution environment.
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
-## Basic Example
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+The Local Agent Server demonstrates how to run a remote agent server locally and connect to it using `RemoteConversation`. This pattern is useful for local development, testing, and scenarios where you want to separate the client code from the agent execution environment.
+
+## Key Concepts
+
+### Managed API Server
+
+The ready-to-run example includes a `ManagedAPIServer` context manager that handles starting and stopping the server subprocess:
+
+```python icon="python" focus={1, 2, 4, 5}
+class ManagedAPIServer:
+    """Context manager for subprocess-managed OpenHands API server."""
+    
+    def __enter__(self):
+        """Start the API server subprocess."""
+        self.process = subprocess.Popen(
+            [
+                "python",
+                "-m",
+                "openhands.agent_server",
+                "--port",
+                str(self.port),
+                "--host",
+                self.host,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={"LOG_JSON": "true", **os.environ},
+        )
+```
+
+The server starts with `python -m openhands.agent_server` and automatically handles health checks to ensure it's ready before proceeding.
+
+### Remote Workspace
+
+When connecting to a remote server, you need to provide a `Workspace` that connects to that server:
+
+```python icon="python"
+workspace = Workspace(host=server.base_url)
+result = workspace.execute_command("pwd")
+```
+
+When `host` is provided, the `Workspace` returns an instance of `RemoteWorkspace` ([source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/workspace.py)).
+The `Workspace` object communicates with the remote server's API to execute commands and manage files.
+
+### RemoteConversation
+
+When you pass a remote `Workspace` to `Conversation`, it automatically becomes a `RemoteConversation` ([source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/conversation.py)):
+
+```python icon="python" focus={1, 3, 7}
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    callbacks=[event_callback],
+    visualize=True,
+)
+assert isinstance(conversation, RemoteConversation)
+```
+
+`RemoteConversation` handles communication with the remote agent server over WebSocket for real-time event streaming.
+
+### Event Callbacks
+
+Callbacks receive events in real-time as they happen on the remote server:
+
+```python icon="python"
+def event_callback(event):
+    """Callback to capture events for testing."""
+    event_type = type(event).__name__
+    logger.info(f"🔔 Callback received event: {event_type}\n{event}")
+    received_events.append(event)
+    event_tracker["last_event_time"] = time.time()
+```
+
+This enables monitoring agent activity, tracking progress, and implementing custom event handling logic.
+
+### Conversation State
+
+The conversation state provides access to all events and status:
+
+```python icon="python"
+# Count total events using state.events
+total_events = len(conversation.state.events)
+logger.info(f"📈 Total events in conversation: {total_events}")
+
+# Get recent events (last 5) using state.events
+all_events = conversation.state.events
+recent_events = all_events[-5:] if len(all_events) >= 5 else all_events
+```
+
+This allows you to inspect the conversation history, analyze agent behavior, and build custom monitoring tools.
+
+## Ready-to-run Example
 
 <Note>
 This example is available on GitHub: [examples/02_remote_agent_server/01_convo_with_local_agent_server.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/01_convo_with_local_agent_server.py)
 </Note>
 
-This example shows how to programmatically start a local agent server and interact with it through a RemoteConversation:
+This example shows how to programmatically start a local agent server and interact with it through a `RemoteConversation`:
 
 ```python icon="python" expandable examples/02_remote_agent_server/01_convo_with_local_agent_server.py
 import os
@@ -261,101 +355,7 @@ with ManagedAPIServer(port=8001) as server:
         conversation.close()
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/02_remote_agent_server/01_convo_with_local_agent_server.py
-```
-
-## Key Concepts
-
-### Managed API Server
-
-The example includes a `ManagedAPIServer` context manager that handles starting and stopping the server subprocess:
-
-```python highlight={42-61}
-class ManagedAPIServer:
-    """Context manager for subprocess-managed OpenHands API server."""
-    
-    def __enter__(self):
-        """Start the API server subprocess."""
-        self.process = subprocess.Popen(
-            [
-                "python",
-                "-m",
-                "openhands.agent_server",
-                "--port",
-                str(self.port),
-                "--host",
-                self.host,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env={"LOG_JSON": "true", **os.environ},
-        )
-```
-
-The server starts with `python -m openhands.agent_server` and automatically handles health checks to ensure it's ready before proceeding.
-
-### Remote Workspace
-
-When connecting to a remote server, you need to provide a `Workspace` that connects to that server:
-
-```python
-workspace = Workspace(host=server.base_url)
-result = workspace.execute_command("pwd")
-```
-
-When `host` is provided, the `Workspace` returns an instance of `RemoteWorkspace` ([source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/workspace.py)).
-The `Workspace` object communicates with the remote server's API to execute commands and manage files.
-
-### RemoteConversation
-
-When you pass a remote `Workspace` to `Conversation`, it automatically becomes a `RemoteConversation` ([source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/conversation.py)):
-
-```python
-conversation = Conversation(
-    agent=agent,
-    workspace=workspace,
-    callbacks=[event_callback],
-    visualize=True,
-)
-assert isinstance(conversation, RemoteConversation)
-```
-
-RemoteConversation handles communication with the remote agent server over WebSocket for real-time event streaming.
-
-### Event Callbacks
-
-Callbacks receive events in real-time as they happen on the remote server:
-
-```python
-def event_callback(event):
-    """Callback to capture events for testing."""
-    event_type = type(event).__name__
-    logger.info(f"🔔 Callback received event: {event_type}\n{event}")
-    received_events.append(event)
-    event_tracker["last_event_time"] = time.time()
-```
-
-This enables monitoring agent activity, tracking progress, and implementing custom event handling logic.
-
-### Conversation State
-
-The conversation state provides access to all events and status:
-
-```python
-# Count total events using state.events
-total_events = len(conversation.state.events)
-logger.info(f"📈 Total events in conversation: {total_events}")
-
-# Get recent events (last 5) using state.events
-all_events = conversation.state.events
-recent_events = all_events[-5:] if len(all_events) >= 5 else all_events
-```
-
-This allows you to inspect the conversation history, analyze agent behavior, and build custom monitoring tools.
+<RunExampleCode path_to_script="examples/02_remote_agent_server/01_convo_with_local_agent_server.py"/>
 
 ## Next Steps
 
