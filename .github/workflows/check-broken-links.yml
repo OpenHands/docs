@@ -11,12 +11,19 @@ on:
     # Run weekly on Monday at 9 AM UTC to catch links that break over time
     - cron: '0 9 * * 1'
   workflow_dispatch:
+    inputs:
+      check_external:
+        description: 'Also check external links (slower)'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
-  check-broken-links:
+  check-internal-links:
+    name: Check Internal Links (Mintlify)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -29,11 +36,41 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Mintlify CLI
-        run: npm install -g mintlify@latest
+      - name: Install Mint CLI
+        run: npm install -g mint@latest
 
-      - name: Check for broken links
+      - name: Check for broken internal links
         run: |
-          echo "Running broken link detection..."
+          echo "Running Mintlify broken link detection..."
           mint broken-links
-          echo "✓ No broken links found!"
+          echo "✓ No broken internal links found!"
+
+  check-external-links:
+    name: Check External Links
+    runs-on: ubuntu-latest
+    # Run on schedule or when manually triggered with check_external=true
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.check_external == true)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check external links
+        run: |
+          echo "Running external link checker..."
+          python .github/scripts/check_external_links.py --verbose
+        continue-on-error: true  # Don't fail the workflow on timeouts
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "External link check complete."
+          echo "Note: Some links may timeout due to rate limiting or slow servers."
+          echo "HTTP 403 errors from Cloudflare-protected sites are expected and skipped."
