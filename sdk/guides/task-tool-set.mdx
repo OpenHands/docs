@@ -1,0 +1,306 @@
+---
+title: Task Tool Set
+description: Delegate complex work to specialized sub-agents that run synchronously and return results to the parent agent.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+The TaskToolSet lets a parent agent launch sub-agents that handle complex, multi-step tasks autonomously. Each sub-agent runs **synchronously** — the parent blocks until the sub-agent finishes and returns its result. Sub-agents can be **resumed** later using a task ID, preserving their full conversation context.
+
+This pattern is useful when:
+- Delegating specialized work to purpose-built sub-agents
+- Breaking a problem into sequential steps handled by different experts
+- Maintaining conversational context across multiple interactions with a sub-agent
+- Isolating sub-task complexity from the parent agent's context
+
+<Tip>
+For **parallel** sub-agent execution, see [Sub-Agent Delegation](/sdk/guides/agent-delegation). TaskToolSet is designed for **sequential** blocking tasks.
+</Tip>
+
+## How It Works
+
+The agent calls the task tool with a prompt and a sub-agent type. The TaskManager creates (or resumes) a sub-agent conversation, runs it to completion, and returns the result to the parent.
+
+```
+Parent Agent                    TaskManager                    Sub-Agent
+     │                              │                              │
+     │── task(prompt, type) ───────>│                              │
+     │                              │── create/resume ────────────>│
+     │                              │                              │── runs autonomously
+     │                              │                              │── ...
+     │                              │<── result ──────────────────│
+     │<── TaskObservation ─────────│                              │
+     │                              │   (persists for resume)      │
+```
+
+### Task Lifecycle
+
+1. **Creation** — A fresh sub-agent and conversation are created
+2. **Running** — The sub-agent processes the prompt autonomously
+3. **Completion** — The final response is extracted and returned
+4. **Persistence** — The conversation is saved to disk for potential resumption
+5. **Resumption** (optional) — A previously completed task continues with full context
+
+## Setting Up the TaskToolSet
+
+<Steps>
+    <Step>
+        ### Register Custom Sub-Agent Types (Optional)
+
+        By default, a `"default"` general-purpose agent is available. Register custom types for specialized behavior:
+
+        ```python icon="python" wrap
+        from openhands.sdk import LLM, Agent, AgentContext
+        from openhands.sdk.context import Skill
+        from openhands.tools.delegate import register_agent
+
+        def create_code_reviewer(llm: LLM) -> Agent:
+            return Agent(
+                llm=llm,
+                tools=[],
+                agent_context=AgentContext(
+                    skills=[
+                        Skill(
+                            name="code_review",
+                            content="You are an expert code reviewer. Analyze code for bugs, style issues, and suggest improvements.",
+                            trigger=None,
+                        )
+                    ],
+                ),
+            )
+
+        register_agent(
+            name="code_reviewer",
+            factory_func=create_code_reviewer,
+            description="Reviews code for bugs, style issues, and improvements.",
+        )
+        ```
+    </Step>
+    <Step>
+        ### Add TaskToolSet to the Agent
+
+        ```python icon="python" wrap
+        from openhands.sdk import Agent, Tool
+        from openhands.tools.task import TaskToolSet
+
+        agent = Agent(
+            llm=llm,
+            tools=[Tool(name=TaskToolSet.name)],
+        )
+        ```
+
+        The tool auto-registers on import — no explicit `register_tool()` call is needed.
+    </Step>
+    <Step>
+        ### Create a Conversation
+
+        ```python icon="python" wrap
+        from openhands.sdk import Conversation
+        from openhands.tools.delegate import DelegationVisualizer
+
+        conversation = Conversation(
+            agent=agent,
+            workspace=os.getcwd(),
+            visualizer=DelegationVisualizer(name="Orchestrator"),
+        )
+        ```
+
+        <Note>
+        The `DelegationVisualizer` is optional but recommended — it shows the multi-agent conversation flow in the terminal.
+        </Note>
+    </Step>
+</Steps>
+
+## Tool Parameters
+
+When the parent agent calls the task tool, it provides these parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | `str` | Yes | The instruction for the sub-agent |
+| `subagent_type` | `str` | No | Which registered agent type to use (default: `"default"`) |
+| `description` | `str` | No | Short label (3-5 words) for display and tracking |
+| `resume` | `str` | No | Task ID from a previous invocation to continue |
+| `max_turns` | `int` | No | Maximum agent iterations before stopping (default: 500) |
+
+## Task Observation
+
+The tool returns a `TaskObservation` containing:
+
+| Field | Description |
+|-------|-------------|
+| `task_id` | Unique identifier (e.g., `task_00000001`) — use this for resumption |
+| `subagent` | The agent type that handled the task |
+| `status` | Final status: `succeeded`, `empty_success`, or `error` |
+| `text` | The sub-agent's response (or error message) |
+
+## Resuming Tasks
+
+A key feature of TaskToolSet is the ability to resume a previously completed task. When a task finishes, its conversation is persisted to disk. Passing the `resume` parameter with the task ID reloads the full conversation history, allowing the sub-agent to continue where it left off.
+
+```python icon="python" wrap
+# First call — sub-agent generates a quiz question
+conversation.send_message(
+    "Use the task tool with subagent_type='quiz_expert' to generate "
+    "a multiple-choice question about zebras."
+)
+conversation.run()
+# The agent receives task_id "task_00000001" in the observation
+
+# Second call — resume the same sub-agent to verify the answer
+conversation.send_message(
+    "The user answered A. Use the task tool with resume='task_00000001' "
+    "to ask the same sub-agent whether that answer is correct."
+)
+conversation.run()
+```
+
+## TaskToolSet vs DelegateTool
+
+| | TaskToolSet | DelegateTool |
+|---|---|---|
+| **Execution** | Sequential (blocking) | Parallel (concurrent) |
+| **Concurrency** | One task at a time | Multiple sub-agents simultaneously |
+| **Resumption** | Built-in via `resume` parameter | Persistent sub-agents by ID |
+| **API** | Single `task` tool call | `spawn` + `delegate` commands |
+| **Best for** | Expert delegation, multi-turn workflows | Fan-out / fan-in parallelism |
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/40_task_tool_set.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/40_task_tool_set.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/40_task_tool_set.py
+"""
+Animal Quiz with Task Tool Set
+
+Demonstrates the TaskToolSet with a main agent delegating to an
+animal-expert sub-agent. The flow is:
+
+1. User names an animal.
+2. Main agent delegates to the "animal_expert" sub-agent to generate
+   a multiple-choice question about that animal.
+3. Main agent shows the question to the user.
+4. User picks an answer.
+5. Main agent delegates again to the same sub-agent type to check
+   whether the answer is correct and explain why.
+"""
+
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool
+from openhands.sdk.context import Skill
+from openhands.tools.delegate import DelegationVisualizer, register_agent
+from openhands.tools.task import TaskToolSet
+
+
+# ── LLM setup ────────────────────────────────────────────────────────
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=SecretStr(api_key),
+    base_url=os.getenv("LLM_BASE_URL", None),
+)
+
+# ── Register the animal expert sub-agent ─────────────────────────────
+
+
+def create_animal_expert(llm: LLM) -> Agent:
+    """Factory for the animal-expert sub-agent."""
+    return Agent(
+        llm=llm,
+        tools=[],  # no tools needed – pure knowledge
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="animal_expertise",
+                    content=(
+                        "You are a world-class zoologist. "
+                        "When asked to generate a quiz question, respond with "
+                        "EXACTLY this format and nothing else:\n\n"
+                        "Question: <question text>\n"
+                        "A) <option>\n"
+                        "B) <option>\n"
+                        "C) <option>\n"
+                        "D) <option>\n\n"
+                        "When asked to verify an answer, state whether it is "
+                        "correct or incorrect, reveal the right answer, and "
+                        "give a short fun-fact explanation."
+                    ),
+                    trigger=None,  # always active
+                )
+            ],
+            system_message_suffix="Keep every response concise.",
+        ),
+    )
+
+
+register_agent(
+    name="animal_expert",
+    factory_func=create_animal_expert,
+    description="Zoologist that creates and verifies animal quiz questions.",
+)
+
+# ── Main agent ───────────────────────────────────────────────────────
+
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name=TaskToolSet.name)],
+)
+
+conversation = Conversation(
+    agent=main_agent,
+    workspace=os.getcwd(),
+    visualizer=DelegationVisualizer(name="QuizHost"),
+)
+
+# ── Round 1: generate the question ──────────────────────────────────
+
+animal = input("Pick an animal: ")
+
+conversation.send_message(
+    f"The user chose the animal: {animal}. "
+    "Use the task tool to delegate to the 'animal_expert' sub-agent "
+    "and ask it to generate a single multiple-choice question (A-D) "
+    f"about {animal}. "
+    "Once you get the question back, display it to the user exactly "
+    "as the sub-agent returned it and ask the user to pick A, B, C, or D."
+)
+conversation.run()
+
+# ── Round 2: verify the answer ──────────────────────────────────────
+
+answer = input("Your answer (A/B/C/D): ")
+
+conversation.send_message(
+    f"The user answered: {answer}. "
+    "Use the task tool to delegate to the 'animal_expert' sub-agent again "
+    f"and ask it whether '{answer}' is the correct answer to the question "
+    "it generated earlier. Don't include the question; instead, use the "
+    "'resume' parameter to continue the previous conversation."
+)
+conversation.run()
+
+# ── Done ────────────────────────────────────────────────────────────
+
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nEXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/40_task_tool_set.py"/>
+
+## Next Steps
+
+- **[Sub-Agent Delegation](/sdk/guides/agent-delegation)** — Parallel task execution with DelegateTool
+- **[Custom Tools](/sdk/guides/custom-tools)** — Build your own tools
+- **[Skills](/sdk/guides/skill)** — Configure agent behavior with skills
