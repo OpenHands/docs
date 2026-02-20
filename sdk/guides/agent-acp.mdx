@@ -11,7 +11,7 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 ## Basic Usage
 
-```python icon="python" wrap focus={5-7}
+```python icon="python" highlight={5-7}
 from openhands.sdk.agent import ACPAgent
 from openhands.sdk.conversation import Conversation
 
@@ -27,33 +27,9 @@ agent.close()
 
 The `acp_command` is the shell command used to spawn the server process. The SDK communicates with it over stdin/stdout JSON-RPC.
 
-## How It Works
-
-1. `ACPAgent` spawns the ACP server as a subprocess
-2. The SDK initializes the ACP protocol and creates a session
-3. When you call `conversation.send_message(...)`, the message is forwarded to the ACP server via `conn.prompt()`
-4. The server processes the request using its own LLM and tools, streaming session updates (text chunks, thought chunks, tool calls) back to the SDK
-5. The SDK accumulates the response and emits it as a `MessageEvent`
-6. Permission requests from the server are auto-approved
-7. Token usage and cost metrics from the ACP server are captured into the agent's `LLM.metrics`
-
-## Configuration
-
-### Server Command and Arguments
-
-```python icon="python" wrap
-agent = ACPAgent(
-    acp_command=["npx", "-y", "claude-code-acp"],
-    acp_args=["--profile", "my-profile"],      # extra CLI args
-    acp_env={"CLAUDE_API_KEY": "sk-..."},       # extra env vars
-)
-```
-
-| Parameter | Description |
-|-----------|-------------|
-| `acp_command` | Command to start the ACP server (required) |
-| `acp_args` | Additional arguments appended to the command |
-| `acp_env` | Additional environment variables for the server process |
+<Note>
+**Key difference from standard agents:** With `ACPAgent`, you don't need an `LLM_API_KEY` in your code. The ACP server handles its own LLM authentication and API calls. This is *delegation* — your code sends messages to the ACP server, which manages all LLM interactions internally.
+</Note>
 
 ### What ACPAgent Does Not Support
 
@@ -67,11 +43,39 @@ Because the ACP server manages its own tools and context, these `AgentBase` feat
 
 Passing any of these raises `NotImplementedError` at initialization.
 
+## How It Works
+
+1. `ACPAgent` spawns the ACP server as a subprocess
+2. The SDK initializes the ACP protocol and creates a session
+3. When you call `conversation.send_message(...)`, the message is forwarded to the ACP server via `conn.prompt()`
+4. The server processes the request using its own LLM and tools, streaming session updates (text chunks, thought chunks, tool calls) back to the SDK
+5. The SDK accumulates the response and emits it as a `MessageEvent`
+6. Permission requests from the server are auto-approved — this means the SDK automatically grants any tool execution or file access the server requests, so ensure you trust the ACP server you're running
+7. Token usage and cost metrics from the ACP server are captured into the agent's `LLM.metrics`
+
+## Configuration
+
+### Server Command and Arguments
+
+```python icon="python"
+agent = ACPAgent(
+    acp_command=["npx", "-y", "claude-code-acp"],
+    acp_args=["--profile", "my-profile"],      # extra CLI args
+    acp_env={"CLAUDE_API_KEY": "sk-..."},       # extra env vars
+)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `acp_command` | Command to start the ACP server (required) |
+| `acp_args` | Additional arguments appended to the command |
+| `acp_env` | Additional environment variables for the server process |
+
 ## Metrics
 
 Token usage and cost data are automatically captured from the ACP server's responses. You can inspect them through the standard `LLM.metrics` interface:
 
-```python icon="python" wrap
+```python icon="python"
 metrics = agent.llm.metrics
 print(f"Total cost: ${metrics.accumulated_cost:.6f}")
 
@@ -87,7 +91,7 @@ Usage data comes from two ACP protocol sources:
 
 Always call `agent.close()` when you are done to terminate the ACP server subprocess. A `try/finally` block is recommended:
 
-```python icon="python" wrap
+```python icon="python"
 agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
 try:
     conversation = Conversation(agent=agent, workspace=".")
