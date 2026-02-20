@@ -1,0 +1,150 @@
+---
+title: ACP Agent
+description: Delegate to an ACP-compatible server (Claude Code, Gemini CLI, etc.) instead of calling an LLM directly.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+`ACPAgent` lets you use any [Agent Client Protocol](https://agentclientprotocol.com/protocol/overview) server as the backend for an OpenHands conversation. Instead of calling an LLM directly, the agent spawns an ACP server subprocess and communicates with it over JSON-RPC. The server manages its own LLM, tools, and execution — your code just sends messages and collects responses.
+
+## Basic Usage
+
+```python icon="python" wrap focus={5-7}
+from openhands.sdk.agent import ACPAgent
+from openhands.sdk.conversation import Conversation
+
+# Point at any ACP-compatible server
+agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
+
+conversation = Conversation(agent=agent, workspace="./my-project")
+conversation.send_message("Explain the architecture of this project.")
+conversation.run()
+
+agent.close()
+```
+
+The `acp_command` is the shell command used to spawn the server process. The SDK communicates with it over stdin/stdout JSON-RPC.
+
+## How It Works
+
+1. `ACPAgent` spawns the ACP server as a subprocess
+2. The SDK initializes the ACP protocol and creates a session
+3. When you call `conversation.send_message(...)`, the message is forwarded to the ACP server via `conn.prompt()`
+4. The server processes the request using its own LLM and tools, streaming session updates (text chunks, thought chunks, tool calls) back to the SDK
+5. The SDK accumulates the response and emits it as a `MessageEvent`
+6. Permission requests from the server are auto-approved
+7. Token usage and cost metrics from the ACP server are captured into the agent's `LLM.metrics`
+
+## Configuration
+
+### Server Command and Arguments
+
+```python icon="python" wrap
+agent = ACPAgent(
+    acp_command=["npx", "-y", "claude-code-acp"],
+    acp_args=["--profile", "my-profile"],      # extra CLI args
+    acp_env={"CLAUDE_API_KEY": "sk-..."},       # extra env vars
+)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `acp_command` | Command to start the ACP server (required) |
+| `acp_args` | Additional arguments appended to the command |
+| `acp_env` | Additional environment variables for the server process |
+
+### What ACPAgent Does Not Support
+
+Because the ACP server manages its own tools and context, these `AgentBase` features are not available on `ACPAgent`:
+
+- `tools` / `include_default_tools` — the server has its own tools
+- `mcp_config` — configure MCP on the server side
+- `condenser` — the server manages its own context window
+- `critic` — the server manages its own evaluation
+- `agent_context` — configure the server directly
+
+Passing any of these raises `NotImplementedError` at initialization.
+
+## Metrics
+
+Token usage and cost data are automatically captured from the ACP server's responses. You can inspect them through the standard `LLM.metrics` interface:
+
+```python icon="python" wrap
+metrics = agent.llm.metrics
+print(f"Total cost: ${metrics.accumulated_cost:.6f}")
+
+for usage in metrics.token_usages:
+    print(f"  prompt={usage.prompt_tokens}  completion={usage.completion_tokens}")
+```
+
+Usage data comes from two ACP protocol sources:
+- **`PromptResponse.usage`** — per-turn token counts (input, output, cached, reasoning tokens)
+- **`UsageUpdate` notifications** — cumulative session cost and context window size
+
+## Cleanup
+
+Always call `agent.close()` when you are done to terminate the ACP server subprocess. A `try/finally` block is recommended:
+
+```python icon="python" wrap
+agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
+try:
+    conversation = Conversation(agent=agent, workspace=".")
+    conversation.send_message("Hello!")
+    conversation.run()
+finally:
+    agent.close()
+```
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/40_acp_agent_example.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/40_acp_agent_example.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/40_acp_agent_example.py
+"""Example: Using ACPAgent with Claude Code ACP server.
+
+This example shows how to use an ACP-compatible server (claude-code-acp)
+as the agent backend instead of direct LLM calls.
+
+Prerequisites:
+    - Node.js / npx available
+    - Claude Code CLI authenticated (or CLAUDE_API_KEY set)
+
+Usage:
+    uv run python examples/01_standalone_sdk/40_acp_agent_example.py
+"""
+
+import os
+
+from openhands.sdk.agent import ACPAgent
+from openhands.sdk.conversation import Conversation
+
+
+agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
+
+try:
+    cwd = os.getcwd()
+    conversation = Conversation(agent=agent, workspace=cwd)
+
+    conversation.send_message(
+        "List the Python source files under openhands-sdk/openhands/sdk/agent/, "
+        "then read the __init__.py and summarize what agent classes are exported."
+    )
+    conversation.run()
+finally:
+    # Clean up the ACP server subprocess
+    agent.close()
+
+print("Done!")
+```
+
+This example does not use an LLM API key directly — the ACP server (Claude Code) handles authentication on its own.
+
+## Next Steps
+
+- **[Creating Custom Agents](/sdk/guides/agent-custom)** — Build specialized agents with custom tool sets and system prompts
+- **[Agent Delegation](/sdk/guides/agent-delegation)** — Compose multiple agents for complex workflows
+- **[LLM Metrics](/sdk/guides/metrics)** — Track token usage and costs across models
