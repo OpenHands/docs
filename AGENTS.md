@@ -25,6 +25,21 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `.agents/skills/` — prompt extensions for agents editing this repo (legacy: `.openhands/skills/`; formerly `microagents`)
 - `tests/` — pytest checks for docs consistency (notably LLM pricing docs)
 
+
+## llms.txt / llms-full.txt (V1-only)
+
+Mintlify auto-generates `/llms.txt` and `/llms-full.txt`, but this repo **overrides** them by committing
+`llms.txt` and `llms-full.txt` at the repo root.
+
+We do this so LLMs get **V1-only** context while legacy V0 pages remain available for humans.
+
+- Generator script: `scripts/generate-llms-files.py`
+- Regenerate:
+  ```bash
+  ./scripts/generate-llms-files.py
+  ```
+- Exclusions: `openhands/usage/v0/` and any `V0*`-prefixed page files.
+
 ## Local development
 
 ### Preview the site
