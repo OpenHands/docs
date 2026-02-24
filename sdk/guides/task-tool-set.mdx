@@ -25,25 +25,31 @@ For **parallel** sub-agent execution, see [Sub-Agent Delegation](/sdk/guides/age
 
 The agent calls the task tool with a prompt and a sub-agent type. The TaskManager creates (or resumes) a sub-agent conversation, runs it to completion, and returns the result to the parent.
 
-```
-Parent Agent                    TaskManager                    Sub-Agent
-     │                              │                              │
-     │── task(prompt, type) ───────>│                              │
-     │                              │── create/resume ────────────>│
-     │                              │                              │── runs autonomously
-     │                              │                              │── ...
-     │                              │<── result ──────────────────│
-     │<── TaskObservation ─────────│                              │
-     │                              │   (persists for resume)      │
+```mermaid
+sequenceDiagram
+    participant P as Parent Agent
+    participant T as TaskManager
+    participant S as Sub-Agent
+
+    P->>T: task(prompt, type)
+    activate T
+    T->>S: create / resume
+    activate S
+    Note over S: runs autonomously
+    S->>T: result
+    deactivate S
+    T->>P: TaskObservation
+    deactivate T
+    Note right of T: persists for resume
 ```
 
 ### Task Lifecycle
 
-1. **Creation** — A fresh sub-agent and conversation are created
-2. **Running** — The sub-agent processes the prompt autonomously
-3. **Completion** — The final response is extracted and returned
-4. **Persistence** — The conversation is saved to disk for potential resumption
-5. **Resumption** (optional) — A previously completed task continues with full context
+1. **Creation**: A fresh sub-agent and conversation are created
+2. **Running**: The sub-agent processes the prompt autonomously
+3. **Completion**: The final response is extracted and returned
+4. **Persistence**: The conversation is saved to disk for potential resumption
+5. **Resumption** (optional): A previous task can be resumed with its full context preserved
 
 ## Setting Up the TaskToolSet
 
@@ -51,9 +57,10 @@ Parent Agent                    TaskManager                    Sub-Agent
     <Step>
         ### Register Custom Sub-Agent Types (Optional)
 
-        By default, a `"default"` general-purpose agent is available. Register custom types for specialized behavior:
+        By default, a `"default"` general-purpose agent is available, but you can register your own custom types
+        for specialized behavior:
 
-        ```python icon="python" wrap
+        ```python icon="python" focus={23-27}
         from openhands.sdk import LLM, Agent, AgentContext
         from openhands.sdk.context import Skill
         from openhands.tools.delegate import register_agent
@@ -66,7 +73,10 @@ Parent Agent                    TaskManager                    Sub-Agent
                     skills=[
                         Skill(
                             name="code_review",
-                            content="You are an expert code reviewer. Analyze code for bugs, style issues, and suggest improvements.",
+                            content="""You are an expert code reviewer.
+                                Analyze code for bugs, style issues,
+                                and suggest improvements.
+                            """,
                             trigger=None,
                         )
                     ],
@@ -83,7 +93,7 @@ Parent Agent                    TaskManager                    Sub-Agent
     <Step>
         ### Add TaskToolSet to the Agent
 
-        ```python icon="python" wrap
+        ```python icon="python" focus={6}
         from openhands.sdk import Agent, Tool
         from openhands.tools.task import TaskToolSet
 
@@ -98,13 +108,14 @@ Parent Agent                    TaskManager                    Sub-Agent
     <Step>
         ### Create a Conversation
 
-        ```python icon="python" wrap
+        ```python icon="python" focus={5-9}
         from openhands.sdk import Conversation
         from openhands.tools.delegate import DelegationVisualizer
+        from pathlib import Path
 
         conversation = Conversation(
             agent=agent,
-            workspace=os.getcwd(),
+            workspace=Path.cwd(),
             visualizer=DelegationVisualizer(name="Orchestrator"),
         )
         ```
@@ -135,14 +146,14 @@ The tool returns a `TaskObservation` containing:
 |-------|-------------|
 | `task_id` | Unique identifier (e.g., `task_00000001`) — use this for resumption |
 | `subagent` | The agent type that handled the task |
-| `status` | Final status: `succeeded`, `empty_success`, or `error` |
+| `status` | Final status: `completed` or `error` |
 | `text` | The sub-agent's response (or error message) |
 
 ## Resuming Tasks
 
 A key feature of TaskToolSet is the ability to resume a previously completed task. When a task finishes, its conversation is persisted to disk. Passing the `resume` parameter with the task ID reloads the full conversation history, allowing the sub-agent to continue where it left off.
 
-```python icon="python" wrap
+```python icon="python"
 # First call — sub-agent generates a quiz question
 conversation.send_message(
     "Use the task tool with subagent_type='quiz_expert' to generate "
@@ -187,8 +198,8 @@ animal-expert sub-agent. The flow is:
    a multiple-choice question about that animal.
 3. Main agent shows the question to the user.
 4. User picks an answer.
-5. Main agent delegates again to the same sub-agent type to check
-   whether the answer is correct and explain why.
+5. Main agent resumes the same sub-agent to check whether the answer
+   is correct and explain why.
 """
 
 import os
