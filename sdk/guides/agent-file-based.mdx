@@ -1,0 +1,426 @@
+---
+title: File-Based Agents
+description: Define specialized sub-agents as simple Markdown files with YAML frontmatter — no Python code required.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+File-based agents let you define specialized sub-agents using Markdown files. Each file declares the agent's name, description, tools, and system prompt — the same things you'd pass to `register_agent()` in code, but without writing any Python.
+
+This is the fastest way to create reusable, domain-specific agents that can be invoked via [delegation](/sdk/guides/agent-delegation).
+
+## Agent File Format
+
+An agent is a single `.md` file with YAML frontmatter and a Markdown body:
+
+```markdown icon="markdown"
+---
+name: code-reviewer
+description: >
+  Reviews code for quality, bugs, and best practices.
+  <example>Review this pull request for issues</example>
+  <example>Check this code for bugs</example>
+tools:
+  - file_editor
+  - terminal
+model: inherit
+---
+
+# Code Reviewer
+
+You are a meticulous code reviewer. When reviewing code:
+
+1. **Correctness** - Look for bugs, off-by-one errors, and race conditions.
+2. **Style** - Check for consistent naming and idiomatic usage.
+3. **Performance** - Identify unnecessary allocations or algorithmic issues.
+4. **Security** - Flag injection vulnerabilities or hardcoded secrets.
+
+Keep feedback concise and actionable. For each issue, suggest a fix.
+```
+
+The YAML frontmatter configures the agent. The Markdown body becomes the agent's system prompt.
+
+### Frontmatter Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | - | Agent identifier (e.g., `code-reviewer`) |
+| `description` | No | `""` | What this agent does. Shown to the orchestrator |
+| `tools` | No | `[]` | List of tools the agent can use |
+| `model` | No | `"inherit"` | LLM model (`"inherit"` uses the parent agent's model) |
+| `color` | No | `None` | Display color for the agent |
+
+### `<example>` Tags
+
+Add `<example>` tags inside the description to help the orchestrating agent know **when** to delegate to this agent:
+
+```markdown icon="markdown"
+description: >
+  Writes and improves technical documentation.
+  <example>Write docs for this module</example>
+  <example>Improve the README</example>
+```
+
+These examples are extracted and stored as `when_to_use_examples` on the `AgentDefinition` object. The delegation system uses them to match user requests to the right sub-agent.
+
+## Directory Conventions
+
+Place agent files in these directories, scanned in **priority order** (first match wins):
+
+| Priority | Location | Scope |
+|----------|----------|-------|
+| 1 | `{project}/.agents/agents/*.md` | Project-level (primary) |
+| 2 | `{project}/.openhands/agents/*.md` | Project-level (legacy) |
+| 3 | `~/.agents/agents/*.md` | User-level (primary) |
+| 4 | `~/.openhands/agents/*.md` | User-level (legacy) |
+
+<Tree>
+    <Tree.Folder name="my-project/" defaultOpen>
+        <Tree.Folder name=".agents" defaultOpen>
+            <Tree.Folder name="agents" defaultOpen>
+                <Tree.File name="code-reviewer.md" />
+                <Tree.File name="tech-writer.md" />
+                <Tree.File name="security-auditor.md" />
+            </Tree.Folder>
+        </Tree.Folder>
+        <Tree.File name="src/" />
+        <Tree.File name="..." />
+    </Tree.Folder>
+</Tree>
+
+**Rules:**
+- Only top-level `.md` files are loaded (subdirectories are skipped)
+- `README.md` files are automatically skipped
+- Project-level agents take priority over user-level agents with the same name
+
+<Tip>
+Put agents shared across all your projects in `~/.agents/agents/`. Put project-specific agents in `{project}/.agents/agents/`.
+</Tip>
+
+## Overall Priority
+
+When the same agent name is defined in multiple places, the highest-priority source wins:
+
+1. **Programmatic** `register_agent()` calls (never overwritten)
+2. **Plugin agents** (`Plugin.agents`)
+3. **Project-level** file-based agents
+4. **User-level** file-based agents
+
+## Auto-Registration
+
+The simplest way to use file-based agents is auto-registration. Call `register_file_agents()` with your project directory, and all discovered agents are registered into the delegation system:
+
+```python icon="python" focus={3}
+from openhands.sdk.subagent import register_file_agents
+
+registered = register_file_agents("/path/to/project")
+print(f"Registered agents: {registered}")
+```
+
+This scans both project-level and user-level directories, deduplicates by name, and registers each agent as a delegate that can be spawned by the orchestrator.
+
+## Manual Loading
+
+For more control, load and register agents explicitly:
+
+```python icon="python" focus={3-5, 7-13}
+from openhands.sdk import load_agents_from_dir, register_agent, agent_definition_to_factory
+
+# Load from a specific directory
+agents_dir = Path("agents")
+agent_definitions = load_agents_from_dir(agents_dir)
+
+# Register each agent
+for agent_def in agent_definitions:
+    register_agent(
+        name=agent_def.name,
+        factory_func=agent_definition_to_factory(agent_def),
+        description=agent_def.description,
+    )
+```
+
+### Key Functions
+
+#### `load_agents_from_dir()`
+
+Scans a directory for `.md` files and returns a list of `AgentDefinition` objects:
+
+```python icon="python" focus={3}
+from openhands.sdk import load_agents_from_dir
+
+definitions = load_agents_from_dir(Path(".agents/agents"))
+for d in definitions:
+    print(f"{d.name}: {d.tools}, model={d.model}")
+```
+
+#### `agent_definition_to_factory()`
+
+Converts an `AgentDefinition` into a factory function `(LLM) -> Agent`:
+
+```python icon="python"
+from openhands.sdk import agent_definition_to_factory
+
+factory = agent_definition_to_factory(agent_def)
+# The factory is called by the delegation system with the parent's LLM
+```
+
+The factory:
+- Maps tool names from the frontmatter to `Tool` objects
+- Converts the Markdown body into an always-active `Skill`
+- Respects the `model` field (`"inherit"` keeps the parent LLM; an explicit model name creates a copy)
+
+#### `load_project_agents()` / `load_user_agents()`
+
+Load agents from project-level or user-level directories respectively:
+
+```python icon="python" focus={3, 4}
+from openhands.sdk.subagent import load_project_agents, load_user_agents
+
+project_agents = load_project_agents("/path/to/project")
+user_agents = load_user_agents()  # scans ~/.agents/agents/ and ~/.openhands/agents/
+```
+
+## Using with Delegation
+
+File-based agents are designed to work with the [DelegateTool](/sdk/guides/agent-delegation). Once registered, the orchestrating agent can spawn and delegate tasks to them by name:
+
+```python icon="python" focus={6, 9-12, 15-19}
+from openhands.sdk import Agent, Conversation, Tool
+from openhands.sdk.subagent import register_file_agents
+from openhands.sdk.tool import register_tool
+from openhands.tools.delegate import DelegateTool, DelegationVisualizer
+
+register_file_agents("/path/to/project")  # Register .agents/agents/*.md
+
+# Set up the orchestrator with DelegateTool
+register_tool("DelegateTool", DelegateTool)
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name="DelegateTool")],
+)
+
+conversation = Conversation(
+    agent=main_agent,
+    workspace="/path/to/project",
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+)
+```
+
+The orchestrator sees the registered agents and their descriptions, and can delegate work like:
+
+```json
+{
+    "command": "spawn",
+    "ids": ["code-reviewer", "tech-writer"]
+}
+```
+
+## Example Agent Files
+
+### Code Reviewer
+
+```markdown icon="markdown"
+---
+name: code-reviewer
+description: >
+  Reviews code for quality, bugs, and best practices.
+  <example>Review this pull request for issues</example>
+  <example>Check this code for bugs</example>
+tools:
+  - file_editor
+  - terminal
+---
+
+# Code Reviewer
+
+You are a meticulous code reviewer. When reviewing code:
+
+1. **Correctness** - Look for bugs, off-by-one errors, null pointer issues, and race conditions.
+2. **Style** - Check for consistent naming, formatting, and idiomatic usage.
+3. **Performance** - Identify unnecessary allocations, N+1 queries, or algorithmic inefficiencies.
+4. **Security** - Flag potential injection vulnerabilities, hardcoded secrets, or unsafe deserialization.
+
+Keep feedback concise and actionable. For each issue found, suggest a concrete fix.
+```
+
+### Technical Writer
+
+```markdown icon="markdown"
+---
+name: tech-writer
+description: >
+  Writes and improves technical documentation.
+  <example>Write docs for this module</example>
+  <example>Improve the README</example>
+tools:
+  - file_editor
+---
+
+# Technical Writer
+
+You are a skilled technical writer. When creating or improving documentation:
+
+1. **Audience** - Write for developers who are new to the project.
+2. **Structure** - Use clear headings, code examples, and step-by-step instructions.
+3. **Accuracy** - Read the source code before documenting behavior. Never guess.
+4. **Brevity** - Prefer short, concrete sentences over long explanations.
+
+Always include a usage example with expected output when documenting functions or APIs.
+```
+
+## Agents in Plugins
+
+File-based agents can also be bundled inside [plugins](/sdk/guides/plugins). Place them in the `agents/` directory of your plugin:
+
+<Tree>
+    <Tree.Folder name="my-plugin/" defaultOpen>
+        <Tree.Folder name=".plugin" defaultOpen>
+            <Tree.File name="plugin.json" />
+        </Tree.Folder>
+        <Tree.Folder name="agents" defaultOpen>
+            <Tree.File name="code-reviewer.md" />
+            <Tree.File name="tech-writer.md" />
+        </Tree.Folder>
+    </Tree.Folder>
+</Tree>
+
+Plugin agents use the same `.md` format and are registered automatically when the plugin is loaded. They have higher priority than file-based agents but lower than programmatic `register_agent()` calls.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/41_file_based_subagents](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/01_standalone_sdk/41_file_based_subagents)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/41_file_based_subagents/41_file_based_subagents.py
+"""Example: Loading Sub-Agents from Markdown Files
+
+This example demonstrates how to define sub-agents using Markdown files with
+YAML frontmatter, load them with AgentDefinition, and register them for
+delegation.
+
+Agent Markdown files follow a simple format:
+- YAML frontmatter with: name, description, tools, model (optional), color (optional)
+- The Markdown body becomes the agent's system prompt
+- <example> tags in the description help the main agent know when to delegate
+
+The example_agents/ directory contains two agents:
+- code-reviewer: Reviews code for quality, bugs, and best practices
+- tech-writer: Writes and improves technical documentation
+"""
+
+import os
+from pathlib import Path
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Tool,
+    agent_definition_to_factory,
+    get_logger,
+    load_agents_from_dir,
+    register_agent,
+)
+from openhands.sdk.subagent import AgentDefinition
+from openhands.sdk.tool import register_tool
+from openhands.tools.delegate import DelegateTool, DelegationVisualizer
+
+
+logger = get_logger(__name__)
+
+script_dir = Path(__file__).parent
+agents_dir = script_dir / "agents"
+
+print("Part 1: Loading Agent Definitions from Markdown")
+print()
+
+# Load each agent definition and inspect its fields
+for md_file in sorted(agents_dir.glob("*.md")):
+    agent_def = AgentDefinition.load(md_file)
+    print(f"\nAgent: {agent_def.name}")
+    print(f"  Description: {agent_def.description[:80]}...")
+    print(f"  Model: {agent_def.model}")
+    print(f"  Tools: {agent_def.tools}")
+    print(f"  When-to-use examples: {agent_def.when_to_use_examples}")
+    print(f"  System prompt length: {len(agent_def.system_prompt)} chars")
+print()
+
+print("Part 2: Registering and Using Agents with Delegation")
+print()
+
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+assert LLM_API_KEY is not None, "LLM API key not set"
+
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+llm = LLM(
+    model=model,
+    api_key=LLM_API_KEY,
+    base_url=os.getenv("LLM_BASE_URL"),
+    usage_id="file-agents-demo",
+)
+
+
+agents_definition = load_agents_from_dir(agents_dir)
+
+for agent_def in agents_definition:
+    register_agent(
+        name=agent_def.name,
+        factory_func=agent_definition_to_factory(agent_def),
+        description=agent_def.description,
+    )
+    print(f"Registered agent: {agent_def.name}")
+
+# NOTE: In a real project, you can skip the manual loading above and instead
+# place your .md files in .agents/agents/ at the project root, then call:
+#
+#   from openhands.sdk.subagent import register_file_agents
+#   register_file_agents(project_dir)
+#
+# This automatically discovers and registers all agent definitions.
+
+print(
+    "Part 3: Set up the main (orchestrator) agent with "
+    "the DelegateTool and start the conversation"
+)
+print()
+
+# Set up the main (orchestrator) agent with the DelegateTool
+register_tool("DelegateTool", DelegateTool)
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name="DelegateTool")],
+)
+conversation = Conversation(
+    agent=main_agent,
+    workspace=Path.cwd(),
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+)
+
+# Ask the main agent to delegate work to our file-based agents
+task = (
+    f"I have a Python file at {agents_dir}/code-reviewer.md. "
+    "Please delegate to the code-reviewer agent and ask it to review that file "
+    "for any issues. Then delegate to the tech-writer agent and ask it to "
+    "suggest a short README paragraph describing what is the code-reviewer.md "
+    "file doing. "
+    "Finally, combine both results into a summary."
+)
+
+print("\nSending task to orchestrator...")
+conversation.send_message(task)
+conversation.run()
+
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nTotal cost: ${cost:.4f}")
+print(f"EXAMPLE_COST: {cost:.4f}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/41_file_based_subagents/41_file_based_subagents.py"/>
+
+## Next Steps
+
+- **[Sub-Agent Delegation](/sdk/guides/agent-delegation)** - Learn about the DelegateTool and delegation patterns
+- **[Skills](/sdk/guides/skill)** - Add specialized knowledge and triggers to agents
+- **[Plugins](/sdk/guides/plugins)** - Bundle agents, skills, hooks, and MCP servers together
+- **[Custom Agent](/sdk/guides/agent-custom)** - Create agents programmatically for more control
