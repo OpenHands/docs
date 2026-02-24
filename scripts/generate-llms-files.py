@@ -1,5 +1,46 @@
 #!/usr/bin/env python3
 
+"""Generate custom `llms.txt` + `llms-full.txt` for the OpenHands docs site.
+
+Why this exists
+--------------
+Mintlify automatically generates and hosts `/llms.txt` and `/llms-full.txt` for
+Mintlify-backed documentation sites.
+
+For OpenHands, we want those files to provide **V1-only** context to LLMs while we
+still keep some legacy V0 pages available for humans. In particular, we want to
+exclude:
+
+- The legacy docs subtree under `openhands/usage/v0/`
+- Any page whose filename starts with `V0*`
+
+Mintlify supports overriding the auto-generated files by committing `llms.txt`
+(and/or `llms-full.txt`) to the repository root.
+
+References:
+- Mintlify docs: https://www.mintlify.com/docs/ai/llmstxt
+- llms.txt proposal: https://llmstxt.org/
+
+How to use
+----------
+Run from the repository root (this repo's `docs/` directory):
+
+    ./scripts/generate-llms-files.py
+
+This will rewrite `./llms.txt` and `./llms-full.txt`.
+
+Design notes
+------------
+- We only parse `title` and `description` from MDX frontmatter.
+- We intentionally group OpenHands pages into sections that clearly distinguish:
+  - OpenHands CLI
+  - OpenHands Web App Server (incl. "Local GUI")
+  - OpenHands Cloud
+  - OpenHands Software Agent SDK
+
+"""
+
+
 from __future__ import annotations
 
 import re
@@ -112,39 +153,95 @@ def iter_doc_pages() -> list[DocPage]:
     return pages
 
 
-def group_name(rel_path: Path) -> str:
-    top = rel_path.parts[0]
-    return {
-        "overview": "Overview",
-        "openhands": "OpenHands",
-        "sdk": "Agent SDK",
-    }.get(top, top.replace("-", " ").title())
+LLMS_SECTION_ORDER = [
+    "OpenHands Web App Server",
+    "OpenHands Cloud",
+    "OpenHands CLI",
+    "OpenHands Software Agent SDK",
+    "OpenHands Overview",
+    "Other",
+]
+
+
+def section_name(page: DocPage) -> str:
+    """Map a page to an `llms.txt` section.
+
+    This is deliberately opinionated. The goal is to make it obvious to an LLM
+    what content is about:
+
+    - the OpenHands CLI
+    - the OpenHands Web App + server (what the nav historically called "Local GUI")
+    - OpenHands Cloud
+    - the OpenHands Software Agent SDK
+
+    """
+
+    route = page.route
+
+    if route.startswith("/sdk"):
+        return "OpenHands Software Agent SDK"
+
+    if route.startswith("/openhands/usage/cli"):
+        return "OpenHands CLI"
+
+    if route.startswith("/openhands/usage/cloud"):
+        return "OpenHands Cloud"
+
+    if route.startswith("/openhands/usage"):
+        return "OpenHands Web App Server"
+
+    if route.startswith("/overview"):
+        return "OpenHands Overview"
+
+    return "Other"
+
+
+def _section_sort_key(section: str) -> tuple[int, str]:
+    """Stable ordering for llms sections, with a sane fallback."""
+
+    try:
+        return (LLMS_SECTION_ORDER.index(section), "")
+    except ValueError:
+        return (len(LLMS_SECTION_ORDER), section.lower())
 
 
 def build_llms_txt(pages: list[DocPage]) -> str:
-    grouped: dict[str, list[DocPage]] = {}
-    for p in pages:
-        grouped.setdefault(group_name(p.rel_path), []).append(p)
+    """Generate `llms.txt`.
 
-    for g in grouped:
-        grouped[g] = sorted(grouped[g], key=lambda x: (x.title.lower(), x.route))
+    The format follows the llms.txt proposal:
+    - One H1
+    - A short blockquote summary
+    - Optional non-heading text
+    - H2 sections containing bullet lists of links
+
+    """
+
+    grouped: dict[str, list[DocPage]] = {}
+    for page in pages:
+        grouped.setdefault(section_name(page), []).append(page)
+
+    for section_pages in grouped.values():
+        section_pages.sort(key=lambda p: (p.title.lower(), p.route))
 
     lines: list[str] = [
         "# OpenHands Docs",
         "",
         "> LLM-friendly index of OpenHands documentation (V1). Legacy V0 docs pages are intentionally excluded.",
         "",
+        "The sections below intentionally separate OpenHands product documentation (Web App Server / Cloud / CLI)",
+        "from the OpenHands Software Agent SDK.",
+        "",
     ]
 
-    for group in sorted(grouped.keys()):
-        lines.append(f"## {group}")
+    for section in sorted(grouped.keys(), key=_section_sort_key):
+        lines.append(f"## {section}")
         lines.append("")
 
-        for p in grouped[group]:
-            url = f"{BASE_URL}{p.route}.md"
-            line = f"- [{p.title}]({url})"
-            if p.description:
-                line += f": {p.description}"
+        for page in grouped[section]:
+            url = f"{BASE_URL}{page.route}.md"
+            line = f"- [{page.title}]({url})"
+            if page.description:
+                line += f": {page.description}"
             lines.append(line)
 
         lines.append("")
@@ -153,21 +250,42 @@ def build_llms_txt(pages: list[DocPage]) -> str:
 
 
 def build_llms_full_txt(pages: list[DocPage]) -> str:
-    header = [
+    """Generate `llms-full.txt`.
+
+    This is meant to be copy/pasteable context for AI tools.
+
+    Unlike `llms.txt`, there is no strict spec for `llms-full.txt`, but we keep a
+    single H1, then use H2/H3 headings to make the document navigable.
+
+    """
+
+    grouped: dict[str, list[DocPage]] = {}
+    for page in pages:
+        grouped.setdefault(section_name(page), []).append(page)
+
+    for section_pages in grouped.values():
+        section_pages.sort(key=lambda p: p.route)
+
+    lines: list[str] = [
         "# OpenHands Docs",
         "",
         "> Consolidated documentation context for LLMs (V1-only). Legacy V0 docs pages are intentionally excluded.",
         "",
     ]
 
-    chunks: list[str] = ["\n".join(header).rstrip()]
+    for section in sorted(grouped.keys(), key=_section_sort_key):
+        lines.append(f"## {section}")
+        lines.append("")
 
-    for p in sorted(pages, key=lambda x: x.route):
-        chunks.append(
-            f"\n\n# {p.title}\nSource: {BASE_URL}{p.route}\n\n{p.body}\n"
-        )
+        for page in grouped[section]:
+            lines.append(f"### {page.title}")
+            lines.append(f"Source: {BASE_URL}{page.route}.md")
+            lines.append("")
+            if page.body:
+                lines.append(page.body)
+                lines.append("")
 
-    return "".join(chunks).lstrip() + "\n"
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def main() -> None:
