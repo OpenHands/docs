@@ -154,10 +154,10 @@ def iter_doc_pages() -> list[DocPage]:
 
 
 LLMS_SECTION_ORDER = [
+    "OpenHands Software Agent SDK",
+    "OpenHands CLI",
     "OpenHands Web App Server",
     "OpenHands Cloud",
-    "OpenHands CLI",
-    "OpenHands Software Agent SDK",
     "OpenHands Overview",
     "Other",
 ]
