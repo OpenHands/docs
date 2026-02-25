@@ -192,3 +192,66 @@ Other options include:
 - **Custom FastAPI/Express servers**: Build your own HTTP wrapper around stdio MCP servers.
 - **Docker-based proxies**: Containerized solutions for better isolation.
 - **Cloud-hosted MCP services**: Third-party services that provide MCP endpoints.
+
+---
+
+## Security with Maybe Don't
+
+[Maybe Don't](https://maybedont.ai) provides AI guardrails — real-time monitoring and policy enforcement for AI agents. It sits between OpenHands and your downstream MCP servers, validating every tool call against configurable policies (CEL rules and AI-powered analysis) before forwarding it to the downstream server.
+
+<Note>
+  Maybe Don't works as a transparent proxy. Your existing MCP server configurations stay the same — you just route them through Maybe Don't.
+</Note>
+
+### Quick Start
+
+Start Maybe Don't with Docker, configuring a downstream MCP server via environment variables:
+
+```bash
+docker run -d --name maybe-dont \
+  -p 8080:8080 \
+  -e MAYBE_DONT_SERVER_LISTEN_ADDR=0.0.0.0:8080 \
+  -e MAYBE_DONT_REQUEST_VALIDATION_AI_ENABLED=false \
+  -e MAYBE_DONT_NATIVE_TOOLS_AUDIT_REPORT_ENABLED=false \
+  -e MAYBE_DONT_DOWNSTREAM_MCP_SERVERS_FILESYSTEM_TYPE=http \
+  -e MAYBE_DONT_DOWNSTREAM_MCP_SERVERS_FILESYSTEM_URL=http://host.docker.internal:8081/sse \
+  ghcr.io/maybedont/maybe-dont:latest
+```
+
+<Note>
+  The `LISTEN_ADDR` must be `0.0.0.0` inside Docker so the port mapping works. AI validation is disabled here for a minimal setup — enable it by setting `MAYBE_DONT_VALIDATION_AI_API_KEY` instead. See [maybedont.ai/docs](https://maybedont.ai/docs) for full configuration options.
+</Note>
+
+Then point OpenHands at Maybe Don't instead of the downstream server directly:
+
+```toml
+[mcp]
+shttp_servers = [
+    "http://localhost:8080/mcp"
+]
+```
+
+Maybe Don't discovers tools from all downstream servers and exposes them through a single endpoint. Policy rules can target specific tools or servers using name prefixes (e.g., `filesystem__read_file`).
+
+For more complex setups, you can volume-mount a `maybe-dont.yaml` config file instead of using environment variables:
+
+```bash
+docker run -d --name maybe-dont \
+  -p 8080:8080 \
+  -e MAYBE_DONT_SERVER_LISTEN_ADDR=0.0.0.0:8080 \
+  -v ./config:/home/maybedont/.config/maybe-dont:ro \
+  ghcr.io/maybedont/maybe-dont:latest
+```
+
+### What It Validates
+
+- **Deterministic rules (CEL)**: Pattern-matching on tool names, arguments, and other request fields. Fast, predictable, and auditable.
+- **AI-powered rules**: Context-aware validation using an LLM for nuanced decisions that pattern matching can't handle.
+
+Both rule types support `audit_only` mode, so you can observe what would be blocked before enforcing policies.
+
+<Tip>
+  Maybe Don't also provides a [security analyzer integration](/sdk/guides/security#maybe-dont-security-analyzer) for validating *all* agent actions (shell commands, file operations, browser actions) — not just MCP tool calls.
+</Tip>
+
+For full documentation, see [maybedont.ai/docs](https://maybedont.ai/docs).
