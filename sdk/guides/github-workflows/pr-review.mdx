@@ -13,19 +13,61 @@ Automatically review pull requests, providing feedback on code quality, security
 The reference workflow triggers on either the "review-this" label or when the openhands-agent account is requested as a reviewer. In OpenHands organization repositories, openhands-agent has access, so this works as-is. In your own repositories, requesting openhands-agent will only work if that account is added as a collaborator or is part of a team with access. If you don't plan to grant access, use the label trigger instead, or change the condition to a reviewer handle that exists in your repo.
 </Note>
 
+## Review Modes
+
+The PR review workflow supports two modes:
+
+| Mode | Description | Required Secrets |
+|------|-------------|-----------------|
+| **SDK Mode** (default) | Runs the agent locally in GitHub Actions | `LLM_API_KEY`, `GITHUB_TOKEN` |
+| **Cloud Mode** | Runs asynchronously in OpenHands Cloud | `OPENHANDS_CLOUD_API_KEY`, `GITHUB_TOKEN` |
+
+### Cloud Mode Benefits
+
+- **No LLM setup** - Uses your OpenHands Cloud account's configured LLM
+- **Faster CI completion** - Workflow exits immediately; review runs in background
+- **Track progress** - Posts a comment on the PR with a link to the conversation URL
+
+### Cloud Mode Prerequisites
+
+<Warning>
+The OpenHands Cloud account that owns the `OPENHANDS_CLOUD_API_KEY` must have GitHub access to the repository you want to review. The agent running in cloud uses your account's GitHub credentials to fetch the PR diff and post review comments.
+
+Follow the [GitHub Installation Guide](/openhands/usage/cloud/github-installation) to connect your GitHub account to OpenHands Cloud.
+</Warning>
+
 ## Quick Start
 
-```bash
-# 1. Copy workflow to your repository
-cp examples/03_github_workflows/02_pr_review/workflow.yml .github/workflows/pr-review.yml
+<Tabs>
+  <Tab title="SDK Mode (Default)">
+    ```bash
+    # 1. Copy workflow to your repository
+    cp examples/03_github_workflows/02_pr_review/workflow.yml .github/workflows/pr-review.yml
 
-# 2. Configure secrets in GitHub Settings → Secrets
-# Add: LLM_API_KEY
+    # 2. Configure secrets in GitHub Settings → Secrets
+    # Add: LLM_API_KEY
 
-# 3. (Optional) Create a "review-this" label in your repository
-# Go to Issues → Labels → New label
-# You can also trigger reviews by requesting "openhands-agent" as a reviewer
-```
+    # 3. (Optional) Create a "review-this" label in your repository
+    # Go to Issues → Labels → New label
+    # You can also trigger reviews by requesting "openhands-agent" as a reviewer
+    ```
+  </Tab>
+  <Tab title="Cloud Mode">
+    ```bash
+    # 1. Copy workflow to your repository
+    cp examples/03_github_workflows/02_pr_review/workflow.yml .github/workflows/pr-review.yml
+
+    # 2. Configure secrets in GitHub Settings → Secrets
+    # Add: OPENHANDS_CLOUD_API_KEY (see https://docs.openhands.dev/openhands/usage/cloud/cloud-api#obtaining-an-api-key)
+    # GITHUB_TOKEN is auto-available in GitHub Actions
+
+    # 3. Update the workflow to use cloud mode:
+    # Set mode: cloud and remove llm-api-key
+
+    # 4. (Optional) Create a "review-this" label in your repository
+    ```
+  </Tab>
+</Tabs>
 
 ## Features
 
@@ -33,6 +75,7 @@ cp examples/03_github_workflows/02_pr_review/workflow.yml .github/workflows/pr-r
 - **Comprehensive Analysis** - Analyzes the changes given the repository context. Covers code quality, security, best practices
 - **GitHub Integration** - Posts comments directly to the PR
 - **Customizable** - Add your own code review guidelines without forking
+- **Two Modes** - Run locally (SDK) or in the cloud (asynchronous)
 
 ## Security
 
@@ -178,13 +221,59 @@ jobs:
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `llm-model` | LLM model to use | Yes | - |
-| `llm-base-url` | LLM base URL (optional) | No | `''` |
-| `review-style` | Review style: 'standard' or 'roasted' | No | `roasted` |
+| `mode` | Review mode: `sdk` or `cloud` | No | `sdk` |
+| `llm-model` | LLM model (SDK mode only) | SDK mode | `anthropic/claude-sonnet-4-5-20250929` |
+| `llm-base-url` | LLM base URL (SDK mode only) | No | `''` |
+| `review-style` | Review style: `standard` or `roasted` | No | `roasted` |
 | `sdk-version` | Git ref for SDK (tag, branch, or commit SHA) | No | `main` |
 | `sdk-repo` | SDK repository (owner/repo) | No | `OpenHands/software-agent-sdk` |
-| `llm-api-key` | LLM API key | Yes | - |
+| `llm-api-key` | LLM API key (SDK mode only) | SDK mode | - |
 | `github-token` | GitHub token for API access | Yes | - |
+| `openhands-cloud-api-key` | OpenHands Cloud API key (cloud mode only) | Cloud mode | - |
+| `openhands-cloud-api-url` | OpenHands Cloud API URL | No | `https://app.all-hands.dev` |
+
+### Cloud Mode Workflow Example
+
+For cloud mode, you don't need an LLM API key - just the cloud API key:
+
+```yaml icon="yaml"
+name: PR Review by OpenHands (Cloud Mode)
+
+on:
+    pull_request:
+        types: [labeled, review_requested]
+
+permissions:
+    contents: read
+    pull-requests: write
+    issues: write
+
+jobs:
+    pr-review:
+        if: |
+            github.event.label.name == 'review-this' ||
+            github.event.requested_reviewer.login == 'openhands-agent'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout for composite action
+              uses: actions/checkout@v4
+              with:
+                  repository: OpenHands/software-agent-sdk
+                  ref: main
+                  sparse-checkout: .github/actions/pr-review
+
+            - name: Run PR Review
+              uses: ./.github/actions/pr-review
+              with:
+                  mode: cloud
+                  review-style: roasted
+                  openhands-cloud-api-key: ${{ secrets.OPENHANDS_CLOUD_API_KEY }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+<Note>
+In cloud mode, the workflow posts a comment on the PR with a link to the conversation URL, then exits immediately. The agent runs asynchronously in OpenHands Cloud and posts review comments when done.
+</Note>
 
 ## Related Files
 
