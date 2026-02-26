@@ -34,9 +34,17 @@ Mintlify auto-generates `/llms.txt` and `/llms-full.txt`, but this repo **overri
 We do this so LLMs get **V1-only** context while legacy V0 pages remain available for humans.
 
 - Generator script: `scripts/generate-llms-files.py`
-- Regenerate:
+- Regenerate (recommended):
   ```bash
-  ./scripts/generate-llms-files.py
+  make llms
+  ```
+  Or directly:
+  ```bash
+  python3 scripts/generate-llms-files.py
+  ```
+- Verify they are up-to-date:
+  ```bash
+  make llms-check
   ```
 - Exclusions: `openhands/usage/v0/` and any `V0*`-prefixed page files.
 
