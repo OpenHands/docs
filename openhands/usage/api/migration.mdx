@@ -1,0 +1,340 @@
+---
+title: V0 to V1 Migration Guide
+description: Complete guide for migrating from OpenHands V0 APIs to V1 APIs
+---
+
+<Warning>
+  The V0 API (`/api/conversations`) is deprecated and scheduled for removal on **April 1, 2026**.
+  Please migrate to the V1 API as soon as possible.
+</Warning>
+
+## Overview
+
+This guide helps you migrate from OpenHands V0 APIs to the new V1 APIs. The V1 API introduces significant architectural improvements including decoupled sandboxes and conversations, better reliability, and enhanced developer experience.
+
+### Key Architectural Change
+
+In V1, **Conversations and Sandboxes are decoupled**. Sandboxes (runtime environments) are managed independently, enabling features like:
+- Pause and resume sandboxes without losing state
+- Sandbox reuse across conversations
+- Independent lifecycle management for better resource control
+
+V1 also introduces two levels of API:
+- **App Server API** - The main API for managing conversations and sandboxes (focus of this guide)
+- **Agent Server API** - Fine-grained control of individual runtimes and sandboxes (see [Agent Server API](#agent-server-api) section)
+
+## Benefits of V1 APIs
+
+| Theme | Key Result |
+|-------|------------|
+| **Reliability** | 61% reduction in system failures — eliminated entire classes of infrastructure errors |
+| **Performance** | Lighter-weight runtime with co-located execution — removes inter-pod communication overhead |
+| **Developer Experience** | Modern API patterns — dedicated search, filtering, batch operations, webhooks, and flexible sandbox controls |
+
+<Accordion title="Detailed Benefits">
+
+### Reliability
+
+- **61% reduction in system-attributable failures** — Production data showed V1 reduced errors from 78.0 to 30.0 per 1k conversations
+- **Eliminated infrastructure errors** — V0's inter-pod communication caused authentication failures, runtime readiness races, and connection timeouts. V1 eliminates these entirely.
+- **Co-located execution model** — Removes dependency on inter-pod HTTP communication, eliminating an entire class of failure modes
+- **Replay-based recovery** — Event-sourced state enables recovery via replay after failures
+
+### Performance
+
+- **Lighter-weight agent server** — More efficient runtime API reduces resource overhead
+- **Decoupled sandboxes and conversations** — Independent lifecycle management for better resource control
+- **Event-sourced state** — One-to-one mapping between execution events and LLM messages enables clean integration, persistence, and replay
+
+### Developer Experience
+
+**Sandbox Controls**
+- Pause and resume sandboxes — Pause when not in use, resume without losing state
+- Explicit status tracking — Clear states (`STARTING`, `RUNNING`, `PAUSED`, `ERROR`, `MISSING`)
+- Sandbox specs — Reusable templates with custom commands, environment variables, and working directories
+
+**Querying & Filtering**
+- Dedicated search endpoints — Enhanced filtering for conversations and events
+- Count endpoints — Get counts without fetching full data
+- Batch get operations — Retrieve multiple items by ID in a single request
+- Enhanced event filtering — Filter by kind, timestamp ranges, with improved pagination
+
+**Streaming & Real-time**
+- Stream from start — Stream conversation updates from moment of creation
+- Start task tracking — Monitor conversation startup progress
+- Webhook support — Native callbacks for lifecycle events and event stream updates
+
+**Export & Portability**
+- Conversation export — Download trajectories as zip files
+- Workspace portability — Easier portability across environments
+
+</Accordion>
+
+## App Server API Endpoint Mapping
+
+The following table maps V0 endpoints to their V1 equivalents, organized by typical workflow order.
+
+### Health & Status
+
+| Operation | V0 Endpoint | V1 Endpoint | Notes |
+|-----------|-------------|-------------|-------|
+| Check server health | `GET /health` | `GET /health` | No change |
+| Check if server is alive | `GET /alive` | `GET /alive` | No change |
+| Check if server is ready | `GET /ready` | `GET /ready` | No change |
+
+### Conversation Lifecycle
+
+| Operation | V0 Endpoint | V1 Endpoint | Notes |
+|-----------|-------------|-------------|-------|
+| Create a new conversation | `POST /api/conversations` | `POST /api/v1/app-conversations` | V1 combines create + start; use `stream-start` for real-time updates |
+| Start conversation (streaming) | `POST /api/conversations/{id}/start` | `POST /api/v1/app-conversations/stream-start` | V1 supports streaming from start |
+| List/search conversations | `GET /api/conversations` | `GET /api/v1/app-conversations/search` | V1 uses dedicated search endpoint |
+| Get conversation by ID | `GET /api/conversations/{id}` | `GET /api/v1/app-conversations` | V1 uses batch get with query params |
+| Get conversation count | N/A | `GET /api/v1/app-conversations/count` | New in V1 |
+| Update conversation | `PATCH /api/conversations/{id}` | `PATCH /api/v1/app-conversations/{id}` | Similar functionality |
+| Stop conversation | `POST /api/conversations/{id}/stop` | N/A | In V1, manage via sandbox pause/resume |
+| Delete conversation | `DELETE /api/conversations/{id}` | `DELETE /api/v1/app-conversations/{id}` | V1 conversations tied to sandbox lifecycle |
+
+### Messaging & Events
+
+| Operation | V0 Endpoint | V1 Endpoint | Notes |
+|-----------|-------------|-------------|-------|
+| Send a message | `POST /api/conversations/{id}/messages` | `POST /api/v1/conversation/{id}/events` | V1 uses event-based messaging |
+| Add an event | `POST /api/conversations/{id}/events` | `POST /api/v1/conversation/{id}/events` | Different event model in V1 |
+| Search/get events | `GET /api/conversations/{id}/events` | `GET /api/v1/conversation/{id}/events/search` | V1 has dedicated search endpoint with filtering |
+| Get event count | N/A | `GET /api/v1/conversation/{id}/events/count` | New in V1 |
+| Batch get events | N/A | `GET /api/v1/conversation/{id}/events` | New in V1 |
+
+### File Operations
+
+| Operation | V0 Endpoint | V1 Endpoint | Notes |
+|-----------|-------------|-------------|-------|
+| List files in workspace | `GET /api/conversations/{id}/list-files` | Use Agent Server API | Use `POST /api/bash/execute_bash_command` with `ls` |
+| Read file content | `GET /api/conversations/{id}/select-file` | Use Agent Server API | V1 uses Agent Server for file operations |
+| Upload files | `POST /api/conversations/{id}/upload-files` | Use Agent Server API | Use Agent Server `POST /api/file/upload/{path}` |
+| Get workspace zip | `GET /api/conversations/{id}/zip-directory` | Use Agent Server API | Use Agent Server `GET /api/file/download/{path}` |
+
+### Sandbox Management (New in V1)
+
+| Operation | Endpoint | Notes |
+|-----------|----------|-------|
+| Create/start a sandbox | `POST /api/v1/sandboxes` | New: Independent sandbox creation |
+| Search sandboxes | `GET /api/v1/sandboxes/search` | New: Find existing sandboxes |
+| Get sandboxes | `GET /api/v1/sandboxes` | New: Batch get sandboxes |
+| Pause a sandbox | `POST /api/v1/sandboxes/{id}/pause` | New: Suspend sandbox execution |
+| Resume a sandbox | `POST /api/v1/sandboxes/{id}/resume` | New: Resume paused sandbox |
+| Delete a sandbox | `DELETE /api/v1/sandboxes/{id}` | New: Clean up sandbox resources |
+
+### Development Tools
+
+| Operation | V0 Endpoint | V1 Endpoint | Notes |
+|-----------|-------------|-------------|-------|
+| Get VSCode URL | `GET /api/conversations/{id}/vscode-url` | N/A | V1: Look for `VSCODE` in sandbox's `exposed_urls` |
+| Get web hosts | `GET /api/conversations/{id}/web-hosts` | N/A | V1: Look for `AGENT_SERVER` in sandbox's `exposed_urls` |
+
+### Trajectory & Skills
+
+| Operation | V0 Endpoint | V1 Endpoint | Notes |
+|-----------|-------------|-------------|-------|
+| Get trajectory | `GET /api/conversations/{id}/trajectory` | Use Agent Server API | Use `GET /api/file/download-trajectory/{conversation_id}` |
+| Get conversation skills | N/A | `GET /api/v1/app-conversations/{id}/skills` | New in V1 |
+
+## Migration Examples
+
+### Creating a Conversation
+
+<Tabs>
+  <Tab title="V0 (Deprecated)">
+    ```bash
+    curl -X POST "https://app.all-hands.dev/api/conversations" \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "initial_user_msg": "Check the README.md file",
+        "repository": "yourusername/your-repo"
+      }'
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "status": "ok",
+      "conversation_id": "abc1234"
+    }
+    ```
+  </Tab>
+  <Tab title="V1 (Recommended)">
+    ```bash
+    curl -X POST "https://app.all-hands.dev/api/v1/app-conversations" \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "initial_message": {
+          "content": [{"type": "text", "text": "Check the README.md file"}]
+        },
+        "selected_repository": "yourusername/your-repo"
+      }'
+    ```
+    
+    **Response:**
+    ```json
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "status": "WORKING",
+      "app_conversation_id": "660e8400-e29b-41d4-a716-446655440001",
+      "sandbox_id": "sandbox-abc123",
+      "created_at": "2025-01-15T10:30:00Z"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Key Migration Changes
+
+1. **Endpoint URL**: `/api/conversations` → `/api/v1/app-conversations`
+
+2. **Request body structure**:
+   - `repository` → `selected_repository`
+   - `initial_user_msg` (string) → `initial_message` (object with content array)
+
+3. **Response handling**: V1 returns a start task object with status tracking. The conversation ID is in `app_conversation_id` (available when status is `READY`).
+
+### Searching Conversations
+
+<Tabs>
+  <Tab title="V0 (Deprecated)">
+    ```bash
+    curl "https://app.all-hands.dev/api/conversations" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+  <Tab title="V1 (Recommended)">
+    ```bash
+    curl "https://app.all-hands.dev/api/v1/app-conversations/search?limit=20" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+</Tabs>
+
+### Managing Sandbox Lifecycle (New in V1)
+
+V1 introduces explicit sandbox management. Here's how to pause and resume a sandbox:
+
+```bash
+# Pause a sandbox
+curl -X POST "https://app.all-hands.dev/api/v1/sandboxes/{sandbox_id}/pause" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+
+# Resume a sandbox
+curl -X POST "https://app.all-hands.dev/api/v1/sandboxes/{sandbox_id}/resume" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Agent Server API
+
+In addition to the App Server API (`app.all-hands.dev`), V1 exposes an **Agent Server API** on each sandbox runtime. This API provides direct access to workspace and conversation operations.
+
+### How to Access
+
+1. Get sandbox info: `GET /api/v1/sandboxes?id={sandbox_id}`
+2. Find `AGENT_SERVER` in the `exposed_urls` field
+3. Use `session_api_key` as `X-Session-API-Key` header
+4. Call Agent Server endpoints on that URL
+5. OpenAPI spec available at `{agent_server_url}/openapi.json`
+
+### Available Endpoints
+
+<Accordion title="File Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/file/upload/{path}` | Upload files to workspace |
+| `GET /api/file/download/{path}` | Download individual files |
+| `GET /api/file/download-trajectory/{conversation_id}` | Download conversation trajectory |
+
+</Accordion>
+
+<Accordion title="Git Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/git/changes/{path}` | Get git changes |
+| `GET /api/git/diff/{path}` | Get git diff |
+
+</Accordion>
+
+<Accordion title="Conversation Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/conversations/{conversation_id}/events` | Send user message |
+| `GET /api/conversations/{conversation_id}/events/search` | Search events |
+| `GET /api/conversations/{conversation_id}/events/count` | Count events |
+| `DELETE /api/conversations/{conversation_id}` | Delete conversation |
+| `POST /api/conversations/{conversation_id}/pause` | Pause conversation |
+| `POST /api/conversations/{conversation_id}/run` | Resume/run conversation |
+| `POST /api/conversations/{conversation_id}/condense` | Condense conversation history |
+| `POST /api/conversations/{conversation_id}/generate_title` | Auto-generate title |
+| `POST /api/conversations/{conversation_id}/confirmation_policy` | Set confirmation policy |
+| `POST /api/conversations/{conversation_id}/secrets` | Update conversation secrets |
+| `POST /api/conversations/{conversation_id}/security_analyzer` | Set security analyzer |
+| `POST /api/conversations/{conversation_id}/ask_agent` | Ask agent directly |
+
+</Accordion>
+
+<Accordion title="Bash Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/bash/execute_bash_command` | Execute bash command (blocking) |
+| `POST /api/bash/start_bash_command` | Start bash command (async) |
+| `GET /api/bash/bash_events/search` | Search bash events |
+
+</Accordion>
+
+<Accordion title="Development Tools">
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/vscode/url` | Get VSCode URL |
+| `GET /api/vscode/status` | Check VSCode status |
+| `GET /api/desktop/url` | Get desktop URL |
+| `GET /api/tools/` | List available tools |
+
+</Accordion>
+
+<Accordion title="Server Info">
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check |
+| `GET /alive` | Alive check |
+| `GET /server_info` | Get server info |
+
+</Accordion>
+
+<Note>
+The Agent Server API requires an active/running sandbox. For operations on inactive sandboxes, use the App Server API.
+</Note>
+
+## Known Gaps
+
+The following V0 capabilities do not yet have direct V1 App Server REST API equivalents:
+
+| Gap | V0 Endpoint | Workaround |
+|-----|-------------|------------|
+| Download workspace as zip | `GET /api/conversations/{id}/zip-directory` | Use Agent Server file download endpoints |
+| Get trajectory (inactive runtime) | `GET /api/conversations/{id}/trajectory` | Trajectory available while sandbox is active via Agent Server |
+| List files in workspace | `GET /api/conversations/{id}/list-files` | Use Agent Server `POST /api/bash/execute_bash_command` with `ls`, or Agent SDK `workspace.list_files()` |
+
+## Authentication
+
+- **API keys** created via `/api/keys` work for both V0 and V1 App Server APIs
+- **Agent Server** uses per-sandbox `session_api_key` with `X-Session-API-Key` header
+
+## Additional Resources
+
+- [V1 REST API Overview](/openhands/usage/api/v1)
+- [Cloud API Guide](/openhands/usage/cloud/cloud-api)
+- [OpenHands Agent SDK](https://docs.openhands.dev/sdk) - Provides `workspace.read_file()`, `workspace.write_file()`, `workspace.list_files()`, and `workspace.get_workspace_zip()` methods
+- [V1 API Swagger Docs](https://app.all-hands.dev/docs)
