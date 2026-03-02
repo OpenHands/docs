@@ -63,7 +63,7 @@ description: >
   <example>Improve the README</example>
 ```
 
-These examples are extracted and stored as `when_to_use_examples` on the `AgentDefinition` object. The delegation system uses them to match user requests to the right sub-agent.
+These examples are extracted and stored as `when_to_use_examples` on the `AgentDefinition` object. They can be used by routing logic (or prompt-building) to help decide when to delegate to the right sub-agent.
 
 ## Directory Conventions
 
@@ -103,7 +103,7 @@ Put agents shared across all your projects in `~/.agents/agents/`. Put project-s
 
 The SDK ships with built-in agents that are automatically loaded at the beginning of each conversation and are available to the user.
 
-All built-in agents include `FinishTool` and `ThinkTool` (these are always appended and cannot be filtered).
+By default, agents include `FinishTool` and `ThinkTool`; they are appended after tool filtering.
 
 The table below summarizes all available built-in agents:
 
@@ -140,7 +140,9 @@ This scans both project-level and user-level directories, deduplicates by name, 
 
 For more control, load and register agents explicitly:
 
-```python icon="python" focus={3-5, 7-13}
+```python icon="python" focus={3-6, 8-14}
+from pathlib import Path
+
 from openhands.sdk import load_agents_from_dir, register_agent, agent_definition_to_factory
 
 # Load from a specific directory
@@ -162,7 +164,9 @@ for agent_def in agent_definitions:
 
 Scans a directory for `.md` files and returns a list of `AgentDefinition` objects:
 
-```python icon="python" focus={3}
+```python icon="python" focus={3-4}
+from pathlib import Path
+
 from openhands.sdk import load_agents_from_dir
 
 definitions = load_agents_from_dir(Path(".agents/agents"))
@@ -183,7 +187,7 @@ factory = agent_definition_to_factory(agent_def)
 
 The factory:
 - Maps tool names from the frontmatter to `Tool` objects
-- Converts the Markdown body into an always-active `Skill`
+- Appends the Markdown body to the parent system message via `AgentContext(system_message_suffix=...)`
 - Respects the `model` field (`"inherit"` keeps the parent LLM; an explicit model name creates a copy)
 
 #### `load_project_agents()` / `load_user_agents()`
@@ -302,24 +306,17 @@ Plugin agents use the same `.md` format and are registered automatically when th
 ## Ready-to-run Example
 
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/41_file_based_subagents](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/01_standalone_sdk/41_file_based_subagents)
+This example is available on GitHub: [examples/01_standalone_sdk/42_file_based_subagents.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/42_file_based_subagents.py)
 </Note>
 
-```python icon="python" expandable examples/01_standalone_sdk/41_file_based_subagents/41_file_based_subagents.py
-"""Example: Loading Sub-Agents from Markdown Files
+This example uses `AgentDefinition` directly. File-based agents are loaded into the same `AgentDefinition` objects (from Markdown) and registered the same way.
 
-This example demonstrates how to define sub-agents using Markdown files with
-YAML frontmatter, load them with AgentDefinition, and register them for
-delegation.
+```python icon="python" expandable examples/01_standalone_sdk/42_file_based_subagents.py
+"""Example: Defining a sub-agent inline with AgentDefinition.
 
-Agent Markdown files follow a simple format:
-- YAML frontmatter with: name, description, tools, model (optional), color (optional)
-- The Markdown body becomes the agent's system prompt
-- <example> tags in the description help the main agent know when to delegate
-
-The example_agents/ directory contains two agents:
-- code-reviewer: Reviews code for quality, bugs, and best practices
-- tech-writer: Writes and improves technical documentation
+Defines a grammar-checker sub-agent using AgentDefinition, registers it,
+and delegates work to it from an orchestrator agent. The orchestrator then
+asks the builtin default agent to judge the results.
 """
 
 import os
@@ -331,8 +328,6 @@ from openhands.sdk import (
     Conversation,
     Tool,
     agent_definition_to_factory,
-    get_logger,
-    load_agents_from_dir,
     register_agent,
 )
 from openhands.sdk.subagent import AgentDefinition
@@ -340,65 +335,29 @@ from openhands.sdk.tool import register_tool
 from openhands.tools.delegate import DelegateTool, DelegationVisualizer
 
 
-logger = get_logger(__name__)
+# 1. Define a sub-agent using AgentDefinition
+grammar_checker = AgentDefinition(
+    name="grammar-checker",
+    description="Checks documents for grammatical errors.",
+    tools=["file_editor"],
+    system_prompt="You are a grammar expert. Find and list grammatical errors.",
+)
 
-script_dir = Path(__file__).parent
-agents_dir = script_dir / "agents"
+# 2. Register it in the delegate registry
+register_agent(
+    name=grammar_checker.name,
+    factory_func=agent_definition_to_factory(grammar_checker),
+    description=grammar_checker.description,
+)
 
-print("Part 1: Loading Agent Definitions from Markdown")
-print()
-
-# Load each agent definition and inspect its fields
-for md_file in sorted(agents_dir.glob("*.md")):
-    agent_def = AgentDefinition.load(md_file)
-    print(f"\nAgent: {agent_def.name}")
-    print(f"  Description: {agent_def.description[:80]}...")
-    print(f"  Model: {agent_def.model}")
-    print(f"  Tools: {agent_def.tools}")
-    print(f"  When-to-use examples: {agent_def.when_to_use_examples}")
-    print(f"  System prompt length: {len(agent_def.system_prompt)} chars")
-print()
-
-print("Part 2: Registering and Using Agents with Delegation")
-print()
-
-LLM_API_KEY = os.getenv("LLM_API_KEY")
-assert LLM_API_KEY is not None, "LLM API key not set"
-
-model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+# 3. Set up the orchestrator agent with the DelegateTool
 llm = LLM(
-    model=model,
-    api_key=LLM_API_KEY,
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
     base_url=os.getenv("LLM_BASE_URL"),
     usage_id="file-agents-demo",
 )
 
-
-agents_definition = load_agents_from_dir(agents_dir)
-
-for agent_def in agents_definition:
-    register_agent(
-        name=agent_def.name,
-        factory_func=agent_definition_to_factory(agent_def),
-        description=agent_def.description,
-    )
-    print(f"Registered agent: {agent_def.name}")
-
-# NOTE: In a real project, you can skip the manual loading above and instead
-# place your .md files in .agents/agents/ at the project root, then call:
-#
-#   from openhands.sdk.subagent import register_file_agents
-#   register_file_agents(project_dir)
-#
-# This automatically discovers and registers all agent definitions.
-
-print(
-    "Part 3: Set up the main (orchestrator) agent with "
-    "the DelegateTool and start the conversation"
-)
-print()
-
-# Set up the main (orchestrator) agent with the DelegateTool
 register_tool("DelegateTool", DelegateTool)
 main_agent = Agent(
     llm=llm,
@@ -410,17 +369,12 @@ conversation = Conversation(
     visualizer=DelegationVisualizer(name="Orchestrator"),
 )
 
-# Ask the main agent to delegate work to our file-based agents
+# 4. Ask the orchestrator to delegate to our agent
 task = (
-    f"I have a Python file at {agents_dir}/code-reviewer.md. "
-    "Please delegate to the code-reviewer agent and ask it to review that file "
-    "for any issues. Then delegate to the tech-writer agent and ask it to "
-    "suggest a short README paragraph describing what is the code-reviewer.md "
-    "file doing. "
-    "Finally, combine both results into a summary."
+    "Please delegate to the grammar-checker agent and ask it to review "
+    "the README.md file in search of grammatical errors.\n"
+    "Then ask the default agent to judge the errors."
 )
-
-print("\nSending task to orchestrator...")
 conversation.send_message(task)
 conversation.run()
 
@@ -429,7 +383,7 @@ print(f"\nTotal cost: ${cost:.4f}")
 print(f"EXAMPLE_COST: {cost:.4f}")
 ```
 
-<RunExampleCode path_to_script="examples/01_standalone_sdk/41_file_based_subagents/41_file_based_subagents.py"/>
+<RunExampleCode path_to_script="examples/01_standalone_sdk/42_file_based_subagents.py"/>
 
 ## Next Steps
 
