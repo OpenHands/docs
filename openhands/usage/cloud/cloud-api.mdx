@@ -167,6 +167,167 @@ The endpoint streams a JSON array incrementally. Each element represents a statu
 
 Each update is streamed as it occurs, allowing you to provide real-time feedback to users about the conversation startup progress.
 
+### Checking Conversation Status
+
+After starting a conversation, you can check its status to monitor whether the agent has completed its task.
+
+#### Step 1: Check Start Task Status
+
+When you start a conversation, you receive a start task ID. Poll this endpoint until `status` becomes `READY` and `app_conversation_id` is available:
+
+```bash
+curl -X GET "https://app.all-hands.dev/api/v1/app-conversations/start-tasks?ids=TASK_ID" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "READY",
+  "app_conversation_id": "660e8400-e29b-41d4-a716-446655440001",
+  "sandbox_id": "sandbox-abc123"
+}
+```
+
+#### Step 2: Check Conversation Execution Status
+
+Once you have the `app_conversation_id`, check whether the agent has finished its task:
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X GET "https://app.all-hands.dev/api/v1/app-conversations?ids=CONVERSATION_ID" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+  <Tab title="Python (with requests)">
+    ```python
+    import requests
+
+    api_key = "YOUR_API_KEY"
+    conversation_id = "YOUR_CONVERSATION_ID"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.get(
+        "https://app.all-hands.dev/api/v1/app-conversations",
+        headers=headers,
+        params={"ids": conversation_id}
+    )
+    conversations = response.json()
+
+    if conversations:
+        conv = conversations[0]
+        print(f"Sandbox Status: {conv.get('sandbox_status')}")
+        print(f"Execution Status: {conv.get('execution_status')}")
+    ```
+  </Tab>
+</Tabs>
+
+**Response:**
+```json
+[
+  {
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "sandbox_status": "RUNNING",
+    "execution_status": "finished",
+    "selected_repository": "yourusername/your-repo",
+    "title": "Fix README"
+  }
+]
+```
+
+#### Status Fields
+
+**`sandbox_status`** - The state of the sandbox environment:
+- `STARTING` - Sandbox is being created
+- `RUNNING` - Sandbox is active
+- `PAUSED` - Sandbox is paused (due to rate limits or user action)
+- `ERROR` - Sandbox encountered an error
+- `MISSING` - Sandbox was deleted
+
+**`execution_status`** - The state of the agent's task (available when sandbox is `RUNNING`):
+- `idle` - Agent is ready to receive tasks
+- `running` - Agent is actively working
+- `paused` - Execution is paused
+- `waiting_for_confirmation` - Agent is waiting for user confirmation
+- `finished` - Agent has completed the task
+- `error` - Agent encountered an error
+- `stuck` - Agent is stuck and unable to proceed
+
+#### Complete Polling Example
+
+Here's a complete example that starts a conversation and polls until completion:
+
+```python
+import requests
+import time
+
+api_key = "YOUR_API_KEY"
+base_url = "https://app.all-hands.dev"
+
+headers = {
+    "Authorization": f"Bearer {api_key}",
+    "Content-Type": "application/json"
+}
+
+# Start a conversation
+print("Starting conversation...")
+start_response = requests.post(
+    f"{base_url}/api/v1/app-conversations",
+    headers=headers,
+    json={
+        "initial_message": {
+            "content": [{"type": "text", "text": "Your task here"}]
+        },
+        "selected_repository": "yourusername/your-repo"
+    }
+)
+start_task = start_response.json()
+task_id = start_task["id"]
+print(f"Start task ID: {task_id}")
+
+# Poll start task until conversation is ready
+conversation_id = None
+while not conversation_id:
+    task_response = requests.get(
+        f"{base_url}/api/v1/app-conversations/start-tasks",
+        headers=headers,
+        params={"ids": task_id}
+    )
+    tasks = task_response.json()
+    if tasks and tasks[0].get("status") == "READY":
+        conversation_id = tasks[0].get("app_conversation_id")
+        print(f"Conversation ready: {base_url}/conversations/{conversation_id}")
+    else:
+        print(f"Start task status: {tasks[0].get('status') if tasks else 'unknown'}")
+        time.sleep(5)
+
+# Poll conversation until agent finishes
+while True:
+    conv_response = requests.get(
+        f"{base_url}/api/v1/app-conversations",
+        headers=headers,
+        params={"ids": conversation_id}
+    )
+    conversations = conv_response.json()
+    
+    if conversations:
+        conv = conversations[0]
+        exec_status = conv.get("execution_status")
+        print(f"Execution status: {exec_status}")
+        
+        if exec_status in ["finished", "error", "stuck"]:
+            print(f"Conversation completed with status: {exec_status}")
+            break
+    
+    time.sleep(30)
+```
+
 ## Rate Limits
 
 If you have too many conversations running at once, older conversations will be paused to limit the number of concurrent conversations.
