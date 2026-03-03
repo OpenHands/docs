@@ -50,21 +50,26 @@ def extract_code_blocks(content: str) -> list[tuple[str, str, str, int, int]]:
     matches: list[tuple[str, str, str, int, int]] = []
     
     # Pattern for Python files
-    # The closing ``` must be at the start of a line (after newline)
-    # This prevents matching embedded ``` inside the code content
-    python_pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)\n```(?=\n|$)'
+    # The closing ``` must be at the start of a line (after newline) OR at the very end
+    # The \n? before ``` makes the trailing newline optional to handle edge cases
+    # where content doesn't have a trailing newline
+    python_pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)\n?```(?=\n|$)'
     for match in re.finditer(python_pattern, content, re.DOTALL):
         file_ref = match.group(1)
         code_content = match.group(2)
+        # Strip trailing newline from code content if present (will be re-added during update)
+        code_content = code_content.rstrip('\n')
         start_pos = match.start()
         end_pos = match.end()
         matches.append(('python', file_ref, code_content, start_pos, end_pos))
     
     # Pattern for YAML files
-    yaml_pattern = r'```yaml[^\n]*\s+([^\s]+\.ya?ml)\n(.*?)\n```(?=\n|$)'
+    yaml_pattern = r'```yaml[^\n]*\s+([^\s]+\.ya?ml)\n(.*?)\n?```(?=\n|$)'
     for match in re.finditer(yaml_pattern, content, re.DOTALL):
         file_ref = match.group(1)
         code_content = match.group(2)
+        # Strip trailing newline from code content if present (will be re-added during update)
+        code_content = code_content.rstrip('\n')
         start_pos = match.start()
         end_pos = match.end()
         matches.append(('yaml', file_ref, code_content, start_pos, end_pos))
@@ -108,7 +113,20 @@ def escape_embedded_backticks(content: str) -> str:
     
     Strategy: Replace ``` with a zero-width space between backticks: `​`​`
     This preserves the visual appearance while preventing markdown parsing issues.
+    
+    Tradeoff note: Zero-width spaces (U+200B) are invisible and will be copied when
+    users copy-paste code from the docs. This could cause subtle issues if users paste
+    code containing these characters. However, this is acceptable because:
+    1. The affected code is primarily display content (example outputs), not executable
+    2. Alternative approaches (like changing source files) aren't feasible since we
+       sync from an external repository (agent-sdk)
+    3. Most modern editors will highlight invisible Unicode characters
+    
+    The function is idempotent - applying it multiple times produces the same result
+    since we only replace actual triple backticks, not already-escaped sequences.
     """
+    if not content:
+        return content
     # Use a zero-width space (U+200B) between backticks
     # This makes ``` render correctly in the code block without closing it
     return content.replace("```", "`\u200b`\u200b`")
@@ -181,14 +199,12 @@ def update_doc_file(
         if actual_content is None:
             continue
 
-        # When comparing, we need to account for backtick escaping
-        # The doc may already have escaped backticks, so we compare both versions
-        old_normalized = normalize_content(old_code)
-        actual_normalized = normalize_content(actual_content)
-        actual_escaped_normalized = normalize_content(escape_embedded_backticks(actual_content))
-
-        # Check if content differs (considering both escaped and unescaped versions)
-        if old_normalized != actual_normalized and old_normalized != actual_escaped_normalized:
+        # Compare normalized versions: old doc content vs escaped actual content
+        # We always compare against escaped version since that's what will be written
+        old_display = normalize_content(old_code)
+        new_display = normalize_content(escape_embedded_backticks(actual_content))
+        
+        if old_display != new_display:
             print(f"\n📝 Found difference in {doc_path.name} for {file_ref}")
             print("   Updating code block...")
 
