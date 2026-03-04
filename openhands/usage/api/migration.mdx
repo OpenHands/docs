@@ -374,6 +374,136 @@ workspace.write_file("output.txt", "Hello, world!")
 
 ---
 
+### Step 7: Monitor Conversations and Fetch Events
+
+If you're building custom dashboards, CI/CD integrations, or alternative visualizations, you'll need to fetch conversation events. V1 provides a much more flexible approach than V0.
+
+**V0 Approach: Trajectory Download**
+
+In V0, you fetched all events at once using the trajectory endpoint:
+
+```bash
+curl "https://app.all-hands.dev/api/conversations/{id}/trajectory" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+This returned the entire conversation history in a single payload—simple, but inefficient for large conversations or real-time monitoring.
+
+**V1 Approach: Events Search API**
+
+V1 introduces a powerful events search endpoint with filtering, pagination, and sorting:
+
+```bash
+curl "https://app.all-hands.dev/api/v1/conversation/{id}/events/search?limit=100&sort_order=TIMESTAMP_DESC" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Response:
+```json
+{
+  "items": [
+    {"id": "evt-123", "kind": "MessageEvent", "timestamp": "2025-01-15T10:30:05Z", ...},
+    {"id": "evt-122", "kind": "ActionEvent", "timestamp": "2025-01-15T10:30:03Z", ...}
+  ],
+  "next_page_id": "page_xyz"
+}
+```
+
+**Available filters:**
+- `limit` - Max results per page (up to 100)
+- `sort_order` - `TIMESTAMP` (oldest first) or `TIMESTAMP_DESC` (newest first)
+- `timestamp__gte` - Events at or after this time
+- `timestamp__lt` - Events before this time
+- `kind__eq` - Filter by event type (`MessageEvent`, `ActionEvent`, `ObservationEvent`, etc.)
+- `page_id` - For pagination through large result sets
+
+**Example: Fetch All Events (Bulk)**
+
+To fetch all events in a conversation (equivalent to V0 trajectory):
+
+```python
+import requests
+
+def fetch_all_events(conversation_id: str, api_key: str) -> list:
+    """Fetch all events from a conversation."""
+    base_url = "https://app.all-hands.dev"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    all_events = []
+    page_id = None
+    
+    while True:
+        params = {"limit": 100, "sort_order": "TIMESTAMP"}
+        if page_id:
+            params["page_id"] = page_id
+        
+        response = requests.get(
+            f"{base_url}/api/v1/conversation/{conversation_id}/events/search",
+            params=params,
+            headers=headers
+        )
+        data = response.json()
+        all_events.extend(data["items"])
+        
+        page_id = data.get("next_page_id")
+        if not page_id:
+            break
+    
+    return all_events
+```
+
+**Example: Efficient Polling for Real-Time Monitoring**
+
+For dashboards or live displays, poll for only new events since your last fetch:
+
+```python
+import requests
+import time
+from datetime import datetime, timedelta
+
+def monitor_conversation(conversation_id: str, api_key: str, poll_interval: float = 1.0):
+    """Poll for new events in real-time."""
+    base_url = "https://app.all-hands.dev"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    last_event_id = None
+    last_timestamp = None
+    
+    while True:
+        params = {"limit": 100, "sort_order": "TIMESTAMP"}
+        if last_timestamp:
+            params["timestamp__gte"] = last_timestamp
+        
+        response = requests.get(
+            f"{base_url}/api/v1/conversation/{conversation_id}/events/search",
+            params=params,
+            headers=headers
+        )
+        
+        events = response.json()["items"]
+        
+        for event in events:
+            # Skip if we've already seen this event
+            if event["id"] == last_event_id:
+                continue
+            
+            # Process the new event (your visualization logic here)
+            print(f"[{event['kind']}] {event.get('timestamp')}")
+            
+            last_event_id = event["id"]
+            last_timestamp = event["timestamp"]
+        
+        time.sleep(poll_interval)
+```
+
+<Note>
+**Why V1 is better for monitoring:**
+- **Incremental fetches** - Only get new events using `timestamp__gte`, not the entire history
+- **Flexible filtering** - Filter by event type, time range, or paginate through results
+- **Lower latency** - Smaller payloads mean faster responses
+- **Works without active sandbox** - App Server events persist even when sandbox is paused
+</Note>
+
+---
+
 ## Quick Reference: Endpoint Mapping
 
 Use this section to look up specific endpoint mappings when you need them.
@@ -395,7 +525,8 @@ Use this section to look up specific endpoint mappings when you need them.
 | Operation | V0 Endpoint | V1 Endpoint |
 |-----------|-------------|-------------|
 | Send message | WebSocket (Socket.IO) required | Agent Server: `POST /api/conversations/{id}/events` |
-| Get events | `GET /api/conversations/{id}/events` | `GET /api/v1/conversation/{id}/events/search` |
+| Get trajectory | `GET /api/conversations/{id}/trajectory` | `GET /api/v1/conversation/{id}/events/search` (paginated) |
+| Search events | `GET /api/conversations/{id}/events` | `GET /api/v1/conversation/{id}/events/search` |
 | Get event count | N/A | `GET /api/v1/conversation/{id}/events/count` |
 | Batch get events | N/A | `GET /api/v1/conversation/{id}/events` |
 
