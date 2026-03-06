@@ -25,6 +25,16 @@ checking.
 | `openhands/` | `OpenHands/OpenHands` |
 | CLI-related docs | `OpenHands/OpenHands-CLI` |
 
+
+### Prefer upstream PR branches when linked
+
+If the docs PR references an upstream PR or branch (for example, "SDK PR: https://github.com/OpenHands/software-agent-sdk/pull/2320"),
+verify documentation against that PR's head branch instead of `main`. Treat the open PR as the source of truth for review and
+**do not block** docs changes that intentionally match that branch, even if `main` differs. When in doubt, inspect the upstream
+documentation sync workflow (for example, `software-agent-sdk/.github/workflows/sync-docs-code-blocks.yml`) to understand the intended
+relationship between code and docs.
+It's OK to approve a docs/ PR on the basis of a linked upstream PR, they will be merged in the right order.
+
 ### What to verify
 
 - **Import paths** exist and export the documented symbols
@@ -39,6 +49,10 @@ checking.
 ```bash
 # Clone the relevant repo (use --depth=1 for speed)
 git clone --depth=1 https://github.com/OpenHands/software-agent-sdk.git /tmp/agent-sdk
+
+# If an upstream PR is referenced, use this command instead of the first one:
+# Get the head branch name from the PR page or API (e.g., "feature-branch-name").
+# git clone --depth=1 --branch feature-branch-name https://github.com/OpenHands/software-agent-sdk.git /tmp/agent-sdk
 
 # Search for the documented symbols
 grep -rn "function_name" /tmp/agent-sdk/
