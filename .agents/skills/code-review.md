@@ -52,7 +52,6 @@ git clone --depth=1 https://github.com/OpenHands/software-agent-sdk.git /tmp/age
 
 # If an upstream PR is referenced, use this command instead of the first one:
 # Get the head branch name from the PR page or API (e.g., "feature-branch-name").
-# Get the head branch name from the PR page or API (e.g., "feature-branch-name").
 # git clone --depth=1 --branch feature-branch-name https://github.com/OpenHands/software-agent-sdk.git /tmp/agent-sdk
 
 # Search for the documented symbols
