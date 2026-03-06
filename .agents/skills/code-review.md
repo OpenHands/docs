@@ -33,6 +33,7 @@ verify documentation against that PR's head branch instead of `main`. Treat the 
 **do not block** docs changes that intentionally match that branch, even if `main` differs. When in doubt, inspect the upstream
 documentation sync workflow (for example, `software-agent-sdk/.github/workflows/sync-docs-code-blocks.yml`) to understand the intended
 relationship between code and docs.
+It's OK to approve a docs/ PR on the basis of a linked upstream PR, they will be merged in the right order.
 
 ### What to verify
 
