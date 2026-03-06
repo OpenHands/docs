@@ -50,7 +50,8 @@ It's OK to approve a docs/ PR on the basis of a linked upstream PR, they will be
 # Clone the relevant repo (use --depth=1 for speed)
 git clone --depth=1 https://github.com/OpenHands/software-agent-sdk.git /tmp/agent-sdk
 
-# If an upstream PR is referenced, replace the clone above with its head branch.
+# If an upstream PR is referenced, use this command instead of the first one:
+# Get the head branch name from the PR page or API (e.g., "feature-branch-name").
 # Get the head branch name from the PR page or API (e.g., "feature-branch-name").
 # git clone --depth=1 --branch feature-branch-name https://github.com/OpenHands/software-agent-sdk.git /tmp/agent-sdk
 
