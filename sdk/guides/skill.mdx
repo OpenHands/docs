@@ -102,6 +102,49 @@ Skills are listed in the system prompt:
 Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic injection when keywords match.
 </Tip>
 
+## Managing Installed Skills
+
+You can install AgentSkills into a persistent directory and list/update them
+using `openhands.sdk.skills`. Skills are stored under
+`~/.openhands/skills/installed/` with a `.installed.json` metadata file that
+records an `enabled` flag. `list_installed_skills` returns all installed skills,
+while `load_installed_skills` returns only those with `enabled=true`.
+
+```python icon="python"
+from openhands.sdk.skills import (
+    disable_skill,
+    enable_skill,
+    install_skill,
+    list_installed_skills,
+    load_installed_skills,
+    uninstall_skill,
+    update_skill,
+)
+
+# Install from GitHub (supports git URLs, local paths, and repo_path for monorepos)
+info = install_skill("github:owner/my-skill", ref="v1.0.0")
+print(f"Installed {info.name} from {info.source}")
+
+# List installed skills
+for skill_info in list_installed_skills():
+    print(f"{skill_info.name}: {skill_info.description}")
+
+# Enable/disable controls which skills load (state persisted in .installed.json)
+
+# Disable a skill temporarily (e.g., while debugging or if it conflicts)
+disable_skill("my-skill")
+
+# Load installed skills for an AgentContext (only enabled skills load)
+skills = load_installed_skills()
+
+# Re-enable when needed
+# enable_skill("my-skill")
+
+# Update or uninstall
+update_skill("my-skill")
+uninstall_skill("my-skill")
+```
+
 ---
 
 ## Full Example
@@ -608,7 +651,29 @@ When enabled, the SDK will:
 2. Load all available skills from the repository
 3. Merge them with your explicitly defined skills
 
-**Skill Precedence**: If a skill name conflicts, your explicitly defined skills take precedence over public skills.
+### Skill Naming and Triggers
+
+**Skill Precedence by Name**: If a skill name conflicts, your explicitly defined skills take precedence over public skills. For example, if you define a skill named `code-review`, the public `code-review` skill will be skipped entirely.
+
+**Multiple Skills with Same Trigger**: Skills with different names but the same trigger can coexist and will ALL be activated when the trigger matches. To add project-specific guidelines alongside public skills, use a unique name (e.g., `custom-codereview-guide` instead of `code-review`). Both skills will be triggered together.
+
+```python icon="python"
+# Both skills will be triggered by "/codereview"
+agent_context = AgentContext(
+    load_public_skills=True,  # Loads public "code-review" skill
+    skills=[
+        Skill(
+            name="custom-codereview-guide",  # Different name = coexists
+            content="Project-specific guidelines...",
+            trigger=KeywordTrigger(keywords=["/codereview"]),
+        ),
+    ]
+)
+```
+
+<Tip>
+**Skill Activation Behavior**: When multiple skills share a trigger, all matching skills are loaded. Content is concatenated into the agent's context with public skills first, then explicitly defined skills. There is no smart merging—if guidelines conflict, the agent sees both.
+</Tip>
 
 ### Programmatic Loading
 
