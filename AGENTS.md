@@ -128,6 +128,15 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 
+
+## AI-only invariants in SDK architecture docs
+
+- Keep natural-language invariants visible in `sdk/arch/*.mdx`.
+- Wrap OCL-like invariants in HTML comments with clear sentinels:
+  - `<!-- AI_INVARIANTS_BEGIN -->`
+  - `<!-- AI_INVARIANTS_END -->`
+  - Place the OCL block inside the comment so it does not render.
+
 ## LLM API Key Options
 
 The SDK documentation maintains three ways for users to obtain LLM access:
