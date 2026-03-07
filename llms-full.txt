@@ -9203,7 +9203,9 @@ This example is available on GitHub: [examples/01_standalone_sdk/40_acp_agent_ex
 """Example: Using ACPAgent with Claude Code ACP server.
 
 This example shows how to use an ACP-compatible server (claude-code-acp)
-as the agent backend instead of direct LLM calls.
+as the agent backend instead of direct LLM calls.  It also demonstrates
+``ask_agent()`` — a stateless side-question that forks the ACP session
+and leaves the main conversation untouched.
 
 Prerequisites:
     - Node.js / npx available
@@ -9219,17 +9221,25 @@ from openhands.sdk.agent import ACPAgent
 from openhands.sdk.conversation import Conversation
 
 
-agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
+agent = ACPAgent(acp_command=["npx", "-y", "@zed-industries/claude-code-acp"])
 
 try:
     cwd = os.getcwd()
     conversation = Conversation(agent=agent, workspace=cwd)
 
+    # --- Main conversation turn ---
     conversation.send_message(
         "List the Python source files under openhands-sdk/openhands/sdk/agent/, "
         "then read the __init__.py and summarize what agent classes are exported."
     )
     conversation.run()
+
+    # --- ask_agent: stateless side-question via fork_session ---
+    print("\n--- ask_agent ---")
+    response = conversation.ask_agent(
+        "Based on what you just saw, which agent class is the newest addition?"
+    )
+    print(f"ask_agent response: {response}")
 finally:
     # Clean up the ACP server subprocess
     agent.close()
@@ -9764,8 +9774,6 @@ which then merges both analyses into a single consolidated report.
 
 import os
 
-from pydantic import SecretStr
-
 from openhands.sdk import (
     LLM,
     Agent,
@@ -9775,13 +9783,13 @@ from openhands.sdk import (
     get_logger,
 )
 from openhands.sdk.context import Skill
+from openhands.sdk.subagent import register_agent
 from openhands.sdk.tool import register_tool
 from openhands.tools.delegate import (
     DelegateTool,
     DelegationVisualizer,
-    register_agent,
 )
-from openhands.tools.preset.default import get_default_tools
+from openhands.tools.preset.default import get_default_tools, register_builtins_agents
 
 
 ONLY_RUN_SIMPLE_DELEGATION = False
@@ -9789,22 +9797,18 @@ ONLY_RUN_SIMPLE_DELEGATION = False
 logger = get_logger(__name__)
 
 # Configure LLM and agent
-# You can get an API key from https://app.all-hands.dev/settings/api-keys
-api_key = os.getenv("LLM_API_KEY")
-assert api_key is not None, "LLM_API_KEY environment variable is not set."
-model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
 llm = LLM(
-    model=model,
-    api_key=SecretStr(api_key),
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
     base_url=os.environ.get("LLM_BASE_URL", None),
     usage_id="agent",
 )
 
 cwd = os.getcwd()
 
-register_tool("DelegateTool", DelegateTool)
-tools = get_default_tools(enable_browser=False)
-tools.append(Tool(name="DelegateTool"))
+tools = get_default_tools(enable_browser=True)
+tools.append(Tool(name=DelegateTool.name))
+register_builtins_agents()
 
 main_agent = Agent(
     llm=llm,
@@ -9816,7 +9820,7 @@ conversation = Conversation(
     visualizer=DelegationVisualizer(name="Delegator"),
 )
 
-task_message = (
+conversation.send_message(
     "Forget about coding. Let's switch to travel planning. "
     "Let's plan a trip to London. I have two issues I need to solve: "
     "Lodging: what are the best areas to stay at while keeping budget in mind? "
@@ -9827,7 +9831,6 @@ task_message = (
     "They should keep it short. After getting the results, merge both analyses "
     "into a single consolidated report.\n\n"
 )
-conversation.send_message(task_message)
 conversation.run()
 
 conversation.send_message(
@@ -9836,16 +9839,55 @@ conversation.send_message(
 conversation.run()
 
 # Report cost for simple delegation example
-cost_1 = conversation.conversation_stats.get_combined_metrics().accumulated_cost
-print(f"EXAMPLE_COST (simple delegation): {cost_1}")
+cost_simple = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"EXAMPLE_COST (simple delegation): {cost_simple}")
 
 print("Simple delegation example done!", "\n" * 20)
 
-
-# -------- Agent Delegation Second Part: User-Defined Agent Types --------
-
 if ONLY_RUN_SIMPLE_DELEGATION:
+    # For CI: always emit the EXAMPLE_COST marker before exiting.
+    print(f"EXAMPLE_COST: {cost_simple}")
     exit(0)
+
+
+# -------- Agent Delegation Second Part: Built-in Agent Types (Explore + Bash) --------
+
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name=DelegateTool.name)],
+)
+conversation = Conversation(
+    agent=main_agent,
+    workspace=cwd,
+    visualizer=DelegationVisualizer(name="Delegator (builtins)"),
+)
+
+builtin_task_message = (
+    "Demonstrate SDK built-in sub-agent types. "
+    "1) Spawn an 'explore' sub-agent and ask it to list the markdown files in "
+    "openhands-sdk/openhands/sdk/subagent/builtins/ and summarize what each "
+    "built-in agent type is for (based on the file contents). "
+    "2) Spawn a 'bash' sub-agent and ask it to run `python --version` in the "
+    "terminal and return the exact output. "
+    "3) Merge both results into a short report. "
+    "Do not use internet access."
+)
+
+print("=" * 100)
+print("Demonstrating built-in agent delegation (explore + bash)...")
+print("=" * 100)
+
+conversation.send_message(builtin_task_message)
+conversation.run()
+
+# Report cost for builtin agent types example
+cost_builtin = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"EXAMPLE_COST (builtin agents): {cost_builtin}")
+
+print("Built-in agent delegation example done!", "\n" * 20)
+
+
+# -------- Agent Delegation Third Part: User-Defined Agent Types --------
 
 
 def create_lodging_planner(llm: LLM) -> Agent:
@@ -9945,16 +9987,438 @@ conversation.send_message(
 conversation.run()
 
 # Report cost for user-defined agent types example
-cost_2 = conversation.conversation_stats.get_combined_metrics().accumulated_cost
-print(f"EXAMPLE_COST (user-defined agents): {cost_2}")
+cost_user_defined = (
+    conversation.conversation_stats.get_combined_metrics().accumulated_cost
+)
+print(f"EXAMPLE_COST (user-defined agents): {cost_user_defined}")
 
 print("All done!")
 
 # Full example cost report for CI workflow
-print(f"EXAMPLE_COST: {cost_1 + cost_2}")
+print(f"EXAMPLE_COST: {cost_simple + cost_builtin + cost_user_defined}")
 ```
 
 <RunExampleCode path_to_script="examples/01_standalone_sdk/25_agent_delegation.py"/>
+
+### File-Based Agents
+Source: https://docs.openhands.dev/sdk/guides/agent-file-based.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+File-based agents let you define specialized sub-agents using Markdown files. Each file declares the agent's name, description, tools, and system prompt — the same things you'd pass to `register_agent()` in code, but without writing any Python.
+
+This is the fastest way to create reusable, domain-specific agents that can be invoked via [delegation](/sdk/guides/agent-delegation).
+
+## Agent File Format
+
+An agent is a single `.md` file with YAML frontmatter and a Markdown body:
+
+```markdown icon="markdown"
+---
+name: code-reviewer
+description: >
+  Reviews code for quality, bugs, and best practices.
+  <example>Review this pull request for issues</example>
+  <example>Check this code for bugs</example>
+tools:
+  - file_editor
+  - terminal
+model: inherit
+---
+
+# Code Reviewer
+
+You are a meticulous code reviewer. When reviewing code:
+
+1. **Correctness** - Look for bugs, off-by-one errors, and race conditions.
+2. **Style** - Check for consistent naming and idiomatic usage.
+3. **Performance** - Identify unnecessary allocations or algorithmic issues.
+4. **Security** - Flag injection vulnerabilities or hardcoded secrets.
+
+Keep feedback concise and actionable. For each issue, suggest a fix.
+```
+
+The YAML frontmatter configures the agent. The Markdown body becomes the agent's system prompt.
+
+### Frontmatter Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | - | Agent identifier (e.g., `code-reviewer`) |
+| `description` | No | `""` | What this agent does. Shown to the orchestrator |
+| `tools` | No | `[]` | List of tools the agent can use |
+| `model` | No | `"inherit"` | LLM model profile to load and use for the subagent (`"inherit"` uses the parent agent's model) |
+| `skills` | No | `[]` | List of skill names for this agent (see [Skill Loading Precedence](/overview/skills#skill-loading-precedence) for resolution order). |
+| `max_iteration_per_run` | No | `None`| Maximum iterations per run. Must be strictly positive, or `None` for the default value. |
+| `color` | No | `None` | [Rich color name](https://rich.readthedocs.io/en/stable/appendix/colors.html) (e.g., `"blue"`, `"green"`) used by visualizers to style this agent's output in terminal panels |
+
+### `<example>` Tags
+
+Add `<example>` tags inside the description to help the orchestrating agent know **when** to delegate to this agent:
+
+```markdown icon="markdown"
+description: >
+  Writes and improves technical documentation.
+  <example>Write docs for this module</example>
+  <example>Improve the README</example>
+```
+
+These examples are extracted and stored as `when_to_use_examples` on the `AgentDefinition` object. They can be used by routing logic (or prompt-building) to help decide when to delegate to the right sub-agent.
+
+## Directory Conventions
+
+Place agent files in these directories, scanned in **priority order** (first match wins):
+
+| Priority | Location | Scope |
+|----------|----------|-------|
+| 1 | `{project}/.agents/agents/*.md` | Project-level (primary) |
+| 2 | `{project}/.openhands/agents/*.md` | Project-level (secondary) |
+| 3 | `~/.agents/agents/*.md` | User-level (primary) |
+| 4 | `~/.openhands/agents/*.md` | User-level (secondary) |
+
+<Tree>
+    <Tree.Folder name="my-project/" defaultOpen>
+        <Tree.Folder name=".agents" defaultOpen>
+            <Tree.Folder name="agents" defaultOpen>
+                <Tree.File name="code-reviewer.md" />
+                <Tree.File name="tech-writer.md" />
+                <Tree.File name="security-auditor.md" />
+            </Tree.Folder>
+        </Tree.Folder>
+        <Tree.File name="src/" />
+        <Tree.File name="..." />
+    </Tree.Folder>
+</Tree>
+
+**Rules:**
+- Only top-level `.md` files are loaded (subdirectories are skipped)
+- `README.md` files are automatically skipped
+- Project-level agents take priority over user-level agents with the same name
+
+<Tip>
+Put agents shared across all your projects in `~/.agents/agents/`. Put project-specific agents in `{project}/.agents/agents/`.
+</Tip>
+
+## Built-in Agents
+
+The `openhands-tools` package ships with built-in sub-agents as Markdown files in `openhands/tools/preset/subagents/`.
+They can be registered via `register_builtins_agents()` and become available for delegation tasks.
+
+By default, all agents include `finish` tool and the `think` tool.
+
+### Available Built-in Sub-Agents
+
+| Agent | Tools | Description |
+|--------|-------|-------|
+| **default** | `terminal`, `file_editor`, `task_tracker`, `browser_tool_set` | General-purpose agent. Used as the fallback when no agent name is specified. |
+| **default cli mode** | `terminal`, `file_editor`, `task_tracker` | Same as `default` but without browser tools (used in CLI mode). |
+| **explore** | `terminal` | Read-only codebase exploration agent. Finds files, searches code, reads source — never creates or modifies anything. |
+| **bash** | `terminal` | Command execution specialist. Runs shell commands, builds, tests, and git operations. |
+
+In CLI mode, the `default` agent (with browser tools) is replaced by the `default cli mode` agent. In non-CLI mode, `default cli mode` is filtered out.
+
+### Registering Built-in Sub-Agents
+
+Call `register_builtins_agents()` to register all built-in sub-agents. This is typically done once before creating a conversation:
+
+```python icon="python" focus={3-4, 6-7}
+from openhands.tools.preset.default import register_builtins_agents
+
+# Register built-in sub-agents (default, explore, bash)
+register_builtins_agents()
+
+# Or in CLI mode (swaps default for default cli mode — no browser)
+register_builtins_agents(cli_mode=True)
+```
+
+<Warning>
+Registration order is critical when programmatically registering agents that share a name with a built-in agent. The system is designed to skip registration if a name is already taken. Therefore, if you register your custom agents before the built-in agents are loaded, your custom versions will take precedence.
+
+Conversely, if the built-in agents are loaded first, they will take precedence, and any subsequent registration of a custom agent with the same name will be ignored.
+</Warning>
+
+
+## Overall Priority
+
+When the same agent name is defined in multiple places, the highest-priority source wins. Registration is first-come first-win.
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 (highest) | **Programmatic** `register_agent()` | Registered first, never overwritten |
+| 2 | **Plugin agents** (`Plugin.agents`) | Loaded from plugin `agents/` directories |
+| 3 | **Project-level** file-based agents | `.agents/agents/*.md` or `.openhands/agents/*.md` |
+| 4 (lowest) | **User-level** file-based agents | `~/.agents/agents/*.md` or `~/.openhands/agents/*.md` |
+
+## Auto-Registration
+
+The simplest way to use file-based agents is auto-registration. Call `register_file_agents()` with your project directory, and all discovered agents are registered into the delegation system:
+
+```python icon="python" focus={3}
+from openhands.sdk.subagent import register_file_agents
+
+agent_names = register_file_agents("/path/to/project")
+print(f"Registered {len(agent_names)} agents: {agent_names}")
+```
+
+This scans both project-level and user-level directories, deduplicates by name, and registers each agent as a delegate that can be spawned by the orchestrator.
+
+## Manual Loading
+
+For more control, load and register agents explicitly:
+
+```python icon="python" focus={3-6, 8-14}
+from pathlib import Path
+
+from openhands.sdk import load_agents_from_dir, register_agent, agent_definition_to_factory
+
+# Load from a specific directory
+agents_dir = Path("agents")
+agent_definitions = load_agents_from_dir(agents_dir)
+
+# Register each agent
+for agent_def in agent_definitions:
+    register_agent(
+        name=agent_def.name,
+        factory_func=agent_definition_to_factory(agent_def),
+        description=agent_def.description,
+    )
+```
+
+### Key Functions
+
+#### `load_agents_from_dir()`
+
+Scans a directory for `.md` files and returns a list of `AgentDefinition` objects:
+
+```python icon="python" focus={3-4}
+from pathlib import Path
+
+from openhands.sdk import load_agents_from_dir
+
+definitions = load_agents_from_dir(Path(".agents/agents"))
+for d in definitions:
+    print(f"{d.name}: {d.tools}, model={d.model}")
+```
+
+#### `agent_definition_to_factory()`
+
+Converts an `AgentDefinition` into a factory function `(LLM) -> Agent`:
+
+```python icon="python"
+from openhands.sdk import agent_definition_to_factory
+
+factory = agent_definition_to_factory(agent_def)
+# The factory is called by the delegation system with the parent's LLM
+```
+
+The factory:
+- Maps tool names from the frontmatter to `Tool` objects
+- Appends the Markdown body to the parent system message via `AgentContext(system_message_suffix=...)`
+- Respects the `model` field (`"inherit"` keeps the parent LLM; an explicit model name creates a copy)
+
+#### `load_project_agents()` / `load_user_agents()`
+
+Load agents from project-level or user-level directories respectively:
+
+```python icon="python" focus={3, 4}
+from openhands.sdk.subagent import load_project_agents, load_user_agents
+
+project_agents = load_project_agents("/path/to/project")
+user_agents = load_user_agents()  # scans ~/.agents/agents/ and ~/.openhands/agents/
+```
+
+## Using with Delegation
+
+File-based agents are designed to work with the [DelegateTool](/sdk/guides/agent-delegation). Once registered, the orchestrating agent can spawn and delegate tasks to them by name:
+
+```python icon="python" focus={6, 9-12, 15-19}
+from openhands.sdk import Agent, Conversation, Tool
+from openhands.sdk.subagent import register_file_agents
+from openhands.sdk.tool import register_tool
+from openhands.tools.delegate import DelegateTool, DelegationVisualizer
+
+register_file_agents("/path/to/project")  # Register .agents/agents/*.md
+
+# Set up the orchestrator with DelegateTool
+register_tool("DelegateTool", DelegateTool)
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name="DelegateTool")],
+)
+
+conversation = Conversation(
+    agent=main_agent,
+    workspace="/path/to/project",
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+)
+```
+
+To learn more about agent delegation, follow our [comprehensive guide](/sdk/guides/agent-delegation).
+
+## Example Agent Files
+
+### Code Reviewer
+
+```markdown icon="markdown"
+---
+name: code-reviewer
+description: >
+  Reviews code for quality, bugs, and best practices.
+  <example>Review this pull request for issues</example>
+  <example>Check this code for bugs</example>
+tools:
+  - file_editor
+  - terminal
+---
+
+# Code Reviewer
+
+You are a meticulous code reviewer. When reviewing code:
+
+1. **Correctness** - Look for bugs, off-by-one errors, null pointer issues, and race conditions.
+2. **Style** - Check for consistent naming, formatting, and idiomatic usage.
+3. **Performance** - Identify unnecessary allocations, N+1 queries, or algorithmic inefficiencies.
+4. **Security** - Flag potential injection vulnerabilities, hardcoded secrets, or unsafe deserialization.
+
+Keep feedback concise and actionable. For each issue found, suggest a concrete fix.
+```
+
+### Technical Writer
+
+```markdown icon="markdown"
+---
+name: tech-writer
+description: >
+  Writes and improves technical documentation.
+  <example>Write docs for this module</example>
+  <example>Improve the README</example>
+tools:
+  - file_editor
+---
+
+# Technical Writer
+
+You are a skilled technical writer. When creating or improving documentation:
+
+1. **Audience** - Write for developers who are new to the project.
+2. **Structure** - Use clear headings, code examples, and step-by-step instructions.
+3. **Accuracy** - Read the source code before documenting behavior. Never guess.
+4. **Brevity** - Prefer short, concrete sentences over long explanations.
+
+Always include a usage example with expected output when documenting functions or APIs.
+```
+
+## Agents in Plugins
+
+> Plugins bundle agents, tools, skills, and MCP servers into reusable packages.
+Learn more about plugins [here](/sdk/guides/plugins).
+
+File-based agents can also be bundled inside plugins. Place them in the `agents/` directory of your plugin:
+
+<Tree>
+    <Tree.Folder name="my-plugin/" defaultOpen>
+        <Tree.Folder name=".plugin" defaultOpen>
+            <Tree.File name="plugin.json" />
+        </Tree.Folder>
+        <Tree.Folder name="agents" defaultOpen>
+            <Tree.File name="code-reviewer.md" />
+            <Tree.File name="tech-writer.md" />
+        </Tree.Folder>
+    </Tree.Folder>
+</Tree>
+
+Plugin agents use the same `.md` format and are registered automatically when the plugin is loaded. They have higher priority than file-based agents but lower than programmatic `register_agent()` calls.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/42_file_based_subagents.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/42_file_based_subagents.py)
+</Note>
+
+This example uses `AgentDefinition` directly. File-based agents are loaded into the same `AgentDefinition` objects (from Markdown) and registered the same way.
+
+```python icon="python" expandable examples/01_standalone_sdk/42_file_based_subagents.py
+"""Example: Defining a sub-agent inline with AgentDefinition.
+
+Defines a grammar-checker sub-agent using AgentDefinition, registers it,
+and delegates work to it from an orchestrator agent. The orchestrator then
+asks the builtin default agent to judge the results.
+"""
+
+import os
+from pathlib import Path
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Tool,
+    agent_definition_to_factory,
+    register_agent,
+)
+from openhands.sdk.subagent import AgentDefinition
+from openhands.sdk.tool import register_tool
+from openhands.tools.delegate import DelegateTool, DelegationVisualizer
+
+
+# 1. Define a sub-agent using AgentDefinition
+grammar_checker = AgentDefinition(
+    name="grammar-checker",
+    description="Checks documents for grammatical errors.",
+    tools=["file_editor"],
+    system_prompt="You are a grammar expert. Find and list grammatical errors.",
+)
+
+# 2. Register it in the delegate registry
+register_agent(
+    name=grammar_checker.name,
+    factory_func=agent_definition_to_factory(grammar_checker),
+    description=grammar_checker.description,
+)
+
+# 3. Set up the orchestrator agent with the DelegateTool
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    usage_id="file-agents-demo",
+)
+
+register_tool("DelegateTool", DelegateTool)
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name="DelegateTool")],
+)
+conversation = Conversation(
+    agent=main_agent,
+    workspace=Path.cwd(),
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+)
+
+# 4. Ask the orchestrator to delegate to our agent
+task = (
+    "Please delegate to the grammar-checker agent and ask it to review "
+    "the README.md file in search of grammatical errors.\n"
+    "Then ask the default agent to judge the errors."
+)
+conversation.send_message(task)
+conversation.run()
+
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nTotal cost: ${cost:.4f}")
+print(f"EXAMPLE_COST: {cost:.4f}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/42_file_based_subagents.py"/>
+
+## Next Steps
+
+- **[Sub-Agent Delegation](/sdk/guides/agent-delegation)** - Learn about the DelegateTool and delegation patterns
+- **[Skills](/sdk/guides/skill)** - Add specialized knowledge and triggers to agents
+- **[Plugins](/sdk/guides/plugins)** - Bundle agents, skills, hooks, and MCP servers together
+- **[Custom Agent](/sdk/guides/agent-custom)** - Create agents programmatically for more control
 
 ### Interactive Terminal
 Source: https://docs.openhands.dev/sdk/guides/agent-interactive-terminal.md
@@ -12027,6 +12491,7 @@ This example shows how to programmatically start a local agent server and intera
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -12184,7 +12649,9 @@ with ManagedAPIServer(port=8001) as server:
 
     # Create RemoteConversation with callbacks
     # NOTE: Workspace is required for RemoteConversation
-    workspace = Workspace(host=server.base_url)
+    # Use a temp directory that exists and is accessible in CI environments
+    temp_workspace_dir = tempfile.mkdtemp(prefix="agent_server_demo_")
+    workspace = Workspace(host=server.base_url, working_dir=temp_workspace_dir)
     result = workspace.execute_command("pwd")
     logger.info(
         f"Command '{result.command}' completed with exit code {result.exit_code}"
@@ -12930,7 +13397,7 @@ browsing session.
 The recording will be automatically saved to the persistence directory when
 browser_stop_recording is called. You can replay it with:
     - rrweb-player: https://github.com/rrweb-io/rrweb/tree/master/packages/rrweb-player
-    - Online viewer: https://www.rrweb.io/
+    - Online viewer: https://www.rrweb.io/demo/
 """
 
 import json
@@ -14663,7 +15130,7 @@ A **critic** is an evaluator that analyzes agent actions and conversation histor
 You can use critic scores to build automated workflows, such as triggering the agent to reflect on and fix its previous solution when the critic indicates poor task performance.
 
 <Note>
-This critic is a more advanced extension of the approach described in our blog post [SOTA on SWE-Bench Verified with Inference-Time Scaling and Critic Model](https://openhands.dev/blog/sota-on-swe-bench-verified-with-inference-time-scaling-and-critic-model). A technical report with detailed evaluation metrics is forthcoming.
+This critic is a more advanced extension of the approach described in our blog post [SOTA on SWE-Bench Verified with Inference-Time Scaling and Critic Model](https://openhands.dev/blog/sota-on-swe-bench-verified-with-inference-time-scaling-and-critic-model). For detailed evaluation metrics and methodology, see our technical report: [A Rubric-Supervised Critic from Sparse Real-World Outcomes](https://arxiv.org/abs/2603.03800).
 </Note>
 
 ## Quick Start
@@ -14947,13 +15414,13 @@ Write tests that verify:
 ## Verification Steps
 
 1. Create a sample file `sample.txt` with this EXACT content (no trailing newline):
-```
+`​`​`
 Hello world!
 This is a well-known test file.
 
 It has 5 lines, including empty ones.
 Numbers like 42 and 3.14 don't count as words.
-```
+`​`​`
 
 2. Run: `python wordstats/cli.py sample.txt`
    Expected output:
@@ -14973,502 +15440,13 @@ The task is complete ONLY when:
 
 
 llm_api_key = get_required_env("LLM_API_KEY")
+# Use a weaker model to increase likelihood of needing multiple iterations
+llm_model = os.getenv("LLM_MODEL", "anthropic/claude-haiku-4-5-20251001")
 llm = LLM(
-    # Use a weaker model to increase likelihood of needing multiple iterations
-    model="anthropic/claude-haiku-4-5",
+    model=llm_model,
     api_key=llm_api_key,
     top_p=0.95,
-    base_url=os.getenv("LLM_BASE_URL", None),
-)
-
-# Setup critic with iterative refinement config
-# The IterativeRefinementConfig tells Conversation.run() to automatically
-# retry the task if the critic score is below the threshold
-iterative_config = IterativeRefinementConfig(
-    success_threshold=SUCCESS_THRESHOLD,
-    max_iterations=MAX_ITERATIONS,
-)
-
-# Auto-configure critic for All-Hands proxy or use explicit env vars
-critic = get_default_critic(llm)
-if critic is None:
-    print("⚠️  No All-Hands LLM proxy detected, trying explicit env vars...")
-    critic = APIBasedCritic(
-        server_url=get_required_env("CRITIC_SERVER_URL"),
-        api_key=get_required_env("CRITIC_API_KEY"),
-        model_name=get_required_env("CRITIC_MODEL_NAME"),
-        iterative_refinement=iterative_config,
-    )
-else:
-    # Add iterative refinement config to the auto-configured critic
-    critic = critic.model_copy(update={"iterative_refinement": iterative_config})
-
-# Create agent with critic (iterative refinement is built into the critic)
-agent = Agent(
-    llm=llm,
-    tools=[
-        Tool(name=TerminalTool.name),
-        Tool(name=FileEditorTool.name),
-        Tool(name=TaskTrackerTool.name),
-    ],
-    critic=critic,
-)
-
-# Create workspace
-workspace = Path(tempfile.mkdtemp(prefix="critic_demo_"))
-print(f"📁 Created workspace: {workspace}")
-
-# Create conversation - iterative refinement is handled automatically
-# by Conversation.run() based on the critic's config
-conversation = Conversation(
-    agent=agent,
-    workspace=str(workspace),
-)
-
-print("\n" + "=" * 70)
-print("🚀 Starting Iterative Refinement with Critic Model")
-print("=" * 70)
-print(f"Success threshold: {SUCCESS_THRESHOLD:.0%}")
-print(f"Max iterations: {MAX_ITERATIONS}")
-
-# Send the task and run - Conversation.run() handles retries automatically
-conversation.send_message(INITIAL_TASK_PROMPT)
-conversation.run()
-
-# Print additional info about created files
-print("\nCreated files:")
-for path in sorted(workspace.rglob("*")):
-    if path.is_file():
-        relative = path.relative_to(workspace)
-        print(f"  - {relative}")
-
-# Report cost
-cost = llm.metrics.accumulated_cost
-print(f"\nEXAMPLE_COST: {cost:.4f}")
-```
-Hello world!
-This is a well-known test file.
-
-It has 5 lines, including empty ones.
-Numbers like 42 and 3.14 don't count as words.
-```
-
-2. Run: `python wordstats/cli.py sample.txt`
-   Expected output:
-   - Lines: 5
-   - Words: 21
-   - Chars: 130
-   - Unique words: 21
-
-3. Run the tests: `python -m pytest wordstats/tests/ -v`
-   ALL tests must pass.
-
-The task is complete ONLY when:
-- All files exist
-- The CLI outputs the correct stats for sample.txt
-- All 5+ tests pass
-"""
-
-
-llm_api_key = get_required_env("LLM_API_KEY")
-llm = LLM(
-    # Use a weaker model to increase likelihood of needing multiple iterations
-    model="anthropic/claude-haiku-4-5",
-    api_key=llm_api_key,
-    top_p=0.95,
-    base_url=os.getenv("LLM_BASE_URL", None),
-)
-
-# Setup critic with iterative refinement config
-# The IterativeRefinementConfig tells Conversation.run() to automatically
-# retry the task if the critic score is below the threshold
-iterative_config = IterativeRefinementConfig(
-    success_threshold=SUCCESS_THRESHOLD,
-    max_iterations=MAX_ITERATIONS,
-)
-
-# Auto-configure critic for All-Hands proxy or use explicit env vars
-critic = get_default_critic(llm)
-if critic is None:
-    print("⚠️  No All-Hands LLM proxy detected, trying explicit env vars...")
-    critic = APIBasedCritic(
-        server_url=get_required_env("CRITIC_SERVER_URL"),
-        api_key=get_required_env("CRITIC_API_KEY"),
-        model_name=get_required_env("CRITIC_MODEL_NAME"),
-        iterative_refinement=iterative_config,
-    )
-else:
-    # Add iterative refinement config to the auto-configured critic
-    critic = critic.model_copy(update={"iterative_refinement": iterative_config})
-
-# Create agent with critic (iterative refinement is built into the critic)
-agent = Agent(
-    llm=llm,
-    tools=[
-        Tool(name=TerminalTool.name),
-        Tool(name=FileEditorTool.name),
-        Tool(name=TaskTrackerTool.name),
-    ],
-    critic=critic,
-)
-
-# Create workspace
-workspace = Path(tempfile.mkdtemp(prefix="critic_demo_"))
-print(f"📁 Created workspace: {workspace}")
-
-# Create conversation - iterative refinement is handled automatically
-# by Conversation.run() based on the critic's config
-conversation = Conversation(
-    agent=agent,
-    workspace=str(workspace),
-)
-
-print("\n" + "=" * 70)
-print("🚀 Starting Iterative Refinement with Critic Model")
-print("=" * 70)
-print(f"Success threshold: {SUCCESS_THRESHOLD:.0%}")
-print(f"Max iterations: {MAX_ITERATIONS}")
-
-# Send the task and run - Conversation.run() handles retries automatically
-conversation.send_message(INITIAL_TASK_PROMPT)
-conversation.run()
-
-# Print additional info about created files
-print("\nCreated files:")
-for path in sorted(workspace.rglob("*")):
-    if path.is_file():
-        relative = path.relative_to(workspace)
-        print(f"  - {relative}")
-
-# Report cost
-cost = llm.metrics.accumulated_cost
-print(f"\nEXAMPLE_COST: {cost:.4f}")
-```
-Hello world!
-This is a well-known test file.
-
-It has 5 lines, including empty ones.
-Numbers like 42 and 3.14 don't count as words.
-```
-
-2. Run: `python wordstats/cli.py sample.txt`
-   Expected output:
-   - Lines: 5
-   - Words: 21
-   - Chars: 130
-   - Unique words: 21
-
-3. Run the tests: `python -m pytest wordstats/tests/ -v`
-   ALL tests must pass.
-
-The task is complete ONLY when:
-- All files exist
-- The CLI outputs the correct stats for sample.txt
-- All 5+ tests pass
-"""
-
-
-llm_api_key = get_required_env("LLM_API_KEY")
-llm = LLM(
-    # Use a weaker model to increase likelihood of needing multiple iterations
-    model="anthropic/claude-haiku-4-5",
-    api_key=llm_api_key,
-    top_p=0.95,
-    base_url=os.getenv("LLM_BASE_URL", None),
-)
-
-# Setup critic with iterative refinement config
-# The IterativeRefinementConfig tells Conversation.run() to automatically
-# retry the task if the critic score is below the threshold
-iterative_config = IterativeRefinementConfig(
-    success_threshold=SUCCESS_THRESHOLD,
-    max_iterations=MAX_ITERATIONS,
-)
-
-# Auto-configure critic for All-Hands proxy or use explicit env vars
-critic = get_default_critic(llm)
-if critic is None:
-    print("⚠️  No All-Hands LLM proxy detected, trying explicit env vars...")
-    critic = APIBasedCritic(
-        server_url=get_required_env("CRITIC_SERVER_URL"),
-        api_key=get_required_env("CRITIC_API_KEY"),
-        model_name=get_required_env("CRITIC_MODEL_NAME"),
-        iterative_refinement=iterative_config,
-    )
-else:
-    # Add iterative refinement config to the auto-configured critic
-    critic = critic.model_copy(update={"iterative_refinement": iterative_config})
-
-# Create agent with critic (iterative refinement is built into the critic)
-agent = Agent(
-    llm=llm,
-    tools=[
-        Tool(name=TerminalTool.name),
-        Tool(name=FileEditorTool.name),
-        Tool(name=TaskTrackerTool.name),
-    ],
-    critic=critic,
-)
-
-# Create workspace
-workspace = Path(tempfile.mkdtemp(prefix="critic_demo_"))
-print(f"📁 Created workspace: {workspace}")
-
-# Create conversation - iterative refinement is handled automatically
-# by Conversation.run() based on the critic's config
-conversation = Conversation(
-    agent=agent,
-    workspace=str(workspace),
-)
-
-print("\n" + "=" * 70)
-print("🚀 Starting Iterative Refinement with Critic Model")
-print("=" * 70)
-print(f"Success threshold: {SUCCESS_THRESHOLD:.0%}")
-print(f"Max iterations: {MAX_ITERATIONS}")
-
-# Send the task and run - Conversation.run() handles retries automatically
-conversation.send_message(INITIAL_TASK_PROMPT)
-conversation.run()
-
-# Print additional info about created files
-print("\nCreated files:")
-for path in sorted(workspace.rglob("*")):
-    if path.is_file():
-        relative = path.relative_to(workspace)
-        print(f"  - {relative}")
-
-# Report cost
-cost = llm.metrics.accumulated_cost
-print(f"\nEXAMPLE_COST: {cost:.4f}")
-```
-Hello world!
-This is a well-known test file.
-
-It has 5 lines, including empty ones.
-Numbers like 42 and 3.14 don't count as words.
-```
-
-2. Run: `python wordstats/cli.py sample.txt`
-   Expected output:
-   - Lines: 5
-   - Words: 21
-   - Chars: 130
-   - Unique words: 21
-
-3. Run the tests: `python -m pytest wordstats/tests/ -v`
-   ALL tests must pass.
-
-The task is complete ONLY when:
-- All files exist
-- The CLI outputs the correct stats for sample.txt
-- All 5+ tests pass
-"""
-
-
-llm_api_key = get_required_env("LLM_API_KEY")
-llm = LLM(
-    # Use a weaker model to increase likelihood of needing multiple iterations
-    model="anthropic/claude-haiku-4-5",
-    api_key=llm_api_key,
-    top_p=0.95,
-    base_url=os.getenv("LLM_BASE_URL", None),
-)
-
-# Setup critic with iterative refinement config
-# The IterativeRefinementConfig tells Conversation.run() to automatically
-# retry the task if the critic score is below the threshold
-iterative_config = IterativeRefinementConfig(
-    success_threshold=SUCCESS_THRESHOLD,
-    max_iterations=MAX_ITERATIONS,
-)
-
-# Auto-configure critic for All-Hands proxy or use explicit env vars
-critic = get_default_critic(llm)
-if critic is None:
-    print("⚠️  No All-Hands LLM proxy detected, trying explicit env vars...")
-    critic = APIBasedCritic(
-        server_url=get_required_env("CRITIC_SERVER_URL"),
-        api_key=get_required_env("CRITIC_API_KEY"),
-        model_name=get_required_env("CRITIC_MODEL_NAME"),
-        iterative_refinement=iterative_config,
-    )
-else:
-    # Add iterative refinement config to the auto-configured critic
-    critic = critic.model_copy(update={"iterative_refinement": iterative_config})
-
-# Create agent with critic (iterative refinement is built into the critic)
-agent = Agent(
-    llm=llm,
-    tools=[
-        Tool(name=TerminalTool.name),
-        Tool(name=FileEditorTool.name),
-        Tool(name=TaskTrackerTool.name),
-    ],
-    critic=critic,
-)
-
-# Create workspace
-workspace = Path(tempfile.mkdtemp(prefix="critic_demo_"))
-print(f"📁 Created workspace: {workspace}")
-
-# Create conversation - iterative refinement is handled automatically
-# by Conversation.run() based on the critic's config
-conversation = Conversation(
-    agent=agent,
-    workspace=str(workspace),
-)
-
-print("\n" + "=" * 70)
-print("🚀 Starting Iterative Refinement with Critic Model")
-print("=" * 70)
-print(f"Success threshold: {SUCCESS_THRESHOLD:.0%}")
-print(f"Max iterations: {MAX_ITERATIONS}")
-
-# Send the task and run - Conversation.run() handles retries automatically
-conversation.send_message(INITIAL_TASK_PROMPT)
-conversation.run()
-
-# Print additional info about created files
-print("\nCreated files:")
-for path in sorted(workspace.rglob("*")):
-    if path.is_file():
-        relative = path.relative_to(workspace)
-        print(f"  - {relative}")
-
-# Report cost
-cost = llm.metrics.accumulated_cost
-print(f"\nEXAMPLE_COST: {cost:.4f}")
-```
-Hello world!
-This is a well-known test file.
-
-It has 5 lines, including empty ones.
-Numbers like 42 and 3.14 don't count as words.
-```
-
-2. Run: `python wordstats/cli.py sample.txt`
-   Expected output:
-   - Lines: 5
-   - Words: 21
-   - Chars: 130
-   - Unique words: 21
-
-3. Run the tests: `python -m pytest wordstats/tests/ -v`
-   ALL tests must pass.
-
-The task is complete ONLY when:
-- All files exist
-- The CLI outputs the correct stats for sample.txt
-- All 5+ tests pass
-"""
-
-
-llm_api_key = get_required_env("LLM_API_KEY")
-llm = LLM(
-    # Use a weaker model to increase likelihood of needing multiple iterations
-    model="anthropic/claude-haiku-4-5",
-    api_key=llm_api_key,
-    top_p=0.95,
-    base_url=os.getenv("LLM_BASE_URL", None),
-)
-
-# Setup critic with iterative refinement config
-# The IterativeRefinementConfig tells Conversation.run() to automatically
-# retry the task if the critic score is below the threshold
-iterative_config = IterativeRefinementConfig(
-    success_threshold=SUCCESS_THRESHOLD,
-    max_iterations=MAX_ITERATIONS,
-)
-
-# Auto-configure critic for All-Hands proxy or use explicit env vars
-critic = get_default_critic(llm)
-if critic is None:
-    print("⚠️  No All-Hands LLM proxy detected, trying explicit env vars...")
-    critic = APIBasedCritic(
-        server_url=get_required_env("CRITIC_SERVER_URL"),
-        api_key=get_required_env("CRITIC_API_KEY"),
-        model_name=get_required_env("CRITIC_MODEL_NAME"),
-        iterative_refinement=iterative_config,
-    )
-else:
-    # Add iterative refinement config to the auto-configured critic
-    critic = critic.model_copy(update={"iterative_refinement": iterative_config})
-
-# Create agent with critic (iterative refinement is built into the critic)
-agent = Agent(
-    llm=llm,
-    tools=[
-        Tool(name=TerminalTool.name),
-        Tool(name=FileEditorTool.name),
-        Tool(name=TaskTrackerTool.name),
-    ],
-    critic=critic,
-)
-
-# Create workspace
-workspace = Path(tempfile.mkdtemp(prefix="critic_demo_"))
-print(f"📁 Created workspace: {workspace}")
-
-# Create conversation - iterative refinement is handled automatically
-# by Conversation.run() based on the critic's config
-conversation = Conversation(
-    agent=agent,
-    workspace=str(workspace),
-)
-
-print("\n" + "=" * 70)
-print("🚀 Starting Iterative Refinement with Critic Model")
-print("=" * 70)
-print(f"Success threshold: {SUCCESS_THRESHOLD:.0%}")
-print(f"Max iterations: {MAX_ITERATIONS}")
-
-# Send the task and run - Conversation.run() handles retries automatically
-conversation.send_message(INITIAL_TASK_PROMPT)
-conversation.run()
-
-# Print additional info about created files
-print("\nCreated files:")
-for path in sorted(workspace.rglob("*")):
-    if path.is_file():
-        relative = path.relative_to(workspace)
-        print(f"  - {relative}")
-
-# Report cost
-cost = llm.metrics.accumulated_cost
-print(f"\nEXAMPLE_COST: {cost:.4f}")
-```
-Hello world!
-This is a well-known test file.
-
-It has 5 lines, including empty ones.
-Numbers like 42 and 3.14 don't count as words.
-```
-
-2. Run: `python wordstats/cli.py sample.txt`
-   Expected output:
-   - Lines: 5
-   - Words: 21
-   - Chars: 130
-   - Unique words: 21
-
-3. Run the tests: `python -m pytest wordstats/tests/ -v`
-   ALL tests must pass.
-
-The task is complete ONLY when:
-- All files exist
-- The CLI outputs the correct stats for sample.txt
-- All 5+ tests pass
-"""
-
-
-llm_api_key = get_required_env("LLM_API_KEY")
-llm = LLM(
-    # Use a weaker model to increase likelihood of needing multiple iterations
-    model="anthropic/claude-haiku-4-5",
-    api_key=llm_api_key,
-    top_p=0.95,
-    base_url=os.getenv("LLM_BASE_URL", None),
+    base_url=os.getenv("LLM_BASE_URL"),
 )
 
 # Setup critic with iterative refinement config
@@ -16485,7 +16463,8 @@ jobs:
             - name: Run PR Review
               uses: ./.github/actions/pr-review
               with:
-                  # LLM configuration
+                  # LLM model(s) to use. Can be comma-separated for A/B testing
+                  # - one model will be randomly selected per review
                   llm-model: anthropic/claude-sonnet-4-5-20250929
                   llm-base-url: ''
                   # Review style: roasted (other option: standard)
@@ -19620,8 +19599,8 @@ For MCP servers requiring OAuth authentication:
 - Configure OAuth-enabled MCP servers by specifying the URL and auth type
 - The SDK automatically handles the OAuth flow when first connecting
 - When the agent first attempts to use an OAuth-protected MCP server's tools, the SDK initiates the OAuth flow via [FastMCP](https://gofastmcp.com/servers/auth/authentication)
-- User will be prompted to authenticate
-- Access tokens are securely stored and automatically refreshed by FastMCP as needed
+- User will be prompted to authenticate via browser
+- Access tokens are securely stored in `~/.fastmcp/oauth-mcp-client-cache/` and automatically refreshed by FastMCP as needed
 
 ```python mcp_config focus={5} icon="python" wrap
 mcp_config = {
@@ -19633,6 +19612,10 @@ mcp_config = {
     }
 }
 ```
+
+<Note>
+OAuth MCP servers require user interaction for the initial browser-based authentication. This means they are not suitable for fully automated/headless workflows. If you need headless access, check if the MCP provider offers API key authentication as an alternative.
+</Note>
 
 ## Ready-to-Run Basic MCP Usage Example
 
@@ -20771,28 +20754,48 @@ Brief explanation on how to use a plugin with an agent.
 
 ## Ready-to-run Example
 
+The example below demonstrates plugin loading via Conversation and plugin management utilities (install, list, update, uninstall).
+
 <Note>
 This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
 </Note>
 
 ```python icon="python" expandable examples/05_skills_and_plugins/02_loading_plugins/main.py
-"""Example: Loading Plugins via Conversation
+"""Example: Loading and Managing Plugins
 
-Demonstrates the recommended way to load plugins using the `plugins` parameter
-on Conversation. Plugins bundle skills, hooks, and MCP config together.
+This example demonstrates plugin loading and management in the SDK:
+
+1. Loading plugins via Conversation (PluginSource)
+2. Installing plugins to persistent storage
+3. Listing, updating, and uninstalling plugins
+
+Plugins bundle skills, hooks, and MCP config together.
+
+Supported plugin sources:
+- Local path: /path/to/plugin
+- GitHub shorthand: github:owner/repo
+- Git URL: https://github.com/owner/repo.git
+- With ref: branch, tag, or commit SHA
+- With repo_path: subdirectory for monorepos
 
 For full documentation, see: https://docs.all-hands.dev/sdk/guides/plugins
 """
 
 import os
-import sys
 import tempfile
 from pathlib import Path
 
 from pydantic import SecretStr
 
 from openhands.sdk import LLM, Agent, Conversation
-from openhands.sdk.plugin import PluginSource
+from openhands.sdk.plugin import (
+    PluginFetchError,
+    PluginSource,
+    install_plugin,
+    list_installed_plugins,
+    load_installed_plugins,
+    uninstall_plugin,
+)
 from openhands.sdk.tool import Tool
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
@@ -20800,64 +20803,207 @@ from openhands.tools.terminal import TerminalTool
 
 # Locate example plugin directory
 script_dir = Path(__file__).parent
-plugin_path = script_dir / "example_plugins" / "code-quality"
+local_plugin_path = script_dir / "example_plugins" / "code-quality"
 
-# Define plugins to load
-# Supported sources: local path, "github:owner/repo", or git URL
-# Optional: ref (branch/tag/commit), repo_path (for monorepos)
-plugins = [
-    PluginSource(source=str(plugin_path)),
-    # PluginSource(source="github:org/security-plugin", ref="v2.0.0"),
-    # PluginSource(source="github:org/monorepo", repo_path="plugins/logging"),
-]
 
-# Check for API key
-api_key = os.getenv("LLM_API_KEY")
-if not api_key:
-    print("Set LLM_API_KEY to run this example")
-    print("EXAMPLE_COST: 0")
-    sys.exit(0)
+def demo_conversation_with_plugins(llm: LLM) -> None:
+    """Demo 1: Load plugins via Conversation's plugins parameter.
 
-# Configure LLM and Agent
-model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
-llm = LLM(
-    usage_id="plugin-demo",
-    model=model,
-    api_key=SecretStr(api_key),
-    base_url=os.getenv("LLM_BASE_URL"),
-)
-agent = Agent(
-    llm=llm, tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)]
-)
+    This is the recommended way to use plugins - they are loaded lazily
+    when the conversation starts.
+    """
+    print("\n" + "=" * 60)
+    print("DEMO 1: Loading plugins via Conversation")
+    print("=" * 60)
 
-# Create conversation with plugins - skills, MCP config, and hooks are merged
-# Note: Plugins are loaded lazily on first send_message() or run() call
-with tempfile.TemporaryDirectory() as tmpdir:
-    conversation = Conversation(
-        agent=agent,
-        workspace=tmpdir,
-        plugins=plugins,
+    # Define plugins to load
+    plugins = [
+        PluginSource(source=str(local_plugin_path)),
+        # Examples of other sources:
+        # PluginSource(source="github:owner/repo", ref="v1.0.0"),
+        # PluginSource(source="github:owner/monorepo", repo_path="plugins/my-plugin"),
+    ]
+
+    agent = Agent(
+        llm=llm,
+        tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
     )
 
-    # Test: The "lint" keyword triggers the python-linting skill
-    # This first send_message() call triggers lazy plugin loading
-    conversation.send_message("How do I lint Python code? Brief answer please.")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        conversation = Conversation(
+            agent=agent,
+            workspace=tmpdir,
+            plugins=plugins,
+        )
 
-    # Verify skills were loaded from the plugin (after lazy loading)
-    skills = (
-        conversation.agent.agent_context.skills
-        if conversation.agent.agent_context
-        else []
-    )
-    print(f"Loaded {len(skills)} skill(s) from plugins")
+        # The "lint" keyword triggers the python-linting skill
+        conversation.send_message("How do I lint Python code? Brief answer please.")
 
-    conversation.run()
+        # Verify skills were loaded
+        skills = (
+            conversation.agent.agent_context.skills
+            if conversation.agent.agent_context
+            else []
+        )
+        print(f"✓ Loaded {len(skills)} skill(s) from plugins")
 
-    print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
+        conversation.run()
+
+
+def demo_install_local_plugin(installed_dir: Path) -> None:
+    """Demo 2: Install a plugin from a local path.
+
+    Useful for development or local-only plugins.
+    """
+    print("\n" + "=" * 60)
+    print("DEMO 2: Installing plugin from local path")
+    print("=" * 60)
+
+    info = install_plugin(source=str(local_plugin_path), installed_dir=installed_dir)
+    print(f"✓ Installed: {info.name} v{info.version}")
+    print(f"  Source: {info.source}")
+    print(f"  Path: {info.install_path}")
+
+
+def demo_install_github_plugin(installed_dir: Path) -> None:
+    """Demo 3: Install a plugin from GitHub.
+
+    Demonstrates the github:owner/repo shorthand with repo_path for monorepos.
+    """
+    print("\n" + "=" * 60)
+    print("DEMO 3: Installing plugin from GitHub")
+    print("=" * 60)
+
+    try:
+        # Install from anthropics/skills repository
+        info = install_plugin(
+            source="github:anthropics/skills",
+            repo_path="skills/pptx",
+            ref="main",
+            installed_dir=installed_dir,
+        )
+        print(f"✓ Installed: {info.name} v{info.version}")
+        print(f"  Source: {info.source}")
+        print(f"  Resolved ref: {info.resolved_ref}")
+
+    except PluginFetchError as e:
+        print(f"⚠ Could not fetch from GitHub: {e}")
+        print("  (Network or rate limiting issue)")
+
+
+def demo_list_and_load_plugins(installed_dir: Path) -> None:
+    """Demo 4: List and load installed plugins."""
+    print("\n" + "=" * 60)
+    print("DEMO 4: List and load installed plugins")
+    print("=" * 60)
+
+    # List installed plugins
+    print("Installed plugins:")
+    for info in list_installed_plugins(installed_dir=installed_dir):
+        print(f"  - {info.name} v{info.version} ({info.source})")
+
+    # Load plugins as Plugin objects
+    plugins = load_installed_plugins(installed_dir=installed_dir)
+    print(f"\nLoaded {len(plugins)} plugin(s):")
+    for plugin in plugins:
+        skills = plugin.get_all_skills()
+        print(f"  - {plugin.name}: {len(skills)} skill(s)")
+
+
+def demo_uninstall_plugins(installed_dir: Path) -> None:
+    """Demo 5: Uninstall plugins."""
+    print("\n" + "=" * 60)
+    print("DEMO 5: Uninstalling plugins")
+    print("=" * 60)
+
+    for info in list_installed_plugins(installed_dir=installed_dir):
+        uninstall_plugin(info.name, installed_dir=installed_dir)
+        print(f"✓ Uninstalled: {info.name}")
+
+    remaining = list_installed_plugins(installed_dir=installed_dir)
+    print(f"\nRemaining plugins: {len(remaining)}")
+
+
+# Main execution
+if __name__ == "__main__":
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        print("Set LLM_API_KEY to run the full example")
+        print("Running install/uninstall demos only...")
+        llm = None
+    else:
+        model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+        llm = LLM(
+            usage_id="plugin-demo",
+            model=model,
+            api_key=SecretStr(api_key),
+            base_url=os.getenv("LLM_BASE_URL"),
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed"
+        installed_dir.mkdir()
+
+        # Demo 1: Conversation with plugins (requires LLM)
+        if llm:
+            demo_conversation_with_plugins(llm)
+
+        # Demo 2-5: Plugin management (no LLM required)
+        demo_install_local_plugin(installed_dir)
+        demo_install_github_plugin(installed_dir)
+        demo_list_and_load_plugins(installed_dir)
+        demo_uninstall_plugins(installed_dir)
+
+    print("\n" + "=" * 60)
+    print("EXAMPLE COMPLETED SUCCESSFULLY")
+    print("=" * 60)
+
+    if llm:
+        print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
+    else:
+        print("EXAMPLE_COST: 0")
 ```
 
 <RunExampleCode path_to_script="examples/05_skills_and_plugins/02_loading_plugins/main.py"/>
 
+## Installing Plugins to Persistent Storage
+
+The SDK provides utilities to install plugins to a local directory (`~/.openhands/plugins/installed/` by default). Installed plugins are tracked in `.installed.json`, which stores metadata including a persistent enabled flag.
+
+Use `list_installed_plugins()` to see all tracked plugins (enabled and disabled). Use `load_installed_plugins()` to load only enabled plugins. Toggle plugins on/off with `enable_plugin()` and `disable_plugin()` without uninstalling.
+
+```python icon="python"
+from openhands.sdk.plugin import (
+    disable_plugin,
+    enable_plugin,
+    install_plugin,
+    list_installed_plugins,
+    load_installed_plugins,
+    uninstall_plugin,
+)
+
+# Install from local path or GitHub
+install_plugin(source="/path/to/plugin")
+install_plugin(source="github:owner/repo", ref="v1.0.0")
+
+# List installed plugins (includes enabled + disabled)
+for info in list_installed_plugins():
+    status = "enabled" if info.enabled else "disabled"
+    print(f"{info.name} v{info.version} ({status})")
+
+# Disable a plugin (won't be loaded until re-enabled)
+disable_plugin("plugin-name")
+
+# Load only enabled plugins for your agent
+plugins = load_installed_plugins()
+
+# Later: re-enable and reload
+enable_plugin("plugin-name")
+plugins = load_installed_plugins()
+
+# Uninstall
+uninstall_plugin("plugin-name")
+```
 
 ## Next Steps
 
@@ -21728,6 +21874,49 @@ Skills are listed in the system prompt:
 <Tip>
 Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic injection when keywords match.
 </Tip>
+
+## Managing Installed Skills
+
+You can install AgentSkills into a persistent directory and list/update them
+using `openhands.sdk.skills`. Skills are stored under
+`~/.openhands/skills/installed/` with a `.installed.json` metadata file that
+records an `enabled` flag. `list_installed_skills` returns all installed skills,
+while `load_installed_skills` returns only those with `enabled=true`.
+
+```python icon="python"
+from openhands.sdk.skills import (
+    disable_skill,
+    enable_skill,
+    install_skill,
+    list_installed_skills,
+    load_installed_skills,
+    uninstall_skill,
+    update_skill,
+)
+
+# Install from GitHub (supports git URLs, local paths, and repo_path for monorepos)
+info = install_skill("github:owner/my-skill", ref="v1.0.0")
+print(f"Installed {info.name} from {info.source}")
+
+# List installed skills
+for skill_info in list_installed_skills():
+    print(f"{skill_info.name}: {skill_info.description}")
+
+# Enable/disable controls which skills load (state persisted in .installed.json)
+
+# Disable a skill temporarily (e.g., while debugging or if it conflicts)
+disable_skill("my-skill")
+
+# Load installed skills for an AgentContext (only enabled skills load)
+skills = load_installed_skills()
+
+# Re-enable when needed
+# enable_skill("my-skill")
+
+# Update or uninstall
+update_skill("my-skill")
+uninstall_skill("my-skill")
+```
 
 ---
 
@@ -23157,16 +23346,15 @@ For detailed information about the critic feature, including programmatic access
 
 ## What is the Critic?
 
-The critic is an LLM-based evaluator that analyzes agent actions and conversation history to predict the quality or success probability of agent decisions. It provides:
+The critic is an LLM-based evaluator that analyzes agent actions and conversation history to predict the quality or success probability of agent decisions (see our technical report: [A Rubric-Supervised Critic from Sparse Real-World Outcomes](https://arxiv.org/abs/2603.03800) for detailed methodology).
+
+It provides:
+
+It provides:
 
 - **Quality scores**: Probability scores between 0.0 and 1.0 indicating predicted success
 - **Real-time feedback**: Scores computed during agent execution, not just at completion
-
-<video
-  controls
-  className="w-full aspect-video"
-  src="/openhands/usage/cli/critic-demo.mp4"
-></video>
+- **Iterative refinement**: Automatic follow-up prompts when the critic predicts incomplete work
 
 ![Critic output in CLI](./screenshots/critic-cli-output.png)
 
@@ -23174,13 +23362,94 @@ The critic is an LLM-based evaluator that analyzes agent actions and conversatio
 
 The critic feature is **free during the public beta phase** for all OpenHands LLM Provider users.
 
+## Iterative Refinement
+
+When **Iterative Refinement** mode is enabled, the CLI automatically prompts the agent to review and improve its work if the critic predicts a low probability of task success, repeating up to a maximum number of iterations (configured in settings).
+
+### How It Works
+
+1. The agent completes a task (or calls `FinishAction`)
+2. The critic evaluates the result and produces a success probability score (0–100%), along with per-issue probability scores
+3. Refinement triggers if **either** condition is met:
+   - The overall score falls below the **refinement threshold** (default: 60%), **OR**
+   - Any specific issue has a probability above the **issue threshold** (default: 75%), even if the overall score exceeds the refinement threshold (e.g., insufficient testing at 82% triggers refinement even when the overall score is 70%)
+4. A follow-up prompt is automatically sent to the agent with the score and any detected issues
+5. The agent reviews its work, identifies remaining issues, and attempts to fix them
+6. This process repeats until neither condition triggers or the **max iterations** limit is reached (default: 3)
+
+### Demo
+
+**Example with refinement threshold set to 80%** — requires a higher score to pass, which may trigger additional refinement cycles if the agent's performance is borderline:
+
+<video
+  controls
+  className="w-full aspect-video"
+  src="https://github.com/user-attachments/assets/4e955321-e627-4d2a-97d8-d9f0f710ab2e"
+></video>
+
+**Example with refinement threshold set to 60% (default):**
+
+<video
+  controls
+  className="w-full aspect-video"
+  src="https://github.com/user-attachments/assets/13237eec-2721-48a1-9ef9-666b57a7529e"
+></video>
+
+### Enabling Iterative Refinement
+
+Iterative refinement is **disabled by default** and must be enabled via the Settings UI:
+
+1. Open the command palette with `Ctrl+P`
+2. Select **Settings**
+3. Navigate to the **Critic Settings** tab
+4. Toggle on **Iterative Refinement**
+5. Optionally adjust the **Refinement Threshold** (1–100%)
+
+### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| **Refinement Threshold** | 60% (`0.6`) | Overall success score below which refinement is triggered |
+| **Issue Threshold** | 75% (`0.75`) | Per-issue probability above which refinement is triggered, even if the overall score exceeds the refinement threshold |
+| **Max Iterations** | 3 | Maximum number of refinement attempts per user turn (1–10) |
+
+### Example Refinement Prompt
+
+When refinement is triggered, the agent receives a message like:
+
+```
+The task appears incomplete (iteration 1/3, predicted success likelihood: 45.0%).
+
+Please review what you've done and verify each requirement is met.
+List what's working and what needs fixing, then complete the task.
+```
+
+If specific issues are detected, they are included in the prompt:
+
+```
+The task appears incomplete (iteration 1/3, predicted success likelihood: 52.0%).
+
+**Detected issues requiring attention:**
+- Insufficient Testing (82%)
+- Missing Error Handling (76%)
+
+Please review what you've done and verify each requirement is met.
+List what's working and what needs fixing, then complete the task.
+```
+
+### Status Indicator
+
+A visual indicator in the status bar shows the current refinement iteration when active (e.g., "Refining 1/3"):
+
+![Refinement status indicator in the status bar](./screenshots/critic-refinement-status.png)
+
 ## Disabling the Critic
 
 If you prefer not to use the critic feature, you can disable it in your settings:
 
 1. Open the command palette with `Ctrl+P`
 2. Select **Settings**
-3. Navigate to the **CLI Settings** tab
+3. Navigate to the **Critic Settings** tab
 4. Toggle off **Enable Critic (Experimental)**
 
 ![Critic settings in CLI](./screenshots/critic-cli-settings.png)
@@ -30012,6 +30281,77 @@ Other options include:
 - **Docker-based proxies**: Containerized solutions for better isolation.
 - **Cloud-hosted MCP services**: Third-party services that provide MCP endpoints.
 
+## OAuth Authentication
+
+Some MCP servers (like Notion MCP) require OAuth authentication instead of API keys. OpenHands supports OAuth-based MCP servers through the [FastMCP](https://gofastmcp.com/) library.
+
+### How OAuth Works
+
+When you configure an OAuth-enabled MCP server:
+
+1. **First connection**: When the agent first attempts to use tools from an OAuth-protected MCP server, OpenHands initiates the OAuth flow
+2. **Browser authentication**: A browser window opens automatically for you to authorize access
+3. **Token storage**: After authorization, tokens are securely stored locally in `~/.fastmcp/oauth-mcp-client-cache/`
+4. **Automatic refresh**: FastMCP automatically refreshes tokens as needed
+
+### Configuration
+
+<Tabs>
+  <Tab title="CLI">
+    Use the `--auth oauth` flag when adding an MCP server:
+
+    ```bash
+    openhands mcp add notion --transport http \
+      --auth oauth \
+      https://mcp.notion.com/mcp
+    ```
+
+    This creates a configuration in `~/.openhands/mcp.json`:
+    ```json
+    {
+      "mcpServers": {
+        "notion": {
+          "url": "https://mcp.notion.com/mcp",
+          "transport": "http",
+          "auth": "oauth"
+        }
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="SDK">
+    Configure OAuth in your `mcp_config`:
+
+    ```python
+    mcp_config = {
+        "mcpServers": {
+            "notion": {
+                "url": "https://mcp.notion.com/mcp",
+                "auth": "oauth"
+            }
+        }
+    }
+    agent = Agent(llm=llm, tools=tools, mcp_config=mcp_config)
+    ```
+
+    See the [SDK MCP Guide](/sdk/guides/mcp) for complete examples.
+  </Tab>
+  <Tab title="Config File">
+    Add the `auth` field to your server configuration:
+
+    ```toml
+    [mcp]
+    shttp_servers = [
+        {url = "https://mcp.notion.com/mcp", auth = "oauth"}
+    ]
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+OAuth MCP servers require user interaction for the initial authentication. This means they may not be suitable for fully automated/headless workflows. For automation, consider using API key-based authentication where available.
+</Note>
+
 ### Secrets Management
 Source: https://docs.openhands.dev/openhands/usage/settings/secrets-settings.md
 
@@ -31194,6 +31534,56 @@ For production incidents, always follow your organization's incident response pr
 - [Datadog Debugging Workflow](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/04_datadog_debugging) - Ready-to-use GitHub Actions workflow
 - [Prompting Best Practices](/openhands/usage/tips/prompting-best-practices) - Write effective prompts
 
+### Use Cases Overview
+Source: https://docs.openhands.dev/openhands/usage/use-cases/overview.md
+
+OpenHands supports a wide variety of software development tasks. Here are some of the key use cases where OpenHands can help accelerate your work.
+
+<CardGroup cols={2}>
+  <Card
+    title="Vulnerability Remediation"
+    icon="shield-halved"
+    href="/openhands/usage/use-cases/vulnerability-remediation"
+  >
+    Identify and fix security vulnerabilities in your codebase using OpenHands.
+  </Card>
+  <Card
+    title="Automated Code Review"
+    icon="code-pull-request"
+    href="/openhands/usage/use-cases/code-review"
+  >
+    Set up automated PR reviews to maintain code quality and catch bugs early.
+  </Card>
+  <Card
+    title="Incident Triage"
+    icon="triangle-exclamation"
+    href="/openhands/usage/use-cases/incident-triage"
+  >
+    Quickly investigate production incidents, analyze logs, and generate fixes.
+  </Card>
+  <Card
+    title="COBOL Modernization"
+    icon="arrows-rotate"
+    href="/openhands/usage/use-cases/cobol-modernization"
+  >
+    Understand, document, and modernize legacy COBOL systems while preserving business logic.
+  </Card>
+  <Card
+    title="Dependency Upgrades"
+    icon="arrow-up-right-dots"
+    href="/openhands/usage/use-cases/dependency-upgrades"
+  >
+    Automate dependency updates, handle breaking changes, and validate applications.
+  </Card>
+  <Card
+    title="Spark Migrations"
+    icon="bolt"
+    href="/openhands/usage/use-cases/spark-migrations"
+  >
+    Analyze, migrate, and validate Apache Spark applications across versions.
+  </Card>
+</CardGroup>
+
 ### Spark Migrations
 Source: https://docs.openhands.dev/openhands/usage/use-cases/spark-migrations.md
 
@@ -31791,6 +32181,7 @@ The `status` field indicates the current state of the conversation startup proce
 - `WORKING` - Initial processing
 - `WAITING_FOR_SANDBOX` - Waiting for sandbox to be ready
 - `PREPARING_REPOSITORY` - Cloning and setting up the repository
+- `SETTING_UP_SKILLS` - Configuring agent skills and tools
 - `READY` - Conversation is ready to use
 - `ERROR` - An error occurred during startup
 
@@ -31830,6 +32221,272 @@ The endpoint streams a JSON array incrementally. Each element represents a statu
 ```
 
 Each update is streamed as it occurs, allowing you to provide real-time feedback to users about the conversation startup progress.
+
+### Checking Conversation Status
+
+After starting a conversation, you can check its status to monitor whether the agent has completed its task.
+
+<Note>
+  The examples below show basic polling patterns. For production use, add proper error handling, 
+  exponential backoff, and handle network failures gracefully.
+</Note>
+
+#### Step 1: Check Start Task Status
+
+When you start a conversation, you receive a start task ID. Poll this endpoint until `status` becomes `READY` and `app_conversation_id` is available:
+
+```bash
+curl -X GET "https://app.all-hands.dev/api/v1/app-conversations/start-tasks?ids=TASK_ID" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Response:**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "READY",
+  "app_conversation_id": "660e8400-e29b-41d4-a716-446655440001",
+  "sandbox_id": "sandbox-abc123"
+}
+```
+
+#### Step 2: Check Conversation Execution Status
+
+Once you have the `app_conversation_id`, check whether the agent has finished its task:
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X GET "https://app.all-hands.dev/api/v1/app-conversations?ids=CONVERSATION_ID" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+  <Tab title="Python (with requests)">
+    ```python
+    import requests
+
+    api_key = "YOUR_API_KEY"
+    conversation_id = "YOUR_CONVERSATION_ID"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.get(
+        "https://app.all-hands.dev/api/v1/app-conversations",
+        headers=headers,
+        params={"ids": conversation_id}
+    )
+    response.raise_for_status()  # Raise exception for HTTP errors
+    conversations = response.json()
+
+    if conversations:
+        conv = conversations[0]
+        print(f"Sandbox Status: {conv.get('sandbox_status')}")
+        print(f"Execution Status: {conv.get('execution_status')}")
+    else:
+        print("Conversation not found")
+    ```
+  </Tab>
+</Tabs>
+
+**Response:**
+```json
+[
+  {
+    "id": "660e8400-e29b-41d4-a716-446655440001",
+    "sandbox_status": "RUNNING",
+    "execution_status": "finished",
+    "selected_repository": "yourusername/your-repo",
+    "title": "Fix README"
+  }
+]
+```
+
+#### Status Fields
+
+**`sandbox_status`** - The state of the sandbox environment:
+- `STARTING` - Sandbox is being created. **Action:** Continue polling.
+- `RUNNING` - Sandbox is active. **Action:** Check `execution_status` for task progress.
+- `PAUSED` - Sandbox is paused (due to rate limits or user action). **Action:** The sandbox will resume automatically when resources are available, or resume manually via the UI.
+- `ERROR` - Sandbox encountered an error. **Action:** This is a terminal state. Check conversation details in the UI for error information.
+- `MISSING` - Sandbox was deleted. **Action:** This is a terminal state. Start a new conversation if needed.
+
+**`execution_status`** - The state of the agent's task (available when sandbox is `RUNNING`):
+- `idle` - Agent is ready to receive tasks. **Action:** Continue polling if task was recently submitted.
+- `running` - Agent is actively working. **Action:** Continue polling.
+- `paused` - Execution is paused. **Action:** Continue polling; will resume automatically.
+- `waiting_for_confirmation` - Agent is waiting for user confirmation. **Action:** This is a blocking state. The agent needs user input via the UI to proceed. Your polling loop should treat this as a terminal state or alert the user.
+- `finished` - Agent has completed the task. **Action:** Terminal state. Task is done successfully.
+- `error` - Agent encountered an error. **Action:** Terminal state. Check conversation in UI for error details.
+- `stuck` - Agent is stuck and unable to proceed. **Action:** Terminal state. Manual intervention may be required.
+
+<Note>
+  **Terminal states** that should exit your polling loop: `finished`, `error`, `stuck`, `waiting_for_confirmation`.
+  The `waiting_for_confirmation` state requires user action through the UI before the agent can continue.
+</Note>
+
+#### Complete Polling Example
+
+Here's a complete example that starts a conversation and polls until completion:
+
+```python
+import requests
+import time
+
+api_key = "YOUR_API_KEY"
+base_url = "https://app.all-hands.dev"
+
+headers = {
+    "Authorization": f"Bearer {api_key}",
+    "Content-Type": "application/json"
+}
+
+# Start a conversation
+print("Starting conversation...")
+start_response = requests.post(
+    f"{base_url}/api/v1/app-conversations",
+    headers=headers,
+    json={
+        "initial_message": {
+            "content": [{"type": "text", "text": "Your task here"}]
+        },
+        "selected_repository": "yourusername/your-repo"
+    }
+)
+start_response.raise_for_status()
+start_task = start_response.json()
+task_id = start_task["id"]
+print(f"Start task ID: {task_id}")
+
+# Poll start task until conversation is ready (with timeout)
+conversation_id = None
+max_attempts = 60  # 5 minutes with 5-second intervals
+attempts = 0
+while not conversation_id and attempts < max_attempts:
+    task_response = requests.get(
+        f"{base_url}/api/v1/app-conversations/start-tasks",
+        headers=headers,
+        params={"ids": task_id}
+    )
+    task_response.raise_for_status()
+    tasks = task_response.json()
+    
+    if tasks and tasks[0].get("status") == "READY":
+        conversation_id = tasks[0].get("app_conversation_id")
+        print(f"Conversation ready: {base_url}/conversations/{conversation_id}")
+    elif tasks and tasks[0].get("status") == "ERROR":
+        print(f"Start task failed: {tasks[0].get('error', 'Unknown error')}")
+        exit(1)
+    else:
+        status = tasks[0].get("status") if tasks else "no response"
+        print(f"Start task status: {status}")
+        time.sleep(5)
+        attempts += 1
+
+if not conversation_id:
+    print("Timeout waiting for conversation to start")
+    exit(1)
+
+# Poll conversation until agent finishes (with timeout)
+# Terminal states: finished, error, stuck, waiting_for_confirmation
+max_attempts = 120  # 1 hour with 30-second intervals
+attempts = 0
+while attempts < max_attempts:
+    conv_response = requests.get(
+        f"{base_url}/api/v1/app-conversations",
+        headers=headers,
+        params={"ids": conversation_id}
+    )
+    conv_response.raise_for_status()
+    conversations = conv_response.json()
+    
+    if not conversations:
+        print("Warning: Conversation not found")
+        time.sleep(30)
+        attempts += 1
+        continue
+    
+    conv = conversations[0]
+    sandbox_status = conv.get("sandbox_status")
+    exec_status = conv.get("execution_status")
+    
+    # Check sandbox health first
+    if sandbox_status in ["ERROR", "MISSING"]:
+        print(f"Sandbox failed with status: {sandbox_status}")
+        exit(1)
+    
+    print(f"Execution status: {exec_status}")
+    
+    # Check for terminal states
+    if exec_status in ["finished", "error", "stuck"]:
+        print(f"Conversation completed with status: {exec_status}")
+        break
+    elif exec_status == "waiting_for_confirmation":
+        print("Agent is waiting for user confirmation in the UI")
+        print(f"Visit: {base_url}/conversations/{conversation_id}")
+        break
+    
+    time.sleep(30)
+    attempts += 1
+else:
+    print("Timeout waiting for conversation to complete")
+    exit(1)
+```
+
+### Listing All Conversations
+
+To list all your conversations, use the search endpoint:
+
+<Tabs>
+  <Tab title="cURL">
+    ```bash
+    curl -X GET "https://app.all-hands.dev/api/v1/app-conversations/search?limit=20" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+  <Tab title="Python (with requests)">
+    ```python
+    import requests
+
+    api_key = "YOUR_API_KEY"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    response = requests.get(
+        "https://app.all-hands.dev/api/v1/app-conversations/search",
+        headers=headers,
+        params={"limit": 20}
+    )
+    response.raise_for_status()
+    result = response.json()
+
+    for conv in result.get("items", []):
+        print(f"ID: {conv['id']}, Status: {conv.get('execution_status')}")
+    ```
+  </Tab>
+</Tabs>
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "id": "660e8400-e29b-41d4-a716-446655440001",
+      "sandbox_status": "RUNNING",
+      "execution_status": "finished",
+      "selected_repository": "yourusername/your-repo",
+      "title": "Fix README"
+    }
+  ],
+  "next_page_id": null
+}
+```
+
+<Note>
+  The search endpoint returns conversations in the `items` array. Use `next_page_id` 
+  for pagination if you have more conversations than the `limit`.
+</Note>
 
 ## Rate Limits
 
@@ -33357,6 +34014,7 @@ When OpenHands starts, it:
 ## Getting Started with MCP
 
 - **For detailed configuration**: See [MCP Settings](/openhands/usage/settings/mcp-settings)
+- **For CLI usage**: See [CLI MCP Servers](/openhands/usage/cli/mcp-servers)
 - **For SDK integration**: See [SDK MCP Guide](/sdk/guides/mcp)
 - **For architecture details**: See [MCP Architecture](/sdk/arch/mcp)
 
