@@ -34,6 +34,7 @@ Mintlify auto-generates `/llms.txt` and `/llms-full.txt`, but this repo **overri
 We do this so LLMs get **V1-only** context while legacy V0 pages remain available for humans.
 
 - Generator script: `scripts/generate-llms-files.py`
+- Sync workflow: `.github/workflows/check-llms-files.yml` runs weekly (and on demand) to open a PR when the files drift.
 - Regenerate (recommended):
   ```bash
   make llms
@@ -42,7 +43,7 @@ We do this so LLMs get **V1-only** context while legacy V0 pages remain availabl
   ```bash
   python3 scripts/generate-llms-files.py
   ```
-- Verify they are up-to-date:
+- Local verify (optional):
   ```bash
   make llms-check
   ```
