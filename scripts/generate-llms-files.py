@@ -51,10 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = "https://docs.openhands.dev"
 
 EXCLUDED_DIRS = {".git", ".github", ".agents", "tests", "openapi", "logo"}
-AI_INVARIANTS_RE = re.compile(
-    r"\{/\*\s*AI_INVARIANTS_BEGIN\s*\n(.*?)\n\s*AI_INVARIANTS_END\s*\*/\}",
-    re.DOTALL,
-)
+AI_INVARIANTS_SUFFIX = ".ai-invariants.md"
 
 
 @dataclass(frozen=True)
@@ -64,7 +61,7 @@ class DocPage:
     title: str
     description: str | None
     body: str
-    ai_invariants: list[str]
+    ai_invariants: str | None
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -104,10 +101,13 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fm, body
 
 
-def extract_ai_invariants(body: str) -> tuple[str, list[str]]:
-    matches = [match.group(1).strip() for match in AI_INVARIANTS_RE.finditer(body)]
-    cleaned = AI_INVARIANTS_RE.sub("", body)
-    return cleaned, matches
+def load_ai_invariants(rel_path: Path) -> str | None:
+    sidecar_path = rel_path.with_suffix(AI_INVARIANTS_SUFFIX)
+    full_path = ROOT / sidecar_path
+    if not full_path.exists():
+        return None
+    content = full_path.read_text(encoding="utf-8").strip()
+    return content or None
 
 
 def rel_to_route(rel_path: Path) -> str:
@@ -143,7 +143,7 @@ def iter_doc_pages() -> list[DocPage]:
 
         raw = mdx_path.read_text(encoding="utf-8")
         fm, body = parse_frontmatter(raw)
-        body, ai_invariants = extract_ai_invariants(body)
+        ai_invariants = load_ai_invariants(rel_path)
 
         title = fm.get("title")
         if not title:
@@ -299,11 +299,8 @@ def build_llms_full_txt(pages: list[DocPage]) -> str:
                 lines.append("")
 
             if page.ai_invariants:
-                lines.append("#### AI Invariants (OCL-like)")
+                lines.append(page.ai_invariants)
                 lines.append("")
-                for block in page.ai_invariants:
-                    lines.append(block)
-                    lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 

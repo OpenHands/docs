@@ -4117,68 +4117,6 @@ flowchart TB
     style Decision fill:#fff4df,stroke:#b7791f,stroke-width:2px
 ```
 
-## Invariants (Normative)
-
-### AgentBase: Configuration is Stateless and Immutable
-
-Natural language invariant:
-
-- An `AgentBase` instance is a **pure configuration object**. It may cache materialized `ToolDefinition` instances internally, but it must remain valid to re-create those tools from its declarative spec.
-
-
-
-### Initialization: System Prompt Precedes Any User Message
-
-`Agent.init_state(state, on_event=...)` is responsible for creating the initial system prompt event.
-
-Natural language invariant:
-
-- A `ConversationState` must not contain a user `MessageEvent` before it contains a `SystemPromptEvent`.
-
-
-
-### Tool Materialization: Names Resolve to Registered ToolDefinitions
-
-An `Agent` is configured with a list of tool *specs* (`openhands.sdk.tool.spec.Tool`) that reference registered `ToolDefinition` factories.
-
-Natural language invariant:
-
-- `resolve_tool(Tool(name=X))` must succeed (tool name present in registry) for all tools the agent intends to use.
-- Tool factories must return a **sequence** of `ToolDefinition` instances; tool sets (e.g., browser tool sets) are represented as multi-element sequences.
-
-### Multi-Tool Calls: Shared Thought Only on First ActionEvent
-
-When an LLM returns parallel tool calls, the SDK represents this as multiple `ActionEvent`s that share the same `llm_response_id`.
-
-Natural language invariant:
-
-- For a batch of `ActionEvent`s with the same `llm_response_id`, only the first action carries `thought` / `reasoning_content` / `thinking_blocks`; subsequent actions must have empty `thought`.
-
-
-
-### Confirmation Mode: Requires Both Analyzer and Policy
-
-`conversation.is_confirmation_mode_active` is true iff:
-
-- A `SecurityAnalyzer` is configured, and
-- The confirmation policy is not `NeverConfirm`.
-
-
-
-**Execution Modes:**
-
-| Mode | Behavior | Use Case |
-|------|----------|----------|
-| **Direct** | Execute immediately | Development, trusted environments |
-| **Confirmation** | Store as pending, wait for user approval | High-risk actions, production |
-
-**Security Integration:**
-
-Before execution, the security analyzer evaluates each action:
-- **Low Risk:** Execute immediately
-- **Medium Risk:** Log warning, execute with monitoring
-- **High Risk:** Block execution, request user confirmation
-
 ## Component Relationships
 
 ### How Agent Interacts
@@ -4219,23 +4157,79 @@ flowchart LR
 - **[Skills](/sdk/arch/skill)** - Prompt engineering and skill patterns
 - **[LLM](/sdk/arch/llm)** - Language model abstraction
 
-#### AI Invariants (OCL-like)
+## Invariants (Normative)
+
+### AgentBase: Configuration is Stateless and Immutable
+
+Natural language invariant:
+
+- An `AgentBase` instance is a **pure configuration object**. It may cache materialized `ToolDefinition` instances internally, but it must remain valid to re-create those tools from its declarative spec.
 
 OCL-like:
 
 - `context AgentBase inv Frozen: self.model_config.frozen = true`
 
+
+### Initialization: System Prompt Precedes Any User Message
+
+`Agent.init_state(state, on_event=...)` is responsible for creating the initial system prompt event.
+
+Natural language invariant:
+
+- A `ConversationState` must not contain a user `MessageEvent` before it contains a `SystemPromptEvent`.
+
 OCL-like (conceptual):
 
 - `context ConversationState inv SystemBeforeUser: self.events->select(e|e.oclIsKindOf(SystemPromptEvent))->size() >= 1 implies self.events->forAll(e| e.oclIsKindOf(MessageEvent) and e.source='user' implies e.index > systemPromptIndex )`
+
+
+### Tool Materialization: Names Resolve to Registered ToolDefinitions
+
+An `Agent` is configured with a list of tool *specs* (`openhands.sdk.tool.spec.Tool`) that reference registered `ToolDefinition` factories.
+
+Natural language invariant:
+
+- `resolve_tool(Tool(name=X))` must succeed (tool name present in registry) for all tools the agent intends to use.
+- Tool factories must return a **sequence** of `ToolDefinition` instances; tool sets (e.g., browser tool sets) are represented as multi-element sequences.
+
+### Multi-Tool Calls: Shared Thought Only on First ActionEvent
+
+When an LLM returns parallel tool calls, the SDK represents this as multiple `ActionEvent`s that share the same `llm_response_id`.
+
+Natural language invariant:
+
+- For a batch of `ActionEvent`s with the same `llm_response_id`, only the first action carries `thought` / `reasoning_content` / `thinking_blocks`; subsequent actions must have empty `thought`.
 
 OCL-like (as modeled in `event.base._combine_action_events`):
 
 - `context ActionEvent inv BatchedThoughtOnlyFirst: (self.llm_response_id = other.llm_response_id and self <> first) implies self.thought->isEmpty()`
 
+
+### Confirmation Mode: Requires Both Analyzer and Policy
+
+`conversation.is_confirmation_mode_active` is true iff:
+
+- A `SecurityAnalyzer` is configured, and
+- The confirmation policy is not `NeverConfirm`.
+
 OCL-like (conceptual):
 
 - `context BaseConversation inv ConfirmationModeIff: self.is_confirmation_mode_active = (self.state.security_analyzer <> null and not self.state.confirmation_policy.oclIsKindOf(NeverConfirm))`
+
+
+**Execution Modes:**
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| **Direct** | Execute immediately | Development, trusted environments |
+| **Confirmation** | Store as pending, wait for user approval | High-risk actions, production |
+
+**Security Integration:**
+
+Before execution, the security analyzer evaluates each action:
+- **Low Risk:** Execute immediately
+- **Medium Risk:** Log warning, execute with monitoring
+- **High Risk:** Block execution, request user confirmation
 
 ### Agent Server Package
 Source: https://docs.openhands.dev/sdk/arch/agent-server.md
@@ -5360,44 +5354,6 @@ The conversation system provides pluggable services that operate independently o
 
 **Design Principle:** Services read from the event log but never mutate state directly.
 
-## Invariants (Normative)
-
-### Conversation Factory: Workspace Chooses Implementation
-
-Natural language invariant:
-
-- `Conversation(...)` is a factory that returns `LocalConversation` unless the provided `workspace` is a `RemoteWorkspace`.
-- When `workspace` is remote, `persistence_dir` must be unset (`None`).
-
-
-
-### ConversationState: Validated Snapshot + Event Log
-
-Natural language invariants:
-
-- `ConversationState` is the **only** component intended to hold mutable execution status (`IDLE`, `RUNNING`, `WAITING_FOR_CONFIRMATION`, etc.).
-- `ConversationState` owns persistence (`FileStore`) and the event store; all other components treat persistence as an implementation detail.
-
-### Confirmation Mode Predicate
-
-The SDK exposes a single predicate for confirmation mode:
-
-- Confirmation mode is active iff `state.security_analyzer != None` **and** the confirmation policy is not `NeverConfirm`.
-
-### ask_agent() Must Be Stateless
-
-Natural language invariant (from the public contract):
-
-- `BaseConversation.ask_agent(question)` **must not** append events, mutate execution status, or persist anything. It is safe to call concurrently with `run()`.
-
-### Secrets Persistence Requires a Cipher
-
-Natural language invariant:
-
-- If `ConversationState` is persisted without a cipher, secret values are redacted and **cannot be recovered on restore**.
-
-(Implication: use `Cipher` when persistence is enabled and you expect to resume with secrets intact.)
-
 ## Component Relationships
 
 ### How Conversation Interacts
@@ -5434,11 +5390,46 @@ flowchart LR
 - **[Event System](/sdk/arch/events)** - Event types and flow
 - **[Conversation Usage Guide](/sdk/guides/convo-persistence)** - Practical examples
 
-#### AI Invariants (OCL-like)
+## Invariants (Normative)
+
+### Conversation Factory: Workspace Chooses Implementation
+
+Natural language invariant:
+
+- `Conversation(...)` is a factory that returns `LocalConversation` unless the provided `workspace` is a `RemoteWorkspace`.
+- When `workspace` is remote, `persistence_dir` must be unset (`None`).
 
 OCL-like (conceptual):
 
 - `context Conversation::__new__ pre RemoteNoPersistence: workspace.oclIsKindOf(RemoteWorkspace) implies persistence_dir = null`
+
+
+### ConversationState: Validated Snapshot + Event Log
+
+Natural language invariants:
+
+- `ConversationState` is the **only** component intended to hold mutable execution status (`IDLE`, `RUNNING`, `WAITING_FOR_CONFIRMATION`, etc.).
+- `ConversationState` owns persistence (`FileStore`) and the event store; all other components treat persistence as an implementation detail.
+
+### Confirmation Mode Predicate
+
+The SDK exposes a single predicate for confirmation mode:
+
+- Confirmation mode is active iff `state.security_analyzer != None` **and** the confirmation policy is not `NeverConfirm`.
+
+### ask_agent() Must Be Stateless
+
+Natural language invariant (from the public contract):
+
+- `BaseConversation.ask_agent(question)` **must not** append events, mutate execution status, or persist anything. It is safe to call concurrently with `run()`.
+
+### Secrets Persistence Requires a Cipher
+
+Natural language invariant:
+
+- If `ConversationState` is persisted without a cipher, secret values are redacted and **cannot be recovered on restore**.
+
+(Implication: use `Cipher` when persistence is enabled and you expect to resume with secrets intact.)
 
 ### Design Principles
 Source: https://docs.openhands.dev/sdk/arch/design.md
@@ -5518,6 +5509,10 @@ The SDK is designed so that **all runtime state that affects agent execution is 
 - **Configuration objects are immutable** (Pydantic `frozen=True` where applicable).
 - **The only intentionally mutable entity is `ConversationState`**, which owns the event log, execution status, secrets registry, and persistence handles.
 
+OCL-like:
+
+- `context AgentBase inv StatelessConfiguration: self.model_config.frozen = true`
+- `context Event inv Immutable: self.model_config.frozen = true`
 
 
 Natural language invariant:
@@ -5530,6 +5525,9 @@ All side effects against the environment (filesystem, processes, git operations)
 
 - Tools may execute in different runtimes (local process vs inside agent-server), but *conceptually* they always operate against a workspace rooted at `workspace.working_dir`.
 
+OCL-like:
+
+- `context BaseWorkspace inv WorkingDirIsString: self.working_dir.oclIsTypeOf(String)`
 
 
 ### Event Log is the Execution Trace
@@ -5544,6 +5542,10 @@ Natural language invariant:
 
 The SDK assumes an explicit `Action -> Observation` pairing.
 
+OCL-like (conceptual):
+
+- `context ActionEvent inv HasToolCallId: self.tool_call_id <> null`
+- `context ObservationEvent inv RefersToAction: self.action_id <> null`
 
 
 Natural language invariant:
@@ -5560,22 +5562,6 @@ The SDK makes *deployment mode* (local vs remote) a **runtime selection behind a
 <Note>
 This does **not** mean every optional method behaves identically across workspace types (e.g., `pause()` / `resume()` may be a no-op locally and meaningful remotely). The core conversation API (`send_message`, `run`, events) stays consistent.
 </Note>
-
-#### AI Invariants (OCL-like)
-
-OCL-like:
-
-- `context AgentBase inv StatelessConfiguration: self.model_config.frozen = true`
-- `context Event inv Immutable: self.model_config.frozen = true`
-
-OCL-like:
-
-- `context BaseWorkspace inv WorkingDirIsString: self.working_dir.oclIsTypeOf(String)`
-
-OCL-like (conceptual):
-
-- `context ActionEvent inv HasToolCallId: self.tool_call_id <> null`
-- `context ObservationEvent inv RefersToAction: self.action_id <> null`
 
 ### Events
 Source: https://docs.openhands.dev/sdk/arch/events.md
@@ -5720,51 +5706,6 @@ Events for metadata, control flow, and user actions (not sent to LLM):
 | **CondensationRequest** | environment | Trigger history compression | Signal to condenser when context window exceeded |
 | **Condensation** | environment | Compression result | `forgotten_event_ids`, `summary`, `summary_offset` |
 
-## Invariants (Normative)
-
-### Event Immutability
-
-All events inherit from `Event` / `LLMConvertibleEvent` with Pydantic config `frozen=True` and `extra="forbid"`.
-
-Natural language invariant:
-
-- Once appended to the event log, an event must be treated as immutable. Mutations are represented as *new events*, not edits.
-
-
-
-### LLM-Convertible Stream Can Be Reconstructed Deterministically
-
-Natural language invariant:
-
-- `LLMConvertibleEvent.events_to_messages(events)` must produce the exact LLM message stream used for decision making, including batching of parallel tool calls.
-
-### Parallel Tool Calls are Batched by llm_response_id
-
-When multiple `ActionEvent`s share the same `llm_response_id`, they represent a single assistant turn with multiple tool calls.
-
-Natural language invariant:
-
-- In a batch, only the first `ActionEvent` may contain `thought`/reasoning; subsequent actions must have empty `thought`. This is asserted when combining events.
-
-### Condensation is a Pure View Transformation
-
-`Condensation.apply(events)` removes forgotten events and optionally inserts a synthetic `CondensationSummaryEvent` at `summary_offset`.
-
-Natural language invariants:
-
-- Condensation never mutates existing events; it returns a new list.
-- `forgotten_event_ids` must refer to events that exist in the input list (otherwise the operation is a no-op for those IDs).
-- If `summary` is present, `summary_offset` must also be present to insert the summary into the view; otherwise the summary is metadata only.
-
-
-
-For the condenser algorithms, thresholds, and configuration, see **[Condenser Architecture](/sdk/arch/condenser)**.
-
-**Source Types:**
-- **user**: Event originated from user input
-- **agent**: Event generated by agent logic
-- **environment**: Event from system/framework/tools
-
 ## Component Relationships
 
 ### How Events Integrate
@@ -5839,15 +5780,56 @@ Two distinct error events exist in the SDK, with different purpose and visibilit
 - **[Tool System](/sdk/arch/tool-system)** - ActionEvent and ObservationEvent generation
 - **[Condenser](/sdk/arch/condenser)** - Event history compression
 
-#### AI Invariants (OCL-like)
+## Invariants (Normative)
+
+### Event Immutability
+
+All events inherit from `Event` / `LLMConvertibleEvent` with Pydantic config `frozen=True` and `extra="forbid"`.
+
+Natural language invariant:
+
+- Once appended to the event log, an event must be treated as immutable. Mutations are represented as *new events*, not edits.
 
 OCL-like:
 
 - `context Event inv Frozen: self.model_config.frozen = true`
 
+
+### LLM-Convertible Stream Can Be Reconstructed Deterministically
+
+Natural language invariant:
+
+- `LLMConvertibleEvent.events_to_messages(events)` must produce the exact LLM message stream used for decision making, including batching of parallel tool calls.
+
+### Parallel Tool Calls are Batched by llm_response_id
+
+When multiple `ActionEvent`s share the same `llm_response_id`, they represent a single assistant turn with multiple tool calls.
+
+Natural language invariant:
+
+- In a batch, only the first `ActionEvent` may contain `thought`/reasoning; subsequent actions must have empty `thought`. This is asserted when combining events.
+
+### Condensation is a Pure View Transformation
+
+`Condensation.apply(events)` removes forgotten events and optionally inserts a synthetic `CondensationSummaryEvent` at `summary_offset`.
+
+Natural language invariants:
+
+- Condensation never mutates existing events; it returns a new list.
+- `forgotten_event_ids` must refer to events that exist in the input list (otherwise the operation is a no-op for those IDs).
+- If `summary` is present, `summary_offset` must also be present to insert the summary into the view; otherwise the summary is metadata only.
+
 OCL-like (conceptual):
 
 - `context Condensation inv SummaryOffsetPair: (self.summary <> null) implies (self.summary_offset <> null) or true -- insertion requires both; metadata-only summary allowed`
+
+
+For the condenser algorithms, thresholds, and configuration, see **[Condenser Architecture](/sdk/arch/condenser)**.
+
+**Source Types:**
+- **user**: Event originated from user input
+- **agent**: Event generated by agent logic
+- **environment**: Event from system/framework/tools
 
 ### LLM
 Source: https://docs.openhands.dev/sdk/arch/llm.md
@@ -8388,88 +8370,6 @@ flowchart LR
 2. **Resolver Lookup** - Registry finds the registered resolver for the tool name
 3. **Factory Invocation** - Resolver calls the tool's `.create()` method with params and conversation state
 
-## Invariants (Normative)
-
-### ToolDefinition Naming
-
-By default, tool names are derived from the class name:
-
-- `TerminalTool` → `terminal`
-- `FileEditorTool` → `file_editor`
-
-Natural language invariant:
-
-- Unless explicitly overridden, `ToolDefinition.name` is deterministic and stable across runs.
-
-### Tool Registry
-
-`register_tool(name, factory)` maintains a global name→resolver mapping.
-
-Invariants:
-
-- Tool names must be non-empty strings.
-- A `ToolDefinition` instance can only be registered if it has a non-None `executor`.
-- A `ToolDefinition` subclass can only be registered if it implements a concrete `create(...)` classmethod that returns `Sequence[ToolDefinition]`.
-- Resolving an unregistered tool name must raise `KeyError`.
-
-
-
-### Executor Presence and Call Semantics
-
-Natural language invariant:
-
-- A `ToolDefinition` without an `executor` is not executable; attempts to call it must fail fast.
-- All tool execution is performed in a `LocalConversation` context (even when invoked remotely) because the agent-server hosts the actual conversation that runs tools.
-
-### Action/Observation Schemas are Validated
-
-Natural language invariant:
-
-- `Action` and `Observation` are Pydantic models; tool inputs are validated before execution, and tool results are **parsed/validated** into the declared observation model (if present). If the executor already returns the correct observation type, this is a no-op.
-
-
-1. **[Tool (Spec)](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/spec.py)** - Configuration object with `name` (e.g., "BashTool") and `params` (e.g., `{"working_dir": "/workspace"}`)
-2. **Resolver Lookup** - Registry finds the registered resolver for the tool name
-3. **Factory Invocation** - Resolver calls the tool's `.create()` method with params and conversation state
-4. **Instance Creation** - Tool instance(s) are created with configured executors
-5. **Agent Usage** - Instances are added to the agent's tools_map for execution
-
-**Registration Types:**
-
-| Type | Registration | Resolver Behavior |
-|------|-------------|-------------------|
-| **Tool Instance** | `register_tool(name, instance)` | Returns the fixed instance (params not allowed) |
-| **Tool Subclass** | `register_tool(name, ToolClass)` | Calls `ToolClass.create(**params, conv_state=state)` |
-| **Factory Function** | `register_tool(name, factory)` | Calls `factory(**params, conv_state=state)` |
-
-### File Organization
-
-Tools follow a consistent file structure for maintainability:
-
-```
-openhands-tools/openhands/tools/my_tool/
-├── __init__.py           # Export MyTool
-├── definition.py         # Action, Observation, MyTool(ToolDefinition)
-├── impl.py              # MyExecutor(ToolExecutor)
-└── [other modules]      # Tool-specific utilities
-```
-
-**File Responsibilities:**
-
-| File | Contains | Purpose |
-|------|----------|---------|
-| `definition.py` | Action, Observation, ToolDefinition subclass | Public API, schema definitions, factory method |
-| `impl.py` | ToolExecutor implementation | Business logic, state management, execution |
-| `__init__.py` | Tool exports | Package interface |
-
-**Benefits:**
-- **Separation of Concerns** - Public API separate from implementation
-- **Avoid Circular Imports** - Import `impl` only inside `create()` method
-- **Consistency** - All tools follow same structure for discoverability
-
-**Example Reference:** See [`terminal/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-tools/openhands/tools/terminal) for complete implementation
-
-
 ## MCP Integration
 
 The tool system supports external tools via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). MCP tools are **configured separately from the tool registry** via the `mcp_config` field in `Agent` class and are automatically discovered from MCP servers during agent initialization.
@@ -8685,11 +8585,89 @@ flowchart TB
 - **[Custom Tools Guide](/sdk/guides/custom-tools)** - Building your own tools
 - **[FastMCP Documentation](https://gofastmcp.com/)** - Underlying MCP client library
 
-#### AI Invariants (OCL-like)
+## Invariants (Normative)
+
+### ToolDefinition Naming
+
+By default, tool names are derived from the class name:
+
+- `TerminalTool` → `terminal`
+- `FileEditorTool` → `file_editor`
+
+Natural language invariant:
+
+- Unless explicitly overridden, `ToolDefinition.name` is deterministic and stable across runs.
+
+### Tool Registry
+
+`register_tool(name, factory)` maintains a global name→resolver mapping.
+
+Invariants:
+
+- Tool names must be non-empty strings.
+- A `ToolDefinition` instance can only be registered if it has a non-None `executor`.
+- A `ToolDefinition` subclass can only be registered if it implements a concrete `create(...)` classmethod that returns `Sequence[ToolDefinition]`.
+- Resolving an unregistered tool name must raise `KeyError`.
 
 OCL-like (conceptual):
 
 - `context ToolRegistry inv NonEmptyNames: name.trim().size() > 0`
+
+
+### Executor Presence and Call Semantics
+
+Natural language invariant:
+
+- A `ToolDefinition` without an `executor` is not executable; attempts to call it must fail fast.
+- All tool execution is performed in a `LocalConversation` context (even when invoked remotely) because the agent-server hosts the actual conversation that runs tools.
+
+### Action/Observation Schemas are Validated
+
+Natural language invariant:
+
+- `Action` and `Observation` are Pydantic models; tool inputs are validated before execution, and tool results are **parsed/validated** into the declared observation model (if present). If the executor already returns the correct observation type, this is a no-op.
+
+
+1. **[Tool (Spec)](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/tool/spec.py)** - Configuration object with `name` (e.g., "BashTool") and `params` (e.g., `{"working_dir": "/workspace"}`)
+2. **Resolver Lookup** - Registry finds the registered resolver for the tool name
+3. **Factory Invocation** - Resolver calls the tool's `.create()` method with params and conversation state
+4. **Instance Creation** - Tool instance(s) are created with configured executors
+5. **Agent Usage** - Instances are added to the agent's tools_map for execution
+
+**Registration Types:**
+
+| Type | Registration | Resolver Behavior |
+|------|-------------|-------------------|
+| **Tool Instance** | `register_tool(name, instance)` | Returns the fixed instance (params not allowed) |
+| **Tool Subclass** | `register_tool(name, ToolClass)` | Calls `ToolClass.create(**params, conv_state=state)` |
+| **Factory Function** | `register_tool(name, factory)` | Calls `factory(**params, conv_state=state)` |
+
+### File Organization
+
+Tools follow a consistent file structure for maintainability:
+
+```
+openhands-tools/openhands/tools/my_tool/
+├── __init__.py           # Export MyTool
+├── definition.py         # Action, Observation, MyTool(ToolDefinition)
+├── impl.py              # MyExecutor(ToolExecutor)
+└── [other modules]      # Tool-specific utilities
+```
+
+**File Responsibilities:**
+
+| File | Contains | Purpose |
+|------|----------|---------|
+| `definition.py` | Action, Observation, ToolDefinition subclass | Public API, schema definitions, factory method |
+| `impl.py` | ToolExecutor implementation | Business logic, state management, execution |
+| `__init__.py` | Tool exports | Package interface |
+
+**Benefits:**
+- **Separation of Concerns** - Public API separate from implementation
+- **Avoid Circular Imports** - Import `impl` only inside `create()` method
+- **Consistency** - All tools follow same structure for discoverability
+
+**Example Reference:** See [`terminal/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-tools/openhands/tools/terminal) for complete implementation
 
 ### Workspace
 Source: https://docs.openhands.dev/sdk/arch/workspace.md
@@ -8813,70 +8791,6 @@ flowchart LR
 | **timeout** | bool | Whether command timed out |
 | **duration** | float | Execution time in seconds |
 
-## Invariants (Normative)
-
-### Workspace Factory: Host Chooses Remote
-
-The `Workspace(...)` constructor is a factory:
-
-- If `host` is provided, it returns a `RemoteWorkspace`.
-- Otherwise it returns a `LocalWorkspace`.
-
-
-
-### BaseWorkspace Contract
-
-All workspace implementations must satisfy:
-
-- `execute_command(command, cwd, timeout)` returns a `CommandResult` where `exit_code=-1` indicates timeout.
-- `file_upload` / `file_download` return a `FileOperationResult` with `success=false` and a populated `error` field on failure.
-- Git helpers (`git_changes`, `git_diff`) must raise if the path is not a git repository.
-
-### working_dir Normalization
-
-Natural language invariant:
-
-- `working_dir` is normalized to a `str` even if passed as a `Path`.
-
-### Pause/Resume Semantics (Optional Capability)
-
-`pause()` / `resume()` are intentionally **optional capabilities**:
-
-- `LocalWorkspace.pause()` / `.resume()` are no-ops.
-- Remote/container workspaces may implement pause/resume to conserve resources.
-- If a workspace type does not support pausing, it must raise `NotImplementedError`.
-
-#### Discussion: `pause()` / `resume()` semantics (design tradeoff)
-
-There is an argument that this is compatible with the “swap workspaces without rewriting code” principle, because most client code should only rely on the *core* workspace and conversation operations, while optional capabilities are feature-detected or used conditionally.
-
-There is a mild design smell here: the method names `pause()` / `resume()` suggest a strong guarantee (that work is actually suspended), but the SDK currently treats them as a **best-effort resource management hook**.
-
-- Locally, there is often nothing meaningful the workspace can suspend at the boundary (it is operating on the host OS), so `LocalWorkspace.pause()` is a no-op.
-- Some remote/container workspaces may be able to pause a container or VM, but others may not.
-
-This tension matters because it creates two different reasonable expectations:
-
-1. *Ergonomic expectation*: orchestration code can call `pause()` unconditionally and it will be safe.
-2. *Guarantee expectation*: calling `pause()` actually pauses resource usage.
-
-**Maybe it would make sense to** model this explicitly as an optional capability:
-
-- Add `supports_pause` (or a richer `pause_capability`) to `BaseWorkspace`, and
-- Make `pause()` / `resume()` no-ops everywhere by default (including remote) while letting pausable implementations override,
-- Keep a strict helper (e.g., `pause_or_raise()`) for callers who require a guarantee.
-
-This would make the default behavior unsurprising (safe to call), while still letting clients opt into fail-fast behavior when pausing is required.
-
-
-### File Operations
-
-| Operation | Local Implementation | Remote Implementation |
-|-----------|---------------------|----------------------|
-| **Upload** | `shutil.copy()` | `POST /file/upload` with multipart |
-| **Download** | `shutil.copy()` | `GET /file/download` stream |
-| **Result** | `FileOperationResult` | `FileOperationResult` |
-
 ## Resource Management
 
 Workspaces use **context manager** for safe resource handling:
@@ -8953,11 +8867,72 @@ flowchart LR
 - **[Agent Server](/sdk/arch/agent-server)** - Remote execution API
 - **[Tool System](/sdk/arch/tool-system)** - Tools that use workspace for execution
 
-#### AI Invariants (OCL-like)
+## Invariants (Normative)
+
+### Workspace Factory: Host Chooses Remote
+
+The `Workspace(...)` constructor is a factory:
+
+- If `host` is provided, it returns a `RemoteWorkspace`.
+- Otherwise it returns a `LocalWorkspace`.
 
 OCL-like (conceptual):
 
 - `context Workspace::__new__ post RemoteIffHost: (host <> null) implies result.oclIsKindOf(RemoteWorkspace)`
+
+
+### BaseWorkspace Contract
+
+All workspace implementations must satisfy:
+
+- `execute_command(command, cwd, timeout)` returns a `CommandResult` where `exit_code=-1` indicates timeout.
+- `file_upload` / `file_download` return a `FileOperationResult` with `success=false` and a populated `error` field on failure.
+- Git helpers (`git_changes`, `git_diff`) must raise if the path is not a git repository.
+
+### working_dir Normalization
+
+Natural language invariant:
+
+- `working_dir` is normalized to a `str` even if passed as a `Path`.
+
+### Pause/Resume Semantics (Optional Capability)
+
+`pause()` / `resume()` are intentionally **optional capabilities**:
+
+- `LocalWorkspace.pause()` / `.resume()` are no-ops.
+- Remote/container workspaces may implement pause/resume to conserve resources.
+- If a workspace type does not support pausing, it must raise `NotImplementedError`.
+
+#### Discussion: `pause()` / `resume()` semantics (design tradeoff)
+
+There is an argument that this is compatible with the “swap workspaces without rewriting code” principle, because most client code should only rely on the *core* workspace and conversation operations, while optional capabilities are feature-detected or used conditionally.
+
+There is a mild design smell here: the method names `pause()` / `resume()` suggest a strong guarantee (that work is actually suspended), but the SDK currently treats them as a **best-effort resource management hook**.
+
+- Locally, there is often nothing meaningful the workspace can suspend at the boundary (it is operating on the host OS), so `LocalWorkspace.pause()` is a no-op.
+- Some remote/container workspaces may be able to pause a container or VM, but others may not.
+
+This tension matters because it creates two different reasonable expectations:
+
+1. *Ergonomic expectation*: orchestration code can call `pause()` unconditionally and it will be safe.
+2. *Guarantee expectation*: calling `pause()` actually pauses resource usage.
+
+**Maybe it would make sense to** model this explicitly as an optional capability:
+
+- Add `supports_pause` (or a richer `pause_capability`) to `BaseWorkspace`, and
+- Make `pause()` / `resume()` no-ops everywhere by default (including remote) while letting pausable implementations override,
+- Keep a strict helper (e.g., `pause_or_raise()`) for callers who require a guarantee.
+
+This would make the default behavior unsurprising (safe to call), while still letting clients opt into fail-fast behavior when pausing is required.
+
+
+### File Operations
+
+| Operation | Local Implementation | Remote Implementation |
+|-----------|---------------------|----------------------|
+| **Upload** | `shutil.copy()` | `POST /file/upload` with multipart |
+| **Download** | `shutil.copy()` | `GET /file/download` stream |
+| **Result** | `FileOperationResult` | `FileOperationResult` |
 
 ### FAQ
 Source: https://docs.openhands.dev/sdk/faq.md
