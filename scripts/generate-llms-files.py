@@ -51,6 +51,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = "https://docs.openhands.dev"
 
 EXCLUDED_DIRS = {".git", ".github", ".agents", "tests", "openapi", "logo"}
+AI_INVARIANTS_RE = re.compile(
+    r"\{/\*\s*AI_INVARIANTS_BEGIN\s*\n(.*?)\n\s*AI_INVARIANTS_END\s*\*/\}",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +64,7 @@ class DocPage:
     title: str
     description: str | None
     body: str
+    ai_invariants: list[str]
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -99,6 +104,12 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fm, body
 
 
+def extract_ai_invariants(body: str) -> tuple[str, list[str]]:
+    matches = [match.group(1).strip() for match in AI_INVARIANTS_RE.finditer(body)]
+    cleaned = AI_INVARIANTS_RE.sub("", body)
+    return cleaned, matches
+
+
 def rel_to_route(rel_path: Path) -> str:
     p = rel_path.as_posix()
     if p.endswith(".mdx"):
@@ -132,6 +143,7 @@ def iter_doc_pages() -> list[DocPage]:
 
         raw = mdx_path.read_text(encoding="utf-8")
         fm, body = parse_frontmatter(raw)
+        body, ai_invariants = extract_ai_invariants(body)
 
         title = fm.get("title")
         if not title:
@@ -147,6 +159,7 @@ def iter_doc_pages() -> list[DocPage]:
                 title=title,
                 description=description,
                 body=body.strip(),
+                ai_invariants=ai_invariants,
             )
         )
 
@@ -284,6 +297,13 @@ def build_llms_full_txt(pages: list[DocPage]) -> str:
             if page.body:
                 lines.append(page.body)
                 lines.append("")
+
+            if page.ai_invariants:
+                lines.append("#### AI Invariants (OCL-like)")
+                lines.append("")
+                for block in page.ai_invariants:
+                    lines.append(block)
+                    lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 

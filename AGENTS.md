@@ -156,10 +156,9 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 ## AI-only invariants in SDK architecture docs
 
 - Keep natural-language invariants visible in `sdk/arch/*.mdx`.
-- Wrap OCL-like invariants in HTML comments with clear sentinels:
-  - `<!-- AI_INVARIANTS_BEGIN -->`
-  - `<!-- AI_INVARIANTS_END -->`
-  - Place the OCL block inside the comment so it does not render.
+- Wrap OCL-like invariants in an MDX comment block so they do not render:
+  - `{/* AI_INVARIANTS_BEGIN` ... `AI_INVARIANTS_END */}`
+- The llms generator extracts these blocks and injects them into `llms-full.txt`.
 
 ## LLM API Key Options
 
