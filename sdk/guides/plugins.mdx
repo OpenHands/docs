@@ -196,7 +196,7 @@ Brief explanation on how to use a plugin with an agent.
 
 ## Ready-to-run Example
 
-The example below demonstrates plugin loading via Conversation and plugin management utilities (install, list, update, uninstall).
+The example below demonstrates plugin loading via Conversation and plugin management utilities (install, list, load, and uninstall).
 
 <Note>
 This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
@@ -207,9 +207,9 @@ This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_
 
 This example demonstrates plugin loading and management in the SDK:
 
-1. Loading plugins via Conversation (PluginSource)
-2. Installing plugins to persistent storage
-3. Listing, updating, and uninstalling plugins
+1. Loading plugins from GitHub via Conversation (PluginSource)
+2. Installing plugins to persistent storage (local and GitHub)
+3. Listing, loading, and uninstalling plugins
 
 Plugins bundle skills, hooks, and MCP config together.
 
@@ -248,22 +248,26 @@ script_dir = Path(__file__).parent
 local_plugin_path = script_dir / "example_plugins" / "code-quality"
 
 
-def demo_conversation_with_plugins(llm: LLM) -> None:
-    """Demo 1: Load plugins via Conversation's plugins parameter.
+def demo_conversation_with_github_plugin(llm: LLM) -> None:
+    """Demo 1: Load plugin from GitHub via Conversation.
 
-    This is the recommended way to use plugins - they are loaded lazily
-    when the conversation starts.
+    This demonstrates loading a plugin directly from GitHub using PluginSource.
+    The plugin is fetched and loaded lazily when the conversation starts.
+
+    We load the anthropics/skills repository which contains the "document-skills"
+    plugin with skills for pptx, xlsx, docx, and pdf document processing.
     """
     print("\n" + "=" * 60)
-    print("DEMO 1: Loading plugins via Conversation")
+    print("DEMO 1: Loading plugin from GitHub via Conversation")
     print("=" * 60)
 
-    # Define plugins to load
+    # Load the anthropics/skills repository which contains the document-skills plugin
+    # This plugin bundles multiple document processing skills including pptx
     plugins = [
-        PluginSource(source=str(local_plugin_path)),
-        # Examples of other sources:
-        # PluginSource(source="github:owner/repo", ref="v1.0.0"),
-        # PluginSource(source="github:owner/monorepo", repo_path="plugins/my-plugin"),
+        PluginSource(
+            source="github:anthropics/skills",
+            ref="main",
+        ),
     ]
 
     agent = Agent(
@@ -272,24 +276,34 @@ def demo_conversation_with_plugins(llm: LLM) -> None:
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        conversation = Conversation(
-            agent=agent,
-            workspace=tmpdir,
-            plugins=plugins,
-        )
+        try:
+            conversation = Conversation(
+                agent=agent,
+                workspace=tmpdir,
+                plugins=plugins,
+            )
 
-        # The "lint" keyword triggers the python-linting skill
-        conversation.send_message("How do I lint Python code? Brief answer please.")
+            # Verify skills were loaded
+            skills = (
+                conversation.agent.agent_context.skills
+                if conversation.agent.agent_context
+                else []
+            )
+            print(f"✓ Loaded {len(skills)} skill(s) from GitHub plugin")
+            for skill in skills:
+                print(f"  - {skill.name}")
 
-        # Verify skills were loaded
-        skills = (
-            conversation.agent.agent_context.skills
-            if conversation.agent.agent_context
-            else []
-        )
-        print(f"✓ Loaded {len(skills)} skill(s) from plugins")
+            # Ask a question that uses the pptx skill
+            conversation.send_message(
+                "What's the best way to create a PowerPoint presentation "
+                "programmatically? Check the skill before you answer."
+            )
 
-        conversation.run()
+            conversation.run()
+
+        except PluginFetchError as e:
+            print(f"⚠ Could not fetch from GitHub: {e}")
+            print("  Skipping this demo (network or rate limiting issue)")
 
 
 def demo_install_local_plugin(installed_dir: Path) -> None:
@@ -308,25 +322,37 @@ def demo_install_local_plugin(installed_dir: Path) -> None:
 
 
 def demo_install_github_plugin(installed_dir: Path) -> None:
-    """Demo 3: Install a plugin from GitHub.
+    """Demo 3: Install a plugin from GitHub to persistent storage.
 
-    Demonstrates the github:owner/repo shorthand with repo_path for monorepos.
+    Demonstrates loading the anthropics/skills repository which contains
+    multiple document processing skills (pptx, xlsx, docx, pdf).
     """
     print("\n" + "=" * 60)
     print("DEMO 3: Installing plugin from GitHub")
     print("=" * 60)
 
     try:
-        # Install from anthropics/skills repository
+        # Install the anthropics/skills repository (contains document-skills plugin)
         info = install_plugin(
             source="github:anthropics/skills",
-            repo_path="skills/pptx",
             ref="main",
             installed_dir=installed_dir,
         )
         print(f"✓ Installed: {info.name} v{info.version}")
         print(f"  Source: {info.source}")
         print(f"  Resolved ref: {info.resolved_ref}")
+
+        # Show the skills loaded from the plugin
+        plugins = load_installed_plugins(installed_dir=installed_dir)
+        for plugin in plugins:
+            if plugin.name == info.name:
+                skills = plugin.get_all_skills()
+                print(f"  Skills: {len(skills)}")
+                for skill in skills[:5]:  # Show first 5 skills
+                    desc = skill.description or "(no description)"
+                    print(f"    - {skill.name}: {desc[:50]}...")
+                if len(skills) > 5:
+                    print(f"    ... and {len(skills) - 5} more skills")
 
     except PluginFetchError as e:
         print(f"⚠ Could not fetch from GitHub: {e}")
@@ -386,9 +412,9 @@ if __name__ == "__main__":
         installed_dir = Path(tmpdir) / "installed"
         installed_dir.mkdir()
 
-        # Demo 1: Conversation with plugins (requires LLM)
+        # Demo 1: Conversation with GitHub plugin (requires LLM)
         if llm:
-            demo_conversation_with_plugins(llm)
+            demo_conversation_with_github_plugin(llm)
 
         # Demo 2-5: Plugin management (no LLM required)
         demo_install_local_plugin(installed_dir)
@@ -410,41 +436,103 @@ if __name__ == "__main__":
 
 ## Installing Plugins to Persistent Storage
 
-The SDK provides utilities to install plugins to a local directory (`~/.openhands/plugins/installed/` by default). Installed plugins are tracked in `.installed.json`, which stores metadata including a persistent enabled flag.
+The SDK provides utilities to install plugins to a local directory
+(`~/.openhands/plugins/installed/` by default). Installed plugins are tracked
+in `.installed.json`, which stores metadata including a persistent enabled
+flag.
 
-Use `list_installed_plugins()` to see all tracked plugins (enabled and disabled). Use `load_installed_plugins()` to load only enabled plugins. Toggle plugins on/off with `enable_plugin()` and `disable_plugin()` without uninstalling.
+Use `list_installed_plugins()` to see all tracked plugins (enabled and
+disabled). Use `load_installed_plugins()` to load only enabled plugins.
+`install_plugin()`, `enable_plugin()`, `disable_plugin()`, and
+`uninstall_plugin()` are exposed from `openhands.sdk.plugin`, which gives the
+CLI a clean SDK surface for `/plugin install`, `/plugin enable`,
+`/plugin disable`, and `/plugin uninstall`.
 
-```python icon="python"
+### Enable and Disable Installed Plugins
+
+<Note>
+Source: [examples/05_skills_and_plugins/03_plugin_enable_disable/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/03_plugin_enable_disable/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/03_plugin_enable_disable/main.py
+"""Example: Enable and Disable Installed Plugins
+
+This example demonstrates the persistent plugin lifecycle APIs:
+
+1. Install a plugin into an isolated installed directory
+2. Inspect the `.installed.json` metadata file and `enabled` flag
+3. Disable the plugin and confirm it is excluded from `load_installed_plugins()`
+4. Re-enable the plugin without reinstalling it
+
+This is useful for CLI commands that need to toggle plugins on and off while
+preserving the installation on disk.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
 from openhands.sdk.plugin import (
     disable_plugin,
     enable_plugin,
     install_plugin,
     list_installed_plugins,
     load_installed_plugins,
-    uninstall_plugin,
 )
 
-# Install from local path or GitHub
-install_plugin(source="/path/to/plugin")
-install_plugin(source="github:owner/repo", ref="v1.0.0")
 
-# List installed plugins (includes enabled + disabled)
-for info in list_installed_plugins():
-    status = "enabled" if info.enabled else "disabled"
-    print(f"{info.name} v{info.version} ({status})")
+script_dir = Path(__file__).resolve().parent
+local_plugin_path = (
+    script_dir.parent / "02_loading_plugins" / "example_plugins" / "code-quality"
+)
 
-# Disable a plugin (won't be loaded until re-enabled)
-disable_plugin("plugin-name")
 
-# Load only enabled plugins for your agent
-plugins = load_installed_plugins()
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted plugin state."""
+    print(f"\n{label}")
+    print("-" * len(label))
 
-# Later: re-enable and reload
-enable_plugin("plugin-name")
-plugins = load_installed_plugins()
+    installed = list_installed_plugins(installed_dir=installed_dir)
+    print("Tracked plugins:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled})")
 
-# Uninstall
-uninstall_plugin("plugin-name")
+    loaded = load_installed_plugins(installed_dir=installed_dir)
+    print(f"Loaded plugins: {[plugin.name for plugin in loaded]}")
+
+    metadata_path = installed_dir / ".installed.json"
+    print("Metadata file:")
+    print(metadata_path.read_text())
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-plugins"
+        installed_dir.mkdir(parents=True)
+
+        info = install_plugin(
+            source=str(local_plugin_path),
+            installed_dir=installed_dir,
+        )
+        print(f"Installed plugin: {info.name} v{info.version}")
+        print_state("After install", installed_dir)
+
+        assert disable_plugin(info.name, installed_dir=installed_dir) is True
+        print_state("After disable", installed_dir)
+
+        metadata = json.loads((installed_dir / ".installed.json").read_text())
+        assert metadata["plugins"][info.name]["enabled"] is False
+        assert load_installed_plugins(installed_dir=installed_dir) == []
+
+        assert enable_plugin(info.name, installed_dir=installed_dir) is True
+        print_state("After re-enable", installed_dir)
+
+        metadata = json.loads((installed_dir / ".installed.json").read_text())
+        assert metadata["plugins"][info.name]["enabled"] is True
+        loaded_names = [plugin.name for plugin in load_installed_plugins(installed_dir)]
+        assert loaded_names == [info.name]
+
+    print("\nEXAMPLE_COST: 0")
 ```
 
 ## Next Steps

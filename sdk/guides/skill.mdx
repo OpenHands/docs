@@ -104,45 +104,171 @@ Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic i
 
 ## Managing Installed Skills
 
-You can install AgentSkills into a persistent directory and list/update them
-using `openhands.sdk.skills`. Skills are stored under
+You can install AgentSkills into a persistent directory and manage them through
+`openhands.sdk.skills`. Skills are stored under
 `~/.openhands/skills/installed/` with a `.installed.json` metadata file that
-records an `enabled` flag. `list_installed_skills` returns all installed skills,
-while `load_installed_skills` returns only those with `enabled=true`.
+records an `enabled` flag. `list_installed_skills()` returns all installed
+skills, while `load_installed_skills()` returns only those with
+`enabled=true`.
 
-```python icon="python"
+The public lifecycle API includes `install_skill()`, `update_skill()`,
+`enable_skill()`, `disable_skill()`, and `uninstall_skill()`, which gives the
+CLI a clean SDK surface for `/skill install`, `/skill enable`,
+`/skill disable`, and `/skill uninstall`.
+
+### Enable and Disable Installed Skills
+
+<Note>
+Source: [examples/05_skills_and_plugins/04_skill_enable_disable/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/04_skill_enable_disable/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/04_skill_enable_disable/main.py
+"""Example: Enable and Disable Installed Skills
+
+This example demonstrates the persistent skill lifecycle APIs:
+
+1. Install a skill into an isolated installed directory
+2. Inspect the `.installed.json` metadata file and `enabled` flag
+3. Disable the skill and confirm it is excluded from `load_installed_skills()`
+4. Re-enable the skill without reinstalling it
+
+This is useful for CLI commands that need to toggle skills on and off while
+preserving the installation on disk.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
 from openhands.sdk.skills import (
     disable_skill,
     enable_skill,
     install_skill,
     list_installed_skills,
     load_installed_skills,
-    uninstall_skill,
-    update_skill,
 )
 
-# Install from GitHub (supports git URLs, local paths, and repo_path for monorepos)
-info = install_skill("github:owner/my-skill", ref="v1.0.0")
-print(f"Installed {info.name} from {info.source}")
 
-# List installed skills
-for skill_info in list_installed_skills():
-    print(f"{skill_info.name}: {skill_info.description}")
+script_dir = Path(__file__).resolve().parent
+local_skill_path = (
+    script_dir.parent / "01_loading_agentskills" / "example_skills" / "rot13-encryption"
+)
 
-# Enable/disable controls which skills load (state persisted in .installed.json)
 
-# Disable a skill temporarily (e.g., while debugging or if it conflicts)
-disable_skill("my-skill")
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted skill state."""
+    print(f"\n{label}")
+    print("-" * len(label))
 
-# Load installed skills for an AgentContext (only enabled skills load)
-skills = load_installed_skills()
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled})")
 
-# Re-enable when needed
-# enable_skill("my-skill")
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"Loaded skills: {[skill.name for skill in loaded]}")
 
-# Update or uninstall
-update_skill("my-skill")
-uninstall_skill("my-skill")
+    metadata_path = installed_dir / ".installed.json"
+    print("Metadata file:")
+    print(metadata_path.read_text())
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-skills"
+        installed_dir.mkdir(parents=True)
+
+        info = install_skill(
+            source=str(local_skill_path),
+            installed_dir=installed_dir,
+        )
+        print(f"Installed skill: {info.name}")
+        print_state("After install", installed_dir)
+
+        assert disable_skill(info.name, installed_dir=installed_dir) is True
+        print_state("After disable", installed_dir)
+
+        metadata = json.loads((installed_dir / ".installed.json").read_text())
+        assert metadata["skills"][info.name]["enabled"] is False
+        assert load_installed_skills(installed_dir=installed_dir) == []
+
+        assert enable_skill(info.name, installed_dir=installed_dir) is True
+        print_state("After re-enable", installed_dir)
+
+        metadata = json.loads((installed_dir / ".installed.json").read_text())
+        assert metadata["skills"][info.name]["enabled"] is True
+        loaded_names = [skill.name for skill in load_installed_skills(installed_dir)]
+        assert loaded_names == [info.name]
+
+    print("\nEXAMPLE_COST: 0")
+```
+
+### Uninstall Installed Skills
+
+<Note>
+Source: [examples/05_skills_and_plugins/05_skill_uninstall/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/05_skill_uninstall/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/05_skill_uninstall/main.py
+"""Example: Uninstall Installed Skills
+
+This example demonstrates the uninstall lifecycle for skills:
+
+1. Install multiple skills into an isolated installed directory
+2. Inspect the `.installed.json` metadata file before uninstalling
+3. Uninstall one skill by name
+4. Confirm the skill directory and metadata entry are removed while other
+   installed skills remain available
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
+from openhands.sdk.skills import install_skill, list_installed_skills, uninstall_skill
+
+
+script_dir = Path(__file__).resolve().parent
+skills_dir = script_dir.parent / "01_loading_agentskills" / "example_skills"
+
+
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked skills and the persisted metadata file."""
+    print(f"\n{label}")
+    print("-" * len(label))
+
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print(f"Tracked skills: {[info.name for info in installed]}")
+
+    metadata_path = installed_dir / ".installed.json"
+    print("Metadata file:")
+    print(metadata_path.read_text())
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-skills"
+        installed_dir.mkdir(parents=True)
+
+        install_skill(
+            source=str(skills_dir / "rot13-encryption"),
+            installed_dir=installed_dir,
+        )
+        install_skill(
+            source=str(skills_dir / "code-style-guide"),
+            installed_dir=installed_dir,
+        )
+        print_state("Before uninstall", installed_dir)
+
+        assert uninstall_skill("rot13-encryption", installed_dir=installed_dir) is True
+        print_state("After uninstall", installed_dir)
+
+        assert not (installed_dir / "rot13-encryption").exists()
+        metadata = json.loads((installed_dir / ".installed.json").read_text())
+        assert "rot13-encryption" not in metadata["skills"]
+        assert "code-style-guide" in metadata["skills"]
+
+    print("\nEXAMPLE_COST: 0")
 ```
 
 ---
