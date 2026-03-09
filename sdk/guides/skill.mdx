@@ -116,24 +116,30 @@ The public lifecycle API includes `install_skill()`, `update_skill()`,
 CLI a clean SDK surface for `/skill install`, `/skill enable`,
 `/skill disable`, and `/skill uninstall`.
 
-### Enable and Disable Installed Skills
+### Installed Skill Lifecycle Example
+
+This example mirrors the installed-plugin lifecycle example, but for
+AgentSkills. It installs sample skills, lists them, toggles the
+persistent `enabled` flag, and uninstalls one skill while leaving the
+other available.
 
 <Note>
-Source: [examples/05_skills_and_plugins/04_skill_enable_disable/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/04_skill_enable_disable/main.py)
+Source: [examples/05_skills_and_plugins/03_managing_installed_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/03_managing_installed_skills/main.py)
 </Note>
 
-```python icon="python" expandable examples/05_skills_and_plugins/04_skill_enable_disable/main.py
-"""Example: Enable and Disable Installed Skills
+```python icon="python" expandable examples/05_skills_and_plugins/03_managing_installed_skills/main.py
+"""Example: Installing and Managing Skills
 
-This example demonstrates the persistent skill lifecycle APIs:
+This example demonstrates installed skill lifecycle operations in the SDK:
 
-1. Install a skill into an isolated installed directory
-2. Inspect the `.installed.json` metadata file and `enabled` flag
-3. Disable the skill and confirm it is excluded from `load_installed_skills()`
-4. Re-enable the skill without reinstalling it
+1. Install skills from local paths into persistent storage
+2. List tracked skills and load only the enabled ones
+3. Inspect the `.installed.json` metadata file and `enabled` flag
+4. Disable and re-enable a skill without reinstalling it
+5. Uninstall a skill while leaving other installed skills available
 
-This is useful for CLI commands that need to toggle skills on and off while
-preserving the installation on disk.
+For marketplace installation flows, see:
+`examples/01_standalone_sdk/43_mixed_marketplace_skills/`.
 """
 
 import json
@@ -146,13 +152,12 @@ from openhands.sdk.skills import (
     install_skill,
     list_installed_skills,
     load_installed_skills,
+    uninstall_skill,
 )
 
 
 script_dir = Path(__file__).resolve().parent
-local_skill_path = (
-    script_dir.parent / "01_loading_agentskills" / "example_skills" / "rot13-encryption"
-)
+example_skills_dir = script_dir.parent / "01_loading_agentskills" / "example_skills"
 
 
 def print_state(label: str, installed_dir: Path) -> None:
@@ -163,86 +168,97 @@ def print_state(label: str, installed_dir: Path) -> None:
     installed = list_installed_skills(installed_dir=installed_dir)
     print("Tracked skills:")
     for info in installed:
-        print(f"  - {info.name} (enabled={info.enabled})")
+        print(f"  - {info.name} (enabled={info.enabled}, source={info.source})")
 
     loaded = load_installed_skills(installed_dir=installed_dir)
     print(f"Loaded skills: {[skill.name for skill in loaded]}")
 
-    metadata_path = installed_dir / ".installed.json"
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
     print("Metadata file:")
-    print(metadata_path.read_text())
+    print(json.dumps(metadata, indent=2))
 
 
-if __name__ == "__main__":
-    with tempfile.TemporaryDirectory() as tmpdir:
-        installed_dir = Path(tmpdir) / "installed-skills"
-        installed_dir.mkdir(parents=True)
+def demo_install_skills(installed_dir: Path) -> list[str]:
+    """Install the sample skills into the isolated installed directory."""
+    print("\n" + "=" * 60)
+    print("DEMO 1: Installing local skills")
+    print("=" * 60)
 
-        info = install_skill(
-            source=str(local_skill_path),
-            installed_dir=installed_dir,
-        )
-        print(f"Installed skill: {info.name}")
-        print_state("After install", installed_dir)
+    installed_names: list[str] = []
+    for skill_dir in sorted(example_skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        info = install_skill(source=str(skill_dir), installed_dir=installed_dir)
+        installed_names.append(info.name)
+        print(f"✓ Installed: {info.name}")
+        print(f"  Source: {info.source}")
+        print(f"  Path: {info.install_path}")
 
-        assert disable_skill(info.name, installed_dir=installed_dir) is True
-        print_state("After disable", installed_dir)
-
-        metadata = json.loads((installed_dir / ".installed.json").read_text())
-        assert metadata["skills"][info.name]["enabled"] is False
-        assert load_installed_skills(installed_dir=installed_dir) == []
-
-        assert enable_skill(info.name, installed_dir=installed_dir) is True
-        print_state("After re-enable", installed_dir)
-
-        metadata = json.loads((installed_dir / ".installed.json").read_text())
-        assert metadata["skills"][info.name]["enabled"] is True
-        loaded_names = [skill.name for skill in load_installed_skills(installed_dir)]
-        assert loaded_names == [info.name]
-
-    print("\nEXAMPLE_COST: 0")
-```
-
-### Uninstall Installed Skills
-
-<Note>
-Source: [examples/05_skills_and_plugins/05_skill_uninstall/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/05_skill_uninstall/main.py)
-</Note>
-
-```python icon="python" expandable examples/05_skills_and_plugins/05_skill_uninstall/main.py
-"""Example: Uninstall Installed Skills
-
-This example demonstrates the uninstall lifecycle for skills:
-
-1. Install multiple skills into an isolated installed directory
-2. Inspect the `.installed.json` metadata file before uninstalling
-3. Uninstall one skill by name
-4. Confirm the skill directory and metadata entry are removed while other
-   installed skills remain available
-"""
-
-import json
-import tempfile
-from pathlib import Path
-
-from openhands.sdk.skills import install_skill, list_installed_skills, uninstall_skill
+    return installed_names
 
 
-script_dir = Path(__file__).resolve().parent
-skills_dir = script_dir.parent / "01_loading_agentskills" / "example_skills"
-
-
-def print_state(label: str, installed_dir: Path) -> None:
-    """Print tracked skills and the persisted metadata file."""
-    print(f"\n{label}")
-    print("-" * len(label))
+def demo_list_and_load_skills(installed_dir: Path) -> None:
+    """List tracked skills and load them as runtime Skill objects."""
+    print("\n" + "=" * 60)
+    print("DEMO 2: Listing and loading installed skills")
+    print("=" * 60)
 
     installed = list_installed_skills(installed_dir=installed_dir)
-    print(f"Tracked skills: {[info.name for info in installed]}")
+    print("Tracked skills:")
+    for info in installed:
+        desc = (info.description or "No description")[:60]
+        print(f"  - {info.name} (enabled={info.enabled})")
+        print(f"    Description: {desc}...")
 
-    metadata_path = installed_dir / ".installed.json"
-    print("Metadata file:")
-    print(metadata_path.read_text())
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"\nLoaded {len(loaded)} skill(s):")
+    for skill in loaded:
+        desc = (skill.description or "No description")[:60]
+        print(f"  - {skill.name}: {desc}...")
+
+
+def demo_enable_disable_skill(installed_dir: Path, skill_name: str) -> None:
+    """Disable then re-enable a skill and show the persisted metadata."""
+    print("\n" + "=" * 60)
+    print("DEMO 3: Disabling and re-enabling a skill")
+    print("=" * 60)
+
+    print_state("Before disable", installed_dir)
+
+    assert disable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After disable", installed_dir)
+    assert skill_name not in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is False
+
+    assert enable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After re-enable", installed_dir)
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is True
+    assert skill_name in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+
+def demo_uninstall_skill(
+    installed_dir: Path, skill_name: str, remaining_skill_name: str
+) -> None:
+    """Uninstall one skill and confirm the other skill remains available."""
+    print("\n" + "=" * 60)
+    print("DEMO 4: Uninstalling a skill")
+    print("=" * 60)
+
+    assert uninstall_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After uninstall", installed_dir)
+
+    assert not (installed_dir / skill_name).exists()
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert skill_name not in metadata["skills"]
+    assert remaining_skill_name in metadata["skills"]
 
 
 if __name__ == "__main__":
@@ -250,26 +266,25 @@ if __name__ == "__main__":
         installed_dir = Path(tmpdir) / "installed-skills"
         installed_dir.mkdir(parents=True)
 
-        install_skill(
-            source=str(skills_dir / "rot13-encryption"),
-            installed_dir=installed_dir,
+        installed_names = demo_install_skills(installed_dir)
+        demo_list_and_load_skills(installed_dir)
+        demo_enable_disable_skill(installed_dir, skill_name="rot13-encryption")
+        demo_uninstall_skill(
+            installed_dir,
+            skill_name="rot13-encryption",
+            remaining_skill_name="code-style-guide",
         )
-        install_skill(
-            source=str(skills_dir / "code-style-guide"),
-            installed_dir=installed_dir,
-        )
-        print_state("Before uninstall", installed_dir)
 
-        assert uninstall_skill("rot13-encryption", installed_dir=installed_dir) is True
-        print_state("After uninstall", installed_dir)
-
-        assert not (installed_dir / "rot13-encryption").exists()
-        metadata = json.loads((installed_dir / ".installed.json").read_text())
-        assert "rot13-encryption" not in metadata["skills"]
-        assert "code-style-guide" in metadata["skills"]
+        remaining_names = [
+            info.name for info in list_installed_skills(installed_dir=installed_dir)
+        ]
+        assert remaining_names == ["code-style-guide"]
+        assert sorted(installed_names) == ["code-style-guide", "rot13-encryption"]
 
     print("\nEXAMPLE_COST: 0")
 ```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/03_managing_installed_skills/main.py"/>
 
 ---
 
