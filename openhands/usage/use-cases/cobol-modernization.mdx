@@ -1,0 +1,168 @@
+---
+title: COBOL Modernization
+description: Modernizing legacy COBOL systems with OpenHands
+---
+
+Legacy COBOL systems power critical business operations across banking, insurance, government, and retail. OpenHands can help you understand, document, and modernize these systems while preserving their essential business logic.
+
+<Note>
+This guide is based on our blog post [Refactoring COBOL to Java with AI Agents](https://openhands.dev/blog/20251218-cobol-to-java-refactoring).
+</Note>
+
+## The COBOL Modernization Challenge
+
+[COBOL](https://en.wikipedia.org/wiki/COBOL) modernization is one of the most pressing challenges facing enterprises today. Gartner estimated there were over 200 billion lines of COBOL code in existence, running 80% of the world's business systems. As of 2020, COBOL was still running background processes for 95% of credit and debit card transactions.
+
+The challenge is acute: [47% of organizations](https://softwaremodernizationservices.com/mainframe-modernization) struggle to fill COBOL roles, with salaries rising 25% annually. By 2027, 92% of remaining COBOL developers will have retired. Traditional modernization approaches have seen high failure rates, with COBOL's specialized nature requiring a unique skill set that makes it difficult for human teams alone.
+
+## Overview
+
+COBOL modernization is a complex undertaking. Every modernization effort is unique and requires careful planning, execution, and validation to ensure the modernized code behaves identically to the original. The migration needs to be driven by an experienced team of developers and domain experts, but even that isn't sufficient to ensure the job is done quickly or cost-effectively. This is where OpenHands comes in.
+
+OpenHands is a powerful agent that assists in modernizing COBOL code along every step of the process:
+
+1. **Understanding**: Analyze and document existing COBOL code
+2. **Translation**: Convert COBOL to modern languages like Java, Python, or C#
+3. **Validation**: Ensure the modernized code behaves identically to the original
+
+In this document, we will explore the different ways OpenHands contributes to COBOL modernization, with example prompts and techniques to use in your own efforts. While the examples are specific to COBOL, the principles laid out here can help with any legacy system modernization.
+
+## Understanding
+
+A significant challenge in modernization is understanding the business function of the code. Developers have practice determining the "how" of the code, even in legacy systems with unfamiliar syntax and keywords, but understanding the "why" is more important to ensure that business logic is preserved accurately. The difficulty then comes from the fact that business function is only implicitly represented in the code and requires external documentation or domain expertise to untangle.
+
+Fortunately, agents like OpenHands are able to understand source code _and_ process-oriented documentation, and this simultaneous view lets them link the two together in a way that makes every downstream process more transparent and predictable. Your COBOL source might already have some structure or comments that make this link clear, but if not OpenHands can help. If your COBOL source is in `/src` and your process-oriented documentation is in `/docs`, the following prompt will establish a link between the two and save it for future reference:
+
+```
+For each COBOL program in `/src`, identify which business functions it supports. Search through the documentation in `/docs` to find all relevant sections describing that business function, and generate a summary of how the program supports that function.
+
+Save the results in `business_functions.json` in the following format:
+
+{
+  ...,
+  "COBIL00C.cbl": {
+    "function": "Bill payment -- pay account balance in full and a transaction action for the online payment",
+    "references": [
+      "docs/billing.md#bill-payment",
+      "docs/transactions.md#transaction-action"
+    ],
+  },
+  ...
+}
+```
+
+OpenHands uses tools like `grep`, `sed`, and `awk` to navigate files and pull in context. This is natural for source code and also works well for process-oriented documentation, but in some cases exposing the latter using a _semantic search engine_ instead will yield better results. Semantic search engines can understand the meaning behind words and phrases, making it easier to find relevant information.
+
+## Translation
+
+With a clear picture of what each program does and why, the next step is translating the COBOL source into your target language. The example prompts in this section target Java, but the same approach works for Python, C#, or any modern language. Just adjust for language-specific idioms and data types as needed.
+
+One thing to watch out for: COBOL keywords and data types do not always match one-to-one with their Java counterparts. For example, COBOL's decimal data type (`PIC S9(9)V9(9)`), which represents a fixed-point number with a scale of 9 digits, does not have a direct equivalent in Java. Instead, you might use `BigDecimal` with a scale of 9, but be aware of potential precision issues when converting between the two. A solid test suite will help catch these corner cases but including such _known problems_ in the translation prompt can help prevent such errors from being introduced at all.
+
+An example prompt is below:
+
+```
+Convert the COBOL files in `/src` to Java in `/src/java`.
+
+Requirements:
+1. Create a Java class for each COBOL program
+2. Preserve the business logic and data structures (see `business_functions.json`)
+3. Use appropriate Java naming conventions (camelCase for methods, PascalCase)
+4. Convert COBOL data types to appropriate Java types (use BigDecimal for decimal data types)
+5. Implement proper error handling with try-catch blocks
+6. Add JavaDoc comments explaining the purpose of each class and method
+7. In JavaDoc comments, include traceability to the original COBOL source using
+   the format: @source <program>:<line numbers> (e.g., @source CBACT01C.cbl:73-77)
+8. Create a clean, maintainable object-oriented design
+9. Each Java file should be compilable and follow Java best practices
+```
+
+Note the rule that introduces traceability comments to the resulting Java. These comments help agents understand the provenance of the code, but are also helpful for developers attempting to understand the migration process. They can be used, for example, to check how much COBOL code has been translated into Java or to identify areas where business logic has been distributed across multiple Java classes.
+
+## Validation
+
+Building confidence in the migrated code is crucial. Ideally, existing end-to-end tests can be reused to validate that business logic has been preserved. If you need to strengthen the testing setup, consider _golden file testing_. This involves capturing the COBOL program's outputs for a set of known inputs, then verifying the translated code produces identical results. When generating inputs, pay particular attention to decimal precision in monetary calculations (COBOL's fixed-point arithmetic doesn't always map cleanly to Java's BigDecimal) and date handling, where COBOL's conventions can diverge from modern defaults.
+
+Every modernization effort is unique, and developer experience is crucial to ensure the testing strategy covers your organization's requirements. Best practices still apply. A solid test suite will not only ensure the migrated code works as expected, but will also help the translation agent converge to a high-quality solution. Of course, OpenHands can help migrate tests, ensure they run and test the migrated code correctly, and even generate new tests to cover edge cases.
+
+## Scaling Up
+
+The largest challenge in scaling modernization efforts is dealing with agents' limited attention span. Asking a single agent to handle the entire migration process in one go will almost certainly lead to errors and low-quality code as the context window is filled and flushed again and again. One way to address this is by tying translation and validation together in an iterative refinement loop.
+
+The idea is straightforward: one agent migrates some amount of code, and another agent critiques the migration. If the quality doesn't meet the standards of the critic, the first agent is given some actionable feedback and the process repeats. Here's what that looks like using the [OpenHands SDK](https://github.com/OpenHands/software-agent-sdk):
+
+```python
+while current_score < QUALITY_THRESHOLD and iteration < MAX_ITERATIONS:
+    # Migrating agent converts COBOL to Java
+    migration_conversation.send_message(migration_prompt)
+    migration_conversation.run()
+    
+    # Critiquing agent evaluates the conversion
+    critique_conversation.send_message(critique_prompt)
+    critique_conversation.run()
+    
+    # Parse the score and decide whether to continue
+    current_score = parse_critique_score(critique_file)
+```
+
+By tweaking the critic's prompt and scoring rubric, you can fine-tune the evaluation process to better align with your needs. For example, you might have code quality standards that are difficult to detect with static analysis tools or architectural patterns that are unique to your organization. The following prompt can be easily modified to support a wide range of requirements:
+
+```
+Evaluate the quality of the COBOL to Java migration in `/src`.
+
+For each Java file, assess using the following criteria:
+1. Correctness: Does the Java code preserve the original business logic (see `business_functions.json`)?
+2. Code Quality: Is the code clean, readable, and following Java 17 conventions?
+3. Completeness: Are all COBOL features properly converted?
+4. Best Practices: Does it use proper OOP, error handling, and documentation?
+
+For each instance of a criteria not met, deduct a point.
+
+Then generate a report containing actionable feedback for each file. The feedback, if addressed, should improve the score.
+
+Save the results in `critique.json` in the following format:
+
+{
+  "total_score": -12,
+  "files": [
+    {
+      "cobol": "COBIL00C.cbl",
+      "java": "bill_payment.java",
+      "scores": {
+        "correctness": 0,
+        "code_quality": 0,
+        "completeness": -1,
+        "best_practices": -2
+      },
+      "feedback": [
+        "Rename single-letter variables to meaningful names.",
+        "Ensure all COBOL functionality is translated -- the transaction action for the bill payment is missing.",
+      ],
+    },
+    ...
+  ]
+}
+```
+
+In future iterations, the migration agent should be given the file `critique.json` and be prompted to act on the feedback.
+
+This iterative refinement pattern works well for medium-sized projects with a moderate level of complexity. For legacy systems that span hundreds of files, however, the migration and critique processes need to be further decomposed to prevent agents from being overwhelmed. A natural way to do so is to break the system into smaller components, each with its own migration and critique processes. This process can be automated by using the OpenHands large codebase SDK, which combines agentic intelligence with static analysis tools to decompose large projects and orchestrate parallel agents in a dependency-aware manner.
+
+## Try It Yourself
+
+The full iterative refinement example is available in the OpenHands SDK:
+
+```bash
+export LLM_API_KEY="your-api-key"
+cd software-agent-sdk
+uv run python examples/01_standalone_sdk/31_iterative_refinement.py
+```
+
+For real-world COBOL files, you can use the [AWS CardDemo application](https://github.com/aws-samples/aws-mainframe-modernization-carddemo/tree/main/app/cbl), which provides a representative mainframe application for testing modernization approaches.
+
+
+## Related Resources
+
+- [OpenHands SDK Repository](https://github.com/OpenHands/software-agent-sdk) - Build custom AI agents
+- [AWS CardDemo Application](https://github.com/aws-samples/aws-mainframe-modernization-carddemo/tree/main/app/cbl) - Sample COBOL application for testing
+- [Prompting Best Practices](/openhands/usage/tips/prompting-best-practices) - Write effective prompts

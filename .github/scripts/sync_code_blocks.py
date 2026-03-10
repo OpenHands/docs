@@ -50,19 +50,26 @@ def extract_code_blocks(content: str) -> list[tuple[str, str, str, int, int]]:
     matches: list[tuple[str, str, str, int, int]] = []
     
     # Pattern for Python files
-    python_pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)```'
+    # The closing ``` must be at the start of a line (after newline) OR at the very end
+    # The \n? before ``` makes the trailing newline optional to handle edge cases
+    # where content doesn't have a trailing newline
+    python_pattern = r'```python[^\n]*\s+([^\s]+\.py)\n(.*?)\n?```(?=\n|$)'
     for match in re.finditer(python_pattern, content, re.DOTALL):
         file_ref = match.group(1)
         code_content = match.group(2)
+        # Strip trailing newline from code content if present (will be re-added during update)
+        code_content = code_content.rstrip('\n')
         start_pos = match.start()
         end_pos = match.end()
         matches.append(('python', file_ref, code_content, start_pos, end_pos))
     
     # Pattern for YAML files
-    yaml_pattern = r'```yaml[^\n]*\s+([^\s]+\.ya?ml)\n(.*?)```'
+    yaml_pattern = r'```yaml[^\n]*\s+([^\s]+\.ya?ml)\n(.*?)\n?```(?=\n|$)'
     for match in re.finditer(yaml_pattern, content, re.DOTALL):
         file_ref = match.group(1)
         code_content = match.group(2)
+        # Strip trailing newline from code content if present (will be re-added during update)
+        code_content = code_content.rstrip('\n')
         start_pos = match.start()
         end_pos = match.end()
         matches.append(('yaml', file_ref, code_content, start_pos, end_pos))
@@ -95,6 +102,34 @@ def read_source_file(agent_sdk_path: Path, file_ref: str) -> str | None:
 def normalize_content(content: str) -> str:
     """Normalize content for comparison (remove trailing whitespace, normalize line endings)."""
     return "\n".join(line.rstrip() for line in content.splitlines())
+
+
+def escape_embedded_backticks(content: str) -> str:
+    """
+    Escape triple backticks inside source code to prevent breaking markdown code blocks.
+    
+    This handles the case where Python code contains triple backticks in strings
+    (e.g., in docstrings or multi-line strings with markdown examples).
+    
+    Strategy: Replace ``` with a zero-width space between backticks: `​`​`
+    This preserves the visual appearance while preventing markdown parsing issues.
+    
+    Tradeoff note: Zero-width spaces (U+200B) are invisible and will be copied when
+    users copy-paste code from the docs. This could cause subtle issues if users paste
+    code containing these characters. However, this is acceptable because:
+    1. The affected code is primarily display content (example outputs), not executable
+    2. Alternative approaches (like changing source files) aren't feasible since we
+       sync from an external repository (agent-sdk)
+    3. Most modern editors will highlight invisible Unicode characters
+    
+    The function is idempotent - applying it multiple times produces the same result
+    since we only replace actual triple backticks, not already-escaped sequences.
+    """
+    if not content:
+        return content
+    # Use a zero-width space (U+200B) between backticks
+    # This makes ``` render correctly in the code block without closing it
+    return content.replace("```", "`\u200b`\u200b`")
 
 
 def resolve_paths() -> tuple[Path, Path]:
@@ -164,10 +199,12 @@ def update_doc_file(
         if actual_content is None:
             continue
 
-        old_normalized = normalize_content(old_code)
-        actual_normalized = normalize_content(actual_content)
-
-        if old_normalized != actual_normalized:
+        # Compare normalized versions: old doc content vs escaped actual content
+        # We always compare against escaped version since that's what will be written
+        old_display = normalize_content(old_code)
+        new_display = normalize_content(escape_embedded_backticks(actual_content))
+        
+        if old_display != new_display:
             print(f"\n📝 Found difference in {doc_path.name} for {file_ref}")
             print("   Updating code block...")
 
@@ -181,11 +218,14 @@ def update_doc_file(
             )
             if opening_line_match:
                 opening_line = opening_line_match.group(0)
+                # Escape any embedded triple backticks in the source content
+                # to prevent them from closing the markdown code block
+                escaped_content = escape_embedded_backticks(actual_content)
                 # Preserve trailing newline behavior
-                if actual_content.endswith("\n"):
-                    new_block = f"{opening_line}\n{actual_content}```"
+                if escaped_content.endswith("\n"):
+                    new_block = f"{opening_line}\n{escaped_content}```"
                 else:
-                    new_block = f"{opening_line}\n{actual_content}\n```"
+                    new_block = f"{opening_line}\n{escaped_content}\n```"
                 old_block = new_content[adj_start:adj_end]
 
                 new_content = new_content[:adj_start] + new_block + new_content[adj_end:]

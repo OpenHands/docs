@@ -102,6 +102,324 @@ Skills are listed in the system prompt:
 Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic injection when keywords match.
 </Tip>
 
+## Managing Installed Skills
+
+You can install AgentSkills into a persistent directory and manage them through
+`openhands.sdk.skills`. Skills are stored under
+`~/.openhands/skills/installed/` with a `.installed.json` metadata file that
+records an `enabled` flag. `list_installed_skills()` returns all installed
+skills, while `load_installed_skills()` returns only those with
+`enabled=true`.
+
+The public lifecycle API includes `install_skill()`, `update_skill()`,
+`enable_skill()`, `disable_skill()`, and `uninstall_skill()`, which gives the
+CLI a clean SDK surface for `/skill install`, `/skill enable`,
+`/skill disable`, and `/skill uninstall`.
+
+### Installed Skill Lifecycle Example
+
+This example mirrors the installed-plugin lifecycle example, but for
+AgentSkills. It installs sample skills, lists them, toggles the
+persistent `enabled` flag, and uninstalls one skill while leaving the
+other available.
+
+<Note>
+Source: [examples/05_skills_and_plugins/03_managing_installed_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/03_managing_installed_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/03_managing_installed_skills/main.py
+"""Example: Installing and Managing Skills
+
+This example demonstrates installed skill lifecycle operations in the SDK:
+
+1. Install skills from local paths into persistent storage
+2. List tracked skills and load only the enabled ones
+3. Inspect the `.installed.json` metadata file and `enabled` flag
+4. Disable and re-enable a skill without reinstalling it
+5. Uninstall a skill while leaving other installed skills available
+
+For marketplace installation flows, see:
+`examples/01_standalone_sdk/43_mixed_marketplace_skills/`.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
+from openhands.sdk.skills import (
+    disable_skill,
+    enable_skill,
+    install_skill,
+    list_installed_skills,
+    load_installed_skills,
+    uninstall_skill,
+)
+
+
+script_dir = Path(__file__).resolve().parent
+example_skills_dir = script_dir.parent / "01_loading_agentskills" / "example_skills"
+
+
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted skill state."""
+    print(f"\n{label}")
+    print("-" * len(label))
+
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled}, source={info.source})")
+
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"Loaded skills: {[skill.name for skill in loaded]}")
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    print("Metadata file:")
+    print(json.dumps(metadata, indent=2))
+
+
+def demo_install_skills(installed_dir: Path) -> list[str]:
+    """Install the sample skills into the isolated installed directory."""
+    print("\n" + "=" * 60)
+    print("DEMO 1: Installing local skills")
+    print("=" * 60)
+
+    installed_names: list[str] = []
+    for skill_dir in sorted(example_skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        info = install_skill(source=str(skill_dir), installed_dir=installed_dir)
+        installed_names.append(info.name)
+        print(f"✓ Installed: {info.name}")
+        print(f"  Source: {info.source}")
+        print(f"  Path: {info.install_path}")
+
+    return installed_names
+
+
+def demo_list_and_load_skills(installed_dir: Path) -> None:
+    """List tracked skills and load them as runtime Skill objects."""
+    print("\n" + "=" * 60)
+    print("DEMO 2: Listing and loading installed skills")
+    print("=" * 60)
+
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        desc = (info.description or "No description")[:60]
+        print(f"  - {info.name} (enabled={info.enabled})")
+        print(f"    Description: {desc}...")
+
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"\nLoaded {len(loaded)} skill(s):")
+    for skill in loaded:
+        desc = (skill.description or "No description")[:60]
+        print(f"  - {skill.name}: {desc}...")
+
+
+def demo_enable_disable_skill(installed_dir: Path, skill_name: str) -> None:
+    """Disable then re-enable a skill and show the persisted metadata."""
+    print("\n" + "=" * 60)
+    print("DEMO 3: Disabling and re-enabling a skill")
+    print("=" * 60)
+
+    print_state("Before disable", installed_dir)
+
+    assert disable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After disable", installed_dir)
+    assert skill_name not in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is False
+
+    assert enable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After re-enable", installed_dir)
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is True
+    assert skill_name in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+
+def demo_uninstall_skill(
+    installed_dir: Path, skill_name: str, remaining_skill_name: str
+) -> None:
+    """Uninstall one skill and confirm the other skill remains available."""
+    print("\n" + "=" * 60)
+    print("DEMO 4: Uninstalling a skill")
+    print("=" * 60)
+
+    assert uninstall_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After uninstall", installed_dir)
+
+    assert not (installed_dir / skill_name).exists()
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert skill_name not in metadata["skills"]
+    assert remaining_skill_name in metadata["skills"]
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-skills"
+        installed_dir.mkdir(parents=True)
+
+        installed_names = demo_install_skills(installed_dir)
+        demo_list_and_load_skills(installed_dir)
+        demo_enable_disable_skill(installed_dir, skill_name="rot13-encryption")
+        demo_uninstall_skill(
+            installed_dir,
+            skill_name="rot13-encryption",
+            remaining_skill_name="code-style-guide",
+        )
+
+        remaining_names = [
+            info.name for info in list_installed_skills(installed_dir=installed_dir)
+        ]
+        assert remaining_names == ["code-style-guide"]
+        assert sorted(installed_names) == ["code-style-guide", "rot13-encryption"]
+
+    print("\nEXAMPLE_COST: 0")
+```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/03_managing_installed_skills/main.py"/>
+
+### Installing Skills from a Marketplace
+
+Use a marketplace when you want to install a curated mix of local and remote
+AgentSkills in one step. The example below shows how to define a marketplace,
+install all listed skills, and inspect the installed metadata.
+
+<Note>
+Source: [examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py
+"""Example: Mixed Marketplace with Local and Remote Skills
+
+This example demonstrates how to create a marketplace that includes both:
+1. Local skills hosted in your project directory
+2. Remote skills from GitHub (OpenHands/extensions repository)
+
+The marketplace.json schema supports source paths in these formats:
+- Local paths: ./path, ../path, /absolute/path, ~/path, file:///path
+- GitHub URLs: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+
+This pattern is useful for teams that want to:
+- Maintain their own custom skills locally
+- Reference specific skills from remote repositories
+- Create a curated skill set for their specific workflows
+
+Directory Structure:
+    43_mixed_marketplace_skills/
+    ├── .plugin/
+    │   └── marketplace.json     # Marketplace with local and remote skills
+    ├── skills/
+    │   └── greeting-helper/
+    │       └── SKILL.md         # Local skill content
+    ├── main.py                  # This file
+    └── README.md                # Documentation
+
+Usage:
+    # Install all skills from marketplace to ~/.openhands/skills/installed/
+    python main.py --install
+
+    # Force reinstall (overwrite existing)
+    python main.py --install --force
+
+    # Show installed skills
+    python main.py --list
+"""
+
+import sys
+from pathlib import Path
+
+from openhands.sdk.plugin import Marketplace
+from openhands.sdk.skills import (
+    install_skills_from_marketplace,
+    list_installed_skills,
+)
+
+
+def main():
+    script_dir = Path(__file__).parent
+
+    if "--list" in sys.argv:
+        # List installed skills
+        print("=" * 80)
+        print("Installed Skills")
+        print("=" * 80)
+        installed = list_installed_skills()
+        if not installed:
+            print("\nNo skills installed.")
+            print("Run with --install to install skills from the marketplace.")
+        else:
+            for info in installed:
+                desc = (info.description or "No description")[:60]
+                print(f"\n  {info.name}")
+                print(f"    Description: {desc}...")
+                print(f"    Source: {info.source}")
+        return
+
+    if "--install" in sys.argv:
+        # Install skills from marketplace
+        print("=" * 80)
+        print("Installing Skills from Marketplace")
+        print("=" * 80)
+        print(f"\nMarketplace directory: {script_dir}")
+
+        force = "--force" in sys.argv
+        installed = install_skills_from_marketplace(script_dir, force=force)
+
+        print(f"\n\nInstalled {len(installed)} skills:")
+        for info in installed:
+            print(f"  - {info.name}")
+
+        # Show all installed skills
+        print("\n" + "=" * 80)
+        print("All Installed Skills")
+        print("=" * 80)
+        all_installed = list_installed_skills()
+        for info in all_installed:
+            desc = (info.description or "No description")[:50]
+            print(f"  - {info.name}: {desc}...")
+        return
+
+    # Default: show marketplace info
+    print("=" * 80)
+    print("Marketplace Information")
+    print("=" * 80)
+    print(f"\nMarketplace directory: {script_dir}")
+
+    marketplace = Marketplace.load(script_dir)
+    print(f"Name: {marketplace.name}")
+    print(f"Description: {marketplace.description}")
+    print(f"Skills defined: {len(marketplace.skills)}")
+
+    print("\nSkills:")
+    for entry in marketplace.skills:
+        source_type = "remote" if entry.source.startswith("http") else "local"
+        print(f"  - {entry.name} ({source_type})")
+        print(f"    Source: {entry.source}")
+        if entry.description:
+            print(f"    Description: {entry.description}")
+
+    print("\n" + "-" * 80)
+    print("Usage:")
+    print("  python main.py --install        # Install all skills")
+    print("  python main.py --install --force # Force reinstall")
+    print("  python main.py --list           # List installed skills")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py"/>
+
+
 ---
 
 ## Full Example
@@ -608,7 +926,29 @@ When enabled, the SDK will:
 2. Load all available skills from the repository
 3. Merge them with your explicitly defined skills
 
-**Skill Precedence**: If a skill name conflicts, your explicitly defined skills take precedence over public skills.
+### Skill Naming and Triggers
+
+**Skill Precedence by Name**: If a skill name conflicts, your explicitly defined skills take precedence over public skills. For example, if you define a skill named `code-review`, the public `code-review` skill will be skipped entirely.
+
+**Multiple Skills with Same Trigger**: Skills with different names but the same trigger can coexist and will ALL be activated when the trigger matches. To add project-specific guidelines alongside public skills, use a unique name (e.g., `custom-codereview-guide` instead of `code-review`). Both skills will be triggered together.
+
+```python icon="python"
+# Both skills will be triggered by "/codereview"
+agent_context = AgentContext(
+    load_public_skills=True,  # Loads public "code-review" skill
+    skills=[
+        Skill(
+            name="custom-codereview-guide",  # Different name = coexists
+            content="Project-specific guidelines...",
+            trigger=KeywordTrigger(keywords=["/codereview"]),
+        ),
+    ]
+)
+```
+
+<Tip>
+**Skill Activation Behavior**: When multiple skills share a trigger, all matching skills are loaded. Content is concatenated into the agent's context with public skills first, then explicitly defined skills. There is no smart merging—if guidelines conflict, the agent sees both.
+</Tip>
 
 ### Programmatic Loading
 
