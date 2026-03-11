@@ -53,6 +53,10 @@ The YAML frontmatter configures the agent. The Markdown body becomes the agent's
 | `skills` | No | `[]` | List of skill names for this agent (see [Skill Loading Precedence](/overview/skills#skill-loading-precedence) for resolution order). |
 | `max_iteration_per_run` | No | `None`| Maximum iterations per run. Must be strictly positive, or `None` for the default value. |
 | `color` | No | `None` | [Rich color name](https://rich.readthedocs.io/en/stable/appendix/colors.html) (e.g., `"blue"`, `"green"`) used by visualizers to style this agent's output in terminal panels |
+| `mcp_servers` | No | `None` | MCP server configurations for this agent (see [MCP Servers](#mcp-servers)) |
+| `hooks` | No | `None` | Hook configuration for lifecycle events (see [Hooks](#hooks)) |
+| `permission_mode` | No | `None` | Controls how the subagent handles action confirmations (see [Permission Mode](#permission-mode)) |
+| `profile_store_dir` | No | `None` | Custom directory path for LLM profiles when using a named `model` |
 
 ### `<example>` Tags
 
@@ -309,6 +313,109 @@ You are a skilled technical writer. When creating or improving documentation:
 
 Always include a usage example with expected output when documenting functions or APIs.
 ```
+
+## Advanced Features
+
+### MCP Servers
+
+File-based agents can define [MCP server configurations](/sdk/guides/mcp) inline, giving them access to external tools without any Python code:
+
+```markdown icon="markdown"
+---
+name: web-researcher
+description: Researches topics using web fetching capabilities.
+tools:
+  - file_editor
+mcp_servers:
+  fetch:
+    command: uvx
+    args:
+      - mcp-server-fetch
+  filesystem:
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+---
+
+You are a web researcher with access to fetch and filesystem tools.
+Use the fetch tool to retrieve web content and save findings to files.
+```
+
+The `mcp_servers` field uses the same format as the [MCP configuration](/sdk/guides/mcp) — each key is a server name, and the value contains `command` and `args` for launching the server.
+
+### Hooks
+
+File-based agents can define [lifecycle hooks](/sdk/guides/hooks) that run at specific points during execution:
+
+```markdown icon="markdown"
+---
+name: audited-agent
+description: An agent with audit logging hooks.
+tools:
+  - terminal
+  - file_editor
+hooks:
+  pre_tool_use:
+    - matcher: "terminal"
+      hooks:
+        - command: "./scripts/validate_command.sh"
+          timeout: 10
+  post_tool_use:
+    - matcher: "*"
+      hooks:
+        - command: "./scripts/log_tool_usage.sh"
+          timeout: 5
+---
+
+You are an audited agent. All your actions are logged for compliance.
+```
+
+**Hook event types:**
+- `pre_tool_use` — Runs before tool execution (can block with exit code 2)
+- `post_tool_use` — Runs after tool execution
+- `user_prompt_submit` — Runs before processing user messages
+- `session_start` / `session_end` — Run when conversation starts/ends
+- `stop` — Runs when agent tries to finish (can block)
+
+Each hook matcher supports:
+- `"*"` — Matches all tools
+- Exact name — e.g., `"terminal"` matches only that tool
+- Regex patterns — e.g., `"/file_.*/"` matches tools starting with `file_`
+
+For more details on hooks, see the [Hooks guide](/sdk/guides/hooks).
+
+### Permission Mode
+
+Control how a file-based agent handles action confirmations with the `permission_mode` field:
+
+```markdown icon="markdown"
+---
+name: autonomous-agent
+description: Runs without requiring user confirmation.
+tools:
+  - terminal
+  - file_editor
+permission_mode: never_confirm
+---
+
+You are an autonomous agent that executes tasks without manual approval.
+```
+
+**Available modes:**
+| Mode | Behavior |
+|------|----------|
+| `always_confirm` | Requires user approval for **all** actions |
+| `never_confirm` | Executes all actions without approval |
+| `confirm_risky` | Only requires approval for actions above a risk threshold (requires a [security analyzer](/sdk/guides/security)) |
+
+When `permission_mode` is omitted (or set to `None`), the subagent inherits the confirmation policy from its parent conversation.
+
+<Note>
+Permission mode is particularly useful for specialized sub-agents. For example, a "read-only explorer" agent might use `never_confirm` since it only reads files, while a "deploy" agent might use `always_confirm` for safety.
+</Note>
+
+For more details on security and confirmation policies, see the [Security guide](/sdk/guides/security).
 
 ## Agents in Plugins
 
