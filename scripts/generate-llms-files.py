@@ -51,6 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = "https://docs.openhands.dev"
 
 EXCLUDED_DIRS = {".git", ".github", ".agents", "tests", "openapi", "logo"}
+AI_INVARIANTS_SUFFIX = ".ai-invariants.md"
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ class DocPage:
     title: str
     description: str | None
     body: str
+    ai_invariants: str | None
 
 
 _FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -99,6 +101,15 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fm, body
 
 
+def load_ai_invariants(rel_path: Path) -> str | None:
+    sidecar_path = rel_path.with_suffix(AI_INVARIANTS_SUFFIX)
+    full_path = ROOT / sidecar_path
+    if not full_path.exists():
+        return None
+    content = full_path.read_text(encoding="utf-8").strip()
+    return content or None
+
+
 def rel_to_route(rel_path: Path) -> str:
     p = rel_path.as_posix()
     if p.endswith(".mdx"):
@@ -132,6 +143,7 @@ def iter_doc_pages() -> list[DocPage]:
 
         raw = mdx_path.read_text(encoding="utf-8")
         fm, body = parse_frontmatter(raw)
+        ai_invariants = load_ai_invariants(rel_path)
 
         title = fm.get("title")
         if not title:
@@ -147,6 +159,7 @@ def iter_doc_pages() -> list[DocPage]:
                 title=title,
                 description=description,
                 body=body.strip(),
+                ai_invariants=ai_invariants,
             )
         )
 
@@ -228,7 +241,7 @@ def build_llms_txt(pages: list[DocPage]) -> str:
         "",
         "> LLM-friendly index of OpenHands documentation (V1). Legacy V0 docs pages are intentionally excluded.",
         "",
-        "The sections below intentionally separate OpenHands product documentation (Web App Server / Cloud / CLI)",
+        "The sections below intentionally separate OpenHands applications documentation (Web App Server / Cloud / CLI)",
         "from the OpenHands Software Agent SDK.",
         "",
     ]
@@ -283,6 +296,10 @@ def build_llms_full_txt(pages: list[DocPage]) -> str:
             lines.append("")
             if page.body:
                 lines.append(page.body)
+                lines.append("")
+
+            if page.ai_invariants:
+                lines.append(page.ai_invariants)
                 lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
