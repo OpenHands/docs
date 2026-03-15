@@ -1,0 +1,232 @@
+---
+title: openhands.sdk.mcp
+description: API reference for openhands.sdk.mcp module
+---
+
+
+MCP (Model Context Protocol) integration for agent-sdk.
+
+### class MCPClient
+
+Bases: `Client`
+
+MCP client with sync helpers and lifecycle management.
+
+Extends fastmcp.Client with:
+: - call_async_from_sync(awaitable_or_fn, 
+  `<br/>`
+    ```
+    *
+    ```
+  `<br/>`
+    args, timeout=None, 
+  `<br/>`
+    ```
+    **
+    ```
+  `<br/>`
+    kwargs)
+  - call_sync_from_async(fn, 
+  `<br/>`
+    ```
+    *
+    ```
+  `<br/>`
+    args, 
+  `<br/>`
+    ```
+    **
+    ```
+  `<br/>`
+    kwargs)  # await this from async code
+
+After create_mcp_tools() populates it, use as a sync context manager:
+
+  with create_mcp_tools(config) as client:
+  : for tool in client.tools:
+    : # use tool
+
+  # Connection automatically closed
+
+Or manage lifecycle manually by calling sync_close() when done.
+
+
+#### Properties
+
+- `tools`: list[[MCPToolDefinition](#class-mcptooldefinition)]
+  The MCP tools using this client connection (returns a copy).
+- `config`: dict | None
+- `timeout`: float
+
+#### Methods
+
+#### __init__()
+
+#### call_async_from_sync()
+
+Run a coroutine or async function on this client’s loop from sync code.
+
+Usage:
+: mcp.call_async_from_sync(async_fn, arg1, kw=…)
+  mcp.call_async_from_sync(coro)
+
+#### async call_sync_from_async()
+
+Await running a blocking function in the default threadpool from async code.
+
+#### async connect()
+
+Establish connection to the MCP server.
+
+#### sync_close()
+
+Synchronously close the MCP client and cleanup resources.
+
+This will attempt to call the async close() method if available,
+then shutdown the background event loop. Safe to call multiple times.
+
+#### __init__()
+
+### class MCPToolAction
+
+Bases: `Action`
+
+Schema for MCP input action.
+
+It is just a thin wrapper around raw JSON and does
+not do any validation.
+
+Validation will be performed by MCPTool.__call__
+by constructing dynamically created Pydantic model
+from the MCP tool input schema.
+
+
+#### Properties
+
+- `data`: dict[str, Any]
+- `model_config`: = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+
+#### Methods
+
+#### to_mcp_arguments()
+
+Return the data field as MCP tool call arguments.
+
+This is used to convert this action to MCP tool call arguments.
+The data field contains the dynamic fields from the tool call.
+
+### class MCPToolDefinition
+
+Bases: `ToolDefinition[MCPToolAction, MCPToolObservation]`
+
+MCP Tool that wraps an MCP client and provides tool functionality.
+
+
+#### Properties
+
+- `mcp_tool`: Tool
+- `model_config`: = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `name`: str
+  Return the MCP tool name instead of the class name.
+
+#### Methods
+
+#### action_from_arguments()
+
+Create an MCPToolAction from parsed arguments with early validation.
+
+We validate the raw arguments against the MCP tool’s input schema here so
+Agent._get_action_event can catch ValidationError and surface an
+AgentErrorEvent back to the model instead of crashing later during tool
+execution. On success, we return MCPToolAction with sanitized arguments.
+
+* Parameters:
+  `arguments` – The parsed arguments from the tool call.
+* Returns:
+  The MCPToolAction instance with data populated from the arguments.
+* Raises:
+  `ValidationError` – If the arguments do not conform to the tool schema.
+
+#### classmethod create()
+
+Create a sequence of Tool instances.
+
+This method must be implemented by all subclasses to provide custom
+initialization logic, typically initializing the executor with parameters
+from conv_state and other optional parameters.
+
+* Parameters:
+   args** – Variable positional arguments (typically conv_state as first arg).
+   kwargs* – Optional parameters for tool initialization.
+* Returns:
+  A sequence of Tool instances. Even single tools are returned as a sequence
+  to provide a consistent interface and eliminate union return types.
+
+#### to_mcp_tool()
+
+Convert a Tool to an MCP tool definition.
+
+Allow overriding input/output schemas (usually by subclasses).
+
+* Parameters:
+  * `input_schema` – Optionally override the input schema.
+  * `output_schema` – Optionally override the output schema.
+
+#### to_openai_tool()
+
+Convert a Tool to an OpenAI tool.
+
+For MCP, we dynamically create the action_type (type: Schema)
+from the MCP tool input schema, and pass it to the parent method.
+It will use the .model_fields from this pydantic model to
+generate the OpenAI-compatible tool schema.
+
+* Parameters:
+  `add_security_risk_prediction` – Whether to add a security_risk field
+  to the action schema for LLM to predict. This is useful for
+  tools that may have safety risks, so the LLM can reason about
+  the risk level before calling the tool.
+
+### class MCPToolExecutor
+
+Bases: `ToolExecutor`
+
+Executor for MCP tools.
+
+
+#### Properties
+
+- `client`: [MCPClient](#class-mcpclient)
+- `timeout`: float
+- `tool_name`: str
+
+#### Methods
+
+#### __init__()
+
+#### async call_tool()
+
+Execute the MCP tool call using the already-connected client.
+
+### class MCPToolObservation
+
+Bases: `Observation`
+
+Observation from MCP tool execution.
+
+
+#### Properties
+
+- `model_config`: = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `tool_name`: str
+- `visualize`: Text
+  Return Rich Text representation of this observation.
+
+#### Methods
+
+#### classmethod from_call_tool_result()
+
+Create an MCPToolObservation from a CallToolResult.

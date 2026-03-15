@@ -167,9 +167,21 @@ Indices and tables
 * :ref:`search`
 ''')
         
-        # Main SDK module
+        # Main SDK module - dynamically build the toctree based on the modules list
+        # (the list is defined below, so we define it here first)
+        all_modules = [
+            # Core modules (original)
+            'agent', 'conversation', 'event', 'llm', 
+            'tool', 'workspace', 'security', 'utils',
+            # Additional important modules
+            'context', 'hooks', 'critic', 'mcp', 'plugin', 
+            'subagent', 'io', 'testing', 'secret', 'skills',
+            'observability', 'logger',
+        ]
+        
+        toctree_entries = "\n".join(f"   openhands.sdk.{m}" for m in all_modules)
         sdk_rst = sphinx_source / "openhands.sdk.rst"
-        sdk_rst.write_text('''
+        sdk_rst.write_text(f'''
 openhands.sdk package
 =====================
 
@@ -184,23 +196,11 @@ Submodules
 .. toctree::
    :maxdepth: 1
 
-   openhands.sdk.agent
-   openhands.sdk.conversation
-   openhands.sdk.event
-   openhands.sdk.llm
-   openhands.sdk.tool
-   openhands.sdk.workspace
-   openhands.sdk.security
-   openhands.sdk.utils
+{toctree_entries}
 ''')
         
-        # Generate RST files for each major module
-        modules = [
-            'agent', 'conversation', 'event', 'llm', 
-            'tool', 'workspace', 'security', 'utils'
-        ]
-        
-        for module in modules:
+        # Generate RST files for each major module (reuse the list defined above)
+        for module in all_modules:
             module_rst = sphinx_source / f"openhands.sdk.{module}.rst"
             module_rst.write_text(f'''
 openhands.sdk.{module} module
@@ -570,37 +570,57 @@ description: API reference for {module_name} module
         
         # Note: All cross-reference link conversion logic removed - we now just strip links entirely
         class_to_module = {
+            # agent module
             'Agent': 'agent',
             'AgentBase': 'agent', 
-            'AgentContext': 'agent',
+            # context module
+            'AgentContext': 'context',
+            'Skill': 'context',
+            'SkillKnowledge': 'context',
+            'BaseTrigger': 'context',
+            'KeywordTrigger': 'context',
+            'TaskTrigger': 'context',
+            'SkillValidationError': 'context',
+            # conversation module
             'Conversation': 'conversation',
             'BaseConversation': 'conversation',
             'LocalConversation': 'conversation',
             'RemoteConversation': 'conversation',
             'ConversationState': 'conversation',
             'ConversationStats': 'conversation',
+            # event module
             'Event': 'event',
             'LLMConvertibleEvent': 'event',
             'MessageEvent': 'event',
+            'HookExecutionEvent': 'event',
+            # llm module
             'LLM': 'llm',
             'LLMRegistry': 'llm',
             'LLMResponse': 'llm',
+            'LLMProfileStore': 'llm',
+            'LLMStreamChunk': 'llm',
+            'FallbackStrategy': 'llm',
             'Message': 'llm',
             'ImageContent': 'llm',
             'TextContent': 'llm',
             'ThinkingBlock': 'llm',
             'RedactedThinkingBlock': 'llm',
+            'TokenUsage': 'llm',
             'Metrics': 'llm',
             'RegistryEvent': 'llm',
+            # security module
             'SecurityManager': 'security',
+            # tool module
             'Tool': 'tool',
             'ToolDefinition': 'tool',
             'Action': 'tool',
             'Observation': 'tool',
+            # workspace module
             'Workspace': 'workspace',
             'BaseWorkspace': 'workspace',
             'LocalWorkspace': 'workspace',
             'RemoteWorkspace': 'workspace',
+            'AsyncRemoteWorkspace': 'workspace',
             'WorkspaceFile': 'workspace',
             'WorkspaceFileEdit': 'workspace',
             'WorkspaceFileEditResult': 'workspace',
@@ -611,6 +631,69 @@ description: API reference for {module_name} module
             'WorkspaceSearchResultItem': 'workspace',
             'WorkspaceUploadResult': 'workspace',
             'WorkspaceWriteResult': 'workspace',
+            # hooks module
+            'HookConfig': 'hooks',
+            'HookDefinition': 'hooks',
+            'HookMatcher': 'hooks',
+            'HookType': 'hooks',
+            'HookExecutor': 'hooks',
+            'HookResult': 'hooks',
+            'HookManager': 'hooks',
+            'HookEvent': 'hooks',
+            'HookEventType': 'hooks',
+            'HookDecision': 'hooks',
+            'HookEventProcessor': 'hooks',
+            # critic module
+            'CriticBase': 'critic',
+            'CriticResult': 'critic',
+            'IterativeRefinementConfig': 'critic',
+            'AgentFinishedCritic': 'critic',
+            'APIBasedCritic': 'critic',
+            'EmptyPatchCritic': 'critic',
+            'PassCritic': 'critic',
+            # mcp module
+            'MCPClient': 'mcp',
+            'MCPToolDefinition': 'mcp',
+            'MCPToolAction': 'mcp',
+            'MCPToolObservation': 'mcp',
+            'MCPToolExecutor': 'mcp',
+            'MCPError': 'mcp',
+            'MCPTimeoutError': 'mcp',
+            # plugin module
+            'Plugin': 'plugin',
+            'PluginManifest': 'plugin',
+            'PluginAuthor': 'plugin',
+            'PluginSource': 'plugin',
+            'ResolvedPluginSource': 'plugin',
+            'CommandDefinition': 'plugin',
+            'PluginFetchError': 'plugin',
+            'Marketplace': 'plugin',
+            'MarketplaceEntry': 'plugin',
+            'MarketplaceOwner': 'plugin',
+            'MarketplacePluginEntry': 'plugin',
+            'MarketplacePluginSource': 'plugin',
+            'MarketplaceMetadata': 'plugin',
+            'InstalledPluginInfo': 'plugin',
+            'InstalledPluginsMetadata': 'plugin',
+            'GitHubURLComponents': 'plugin',
+            # subagent module
+            'AgentDefinition': 'subagent',
+            # io module
+            'FileStore': 'io',
+            'LocalFileStore': 'io',
+            'InMemoryFileStore': 'io',
+            # testing module
+            'TestLLM': 'testing',
+            'TestLLMExhaustedError': 'testing',
+            # secret module
+            'SecretSource': 'secret',
+            'StaticSecret': 'secret',
+            'LookupSecret': 'secret',
+            'SecretValue': 'secret',
+            # skills module
+            'InstalledSkillInfo': 'skills',
+            'InstalledSkillsMetadata': 'skills',
+            'SkillFetchError': 'skills',
         }
 
         # Fix anchor links - convert full module path anchors to simple class format

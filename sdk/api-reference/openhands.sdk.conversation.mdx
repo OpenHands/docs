@@ -245,7 +245,9 @@ Bases: `OpenHandsModel`
   Directory for persisting environment observation files.
 - `events`: [EventLog](#class-eventlog)
 - `execution_status`: [ConversationExecutionStatus](#class-conversationexecutionstatus)
+- `hook_config`: HookConfig | None
 - `id`: UUID
+- `last_user_message_id`: str | None
 - `max_iterations`: int
 - `persistence_dir`: str | None
 - `secret_registry`: [SecretRegistry](#class-secretregistry)
@@ -315,8 +317,12 @@ agent_context, condenser, system prompts, etc.
 Find actions in the event history that don’t have matching observations.
 
 This method identifies ActionEvents that don’t have corresponding
-ObservationEvents or UserRejectObservations, which typically indicates
-actions that are pending confirmation or execution.
+ObservationEvents, UserRejectObservations, or AgentErrorEvents,
+which typically indicates actions that are pending confirmation or execution.
+
+Note: AgentErrorEvent is matched by tool_call_id (not action_id) because
+it doesn’t have an action_id field. This is important for crash recovery
+scenarios where an error event is emitted after a server restart.
 
 * Parameters:
   `events` – List of events to search through
@@ -679,6 +685,38 @@ Reject all pending actions from the agent.
 This is a non-invasive method to reject actions between run() calls.
 Also clears the agent_waiting_for_confirmation flag.
 
+#### rerun_actions()
+
+Re-execute all actions from the conversation’s event history.
+
+This method iterates through all ActionEvents in the conversation and
+re-executes them using their original action parameters. Execution
+stops immediately if any tool call fails.
+
+WARNING: This is an advanced feature intended for specific use cases
+such as reproducing environment state from a saved conversation. Many
+tool operations are NOT idempotent:
+
+- File operations may fail if files already exist or were deleted
+- Terminal commands may have different effects on changed state
+- API calls may have side effects or return different results
+- Browser state may differ from the original session
+
+Use this method only when you understand that:
+1. Results may differ from the original conversation
+2. Some actions may fail due to changed environment state
+3. The workspace should typically be reset before rerunning
+
+* Parameters:
+  `rerun_log_path` – Optional directory path to save a rerun event log.
+  If provided, events will be written incrementally to disk using
+  EventLog, avoiding memory buildup for large conversations.
+* Returns:
+  True if all actions executed successfully, False if any action failed.
+* Raises:
+  `KeyError` – If a tool from the original conversation is not available.
+      This is a configuration error (different from execution failure).
+
 #### run()
 
 Runs the conversation until the agent finishes.
@@ -712,9 +750,29 @@ Set the confirmation policy and store it in conversation state.
 
 Set the security analyzer for the conversation.
 
+#### switch_profile()
+
+Switch the agent’s LLM to a named profile.
+
+Loads the profile from the LLMProfileStore (cached in the registry
+after the first load) and updates the agent and conversation state.
+
+* Parameters:
+  `profile_name` – Name of a profile previously saved via LLMProfileStore.
+* Raises:
+  * `FileNotFoundError` – If the profile does not exist.
+  * `ValueError` – If the profile is corrupted or invalid.
+
 #### update_secrets()
 
-Add secrets to the conversation.
+Add secrets to the conversation’s secret registry.
+
+Secrets are stored in the conversation’s secret_registry which:
+1. Provides environment variable injection during command execution
+2. Is read by the agent when building its system prompt (dynamic_context)
+
+The agent pulls secrets from the registry via get_dynamic_context() during
+init_state(), ensuring secret names and descriptions appear in the prompt.
 
 * Parameters:
   `secrets` – Dictionary mapping secret keys to values or no-arg callables.
@@ -756,7 +814,8 @@ Remote conversation proxy that talks to an agent server.
     a dict with keys: ‘action_observation’, ‘action_error’,
     ‘monologue’, ‘alternating_pattern’. Values are integers
     representing the number of repetitions before triggering.
-  * `hook_config` – Optional hook configuration for session hooks
+  * `hook_config` – Optional hook configuration sent to the server.
+    All hooks are executed server-side.
   * `visualizer` –  
 
     Visualization configuration. Can be:
@@ -899,7 +958,7 @@ even when callable secrets fail on subsequent calls.
 
 #### Properties
 
-- `secret_sources`: dict[str, SecretSource]
+- `secret_sources`: dictstr, [SecretSource]
 
 #### Methods
 
@@ -911,6 +970,15 @@ Find all secret keys mentioned in the given text.
   `text` – The text to search for secret keys
 * Returns:
   Set of secret keys found in the text
+
+#### get_secret_infos()
+
+Get secret information (name and description) for prompt inclusion.
+
+* Returns:
+  List of dictionaries with ‘name’ and ‘description’ keys.
+  Returns an empty list if no secrets are registered.
+  Description will be None if not available.
 
 #### get_secrets_as_env_vars()
 

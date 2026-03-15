@@ -1,0 +1,130 @@
+---
+title: openhands.sdk.testing
+description: API reference for openhands.sdk.testing module
+---
+
+
+Testing utilities for OpenHands SDK.
+
+This module provides test utilities that make it easy to write tests for
+code that uses the OpenHands SDK, without needing to mock LiteLLM internals.
+
+### class TestLLM
+
+Bases: `LLM`
+
+A mock LLM for testing that returns scripted responses.
+
+TestLLM is a real LLM subclass that can be used anywhere an LLM is accepted:
+in Agent(llm=…), in fallback_llms, in condensers, in routers, etc.
+
+Key features:
+- No patching needed: just pass TestLLM as the llm= argument
+- Tests speak in SDK types (Message, TextContent, MessageToolCall)
+- Clear error when responses are exhausted
+- Zero-cost metrics by default
+- Always uses completion() path (uses_responses_api returns False)
+
+#### Example
+
+```pycon
+>>> from openhands.sdk.testing import TestLLM
+>>> from openhands.sdk.llm import Message, TextContent, MessageToolCall
+>>>
+>>> # Simple text response
+>>> llm = TestLLM.from_messages([
+...     Message(role="assistant", content=[TextContent(text="Done!")]),
+... ])
+>>>
+>>> # Response with tool calls
+>>> llm = TestLLM.from_messages([
+...     Message(
+...         role="assistant",
+...         content=[TextContent(text="")],
+...         tool_calls=[
+...             MessageToolCall(
+...                 id="call_1",
+...                 name="my_tool",
+...                 arguments='(configuration object)',
+...                 origin="completion",
+...             )
+...         ],
+...     ),
+...     Message(role="assistant", content=[TextContent(text="Done!")]),
+... ])
+```
+
+
+#### Properties
+
+- `call_count`: int
+  Return the number of calls made to this TestLLM.
+- `model`: str
+- `model_config`: ClassVar[ConfigDict] = (configuration object)
+  Configuration for the model, should be a dictionary conforming to [ConfigDict][pydantic.config.ConfigDict].
+- `remaining_responses`: int
+  Return the number of remaining scripted responses.
+
+#### Methods
+
+#### __init__()
+
+Create a new model by parsing and validating input data from keyword arguments.
+
+Raises [ValidationError][pydantic_core.ValidationError] if the input data cannot be
+validated to form a valid model.
+
+self is explicitly positional-only to allow self as a field name.
+
+#### completion()
+
+Return the next scripted response.
+
+* Parameters:
+  * `messages` – Input messages (ignored, but required for API compatibility)
+  * `tools` – Available tools (ignored)
+  * `_return_metrics` – Whether to return metrics (ignored)
+  * `add_security_risk_prediction` – Add security risk field (ignored)
+  * `on_token` – Streaming callback (ignored)
+   kwargs* – Additional arguments (ignored)
+* Returns:
+  LLMResponse containing the next scripted message.
+* Raises:
+  * [TestLLMExhaustedError](#class-testllmexhaustederror) – When no more scripted responses are available.
+  * `Exception` – Any scripted exception placed in the response queue.
+
+#### classmethod from_messages()
+
+Create a TestLLM with scripted responses and/or errors.
+
+* Parameters:
+  * `messages` – List of Message or Exception objects to return in order.
+    Each call to completion() or responses() consumes the next
+    item: Message objects are returned normally, Exception objects
+    are raised (like unittest.mock side_effect).
+  * `model` – Model name (default: “test-model”)
+  * `usage_id` – Usage ID for metrics (default: “test-llm”)
+   kwargs* – Additional LLM configuration options
+* Returns:
+  A TestLLM instance configured with the scripted responses.
+
+#### model_post_init()
+
+This function is meant to behave like a BaseModel method to initialise private attributes.
+
+It takes context as an argument since that’s what pydantic-core passes when calling it.
+
+* Parameters:
+  * `self` – The BaseModel instance.
+  * `context` – The context.
+
+#### responses()
+
+Return the next scripted response (delegates to completion).
+
+For TestLLM, both completion() and responses() return from the same
+queue of scripted responses.
+
+#### uses_responses_api()
+
+TestLLM always uses the completion path.
