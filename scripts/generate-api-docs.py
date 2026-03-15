@@ -372,7 +372,10 @@ openhands.sdk.{module} module
                         result_lines.extend(cleaned_code)
                         result_lines.append('```')
                         result_lines.append('')
-                    continue
+                # else: Already has a proper code block starting with ```
+                # The code block lines will be added by subsequent iterations
+                # (i is already pointing to the ``` line)
+                continue
             
             result_lines.append(line)
             i += 1
@@ -392,14 +395,21 @@ openhands.sdk.{module} module
         result = []
         
         for i, line in enumerate(lines):
-            # Check if this is a class header (### class ...)
-            if line.startswith('### class '):
+            # Check if this is a class header
+            # Match both "### class ..." and "### *class* ..." formats
+            is_class_header = (
+                line.startswith('### class ') or 
+                line.startswith('### *class* ')
+            )
+            
+            if is_class_header:
                 # Don't add separator before the very first class (after frontmatter)
-                # Check if there's actual content before this (not just blank lines)
+                # Check if there's actual content before this (not just blank lines or frontmatter)
                 has_content_before = False
                 for j in range(i - 1, -1, -1):
-                    if lines[j].strip():
-                        # Found non-blank content
+                    stripped = lines[j].strip()
+                    if stripped and stripped != '---':  # Ignore frontmatter delimiters
+                        # Found non-blank, non-frontmatter content
                         has_content_before = True
                         break
                 
@@ -695,11 +705,14 @@ openhands.sdk.{module} module
         # Clean up blockquote markers that break MDX parsing
         # Convert '  > text' to '  text' (indented blockquotes to plain indented text)
         # Handle multiple levels of nesting like '> > text'
+        # BUT: Don't remove >>> which are Python REPL prompts!
         # Run multiple times to handle nested blockquotes
         prev_content = None
         while prev_content != content:
             prev_content = content
-            content = re.sub(r'^(\s*)>\s*', r'\1', content, flags=re.MULTILINE)
+            # Only match single > at start of line (not >>> or >>)
+            # Pattern: start of line, optional whitespace, single > not followed by >
+            content = re.sub(r'^(\s*)>(?!>)\s*', r'\1', content, flags=re.MULTILINE)
         
         # Remove duplicate Example: lines after #### Example header
         content = re.sub(r'(#### Example\n\n)Example:\n', r'\1', content)
@@ -711,31 +724,42 @@ openhands.sdk.{module} module
         # Clean up multiple consecutive blank lines (more than 2)
         content = re.sub(r'\n{4,}', '\n\n\n', content)
         
-        # Remove orphaned code block openers followed by malformed content
-        # Pattern: ``` followed by content that doesn't have a matching closing ```
+        # Remove orphaned code block openers (but not closers!)
+        # Pattern: ``` opener followed by content that doesn't have a matching closing ```
         # This handles Sphinx's broken JSON/code examples
+        # We track whether we're inside a code block to distinguish openers from closers
         lines = content.split('\n')
         cleaned = []
+        in_code_block = False
         i = 0
         while i < len(lines):
             line = lines[i]
-            # Check for orphaned code block
-            if line.strip() == '```':
-                # Look ahead to see if there's proper code and closing
-                j = i + 1
-                has_close = False
-                while j < len(lines):
-                    if lines[j].strip() == '```':
-                        has_close = True
-                        break
-                    if lines[j].startswith('#'):  # Hit a header - no proper close
-                        break
-                    j += 1
-                
-                if not has_close:
-                    # Skip this orphaned opener
-                    i += 1
-                    continue
+            
+            # Check for code block markers
+            if line.strip().startswith('```'):
+                if not in_code_block:
+                    # This is an opener - check if it has a matching close
+                    if line.strip() == '```':
+                        # Standalone opener - look ahead for close
+                        j = i + 1
+                        has_close = False
+                        while j < len(lines):
+                            if lines[j].strip() == '```':
+                                has_close = True
+                                break
+                            if lines[j].startswith('#'):  # Hit a header - no proper close
+                                break
+                            j += 1
+                        
+                        if not has_close:
+                            # Skip this orphaned opener
+                            i += 1
+                            continue
+                    # It's a valid opener (either has language or has close)
+                    in_code_block = True
+                else:
+                    # This is a closer
+                    in_code_block = False
             
             cleaned.append(line)
             i += 1
