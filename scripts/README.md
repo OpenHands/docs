@@ -4,10 +4,7 @@ This directory contains the automated pipeline for generating API reference docu
 
 ## Overview
 
-The pipeline generates two types of API documentation:
-
-1. **Python SDK Reference**: Uses Sphinx with the `sphinx-markdown-builder` extension to generate clean, parser-friendly Markdown files from Python docstrings.
-2. **Agent Server REST API Reference**: Generates an OpenAPI specification from the FastAPI-based agent server.
+The pipeline uses Sphinx with the `sphinx-markdown-builder` extension to generate clean, parser-friendly Markdown files from Python docstrings. The output is specifically designed to avoid JavaScript parsing errors in Mintlify by using simple headers and clean formatting.
 
 ### Key Features
 
@@ -15,7 +12,6 @@ The pipeline generates two types of API documentation:
 - **No complex signatures**: Parameters documented as readable text, not in headers
 - **Parser-friendly**: Eliminates asterisks, emphasis, and patterns that cause acorn parsing errors
 - **Organized structure**: 9 module-level pages instead of 100+ individual files
-- **OpenAPI generation**: Automatically generates `agent-server.json` for REST API docs
 
 ## Files Structure
 
@@ -86,14 +82,12 @@ The generation pipeline follows these steps:
 
 1. **Dependency Check**: Verifies that required Python packages are installed
 2. **Repository Management**: Clones or updates the `software-agent-sdk` repository
-3. **SDK Installation**: Installs the SDK package for documentation extraction
-4. **OpenAPI Generation**: Generates the Agent Server REST API specification from FastAPI
-5. **Sphinx Setup**: Creates necessary Sphinx directories and configuration
-6. **RST Generation**: Uses `sphinx-apidoc` to generate RST files from Python source
-7. **Markdown Build**: Runs Sphinx with the markdown builder to generate clean Markdown
-8. **Content Organization**: Processes and organizes the generated Markdown files
-9. **Mintlify Integration**: Creates configuration snippets for easy integration
-10. **Cleanup**: Removes build artifacts while preserving generated documentation
+3. **Sphinx Setup**: Creates necessary Sphinx directories and configuration
+4. **RST Generation**: Uses `sphinx-apidoc` to generate RST files from Python source
+5. **Markdown Build**: Runs Sphinx with the markdown builder to generate clean Markdown
+6. **Content Organization**: Processes and organizes the generated Markdown files
+7. **Mintlify Integration**: Creates configuration snippets for easy integration
+8. **Cleanup**: Removes build artifacts while preserving generated documentation
 
 ## Output
 
@@ -101,7 +95,7 @@ The script generates the following:
 
 ### Generated Documentation
 
-- **`sdk/api-reference/`**: Directory containing all generated Python SDK documentation
+- **`sdk/api-reference/`**: Directory containing all generated API documentation
   - `openhands.sdk.mdx`: Main SDK module documentation
   - `openhands.sdk.agent.mdx`: Agent system documentation
   - `openhands.sdk.conversation.mdx`: Conversation management documentation
@@ -111,10 +105,6 @@ The script generates the following:
   - `openhands.sdk.tool.mdx`: Tool system documentation
   - `openhands.sdk.utils.mdx`: Utilities documentation
   - `openhands.sdk.workspace.mdx`: Workspace management documentation
-
-- **`openapi/agent-server.json`**: OpenAPI 3.1 specification for the Agent Server REST API
-  - Auto-generated from FastAPI endpoint definitions
-  - Used by Mintlify to render REST API reference docs
 
 ### Configuration Files
 

@@ -25,7 +25,6 @@ class SimpleAPIDocGenerator:
         self.agent_sdk_dir = docs_dir / "agent-sdk"
         self.output_dir = docs_dir / "sdk" / "api-reference"
         self.sphinx_dir = docs_dir / "scripts" / "sphinx"
-        self.openapi_output = docs_dir / "openapi" / "agent-server.json"
         
     def run(self):
         """Main execution method."""
@@ -40,16 +39,13 @@ class SimpleAPIDocGenerator:
         # Step 3: Install the SDK
         self.install_sdk()
         
-        # Step 4: Generate Agent Server OpenAPI spec
-        self.generate_agent_server_openapi()
-        
-        # Step 5: Generate documentation using Sphinx
+        # Step 4: Generate documentation using Sphinx
         self.generate_sphinx_docs()
         
-        # Step 6: Clean and simplify the generated markdown
+        # Step 5: Clean and simplify the generated markdown
         self.clean_generated_docs()
         
-        # Step 7: Update navigation
+        # Step 6: Update navigation
         self.update_navigation()
         
         logger.info("API documentation generation completed successfully!")
@@ -75,44 +71,6 @@ class SimpleAPIDocGenerator:
         self.run_command([
             "python", "-m", "pip", "install", "-e", str(sdk_path)
         ])
-
-    def generate_agent_server_openapi(self):
-        """Generate the Agent Server OpenAPI specification."""
-        logger.info("Generating Agent Server OpenAPI spec...")
-        
-        # Ensure output directory exists
-        self.openapi_output.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Generate OpenAPI spec using the agent-server's openapi.py script
-        openapi_script = (
-            self.agent_sdk_dir
-            / "openhands-agent-server"
-            / "openhands"
-            / "agent_server"
-            / "openapi.py"
-        )
-        
-        if not openapi_script.exists():
-            logger.warning(
-                f"OpenAPI generator script not found at {openapi_script}. "
-                "Agent Server REST API docs will not be updated."
-            )
-            return
-        
-        env = os.environ.copy()
-        env["SCHEMA_PATH"] = str(self.openapi_output)
-        env["OPENHANDS_SUPPRESS_BANNER"] = "1"
-        
-        try:
-            self.run_command(
-                ["python", str(openapi_script)],
-                cwd=self.agent_sdk_dir,
-                env=env,
-            )
-            logger.info(f"Generated OpenAPI spec at {self.openapi_output}")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to generate OpenAPI spec: {e}")
-            raise
         
     def fix_agent_sdk_mdx_syntax(self):
         """Fix MDX syntax issues in agent-sdk files to prevent Mintlify parsing errors."""
@@ -794,12 +752,7 @@ description: API reference for {module_name} module
         except Exception as e:
             logger.error(f"Error updating docs.json: {e}")
         
-    def run_command(
-        self,
-        cmd: List[str],
-        cwd: Path = None,
-        env: Dict[str, str] = None,
-    ):
+    def run_command(self, cmd: List[str], cwd: Path = None):
         """Run a shell command with error handling."""
         try:
             result = subprocess.run(
@@ -807,8 +760,7 @@ description: API reference for {module_name} module
                 cwd=cwd or self.docs_dir,
                 capture_output=True, 
                 text=True, 
-                check=True,
-                env=env,
+                check=True
             )
             if result.stdout:
                 logger.debug(f"STDOUT: {result.stdout}")
