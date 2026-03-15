@@ -382,6 +382,75 @@ openhands.sdk.{module} module
         
         return '\n'.join(result_lines)
 
+    def fix_shell_config_examples(self, content: str) -> str:
+        """Fix shell-style configuration examples where # comments are interpreted as headers.
+        
+        Wraps configuration blocks (KEY=VALUE lines with # comments) in code blocks.
+        """
+        import re
+        
+        lines = content.split('\n')
+        result = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this line introduces a configuration example
+            # Common patterns: "Example configuration:", "Configuration example:", etc.
+            if re.match(r'^(Example\s+)?[Cc]onfiguration[:\s]', line.strip()) or \
+               line.strip().endswith('configuration:'):
+                result.append(line)
+                i += 1
+                
+                # Collect following lines that look like config (KEY=VALUE or # comments)
+                config_lines = []
+                while i < len(lines):
+                    current = lines[i]
+                    stripped = current.strip()
+                    
+                    # Stop conditions: empty line followed by non-config, or header
+                    if not stripped:
+                        # Check if next non-blank is a real header (method/class)
+                        j = i + 1
+                        while j < len(lines) and not lines[j].strip():
+                            j += 1
+                        if j < len(lines) and lines[j].startswith('###'):
+                            break
+                        config_lines.append(current)
+                        i += 1
+                        continue
+                    
+                    # Real markdown headers (### method or class)
+                    if stripped.startswith('### ') or stripped.startswith('#### '):
+                        break
+                    
+                    # Config-like lines: KEY=VALUE, # comment, or continuation
+                    if re.match(r'^[A-Z_]+=', stripped) or \
+                       stripped.startswith('#') or \
+                       '=' in stripped:
+                        config_lines.append(current)
+                        i += 1
+                    else:
+                        # Non-config line
+                        break
+                
+                # Remove trailing blank lines from config
+                while config_lines and not config_lines[-1].strip():
+                    config_lines.pop()
+                
+                if config_lines:
+                    # Wrap in code block
+                    result.append('```bash')
+                    result.extend(config_lines)
+                    result.append('```')
+                continue
+            
+            result.append(line)
+            i += 1
+        
+        return '\n'.join(result)
+    
     def add_class_separators(self, content: str) -> str:
         """Add horizontal rules before class headers to ensure proper spacing.
         
@@ -687,6 +756,10 @@ openhands.sdk.{module} module
         
         # Fix example code blocks that are not properly formatted
         content = self.fix_example_blocks(content)
+        
+        # Fix shell-style configuration examples that have # comments being interpreted as headers
+        # Pattern: lines like "Example configuration:" followed by KEY=VALUE and "# comment" lines
+        content = self.fix_shell_config_examples(content)
         
         # Remove all <br/> tags (wrapped in backticks or not)
         content = content.replace('`<br/>`', '')
