@@ -379,6 +379,41 @@ openhands.sdk.{module} module
         
         return '\n'.join(result_lines)
 
+    def add_class_separators(self, content: str) -> str:
+        """Add horizontal rules before class headers to ensure proper spacing.
+        
+        This fixes the CSS issue where h4 (method headers like init()) followed by 
+        h3 (class headers) lose their margin-top due to Mintlify's CSS rule that 
+        sets margin-top: 0 for elements following h4.
+        """
+        import re
+        
+        lines = content.split('\n')
+        result = []
+        
+        for i, line in enumerate(lines):
+            # Check if this is a class header (### class ...)
+            if line.startswith('### class '):
+                # Don't add separator before the very first class (after frontmatter)
+                # Check if there's actual content before this (not just blank lines)
+                has_content_before = False
+                for j in range(i - 1, -1, -1):
+                    if lines[j].strip():
+                        # Found non-blank content
+                        has_content_before = True
+                        break
+                
+                if has_content_before:
+                    # Add a horizontal rule before the class header for visual separation
+                    # This overrides the margin-top: 0 from CSS
+                    result.append('')
+                    result.append('---')
+                    result.append('')
+            
+            result.append(line)
+        
+        return '\n'.join(result)
+    
     def remove_malformed_examples(self, content: str) -> str:
         """Remove Example sections that contain malformed code (raw JSON/code without proper code blocks)."""
         import re
@@ -602,6 +637,35 @@ openhands.sdk.{module} module
 
     def clean_markdown_content(self, content: str, filename: str) -> str:
         """Clean markdown content to be parser-friendly."""
+        # FIRST: Fix malformed *args and **kwargs patterns from Sphinx
+        # These appear as: ```\n*\n```\n<br/>\nargs  or similar
+        # Convert to clean `*args` and `**kwargs`
+        content = re.sub(
+            r'<br/>\s*```\s*\n\s*\*\*\s*\n\s*```\s*<br/>\s*kwargs',
+            '`**kwargs`',
+            content
+        )
+        content = re.sub(
+            r'<br/>\s*```\s*\n\s*\*\s*\n\s*```\s*<br/>\s*args',
+            '`*args`',
+            content
+        )
+        # Also without <br/> tags
+        content = re.sub(
+            r'```\s*\n\s*\*\*\s*\n\s*```[\s\n]*kwargs',
+            '`**kwargs`',
+            content
+        )
+        content = re.sub(
+            r'```\s*\n\s*\*\s*\n\s*```[\s\n]*args',
+            '`*args`',
+            content
+        )
+        
+        # Handle escaped \*args and \*\*kwargs before other processing
+        content = content.replace('\\*\\*kwargs', '`**kwargs`')
+        content = content.replace('\\*args', '`*args`')
+        
         # First handle multi-line dictionary patterns
         content = self.clean_multiline_dictionaries(content)
         
@@ -623,6 +687,10 @@ openhands.sdk.{module} module
         content = re.sub(r'```\s*\n``\s*\n```', '', content)  # Empty weird block
         content = re.sub(r'```\s*\n`\s*\n```', '', content)   # Another weird pattern
         content = re.sub(r'^## \}', '}', content, flags=re.MULTILINE)  # Fix closing brace with header prefix
+        
+        # Handle any remaining standalone code blocks with just * or ** (cleanup)
+        content = re.sub(r'\s*```\s*\n\s*\*\*\s*\n\s*```\s*', ' ', content)
+        content = re.sub(r'\s*```\s*\n\s*\*\s*\n\s*```\s*', ' ', content)
         
         # Clean up blockquote markers that break MDX parsing
         # Convert '  > text' to '  text' (indented blockquotes to plain indented text)
@@ -676,6 +744,10 @@ openhands.sdk.{module} module
         # Remove malformed Example sections that contain raw JSON/code without proper formatting
         # These cause MDX parsing errors due to curly braces being interpreted as JSX
         content = self.remove_malformed_examples(content)
+        
+        # Add horizontal rules before class headers to ensure proper spacing
+        # This fixes the issue where h4 (method) followed by h3 (class) loses margin-top
+        content = self.add_class_separators(content)
         
         lines = content.split('\n')
         cleaned_lines = []
@@ -754,10 +826,10 @@ description: API reference for {module_name} module
         line = re.sub(r'<(/?\w+[^>]*)>', r'`<\1>`', line)
         
         # Note: Blockquote markers are now handled globally in clean_markdown_content
+        # Note: *args and **kwargs are now handled at the start of clean_markdown_content
         
-        # Remove escaped characters that cause issues
-        line = line.replace('\\*', '*')
-        line = line.replace('\\', '')
+        # Remove remaining escaped backslashes, but preserve literal asterisks in code
+        line = re.sub(r'\\([^*])', r'\1', line)  # Remove backslash before non-asterisks
         
         # Fix dictionary/object literals that cause parsing issues
         # Pattern: = {'key': 'value', 'key2': 'value2'} or = {}
