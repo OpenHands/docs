@@ -175,7 +175,7 @@ Indices and tables
             'tool', 'workspace', 'security', 'utils',
             # Additional important modules
             'context', 'hooks', 'critic', 'mcp', 'plugin', 
-            'subagent', 'io', 'testing', 'secret', 'skills',
+            'subagent', 'io', 'secret', 'skills',
             'observability', 'logger',
         ]
         
@@ -233,6 +233,17 @@ openhands.sdk.{module} module
         
         build_dir = self.sphinx_dir / "build"
         
+        # Define the modules we want to include (must match the list in create_rst_files)
+        allowed_modules = [
+            # Core modules (original)
+            'agent', 'conversation', 'event', 'llm', 
+            'tool', 'workspace', 'security', 'utils',
+            # Additional important modules
+            'context', 'hooks', 'critic', 'mcp', 'plugin', 
+            'subagent', 'io', 'secret', 'skills',
+            'observability', 'logger',
+        ]
+        
         # Remove old output directory
         if self.output_dir.exists():
             shutil.rmtree(self.output_dir)
@@ -246,6 +257,13 @@ openhands.sdk.{module} module
             # Skip the top-level openhands.sdk.md file as it duplicates content
             if md_file.name == "openhands.sdk.md":
                 logger.info(f"Skipping {md_file.name} (top-level duplicate)")
+                continue
+            
+            # Only process files for modules in the allowed list
+            # File names are like: openhands.sdk.module.md
+            module_name = md_file.stem.replace('openhands.sdk.', '')
+            if module_name not in allowed_modules:
+                logger.info(f"Skipping {md_file.name} (not in allowed modules)")
                 continue
                 
             logger.info(f"Processing {md_file.name}")
@@ -277,6 +295,89 @@ openhands.sdk.{module} module
         content = re.sub(pattern3, '(configuration object)', content, flags=re.DOTALL)
         
         return content
+    
+    def fix_example_blocks(self, content: str) -> str:
+        """Fix example code blocks that are not properly formatted."""
+        import re
+        
+        lines = content.split('\n')
+        result_lines = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this is an Example header followed by unformatted code
+            # Handle both header-style and plain "Example:" format
+            is_example_header = (
+                line.strip() in ['#### Example', '### Example', '## Example'] or
+                line.strip() == 'Example:' or
+                line.strip() == 'Example'
+            )
+            
+            if is_example_header:
+                # Normalize to h4 header
+                result_lines.append('#### Example')
+                result_lines.append('')
+                i += 1
+                
+                # Skip any blank lines after the header
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+                
+                # Check if the next line looks like code (not a proper code block)
+                if i < len(lines) and not lines[i].startswith('```'):
+                    # Collect all lines until we hit another header or blank line followed by a header
+                    code_lines = []
+                    while i < len(lines):
+                        current = lines[i]
+                        # Stop if we hit a header
+                        if current.startswith('#'):
+                            break
+                        # Stop if we hit Properties or Methods sections
+                        if current.strip() in ['#### Properties', '#### Methods', '### Properties', '### Methods']:
+                            break
+                        # Stop if we hit two blank lines (paragraph break)
+                        if not current.strip() and i + 1 < len(lines) and lines[i + 1].startswith('#'):
+                            break
+                        code_lines.append(current)
+                        i += 1
+                    
+                    # Remove trailing blank lines from code
+                    while code_lines and not code_lines[-1].strip():
+                        code_lines.pop()
+                    
+                    # Clean up the code lines
+                    cleaned_code = []
+                    for code_line in code_lines:
+                        # Remove RST-style definition list markers
+                        code_line = re.sub(r'^:\s*', '', code_line)
+                        # Remove <br/> tags
+                        code_line = code_line.replace('`<br/>`', '')
+                        code_line = code_line.replace('<br/>', '')
+                        # Remove standalone > characters (blockquote artifacts)
+                        code_line = re.sub(r'^\s*>\s*', '', code_line)
+                        cleaned_code.append(code_line)
+                    
+                    if cleaned_code:
+                        # Determine language from content
+                        first_non_empty = next((l for l in cleaned_code if l.strip()), '')
+                        if first_non_empty.strip().startswith('{') or first_non_empty.strip() == 'json':
+                            # Remove the standalone 'json' line if present
+                            if cleaned_code and cleaned_code[0].strip() == 'json':
+                                cleaned_code = cleaned_code[1:]
+                            result_lines.append('```json')
+                        else:
+                            result_lines.append('```python')
+                        result_lines.extend(cleaned_code)
+                        result_lines.append('```')
+                        result_lines.append('')
+                    continue
+            
+            result_lines.append(line)
+            i += 1
+        
+        return '\n'.join(result_lines)
 
     def fix_header_hierarchy(self, content: str) -> str:
         """Fix header hierarchy to ensure proper nesting under class headers."""
@@ -453,6 +554,68 @@ openhands.sdk.{module} module
         # Fix header hierarchy (Example sections should be h4 under class headers)
         content = self.fix_header_hierarchy(content)
         
+        # Fix example code blocks that are not properly formatted
+        content = self.fix_example_blocks(content)
+        
+        # Remove all <br/> tags (wrapped in backticks or not)
+        content = content.replace('`<br/>`', '')
+        content = content.replace('<br/>', '')
+        
+        # Clean up malformed code blocks with weird backtick patterns
+        # These come from Sphinx's markdown output
+        content = re.sub(r'```\s*\n``\s*\n```', '', content)  # Empty weird block
+        content = re.sub(r'```\s*\n`\s*\n```', '', content)   # Another weird pattern
+        content = re.sub(r'^## \}', '}', content, flags=re.MULTILINE)  # Fix closing brace with header prefix
+        
+        # Clean up blockquote markers that break MDX parsing
+        # Convert '  > text' to '  text' (indented blockquotes to plain indented text)
+        # Handle multiple levels of nesting like '> > text'
+        # Run multiple times to handle nested blockquotes
+        prev_content = None
+        while prev_content != content:
+            prev_content = content
+            content = re.sub(r'^(\s*)>\s*', r'\1', content, flags=re.MULTILINE)
+        
+        # Remove duplicate Example: lines after #### Example header
+        content = re.sub(r'(#### Example\n\n)Example:\n', r'\1', content)
+        
+        # Remove malformed standalone backtick patterns
+        content = re.sub(r'^``\s*$', '', content, flags=re.MULTILINE)
+        content = re.sub(r'^`\s*$', '', content, flags=re.MULTILINE)
+        
+        # Clean up multiple consecutive blank lines (more than 2)
+        content = re.sub(r'\n{4,}', '\n\n\n', content)
+        
+        # Remove orphaned code block openers followed by malformed content
+        # Pattern: ``` followed by content that doesn't have a matching closing ```
+        # This handles Sphinx's broken JSON/code examples
+        lines = content.split('\n')
+        cleaned = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # Check for orphaned code block
+            if line.strip() == '```':
+                # Look ahead to see if there's proper code and closing
+                j = i + 1
+                has_close = False
+                while j < len(lines):
+                    if lines[j].strip() == '```':
+                        has_close = True
+                        break
+                    if lines[j].startswith('#'):  # Hit a header - no proper close
+                        break
+                    j += 1
+                
+                if not has_close:
+                    # Skip this orphaned opener
+                    i += 1
+                    continue
+            
+            cleaned.append(line)
+            i += 1
+        content = '\n'.join(cleaned)
+        
         lines = content.split('\n')
         cleaned_lines = []
         
@@ -529,10 +692,7 @@ description: API reference for {module_name} module
         # Only replace if it looks like an HTML tag: <tagname> or </tagname>
         line = re.sub(r'<(/?\w+[^>]*)>', r'`<\1>`', line)
         
-        # Fix Sphinx-generated blockquote markers that should be list continuations
-        if line.startswith('> ') and not line.startswith('> **'):
-            # This is likely a continuation of a bullet point, not a blockquote
-            line = '  ' + line[2:]  # Replace '> ' with proper indentation
+        # Note: Blockquote markers are now handled globally in clean_markdown_content
         
         # Remove escaped characters that cause issues
         line = line.replace('\\*', '*')
@@ -682,9 +842,6 @@ description: API reference for {module_name} module
             'FileStore': 'io',
             'LocalFileStore': 'io',
             'InMemoryFileStore': 'io',
-            # testing module
-            'TestLLM': 'testing',
-            'TestLLMExhaustedError': 'testing',
             # secret module
             'SecretSource': 'secret',
             'StaticSecret': 'secret',
