@@ -1201,12 +1201,26 @@ description: API reference for {module_name} module
                 docs_config = json.load(f)
             
             # Find and update the API Reference section
+            # Structure: API Reference (collapsed) > Python SDK (collapsed) > modules
             updated = False
+            new_api_ref_structure = {
+                "group": "API Reference",
+                "collapsed": True,
+                "pages": [
+                    {
+                        "group": "Python SDK",
+                        "collapsed": True,
+                        "pages": nav_entries
+                    }
+                ]
+            }
+            
             for tab in docs_config.get("navigation", {}).get("tabs", []):
                 if tab.get("tab") == "SDK":
-                    for page in tab.get("pages", []):
+                    pages = tab.get("pages", [])
+                    for i, page in enumerate(pages):
                         if isinstance(page, dict) and page.get("group") == "API Reference":
-                            page["pages"] = nav_entries
+                            pages[i] = new_api_ref_structure
                             updated = True
                             logger.info("Updated API Reference navigation in docs.json")
                             break
