@@ -379,6 +379,63 @@ openhands.sdk.{module} module
         
         return '\n'.join(result_lines)
 
+    def remove_malformed_examples(self, content: str) -> str:
+        """Remove Example sections that contain malformed code (raw JSON/code without proper code blocks)."""
+        import re
+        
+        lines = content.split('\n')
+        result = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this is an Example header
+            if line.strip() == '#### Example':
+                # Look ahead to see if the example content is properly formatted
+                j = i + 1
+                
+                # Skip blank lines
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                
+                # Check if the next non-blank line starts a proper code block
+                if j < len(lines) and lines[j].startswith('```'):
+                    # This is a properly formatted example, keep it
+                    result.append(line)
+                    i += 1
+                    continue
+                
+                # Check if the content contains curly braces (JSON/dict) without code blocks
+                # This would cause MDX parsing errors
+                example_content = []
+                k = j
+                while k < len(lines):
+                    if lines[k].startswith('#'):  # Hit next header
+                        break
+                    example_content.append(lines[k])
+                    k += 1
+                
+                example_text = '\n'.join(example_content)
+                has_curly_braces = '{' in example_text or '}' in example_text
+                has_proper_code_block = '```' in example_text
+                
+                if has_curly_braces and not has_proper_code_block:
+                    # This is a malformed example with raw code - skip it entirely
+                    # Skip to the next header
+                    i = k
+                    continue
+                else:
+                    # Keep this example
+                    result.append(line)
+                    i += 1
+                    continue
+            
+            result.append(line)
+            i += 1
+        
+        return '\n'.join(result)
+    
     def fix_header_hierarchy(self, content: str) -> str:
         """Fix header hierarchy to ensure proper nesting under class headers."""
         import re
@@ -615,6 +672,10 @@ openhands.sdk.{module} module
             cleaned.append(line)
             i += 1
         content = '\n'.join(cleaned)
+        
+        # Remove malformed Example sections that contain raw JSON/code without proper formatting
+        # These cause MDX parsing errors due to curly braces being interpreted as JSX
+        content = self.remove_malformed_examples(content)
         
         lines = content.split('\n')
         cleaned_lines = []
