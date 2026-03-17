@@ -444,6 +444,133 @@ agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
     For more details on the base class implementation, see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py).
 </Tip>
 
+### Defense-in-Depth Security Analyzer
+
+The LLM-based analyzer above relies on the model to assess risk. But what if
+the model itself is compromised, or the action contains encoding evasions that
+trick the LLM into rating a dangerous command as safe?
+
+A **defense-in-depth** approach stacks multiple independent layers so each
+covers the others' blind spots. The example below implements four layers in
+a single file, using the standard library plus the SDK and Pydantic — no
+model calls, no external services, and no extra dependencies beyond the
+SDK's normal runtime environment.
+
+1. **Extraction with two corpora** — separates *what the agent will do*
+   (tool metadata and tool-call content) from *what it thought about*
+   (reasoning, summary).
+   Shell-destructive patterns only scan executable fields, so an agent that
+   thinks "I should avoid rm -rf /" while running `ls /tmp` is correctly
+   rated LOW, not HIGH.
+
+2. **Unicode normalization** — strips invisible characters (zero-width spaces,
+   bidi controls, word joiners) and applies NFKC compatibility normalization
+   so fullwidth and ligature evasions collapse to ASCII before matching.
+
+3. **Deterministic policy rails** — fast, segment-aware rules that
+   short-circuit before pattern scanning. Composed conditions like "sudo AND
+   rm" require both tokens in the same extraction segment, preventing
+   cross-field false positives. At the SDK boundary, internal rail outcomes
+   like "DENY" and "CONFIRM" both map to `SecurityRisk.HIGH`. Under
+   `ConfirmRisky`, that means "ask before proceeding," not "hard-block
+   execution." True blocking requires hook-based enforcement.
+
+4. **Pattern scanning with ensemble fusion** — regex patterns categorized as
+   HIGH or MEDIUM, fused across analyzers via max-severity. UNKNOWN is
+   preserved as first-class, never promoted to HIGH.
+
+#### When to use this vs. the LLM analyzer
+
+The LLM analyzer generalizes to novel threats but costs an API call per
+action. The pattern analyzer is free, deterministic, and catches known threat
+categories reliably. In practice, you combine both in an ensemble — the
+pattern analyzer catches the obvious threats instantly, the LLM analyzer
+can cover novel or ambiguous cases the deterministic layer does not, and
+max-severity fusion takes the worst case.
+
+#### Wiring into a conversation
+
+The classes below (`PatternSecurityAnalyzer`, `EnsembleSecurityAnalyzer`)
+are defined in the [ready-to-run example](#ready-to-run-example):
+
+```python icon="python" focus={7-11}
+from openhands.sdk import Conversation
+from openhands.sdk.security.confirmation_policy import ConfirmRisky
+
+# PatternSecurityAnalyzer and EnsembleSecurityAnalyzer are defined
+# in the example file below — copy them into your project or import
+# from the example module.
+pattern = PatternSecurityAnalyzer()
+ensemble = EnsembleSecurityAnalyzer(analyzers=[pattern])
+
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_security_analyzer(ensemble)
+conversation.set_confirmation_policy(ConfirmRisky())
+
+# Every agent action now passes through the analyzer.
+# HIGH -> confirmation prompt. MEDIUM -> allowed.
+# UNKNOWN -> confirmed by default (confirm_unknown=True).
+```
+
+<Warning>
+`conversation.execute_tool()` bypasses the analyzer and confirmation policy.
+This example protects normal agent actions in the conversation loop; hard
+enforcement for direct tool calls requires hooks.
+</Warning>
+
+#### Key design decisions
+
+Understanding *why* the example is built this way helps you decide what to
+keep, modify, or replace when adapting it:
+
+- **Two corpora, not one.** Shell patterns on reasoning text produce false
+  positives whenever the model discusses dangerous commands it chose not to
+  run. Injection patterns (instruction overrides, mode switching) are
+  textual attacks that make sense in any field. The split eliminates the
+  first problem without losing the second.
+
+- **Max-severity, not noisy-OR.** The analyzers scan the same input, so
+  they're correlated. Noisy-OR assumes independence. Max-severity is
+  simpler, correct, and auditable.
+
+- **UNKNOWN is first-class.** Some analyzers may return UNKNOWN when they
+  cannot assess an action or are not fully configured. The ensemble
+  preserves UNKNOWN unless at least one analyzer returns a concrete risk.
+  If the ensemble promoted UNKNOWN to HIGH, composing with optional
+  analyzers would be unusable.
+
+- **Stdlib-only normalization.** NFKC normalization plus invisible/bidi
+  stripping covers the most common encoding evasions. Full confusable
+  detection (TR39) is documented as a known limitation, not silently
+  omitted.
+
+#### Known limitations
+
+The example documents its boundaries explicitly:
+
+| Limitation | Why it exists | What would fix it |
+|---|---|---|
+| No hard-deny at the `SecurityAnalyzer` boundary | The SDK analyzer returns `SecurityRisk`, not block/allow decisions | Hook-based enforcement |
+| `conversation.execute_tool()` bypasses analyzer checks | Direct tool execution skips the normal agent decision path | Avoid bypass path or enforce through hooks |
+| No Cyrillic/homoglyph detection | NFKC maps compatibility variants, not cross-script confusables | Unicode TR39 tables (not in stdlib) |
+| Content beyond the 30k extraction cap is not scanned | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
+| `thinking_blocks` not scanned | Scanning reasoning artifacts would create high false-positive risk by treating internal deliberation as executable intent | Separate injection-only scan of CoT |
+| `curl \| node` not detected | Interpreter list covers sh/bash/python/perl/ruby only | Expand the list (increases false positives) |
+
+#### Ready-to-run example
+
+<Note>
+Full defense-in-depth example: [examples/01_standalone_sdk/45_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/45_defense_in_depth_security.py)
+</Note>
+
+The full example lives here:
+
+```python icon="python" expandable examples/01_standalone_sdk/45_defense_in_depth_security.py
+<code will be auto-synced from agent-sdk>
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/45_defense_in_depth_security.py"/>
+
 
 ---
 
