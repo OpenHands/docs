@@ -35039,6 +35039,11 @@ OpenHands Enterprise allows you to run AI coding agents directly on your own
 servers or in your private cloud. Unlike the SaaS version, the enterprise
 deployment gives you complete control over your AI development environment.
 
+<Card title="Start a Free 30-Day Trial" icon="rocket" href="/enterprise/quick-start">
+  Deploy OpenHands Enterprise on your own infrastructure in under an hour.
+  No credit card required.
+</Card>
+
 ## What is OpenHands Enterprise?
 
 OpenHands Enterprise brings the power of autonomous coding agents to your
@@ -35083,7 +35088,7 @@ OpenHands Enterprise integrates with your existing enterprise ecosystem:
 
 - **Identity & Access**: Enterprise SAML/SSO for centralized authentication
 - **Source Control**: GitHub Enterprise, GitLab, Bitbucket
-- **Project Management**: Jira, and other ticketing systems
+- **Project Management**: Jira and other ticketing systems
 - **Communication**: Slack integration for notifications and workflows
 
 ### Containerized Sandbox Runtime
@@ -35117,12 +35122,11 @@ Enterprise customers receive:
 
 <CardGroup cols={2}>
   <Card
-    title="Installation Guide"
+    title="Quick Start"
     icon="rocket"
-    href="/enterprise/getting-started"
+    href="/enterprise/quick-start"
   >
-    Deploy OpenHands Enterprise on your infrastructure using Replicated with
-    step-by-step instructions.
+    Trial OpenHands Enterprise for free!
   </Card>
   <Card
     title="Contact Us"
@@ -35140,166 +35144,342 @@ Enterprise customers receive:
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
 
-### Getting Started
-Source: https://docs.openhands.dev/enterprise/getting-started.md
+### Quick Start
+Source: https://docs.openhands.dev/enterprise/quick-start.md
 
-OpenHands Enterprise is deployed to your infrastructure using [Replicated](https://www.replicated.com/), which supports both online and air-gapped Kubernetes environments. This guide walks you through prerequisites, installation, and initial configuration.
+This guide walks you through trialing OpenHands Enterprise on AWS. You'll provision
+infrastructure with Terraform, configure GitHub for user authentication, and set up
+Anthropic as your LLM provider.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following:
+Before you begin, make sure you have the following ready:
 
-- **Kubernetes cluster**: A running K8s cluster (v1.25+) with `kubectl` access configured
-- **Helm**: Helm v3.12+ installed
-- **Storage**: A default StorageClass configured in your cluster
-- **Resources**: Minimum 8 CPU cores and 16 GB RAM available for OpenHands workloads
-- **Networking**: Outbound HTTPS access (for online installs) and an ingress controller or load balancer
+- **Anthropic API key** from the [Anthropic Console](https://console.anthropic.com/)
+- **A GitHub account** with permission to create GitHub Apps
+- **An AWS account** with permissions to create EC2 instances, Route53 records, and ACM certificates
 
-<Note>
-  You will need a **license key** from the OpenHands team to proceed with installation.
-  [Contact us](https://openhands.dev/contact) if you have not received one.
-</Note>
-
-- **LLM provider access**: An API key from your chosen LLM provider (Anthropic, OpenAI, AWS Bedrock, Azure OpenAI, Google Vertex AI, etc.)
-
-## Installation
+## Provision Infrastructure
 
 <Tabs>
-  <Tab title="Online Install">
-    For clusters with outbound internet access:
+  <Tab title="AWS with Terraform (Recommended)">
+    We provide a Terraform module that provisions a properly configured environment
+    for OpenHands Enterprise, including the EC2 instance, DNS records, and TLS certificates.
 
-    1. **Add the OpenHands Helm repository**
-
-       ```bash
-       helm repo add openhands https://registry.replicated.com/openhands
-       helm repo update
-       ```
-
-    2. **Create a namespace**
-
-       ```bash
-       kubectl create namespace openhands
-       ```
-
-    3. **Install using your license key**
-
-       ```bash
-       helm install openhands openhands/openhands \
-         --namespace openhands \
-         --set license.key=YOUR_LICENSE_KEY \
-         --set config.llm.apiKey=YOUR_LLM_API_KEY \
-         --set config.llm.model=anthropic/claude-sonnet-4-5-20250929
-       ```
-
-    4. **Wait for pods to become ready**
-
-       ```bash
-       kubectl -n openhands get pods --watch
-       ```
+    <Card title="OpenHands AWS Terraform Module" icon="github" href="https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws">
+      Follow the README instructions to configure and apply the Terraform configuration.
+    </Card>
   </Tab>
 
-  <Tab title="Air-Gapped Install">
-    For environments without direct internet access:
+  <Tab title="Manual VM Setup">
+    If you are provisioning a VM manually (on-premises or on another cloud provider),
+    it must meet the requirements below.
 
-    1. **Download the air-gap bundle** from the Replicated download portal using the link provided with your license
+    <Accordion title="System requirements">
+      | Resource | Requirement |
+      |----------|-------------|
+      | **vCPUs** | 16 |
+      | **Memory** | 64 GB |
+      | **Disk** | 200 GB |
+      | **Disk P99 write latency** | 10 ms maximum |
+      | **OS** | Linux (x86-64 architecture) |
+      | **Init system** | systemd |
+      | **Access** | Root access (sudo) required |
+    </Accordion>
 
-    2. **Transfer the bundle** to a host with access to your cluster's private registry
+    <Accordion title="Network requirements">
+      **Firewall inbound rules** -- the following ports must be open:
 
-    3. **Push images to your private registry**
+      | Port | Protocol | Purpose |
+      |------|----------|---------|
+      | 80 | TCP | HTTP |
+      | 443 | TCP | HTTPS |
+      | 30000 | TCP | Admin Console |
 
-       ```bash
-       kubectl kots admin-console push-images \
-         ./openhands-airgap-bundle.tar.gz \
-         your-registry.example.com/openhands \
-         --registry-username YOUR_USER \
-         --registry-password YOUR_PASS
-       ```
+      **Local ports** -- the following ports must be available for local processes (no firewall rules needed):
 
-    4. **Install from your private registry**
+      `2379/TCP`, `7443/TCP`, `9099/TCP`, `10248/TCP`, `10257/TCP`, `10259/TCP`
 
-       ```bash
-       helm install openhands oci://your-registry.example.com/openhands/openhands \
-         --namespace openhands \
-         --set license.key=YOUR_LICENSE_KEY \
-         --set config.llm.apiKey=YOUR_LLM_API_KEY \
-         --set config.llm.model=anthropic/claude-sonnet-4-5-20250929
-       ```
+      **Outbound access** -- the VM must be able to reach:
 
-    5. **Wait for pods to become ready**
+      - `replicated.app`
+      - `proxy.replicated.com`
+      - `images.r9.all-hands.dev`
+      - `install.r9.all-hands.dev`
+      - `charts.r9.all-hands.dev`
+      - `updates.r9.all-hands.dev`
+      - `github.com`
+      - `docker.io`
+      - `docker.dev`
+      - `ghcr.io`
+    </Accordion>
 
-       ```bash
-       kubectl -n openhands get pods --watch
-       ```
+    <Accordion title="System directories created by the installer">
+      The installation creates directories and files in the following locations:
+
+      ```
+      /etc/cni
+      /etc/k0s
+      /opt/cni
+      /opt/containerd
+      /run/calico
+      /run/containerd
+      /run/k0s
+      /sys/fs/cgroup/kubepods
+      /sys/fs/cgroup/system.slice/containerd.service
+      /sys/fs/cgroup/system.slice/k0scontroller.service
+      /usr/libexec/k0s
+      /usr/local/bin/k0s
+      /var/lib/calico
+      /var/lib/cni
+      /var/lib/containers
+      /var/lib/embedded-cluster
+      /var/lib/kubelet
+      /var/log/calico
+      /var/log/containers
+      /var/log/embedded-cluster
+      /var/log/pods
+      ```
+    </Accordion>
+
+    ### DNS and TLS Setup
+
+    Once your VM is running, configure DNS and TLS before starting the installer.
+
+    **Create DNS A records** pointing to your VM's public IP address:
+
+    | Record | Example |
+    |--------|---------|
+    | `<your-domain>` | `openhands.example.com` |
+    | `app.<your-domain>` | `app.openhands.example.com` |
+    | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
+    | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
+    | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
+    | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
+
+    **Obtain a TLS certificate** with SANs (Subject Alternative Names) for all of the above domains,
+    then copy the certificate (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM.
+
+    <Warning>
+      If you don't provide TLS certificates during installation, the Admin Console will use a
+      self-signed certificate and your browser will display a security warning. You can still
+      upload your certificate afterward through the Admin Console.
+    </Warning>
   </Tab>
 </Tabs>
 
-## Configuration
+## Run the Installer
 
-After the base installation, configure OpenHands Enterprise for your environment:
+### 1. Access the Installer Dashboard
 
-<AccordionGroup>
-  <Accordion title="LLM Provider" icon="brain">
-    {/* TODO: Document supported providers (Anthropic, OpenAI, Bedrock, Azure, Vertex AI), environment variables, and model selection */}
+[Register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup), then
+log in to the installer dashboard. You will see the dashboard below.
+Click **"View install guide"** in the Install tile.
 
-    Configure your preferred LLM provider and model. OpenHands Enterprise supports Anthropic, OpenAI, AWS Bedrock, Azure OpenAI, Google Vertex AI, and other LiteLLM-compatible providers.
-  </Accordion>
+![Installer Dashboard](./images/admin-dashboard.png)
 
-  <Accordion title="SSO / SAML" icon="lock">
-    {/* TODO: Document SAML IdP configuration, attribute mapping, and role assignment */}
+### 2. Name your instance
 
-    Enable single sign-on with your identity provider using SAML 2.0. Supports Okta, Azure AD, Google Workspace, and other SAML-compliant IdPs.
-  </Accordion>
+Enter a name for your instance (e.g., your company name or environment identifier).
+Select **"Outbound requests allowed"** for Network Availability, then click **Continue**.
 
-  <Accordion title="Storage" icon="hard-drive">
-    {/* TODO: Document persistent volume configuration, S3-compatible object storage, and backup strategy */}
+![Instance name and network availability](./images/install-instance-name.png)
 
-    Configure persistent storage for conversation history, agent workspace data, and application state.
-  </Accordion>
+### 3. Run the installation commands
 
-  <Accordion title="Networking" icon="network-wired">
-    {/* TODO: Document ingress configuration, TLS setup, domain mapping, and firewall rules */}
+The install guide provides commands to run on your VM. SSH into your VM and execute them in order:
 
-    Set up ingress, TLS termination, and network policies to expose the OpenHands UI and API securely within your network.
-  </Accordion>
-</AccordionGroup>
-
-## Verification
-
-After installation, verify your deployment is working correctly:
-
-1. **Check pod health**
-
+1. **Select a version** -- the latest version is pre-selected
+2. **Download the installation assets** -- copy and run the `curl` command shown
+3. **Extract the installation assets** -- run the `tar` command shown (this includes your license file)
+4. **Install** -- we recommend providing your TLS certificates during installation.
+   If you used the Terraform module, the certificates are in your home directory:
    ```bash
-   kubectl -n openhands get pods
+   sudo ./openhands install --license license.yaml \
+     --tls-cert ~/certificate.pem \
+     --tls-key ~/private-key.pem
    ```
+   If you provisioned manually and have your own certificates on the VM, pass them the same way.
+   You can also omit the `--tls-cert` and `--tls-key` flags and upload certificates later through
+   the Admin Console.
 
-   All pods should show `Running` status with all containers ready.
+![Installation commands](./images/install-commands.png)
 
-2. **Access the UI**
+### 4. Access the Admin Console
 
-   Open the OpenHands URL in your browser (the address depends on your ingress configuration).
+Once the install command completes, the Admin Console is available at:
+- `https://<your-base-domain>:30000` (if you provided TLS certificates)
+- `http://<your-vm-ip>:30000` (if using self-signed certificates)
 
-3. **Log in**
+If you did not provide TLS certificates with the `install` command, your browser will display a security warning.
+Click **Advanced**, then **Proceed** to continue to the Admin Console.
 
-   Sign in using your configured SSO provider or the initial admin credentials provided during setup.
+![Self-signed certificate warning](./images/self-signed-cert-warning.png)
 
-4. **Run a test task**
+### 5. Upload TLS certificate (if not provided with the install command)
 
-   Create a new conversation and ask the agent to perform a simple task (e.g., "List the files in the current directory") to confirm end-to-end connectivity with your LLM provider.
+If you did not provide certificates with the `install` command, select **"Upload your own"**,
+enter your base domain under **Hostname**, upload your private key and SSL certificate, then click **Continue**.
+
+![Upload TLS certificate](./images/upload-tls-certificate.png)
+
+### 6. Log in to the Admin Console
+
+Enter the password you set during installation and click **Log in**.
+
+![Admin Console login](./images/admin-console-login.png)
+
+### 7. Configure the cluster
+
+You will be prompted to add additional nodes to the cluster.
+For a single-node deployment, click **Continue** to skip this step.
+
+![Configure cluster nodes](./images/configure-cluster-nodes.png)
+
+## Configure OpenHands
+
+You should now see the application configuration page.
+
+![Configure OpenHands](./images/configure-openhands.png)
+
+### Domain Configuration
+
+- Select **"Derive hostnames from domain (recommended)"**
+- Enter your base domain (e.g., `openhands.example.com`)
+
+### Certificate Configuration
+
+- Upload your **TLS Certificate** (`.crt` or `.pem`)
+- Upload your **TLS Private Key** (`.key` or `.pem`)
+- Optionally upload the root **CA Certificate** for your TLS certificates
+
+### LLM Configuration
+
+Enter your Anthropic API key from the [Anthropic Console](https://console.anthropic.com/).
+
+### GitHub Authentication
+
+Enable GitHub Authentication in the Admin Console, then follow these steps to create and
+configure a GitHub App.
+
+#### Create a GitHub App
+
+1. Go to [github.com/settings/apps](https://github.com/settings/apps) and click **New GitHub App**.
+
+2. Set the **GitHub App name** (e.g., `OpenHands`).
+
+3. Set the **Homepage URL** to `https://app.<YOUR_BASE_DOMAIN>`.
+
+4. Under **Identifying and authorizing users**:
+   - Set the **Callback URL** to:
+     ```
+     https://auth.app.<YOUR_BASE_DOMAIN>/realms/allhands/broker/github/endpoint
+     ```
+   - Check the box for **Request user authorization (OAuth) during installation**
+
+5. Under **Webhook**:
+   - Set the **Webhook URL** to:
+     ```
+     https://app.<YOUR_BASE_DOMAIN>/integration/github/events
+     ```
+   - Generate a webhook secret:
+     ```bash
+     export WEBHOOK_SECRET=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 32)
+     echo $WEBHOOK_SECRET
+     ```
+   - Paste the generated value into the **Secret** field
+
+   <Warning>
+     Save the webhook secret value -- you will need to enter it in the Admin Console configuration.
+   </Warning>
+
+6. Under **Permissions**, configure the following:
+
+   **Repository permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Actions | Read and write |
+   | Commit statuses | Read and write |
+   | Contents | Read and write |
+   | Issues | Read and write |
+   | Pull requests | Read and write |
+   | Webhooks | Read and write |
+   | Workflows | Read and write |
+
+   **Organization permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Events | Read-only |
+
+   **Account permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Email addresses | Read-only |
+
+7. Click **Create GitHub App**.
+
+8. On the GitHub App page, under **Client secrets**, click **Generate a new client secret**.
+   Save this value.
+
+9. Under **Private keys**, click **Generate a private key**. The `.pem` file downloads
+   automatically -- note its location.
+
+#### Map GitHub App values to Admin Console
+
+Enter the following values in the Admin Console configuration:
+
+| GitHub App Value | Admin Console Field |
+|-----------------|-------------------|
+| Client ID (shown on app page) | GitHub OAuth Client ID |
+| Client secret (from step 8) | GitHub OAuth Client Secret |
+| App ID (shown on app page) | GitHub App ID |
+| Webhook secret (from step 5) | GitHub App Webhook Secret |
+| Private key file (from step 9) | GitHub App Private Key (file upload) |
+
+After filling in all fields, click **Save config** in the Admin Console, then click **Continue**.
+
+## Deploy and Verify
+
+OpenHands will begin deploying. You can expect the deployment status to transition from
+**Missing** to **Unavailable** to **Ready**. This typically takes 5-10 minutes.
+
+![Deployment in progress](./images/deployment-in-progress.png)
+
+Click **Details** next to the deployment status to monitor individual resources. Resources
+shown in orange are still deploying -- wait until all resources are ready.
+
+![Deployment status details](./images/deployment-status-details.png)
+
+## First Login
+
+Once the deployment status shows **Ready**, navigate to `https://app.<your-base-domain>`
+and click the **Login with GitHub** tile.
+
+
+Accept the Terms of Service and click **Continue**.
+
+![Accept Terms of Service](./images/accept-terms-of-service.png)
+
+OpenHands Enterprise is now running. You can open a repository or start a new conversation.
+
+![OpenHands is ready](./images/openhands-ready.png)
 
 ## Next Steps
 
 <CardGroup cols={2}>
   <Card title="Enterprise Overview" icon="building" href="/enterprise/index">
-    Learn more about OpenHands Enterprise features and deployment options.
+    Learn about OpenHands Enterprise features, integrations, and deployment options.
   </Card>
   <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
-    Get the most out of your AI coding agents with effective prompts.
-  </Card>
-  <Card title="LLM Configuration" icon="brain" href="/openhands/usage/llms/llms">
-    Explore supported LLM providers and advanced model configuration.
+    Get the most out of your AI coding agents with effective prompting techniques.
   </Card>
   <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
     Reach out to the OpenHands team for deployment assistance or questions.
+  </Card>
+  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
+    Explore the full OpenHands documentation for usage guides and features.
   </Card>
 </CardGroup>
