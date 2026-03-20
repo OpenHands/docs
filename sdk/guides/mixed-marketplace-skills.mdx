@@ -1,0 +1,283 @@
+---
+title: Mixed Marketplace Skills
+description: Combine local skills with remote skills from OpenHands extensions to create custom skill configurations.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+This guide shows how to combine locally-defined skills with remote skills from the [OpenHands extensions repository](https://github.com/OpenHands/extensions).
+
+## Use Case
+
+Teams often need to:
+- Maintain custom workflow-specific skills locally
+- Use skills from OpenHands extensions
+- Create curated skill sets for specific projects
+
+## Loading Pattern
+
+This guide focuses on the two loader APIs used in the example:
+
+| Method | Source | Use Case |
+|--------|--------|----------|
+| `load_skills_from_dir()` | Local directory | Project-specific skills |
+| `load_public_skills()` | OpenHands/extensions | Community skills filtered by a marketplace |
+
+## Example repository layout
+
+The example repository separates local skills from the marketplace configuration that filters public skills:
+
+```text
+43_mixed_marketplace_skills/
+├── .plugin/
+│   └── marketplace.json
+├── local_skills/
+│   └── greeting-helper/
+│       └── SKILL.md
+├── main.py
+└── README.md
+```
+
+## Marketplace format note
+
+The `.plugin/marketplace.json` file follows the Claude Code plugin marketplace schema. In OpenHands, plugin entry names are used as a filter list for which public skills to load from OpenHands/extensions, while local skills live in `local_skills/` and are merged separately.
+
+The guide below starts with the simplest direct loader calls (`load_skills_from_dir()` and `load_public_skills()`) so you can see exactly what each source contributes. The example repository still includes `.plugin/marketplace.json` because that is the configuration file used for repository-managed marketplace filtering.
+
+Additionally, OpenHands extends the schema with an optional `skills[]` array for listing skills directly (these are treated as direct skill sources, not plugin bundles).
+
+## Example: Combining Local and Remote Skills
+
+<Note>
+Full example: [examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py
+"""Example: Mixed Marketplace Skills - Combining Local and Remote Skills
+
+This example demonstrates how to create a marketplace that combines:
+1. Local skills hosted in your project directory
+2. Remote skills from the OpenHands/extensions repository
+
+Use Case:
+---------
+Teams often need to maintain their own custom skills while also leveraging
+the community skills from OpenHands. This pattern allows you to:
+- Keep specialized/private skills in your repository
+- Reference public skills from OpenHands/extensions
+- Create a curated skill set tailored for your workflow
+
+Directory Structure:
+-------------------
+43_mixed_marketplace_skills/
+├── .plugin/
+│   └── marketplace.json      # Marketplace configuration
+├── local_skills/
+│   └── greeting-helper/
+│       └── SKILL.md          # Local skill following AgentSkills standard
+├── main.py                   # This example script
+└── README.md
+
+The marketplace.json lists which remote skills to include. In OpenHands, entries
+in `skills[]` or `plugins[]` should point directly to skill directories containing
+`SKILL.md`; local skills live in `local_skills/` and are loaded separately.
+"""
+
+import argparse
+import os
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, AgentContext, Conversation
+from openhands.sdk.context.skills import (
+    load_public_skills,
+    load_skills_from_dir,
+)
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Mixed Marketplace Skills Example")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run without LLM (just show skill loading)",
+    )
+    args = parser.parse_args()
+
+    # =========================================================================
+    # Part 1: Loading Local Skills from Directory
+    # =========================================================================
+    print("=" * 80)
+    print("Part 1: Loading Local Skills from Directory")
+    print("=" * 80)
+
+    script_dir = Path(__file__).parent
+    local_skills_dir = script_dir / "local_skills"
+
+    print(f"\nLoading local skills from: {local_skills_dir}")
+
+    # Load skills from the local directory
+    # This loads any SKILL.md files following the AgentSkills standard
+    repo_skills, knowledge_skills, local_skills = load_skills_from_dir(local_skills_dir)
+
+    print("\nLoaded local skills:")
+    for name, skill in local_skills.items():
+        print(f"  - {name}: {skill.description or 'No description'}")
+        if skill.trigger:
+            # KeywordTrigger has 'keywords', TaskTrigger has 'triggers'
+            trigger_values = getattr(skill.trigger, "keywords", None) or getattr(
+                skill.trigger, "triggers", None
+            )
+            if trigger_values:
+                print(f"    Triggers: {trigger_values}")
+
+    # =========================================================================
+    # Part 2: Loading Remote Skills from OpenHands/extensions
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("Part 2: Loading Remote Skills from OpenHands/extensions")
+    print("=" * 80)
+
+    print("\nLoading public skills from https://github.com/OpenHands/extensions...")
+
+    # Load public skills from the OpenHands extensions repository
+    # This pulls from the default marketplace at OpenHands/extensions
+    public_skills = load_public_skills()
+
+    print(f"\nLoaded {len(public_skills)} public skills from OpenHands/extensions:")
+    for skill in public_skills[:5]:  # Show first 5
+        desc = (skill.description or "No description")[:50]
+        print(f"  - {skill.name}: {desc}...")
+    if len(public_skills) > 5:
+        print(f"  ... and {len(public_skills) - 5} more")
+
+    # =========================================================================
+    # Part 3: Combining Local and Remote Skills
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("Part 3: Combining Local and Remote Skills")
+    print("=" * 80)
+
+    # Combine skills with local skills taking precedence
+    # This allows local skills to override public skills with the same name
+    combined_skills = list(local_skills.values()) + public_skills
+
+    # Remove duplicates (keep first occurrence = local takes precedence)
+    seen_names: set[str] = set()
+    unique_skills = []
+    for skill in combined_skills:
+        if skill.name not in seen_names:
+            seen_names.add(skill.name)
+            unique_skills.append(skill)
+
+    print(f"\nTotal combined skills: {len(unique_skills)}")
+    print(f"  - Local skills: {len(local_skills)}")
+    print(f"  - Public skills: {len(public_skills)}")
+
+    local_names = list(local_skills.keys())
+    public_names = [s.name for s in public_skills[:5]]
+    print(f"\nSkills by source:")
+    print(f"  Local: {local_names}")
+    print(f"  Remote (first 5): {public_names}")
+
+    # =========================================================================
+    # Part 4: Using Skills with an Agent
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("Part 4: Using Skills with an Agent")
+    print("=" * 80)
+
+    api_key = os.getenv("LLM_API_KEY")
+    model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+
+    if args.dry_run or not api_key:
+        print("\nSkipping agent demo (LLM_API_KEY not set)")
+        print("To run the full demo, set the LLM_API_KEY environment variable:")
+        print("  export LLM_API_KEY=your-api-key")
+        return
+
+    print(f"\nUsing model: {model}")
+
+    llm = LLM(
+        usage_id="mixed-skills-demo",
+        model=model,
+        api_key=SecretStr(api_key),
+    )
+
+    tools = [
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ]
+
+    # Create agent context with combined skills
+    agent_context = AgentContext(skills=unique_skills)
+
+    agent = Agent(llm=llm, tools=tools, agent_context=agent_context)
+    conversation = Conversation(agent=agent, workspace=str(script_dir))
+
+    # Test the agent with a query that should trigger both local and public skills
+    print("\nSending message to trigger skills...")
+    conversation.send_message(
+        "Tell me about GitHub best practices. "
+        "Also, can you give me a creative greeting?"
+    )
+    conversation.run()
+
+    print(f"\nTotal cost: ${llm.metrics.accumulated_cost:.4f}")
+    print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py"/>
+
+## Creating a Local Skill
+
+Local skills follow the [AgentSkills standard](https://agentskills.io/specification). Create a `SKILL.md` file:
+
+```markdown icon="markdown"
+---
+name: greeting-helper
+description: A local skill that helps generate creative greetings.
+triggers:
+  - greeting
+  - hello
+  - salutation
+---
+
+# Greeting Helper Skill
+
+When asked for a greeting, provide creative options in different styles:
+
+1. **Formal**: "Good day, esteemed colleague"
+2. **Casual**: "Hey there!"
+3. **Enthusiastic**: "Hello, wonderful human!"
+```
+
+## Skill Precedence
+
+When combining skills, local skills take precedence over public skills with the same name:
+
+```python icon="python"
+# Local skills override public skills with matching names
+combined_skills = list(local_skills.values()) + public_skills
+
+seen_names = set()
+unique_skills = []
+for skill in combined_skills:
+    if skill.name not in seen_names:
+        seen_names.add(skill.name)
+        unique_skills.append(skill)
+```
+
+## Next Steps
+
+- **[Skills Overview](/overview/skills)** - Learn more about skill types
+- **[Public Skills](/sdk/guides/skill#loading-public-skills)** - Load from OpenHands extensions
+- **[Custom Tools](/sdk/guides/custom-tools)** - Create specialized tools
