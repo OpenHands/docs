@@ -8,7 +8,7 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 > A ready-to-run example is available [here](#ready-to-run-example)!
 
 <Warning>
-**Experimental Feature**: Parallel tool execution is still experimental. By default, `tool_concurrency_limit` is set to `1` (sequential execution). Increasing this value may improve performance for independent operations, but use at your own risk—concurrent execution can lead to race conditions or unexpected behavior for tools that share state.
+**Experimental Feature**: Parallel tool execution is still experimental. By default, `tool_concurrency_limit` is set to `1` (sequential execution). Increasing this value may improve runtime performance, but use at your own risk. Concurrent execution can lead to race conditions or unexpected behavior for tools that share state.
 </Warning>
 
 ## Overview
@@ -25,40 +25,22 @@ When an LLM requests multiple tool calls in a single response, the SDK can execu
 - Delegating to multiple sub-agents at once
 - Executing independent API calls or file operations
 
-## How It Works
-
-```mermaid
-flowchart LR
-    LLM["LLM Response"] --> TC1["Tool Call 1"]
-    LLM --> TC2["Tool Call 2"]
-    LLM --> TC3["Tool Call 3"]
-    
-    subgraph Sequential["Sequential (default)"]
-        S1["Tool 1"] --> S2["Tool 2"] --> S3["Tool 3"]
-    end
-    
-    subgraph Parallel["Parallel (tool_concurrency_limit > 1)"]
-        P1["Tool 1"]
-        P2["Tool 2"]
-        P3["Tool 3"]
-    end
-    
-    TC1 -.-> Sequential
-    TC1 -.-> Parallel
-```
-
-With sequential execution (default), tools run one after another. With parallel execution enabled, independent tools run concurrently up to the specified limit.
-
 ## Configuration
 
 ### Setting the Concurrency Limit
 
 Configure `tool_concurrency_limit` when creating an `Agent`:
 
-```python icon="python" wrap
+```python icon="python" wrap focus={11, 17, 18}
+import os
 from openhands.sdk import Agent, LLM, Tool
 from openhands.tools.terminal import TerminalTool
 from openhands.tools.file_editor import FileEditorTool
+
+llm = LLM(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=os.getenv("LLM_API_KEY"),
+)
 
 agent = Agent(
     llm=llm,
@@ -66,7 +48,8 @@ agent = Agent(
         Tool(name=TerminalTool.name),
         Tool(name=FileEditorTool.name),
     ],
-    tool_concurrency_limit=4,  # Execute up to 4 tools concurrently
+    # Execute up to 4 tools concurrently
+    tool_concurrency_limit=4,
 )
 ```
 
@@ -76,7 +59,7 @@ agent = Agent(
 |-------|----------|
 | `1` (default) | Sequential execution—tools run one at a time |
 | `2-8` | Moderate parallelism—good for most use cases |
-| `>8` | High parallelism—use with caution |
+| `>8` | High parallelism—only for I/O-heavy workloads with independent tools. Risk of resource exhaustion. |
 
 <Note>
 The optimal value depends on your workload. Start with a lower value (e.g., `4`) and increase if needed.
@@ -107,13 +90,17 @@ agent = Agent(
 
 Combine with [sub-agent delegation](/sdk/guides/agent-delegation) for parallel task processing:
 
-```python icon="python" wrap
-from openhands.tools.delegate import DelegateTool
+```python icon="python" wrap focus={7, 11}
+from openhands.tools.task import TaskToolSet
 
 # Orchestrator with high concurrency for delegation
 main_agent = Agent(
     llm=llm,
-    tools=[Tool(name=DelegateTool.name)],
+    tools=[
+        Tool(name=TaskToolSet.name),
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
     tool_concurrency_limit=8,  # Handle multiple delegations at once
 )
 ```
@@ -144,6 +131,8 @@ Not all tools are safe to run concurrently. Be careful with:
 - Tools that modify shared state
 - Tools that write to the same files
 - Tools with external side effects that depend on execution order
+- Deadlocks when tools wait on resources held by other concurrent tools
+- Resource exhaustion (file handles, memory, network connections)
 </Warning>
 
 ### Best Practices
@@ -152,6 +141,7 @@ Not all tools are safe to run concurrently. Be careful with:
 2. **Test thoroughly**: Verify your workflow behaves correctly with concurrent execution
 3. **Use for read-heavy workloads**: Parallel execution works best for independent read operations
 4. **Monitor for race conditions**: Watch for unexpected behavior when tools share state
+5. **Understand failure behavior**: If one tool fails, others in the same batch may continue. Check logs for partial results
 
 ### When NOT to Use
 
