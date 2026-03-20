@@ -1,0 +1,408 @@
+---
+title: Parallel Tool Execution
+description: Execute multiple tools concurrently within a single LLM response to improve throughput for independent operations.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+<Warning>
+**Experimental Feature**: Parallel tool execution is still experimental. By default, `tool_concurrency_limit` is set to `1` (sequential execution). Increasing this value may improve performance for independent operations, but use at your own risk—concurrent execution can lead to race conditions or unexpected behavior for tools that share state.
+</Warning>
+
+## Overview
+
+When an LLM requests multiple tool calls in a single response, the SDK can execute them concurrently rather than sequentially. This is controlled by the `tool_concurrency_limit` parameter on the `Agent` class.
+
+**Key benefits:**
+- Faster execution when tools are independent (e.g., reading multiple files)
+- Better utilization of I/O-bound operations
+- Enables parallel sub-agent delegation
+
+**When to use:**
+- Running multiple read-only operations simultaneously
+- Delegating to multiple sub-agents at once
+- Executing independent API calls or file operations
+
+## How It Works
+
+```mermaid
+flowchart LR
+    LLM["LLM Response"] --> TC1["Tool Call 1"]
+    LLM --> TC2["Tool Call 2"]
+    LLM --> TC3["Tool Call 3"]
+    
+    subgraph Sequential["Sequential (default)"]
+        S1["Tool 1"] --> S2["Tool 2"] --> S3["Tool 3"]
+    end
+    
+    subgraph Parallel["Parallel (tool_concurrency_limit > 1)"]
+        P1["Tool 1"]
+        P2["Tool 2"]
+        P3["Tool 3"]
+    end
+    
+    TC1 -.-> Sequential
+    TC1 -.-> Parallel
+```
+
+With sequential execution (default), tools run one after another. With parallel execution enabled, independent tools run concurrently up to the specified limit.
+
+## Configuration
+
+### Setting the Concurrency Limit
+
+Configure `tool_concurrency_limit` when creating an `Agent`:
+
+```python icon="python" wrap
+from openhands.sdk import Agent, LLM, Tool
+from openhands.tools.terminal import TerminalTool
+from openhands.tools.file_editor import FileEditorTool
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    tool_concurrency_limit=4,  # Execute up to 4 tools concurrently
+)
+```
+
+### Concurrency Limit Values
+
+| Value | Behavior |
+|-------|----------|
+| `1` (default) | Sequential execution—tools run one at a time |
+| `2-8` | Moderate parallelism—good for most use cases |
+| `>8` | High parallelism—use with caution |
+
+<Note>
+The optimal value depends on your workload. Start with a lower value (e.g., `4`) and increase if needed.
+</Note>
+
+## Use Cases
+
+### Parallel File Operations
+
+When reading multiple independent files:
+
+```python icon="python" wrap
+# Agent can read multiple files concurrently
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=FileEditorTool.name)],
+    tool_concurrency_limit=4,
+)
+
+# The agent might request:
+# - file_editor view /path/to/file1.py
+# - file_editor view /path/to/file2.py
+# - file_editor view /path/to/file3.py
+# All three execute concurrently
+```
+
+### Parallel Sub-Agent Delegation
+
+Combine with [sub-agent delegation](/sdk/guides/agent-delegation) for parallel task processing:
+
+```python icon="python" wrap
+from openhands.tools.delegate import DelegateTool
+
+# Orchestrator with high concurrency for delegation
+main_agent = Agent(
+    llm=llm,
+    tools=[Tool(name=DelegateTool.name)],
+    tool_concurrency_limit=8,  # Handle multiple delegations at once
+)
+```
+
+### Sub-Agents with Their Own Parallelism
+
+Each sub-agent can have its own concurrency limit:
+
+```python icon="python" wrap
+def create_analysis_agent(llm: LLM) -> Agent:
+    """Sub-agent that runs multiple analysis tools in parallel."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,  # Sub-agent also runs tools in parallel
+    )
+```
+
+## Considerations
+
+### Thread Safety
+
+<Warning>
+Not all tools are safe to run concurrently. Be careful with:
+- Tools that modify shared state
+- Tools that write to the same files
+- Tools with external side effects that depend on execution order
+</Warning>
+
+### Best Practices
+
+1. **Start conservative**: Begin with `tool_concurrency_limit=1` and increase gradually
+2. **Test thoroughly**: Verify your workflow behaves correctly with concurrent execution
+3. **Use for read-heavy workloads**: Parallel execution works best for independent read operations
+4. **Monitor for race conditions**: Watch for unexpected behavior when tools share state
+
+### When NOT to Use
+
+- Tools that must execute in a specific order
+- Operations that modify the same files
+- Workflows where one tool's output feeds into another
+
+## Ready-to-run Example
+
+This example demonstrates parallel tool execution with an orchestrator agent that delegates to multiple sub-agents, each running their own tools concurrently.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/45_parallel_tool_execution.py](https://github.com/OpenHands/software-agent-sdk/blob/parallel-tool-execution/examples/01_standalone_sdk/45_parallel_tool_execution.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/45_parallel_tool_execution.py
+"""Example: Parallel tool execution with tool_concurrency_limit.
+
+Demonstrates how setting tool_concurrency_limit on an Agent enables
+concurrent tool execution within a single step. The orchestrator agent
+delegates to multiple sub-agents in parallel, and each sub-agent itself
+runs tools concurrently. This stress-tests the parallel execution system
+end-to-end.
+"""
+
+import json
+import os
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    AgentContext,
+    Conversation,
+    Tool,
+    register_agent,
+)
+from openhands.sdk.context import Skill
+from openhands.tools.delegate import DelegationVisualizer
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task import TaskToolSet
+from openhands.tools.terminal import TerminalTool
+
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    usage_id="parallel-tools-demo",
+)
+
+
+# --- Sub-agents ---
+
+
+def create_code_analyst(llm: LLM) -> Agent:
+    """Sub-agent that analyzes code structure."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="code_analysis",
+                    content=(
+                        "You analyze code structure. Use the terminal to count files, "
+                        "lines of code, and list directory structure. Use the file "
+                        "editor to read key files. Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+def create_doc_reviewer(llm: LLM) -> Agent:
+    """Sub-agent that reviews documentation."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="doc_review",
+                    content=(
+                        "You review project documentation. Check README files, "
+                        "docstrings, and inline comments. Use the terminal and "
+                        "file editor to inspect files. Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+def create_dependency_checker(llm: LLM) -> Agent:
+    """Sub-agent that checks project dependencies."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="dependency_check",
+                    content=(
+                        "You analyze project dependencies. Read pyproject.toml, "
+                        "requirements files, and package configs. Summarize key "
+                        "dependencies, their purposes, and any version constraints. "
+                        "Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+# Register sub-agents
+register_agent(
+    name="code_analyst",
+    factory_func=create_code_analyst,
+    description="Analyzes code structure, file counts, and directory layout.",
+)
+register_agent(
+    name="doc_reviewer",
+    factory_func=create_doc_reviewer,
+    description="Reviews documentation quality and completeness.",
+)
+register_agent(
+    name="dependency_checker",
+    factory_func=create_dependency_checker,
+    description="Checks and summarizes project dependencies.",
+)
+# --- Orchestrator agent with parallel execution ---
+main_agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TaskToolSet.name),
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    tool_concurrency_limit=8,
+)
+
+persistence_dir = Path(tempfile.mkdtemp(prefix="parallel_example_"))
+
+conversation = Conversation(
+    agent=main_agent,
+    workspace=Path.cwd(),
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+    persistence_dir=persistence_dir,
+)
+
+print("=" * 80)
+print("Parallel Tool Execution Stress Test")
+print("=" * 80)
+
+conversation.send_message("""
+Analyze the current project by delegating to ALL THREE sub-agents IN PARALLEL:
+
+1. code_analyst: Analyze the project structure (file counts, key directories)
+2. doc_reviewer: Review documentation quality (README, docstrings)
+3. dependency_checker: Check dependencies (pyproject.toml, requirements)
+
+IMPORTANT: Delegate to all three agents at the same time using parallel tool calls.
+Do NOT delegate one at a time - call all three delegate tools in a single response.
+
+Once all three have reported back, write a consolidated summary to
+project_analysis_report.txt in the working directory. The report should have
+three sections (Code Structure, Documentation, Dependencies) with the key
+findings from each sub-agent.
+""")
+conversation.run()
+
+# --- Analyze persisted events for parallelism ---
+#
+# Walk the persistence directory to find all conversations (main + sub-agents).
+# Each conversation stores events as event-*.json files under an events/ dir.
+# We parse ActionEvent entries and group by llm_response_id — batches with 2+
+# actions sharing the same response ID prove the LLM requested parallel calls
+# and the executor handled them concurrently.
+
+print("\n" + "=" * 80)
+print("Parallelism Report")
+print("=" * 80)
+
+
+def _analyze_conversation(events_dir: Path) -> dict[str, list[str]]:
+    """Return {llm_response_id: [tool_name, ...]} for multi-tool batches."""
+    batches: dict[str, list[str]] = defaultdict(list)
+    for event_file in sorted(events_dir.glob("event-*.json")):
+        data = json.loads(event_file.read_text())
+        if data.get("kind") == "ActionEvent" and "llm_response_id" in data:
+            batches[data["llm_response_id"]].append(data.get("tool_name", "?"))
+    return {rid: tools for rid, tools in batches.items() if len(tools) >= 2}
+
+
+for events_dir in sorted(persistence_dir.rglob("events")):
+    if not events_dir.is_dir():
+        continue
+    # Derive a label from the path (main conv vs sub-agent)
+    rel = events_dir.parent.relative_to(persistence_dir)
+    is_subagent = "subagents" in rel.parts
+    label = "sub-agent" if is_subagent else "main agent"
+
+    multi_batches = _analyze_conversation(events_dir)
+    if multi_batches:
+        for resp_id, tools in multi_batches.items():
+            print(f"\n  {label} batch ({resp_id[:16]}...):")
+            print(f"    Parallel tools: {tools}")
+    else:
+        print(f"\n  {label}: no parallel batches")
+
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nTotal cost: ${cost:.4f}")
+print(f"EXAMPLE_COST: {cost:.4f}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/45_parallel_tool_execution.py"/>
+
+### Understanding the Example
+
+The example demonstrates a two-level parallel execution pattern:
+
+1. **Orchestrator Level**: The main agent has `tool_concurrency_limit=8`, allowing it to delegate to all three sub-agents simultaneously
+
+2. **Sub-Agent Level**: Each sub-agent has `tool_concurrency_limit=4`, allowing them to run their own tools (terminal commands, file reads) in parallel
+
+3. **Verification**: The example includes a parallelism report that analyzes persisted events to confirm tools actually ran concurrently
+
+## Next Steps
+
+- **[Sub-Agent Delegation](/sdk/guides/agent-delegation)** - Delegate work to specialized sub-agents
+- **[Custom Tools](/sdk/guides/custom-tools)** - Create thread-safe custom tools
+- **[Agent Architecture](/sdk/arch/agent)** - Understand the agent execution model
