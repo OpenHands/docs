@@ -9138,6 +9138,22 @@ Because the ACP server manages its own tools and context, these `AgentBase` feat
 
 Passing any of these raises `NotImplementedError` at initialization.
 
+## ACPAgent with RemoteConversation
+
+`ACPAgent` also works with remote agent-server deployments such as `APIRemoteWorkspace`, `DockerWorkspace`, and other `RemoteWorkspace`-backed setups.
+
+When `RemoteConversation` detects an `ACPAgent`, it automatically uses the ACP-capable conversation routes for:
+
+- conversation creation
+- conversation info reads
+- conversation counting
+
+The rest of the lifecycle, including events, runs, pauses, and secrets, continues to use the standard agent-server routes. This keeps the existing remote execution flow intact while isolating the schema-sensitive ACP contract under `/api/acp/conversations`.
+
+<Warning>
+If you attach to an existing conversation by `conversation_id`, use `ACPAgent` for ACP-backed conversations. Attaching with a regular `Agent` to an ACP conversation ID is rejected explicitly to avoid mixing the standard and ACP conversation contracts.
+</Warning>
+
 ## How It Works
 
 - **Subprocess delegation**: `ACPAgent` spawns the ACP server and communicates via JSON-RPC over stdin/stdout
@@ -9255,6 +9271,117 @@ This example does not use an LLM API key directly — the ACP server (Claude Cod
 cd software-agent-sdk
 uv run python examples/01_standalone_sdk/40_acp_agent_example.py
 ```
+
+## Remote Runtime Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/09_acp_agent_with_remote_runtime.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/09_acp_agent_with_remote_runtime.py)
+</Note>
+
+This example shows how to run an ACPAgent in a remote sandboxed environment via the Runtime API, using `APIRemoteWorkspace`:
+
+```python icon="python" expandable examples/02_remote_agent_server/09_acp_agent_with_remote_runtime.py
+"""Example: ACPAgent with Remote Runtime via API.
+
+This example demonstrates running an ACPAgent (Claude Code via ACP protocol)
+in a remote sandboxed environment via Runtime API. It follows the same pattern
+as 04_convo_with_api_sandboxed_server.py but uses ACPAgent instead of the
+default LLM-based Agent.
+
+Usage:
+  uv run examples/02_remote_agent_server/09_acp_agent_with_remote_runtime.py
+
+Requirements:
+  - LLM_BASE_URL: LiteLLM proxy URL (routes Claude Code requests)
+  - LLM_API_KEY: LiteLLM virtual API key
+  - RUNTIME_API_KEY: API key for runtime API access
+"""
+
+import os
+import time
+
+from openhands.sdk import (
+    Conversation,
+    RemoteConversation,
+    get_logger,
+)
+from openhands.sdk.agent import ACPAgent
+from openhands.workspace import APIRemoteWorkspace
+
+
+logger = get_logger(__name__)
+
+
+# ACP agents (Claude Code) route through LiteLLM proxy
+llm_base_url = os.getenv("LLM_BASE_URL")
+llm_api_key = os.getenv("LLM_API_KEY")
+assert llm_base_url and llm_api_key, "LLM_BASE_URL and LLM_API_KEY required"
+
+# Set ANTHROPIC_* vars so Claude Code routes through LiteLLM
+os.environ["ANTHROPIC_BASE_URL"] = llm_base_url
+os.environ["ANTHROPIC_API_KEY"] = llm_api_key
+
+runtime_api_key = os.getenv("RUNTIME_API_KEY")
+assert runtime_api_key, "RUNTIME_API_KEY required"
+
+# If GITHUB_SHA is set (e.g. running in CI of a PR), use that to ensure consistency
+# Otherwise, use the latest image from main
+server_image_sha = os.getenv("GITHUB_SHA") or "main"
+server_image = f"ghcr.io/openhands/agent-server:{server_image_sha[:7]}-python-amd64"
+logger.info(f"Using server image: {server_image}")
+
+with APIRemoteWorkspace(
+    runtime_api_url=os.getenv("RUNTIME_API_URL", "https://runtime.eval.all-hands.dev"),
+    runtime_api_key=runtime_api_key,
+    server_image=server_image,
+    image_pull_policy="Always",
+    target_type="binary",  # CI builds binary target images
+    forward_env=["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"],
+) as workspace:
+    agent = ACPAgent(
+        acp_command=["claude-agent-acp"],  # Pre-installed in Docker image
+    )
+
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    conversation = Conversation(
+        agent=agent, workspace=workspace, callbacks=[event_callback]
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    try:
+        conversation.send_message(
+            "List the files in /workspace and describe what you see."
+        )
+        conversation.run()
+
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+
+        # Report cost
+        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        print(f"EXAMPLE_COST: {cost:.4f}")
+    finally:
+        conversation.close()
+```
+
+```bash Running the Example
+export LLM_BASE_URL="https://your-litellm-proxy.example.com"
+export LLM_API_KEY="your-litellm-api-key"
+export RUNTIME_API_KEY="your-runtime-api-key"
+export RUNTIME_API_URL="https://runtime.eval.all-hands.dev"
+cd software-agent-sdk
+uv run python examples/02_remote_agent_server/09_acp_agent_with_remote_runtime.py
+```
+
+<Note>
+On the agent-server side, the ACP-capable REST surface lives under `/api/acp/conversations`, including `POST`, `GET`, `search`, `batch get`, and `count`.
+</Note>
 
 ## Next Steps
 
@@ -10053,6 +10180,10 @@ The YAML frontmatter configures the agent. The Markdown body becomes the agent's
 | `skills` | No | `[]` | List of skill names for this agent (see [Skill Loading Precedence](/overview/skills#skill-loading-precedence) for resolution order). |
 | `max_iteration_per_run` | No | `None`| Maximum iterations per run. Must be strictly positive, or `None` for the default value. |
 | `color` | No | `None` | [Rich color name](https://rich.readthedocs.io/en/stable/appendix/colors.html) (e.g., `"blue"`, `"green"`) used by visualizers to style this agent's output in terminal panels |
+| `mcp_servers` | No | `None` | MCP server configurations for this agent (see [MCP Servers](#mcp-servers)) |
+| `hooks` | No | `None` | Hook configuration for lifecycle events (see [Hooks](#hooks)) |
+| `permission_mode` | No | `None` | Controls how the subagent handles action confirmations (see [Permission Mode](#permission-mode)) |
+| `profile_store_dir` | No | `None` | Custom directory path for LLM profiles when using a named `model` |
 
 ### `<example>` Tags
 
@@ -10309,6 +10440,109 @@ You are a skilled technical writer. When creating or improving documentation:
 
 Always include a usage example with expected output when documenting functions or APIs.
 ```
+
+## Advanced Features
+
+### MCP Servers
+
+File-based agents can define [MCP server configurations](/sdk/guides/mcp) inline, giving them access to external tools without any Python code:
+
+```markdown icon="markdown"
+---
+name: web-researcher
+description: Researches topics using web fetching capabilities.
+tools:
+  - file_editor
+mcp_servers:
+  fetch:
+    command: uvx
+    args:
+      - mcp-server-fetch
+  filesystem:
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+---
+
+You are a web researcher with access to fetch and filesystem tools.
+Use the fetch tool to retrieve web content and save findings to files.
+```
+
+The `mcp_servers` field uses the same format as the [MCP configuration](/sdk/guides/mcp) — each key is a server name, and the value contains `command` and `args` for launching the server.
+
+### Hooks
+
+File-based agents can define [lifecycle hooks](/sdk/guides/hooks) that run at specific points during execution:
+
+```markdown icon="markdown"
+---
+name: audited-agent
+description: An agent with audit logging hooks.
+tools:
+  - terminal
+  - file_editor
+hooks:
+  pre_tool_use:
+    - matcher: "terminal"
+      hooks:
+        - command: "./scripts/validate_command.sh"
+          timeout: 10
+  post_tool_use:
+    - matcher: "*"
+      hooks:
+        - command: "./scripts/log_tool_usage.sh"
+          timeout: 5
+---
+
+You are an audited agent. All your actions are logged for compliance.
+```
+
+**Hook event types:**
+- `pre_tool_use` — Runs before tool execution (can block with exit code 2)
+- `post_tool_use` — Runs after tool execution
+- `user_prompt_submit` — Runs before processing user messages
+- `session_start` / `session_end` — Run when conversation starts/ends
+- `stop` — Runs when agent tries to finish (can block)
+
+Each hook matcher supports:
+- `"*"` — Matches all tools
+- Exact name — e.g., `"terminal"` matches only that tool
+- Regex patterns — e.g., `"/file_.*/"` matches tools starting with `file_`
+
+For more details on hooks, see the [Hooks guide](/sdk/guides/hooks).
+
+### Permission Mode
+
+Control how a file-based agent handles action confirmations with the `permission_mode` field:
+
+```markdown icon="markdown"
+---
+name: autonomous-agent
+description: Runs without requiring user confirmation.
+tools:
+  - terminal
+  - file_editor
+permission_mode: never_confirm
+---
+
+You are an autonomous agent that executes tasks without manual approval.
+```
+
+**Available modes:**
+| Mode | Behavior |
+|------|----------|
+| `always_confirm` | Requires user approval for **all** actions |
+| `never_confirm` | Executes all actions without approval |
+| `confirm_risky` | Only requires approval for actions above a risk threshold (requires a [security analyzer](/sdk/guides/security)) |
+
+When `permission_mode` is omitted (or set to `None`), the subagent inherits the confirmation policy from its parent conversation.
+
+<Note>
+Permission mode is particularly useful for specialized sub-agents. For example, a "read-only explorer" agent might use `never_confirm` since it only reads files, while a "deploy" agent might use `always_confirm` for safety.
+</Note>
+
+For more details on security and confirmation policies, see the [Security guide](/sdk/guides/security).
 
 ## Agents in Plugins
 
@@ -10616,6 +10850,14 @@ assert isinstance(conversation, RemoteConversation)
 ```
 
 All agent execution happens on the remote runtime infrastructure.
+
+<Note>
+The same runtime flow also supports `ACPAgent`. For an end-to-end example, see the [ACP Agent guide](/sdk/guides/agent-acp#remote-runtime-example).
+</Note>
+
+<Warning>
+ACP-backed remote conversations use the ACP-capable conversation endpoints under `/api/acp/conversations` for creation, reads, and counts. If you reconnect to an existing ACP conversation by `conversation_id`, use `ACPAgent` rather than a standard `Agent`.
+</Warning>
 
 ## Ready-to-run Example
 
@@ -11085,6 +11327,48 @@ logger.info(f"Command completed: {result.exit_code}, {result.stdout}")
 
 This verifies connectivity to the cloud sandbox and ensures the environment is ready.
 
+### Inheriting SaaS Credentials
+
+Instead of providing your own `LLM_API_KEY`, you can inherit the LLM configuration and secrets from your OpenHands Cloud account. This means you only need `OPENHANDS_CLOUD_API_KEY` — no separate LLM key required.
+
+#### `get_llm()`
+
+Fetches your account's LLM settings (model, API key, base URL) and returns a ready-to-use `LLM` instance:
+
+```python icon="python" focus={2-3}
+with OpenHandsCloudWorkspace(...) as workspace:
+    llm = workspace.get_llm()
+    agent = Agent(llm=llm, tools=get_default_tools())
+```
+
+You can override any parameter:
+
+```python icon="python"
+llm = workspace.get_llm(model="gpt-4o", temperature=0.5)
+```
+
+Under the hood, `get_llm()` calls `GET /api/v1/users/me?expose_secrets=true`, sending your Cloud API key in the `Authorization` header plus the sandbox's `X-Session-API-Key`. That session key is issued by OpenHands Cloud for the running sandbox, so it scopes the request to that sandbox rather than acting like a separately provisioned second credential.
+
+#### `get_secrets()`
+
+Builds `LookupSecret` references for your SaaS-configured secrets. Raw values **never transit through the SDK client** — they are resolved lazily by the agent-server inside the sandbox:
+
+```python icon="python" focus={2-3}
+with OpenHandsCloudWorkspace(...) as workspace:
+    secrets = workspace.get_secrets()
+    conversation.update_secrets(secrets)
+```
+
+You can also filter to specific secrets:
+
+```python icon="python"
+gh_secrets = workspace.get_secrets(names=["GITHUB_TOKEN"])
+```
+
+<Tip>
+See the [SaaS Credentials example](#saas-credentials-example) below for a complete working example.
+</Tip>
+
 ## Comparison with Other Workspace Types
 
 | Feature | OpenHandsCloudWorkspace | APIRemoteWorkspace | DockerWorkspace |
@@ -11211,6 +11495,141 @@ export OPENHANDS_CLOUD_API_KEY="your-cloud-api-key"
 # export OPENHANDS_SANDBOX_SPEC_ID="your-sandbox-spec-id"
 cd agent-sdk
 uv run python examples/02_remote_agent_server/07_convo_with_cloud_workspace.py
+```
+
+## SaaS Credentials Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py)
+</Note>
+
+This example demonstrates the simplified flow where your OpenHands Cloud account's LLM configuration and secrets are inherited automatically — no need to provide `LLM_API_KEY` separately:
+
+```python icon="python" expandable examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
+"""Example: Inherit SaaS credentials via OpenHandsCloudWorkspace.
+
+This example shows the simplified flow where your OpenHands Cloud account's
+LLM configuration and secrets are inherited automatically — no need to
+provide LLM_API_KEY separately.
+
+Compared to 07_convo_with_cloud_workspace.py (which requires a separate
+LLM_API_KEY), this approach uses:
+  - workspace.get_llm()     → fetches LLM config from your SaaS account
+  - workspace.get_secrets()  → builds lazy LookupSecret references for your secrets
+
+Raw secret values never transit through the SDK client. The agent-server
+inside the sandbox resolves them on demand.
+
+Usage:
+  uv run examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
+
+Requirements:
+  - OPENHANDS_CLOUD_API_KEY: API key for OpenHands Cloud (the only credential needed)
+
+Optional:
+  - OPENHANDS_CLOUD_API_URL: Override the Cloud API URL (default: https://app.all-hands.dev)
+  - LLM_MODEL: Override the model from your SaaS settings
+"""
+
+import os
+import time
+
+from openhands.sdk import (
+    Conversation,
+    RemoteConversation,
+    get_logger,
+)
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import OpenHandsCloudWorkspace
+
+
+logger = get_logger(__name__)
+
+
+cloud_api_key = os.getenv("OPENHANDS_CLOUD_API_KEY")
+if not cloud_api_key:
+    logger.error("OPENHANDS_CLOUD_API_KEY required")
+    exit(1)
+
+cloud_api_url = os.getenv("OPENHANDS_CLOUD_API_URL", "https://app.all-hands.dev")
+logger.info(f"Using OpenHands Cloud API: {cloud_api_url}")
+
+with OpenHandsCloudWorkspace(
+    cloud_api_url=cloud_api_url,
+    cloud_api_key=cloud_api_key,
+) as workspace:
+    # --- LLM from SaaS account settings ---
+    # get_llm() calls GET /users/me?expose_secrets=true,
+    # sending your Cloud API key plus the sandbox session
+    # key that OpenHands Cloud issued for this workspace.
+    # It returns a fully configured LLM instance.
+    # Override any parameter: workspace.get_llm(model="gpt-4o")
+    llm = workspace.get_llm()
+    logger.info(f"LLM configured: model={llm.model}")
+
+    # --- Secrets from SaaS account ---
+    # get_secrets() fetches secret *names* (not values) and builds LookupSecret
+    # references. Values are resolved lazily inside the sandbox.
+    secrets = workspace.get_secrets()
+    logger.info(f"Available secrets: {list(secrets.keys())}")
+
+    # Build agent and conversation
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    conversation = Conversation(
+        agent=agent, workspace=workspace, callbacks=[event_callback]
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    # Inject SaaS secrets into the conversation
+    if secrets:
+        conversation.update_secrets(secrets)
+        logger.info(f"Injected {len(secrets)} secrets into conversation")
+
+    # Build a prompt that exercises the injected secrets by asking the agent to
+    # print the last 50% of each token — proves values resolved without leaking
+    # full secrets in logs.
+    secret_names = list(secrets.keys()) if secrets else []
+    if secret_names:
+        names_str = ", ".join(f"${name}" for name in secret_names)
+        prompt = (
+            f"For each of these environment variables: {names_str} — "
+            "print the variable name and the LAST 50% of its value "
+            "(i.e. the second half of the string). "
+            "Then write a short summary into SECRETS_CHECK.txt."
+        )
+    else:
+        # No secret was configured on OpenHands Cloud
+        prompt = "Tell me, is there any secret configured for you?"
+
+    try:
+        conversation.send_message(prompt)
+        conversation.run()
+
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+
+        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        print(f"EXAMPLE_COST: {cost}")
+    finally:
+        conversation.close()
+
+    logger.info("✅ Conversation completed successfully.")
+    logger.info(f"Total {len(received_events)} events received during conversation.")
+```
+
+```bash Running the SaaS Credentials Example
+export OPENHANDS_CLOUD_API_KEY="your-cloud-api-key"
+# Optional: override LLM model from your SaaS settings
+# export LLM_MODEL="gpt-4o"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
 ```
 
 ## Next Steps
@@ -16469,8 +16888,8 @@ jobs:
                   llm-base-url: ''
                   # Review style: roasted (other option: standard)
                   review-style: roasted
-                  # SDK version to use (version tag or branch name)
-                  sdk-version: main
+                  # Extensions version to use (version tag or branch name)
+                  extensions-version: main
                   # Secrets
                   llm-api-key: ${{ secrets.LLM_API_KEY }}
                   github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -16483,17 +16902,18 @@ jobs:
 | `llm-model` | LLM model to use | Yes | - |
 | `llm-base-url` | LLM base URL (optional) | No | `''` |
 | `review-style` | Review style: 'standard' or 'roasted' | No | `roasted` |
-| `sdk-version` | Git ref for SDK (tag, branch, or commit SHA) | No | `main` |
-| `sdk-repo` | SDK repository (owner/repo) | No | `OpenHands/software-agent-sdk` |
+| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
 | `llm-api-key` | LLM API key | Yes | - |
 | `github-token` | GitHub token for API access | Yes | - |
 
 ## Related Files
 
-- [Agent Script](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/02_pr_review/agent_script.py)
-- [Workflow File](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/02_pr_review/workflow.yml)
-- [Prompt Template](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/02_pr_review/prompt.py)
-- [Composite Action](https://github.com/OpenHands/software-agent-sdk/blob/main/.github/actions/pr-review/action.yml)
+- [PR Review Plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review) - Complete plugin with scripts and skills (in extensions repo)
+- [Agent Script](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/scripts/agent_script.py) - Main review agent script
+- [Prompt Template](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/scripts/prompt.py) - Review prompt template
+- [Workflow File](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/02_pr_review/workflow.yml) - Example workflow
+- [Composite Action](https://github.com/OpenHands/software-agent-sdk/blob/main/.github/actions/pr-review/action.yml) - Reusable GitHub Action
 
 ### TODO Management
 Source: https://docs.openhands.dev/sdk/guides/github-workflows/todo-management.md
@@ -18472,8 +18892,8 @@ Define a profile once, reuse it everywhere — across scripts, sessions, and eve
         ```
 
         <Info>
-        API keys are **excluded** by default for security. Pass `include_secrets=True` to the save method if you wish to
-        persist them; otherwise, they will be read from the environment at load time.
+        Secret fields are **masked** by default for security, so the saved JSON keeps the field shape without exposing the
+        real value. Pass `include_secrets=True` to persist the actual secret values.
         </Info>
     </Step>
     <Step>
@@ -18507,77 +18927,75 @@ Profile names must be simple filenames (no slashes, no dots at the start).
 ## Ready-to-run Example
 
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/37_llm_profile_store.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/37_llm_profile_store.py)
+This example is available on GitHub: [examples/01_standalone_sdk/37_llm_profile_store/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/37_llm_profile_store/main.py)
 </Note>
 
-```python icon="python" expandable examples/01_standalone_sdk/37_llm_profile_store.py
+This directory-based example ships with a pre-generated `profiles/fast.json` file created from a normal save, then creates a second profile at runtime in a temporary store.
+
+```python icon="python" expandable examples/01_standalone_sdk/37_llm_profile_store/main.py
 """Example: Using LLMProfileStore to save and reuse LLM configurations.
 
-LLMProfileStore persists LLM configurations as JSON files, so you can define
-a profile once and reload it across sessions without repeating setup code.
+This example ships with one pre-generated profile JSON file and creates another
+profile at runtime. The checked-in profile comes from a normal save, so secrets
+are masked instead of exposed and non-secret fields like `base_url` are kept
+when present.
 """
 
 import os
+import shutil
 import tempfile
+from pathlib import Path
 
 from pydantic import SecretStr
 
 from openhands.sdk import LLM, LLMProfileStore
 
 
-# Use a temporary directory so this example doesn't pollute your home folder.
-# In real usage you can omit base_dir to use the default (~/.openhands/profiles).
-store = LLMProfileStore(base_dir=tempfile.mkdtemp())
+SCRIPT_DIR = Path(__file__).parent
+EXAMPLE_PROFILES_DIR = SCRIPT_DIR / "profiles"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 
-# 1. Create two LLM profiles with different usage
+profile_store_dir = Path(tempfile.mkdtemp()) / "profiles"
+shutil.copytree(EXAMPLE_PROFILES_DIR, profile_store_dir)
+store = LLMProfileStore(base_dir=profile_store_dir)
+
+print(f"Seeded profiles: {store.list()}")
 
 api_key = os.getenv("LLM_API_KEY")
-assert api_key is not None, "LLM_API_KEY environment variable is not set."
-base_url = os.getenv("LLM_BASE_URL")
-model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
-
-fast_llm = LLM(
-    usage_id="fast",
-    model=model,
-    api_key=SecretStr(api_key),
-    base_url=base_url,
-    temperature=0.0,
-)
-
 creative_llm = LLM(
     usage_id="creative",
-    model=model,
-    api_key=SecretStr(api_key),
-    base_url=base_url,
+    model=os.getenv("LLM_MODEL", DEFAULT_MODEL),
+    api_key=SecretStr(api_key) if api_key else None,
+    base_url=os.getenv("LLM_BASE_URL"),
     temperature=0.9,
 )
 
-# 2. Save profiles
-
-# Note that secrets are excluded by default for safety.
-store.save("fast", fast_llm)
+# The checked-in fast.json was generated with a normal save, so its api_key is
+# masked and any configured base_url would be preserved. This runtime profile
+# also avoids persisting the real API key because secrets are masked by default.
 store.save("creative", creative_llm)
-
-# To persist the API key as well, pass `include_secrets=True`:
-# store.save("fast", fast_llm, include_secrets=True)
-
-# 3. List available persisted profiles
+creative_profile_json = (profile_store_dir / "creative.json").read_text()
+if api_key is not None:
+    assert api_key not in creative_profile_json
 
 print(f"Stored profiles: {store.list()}")
 
-# 4. Load a profile
+fast_profile = store.load("fast")
+creative_profile = store.load("creative")
 
-loaded = store.load("fast")
-assert isinstance(loaded, LLM)
 print(
-    "Loaded profile. "
-    f"usage:{loaded.usage_id}, "
-    f"model: {loaded.model}, "
-    f"temperature: {loaded.temperature}."
+    "Loaded fast profile. "
+    f"usage: {fast_profile.usage_id}, "
+    f"model: {fast_profile.model}, "
+    f"temperature: {fast_profile.temperature}."
 )
-
-# 5. Delete a profile
+print(
+    "Loaded creative profile. "
+    f"usage: {creative_profile.usage_id}, "
+    f"model: {creative_profile.model}, "
+    f"temperature: {creative_profile.temperature}."
+)
 
 store.delete("creative")
 print(f"After deletion: {store.list()}")
@@ -18585,7 +19003,71 @@ print(f"After deletion: {store.list()}")
 print("EXAMPLE_COST: 0")
 ```
 
-<RunExampleCode path_to_script="examples/01_standalone_sdk/37_llm_profile_store.py"/>
+<RunExampleCode path_to_script="examples/01_standalone_sdk/37_llm_profile_store/main.py"/>
+
+## Mid-Conversation Model Switching
+
+You can use a saved profile to switch the active model on a running conversation between turns. This is useful when you want to start with one model, then switch to another for later user messages while keeping the same conversation history and combined usage metrics.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/44_model_switching_in_convo.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/44_model_switching_in_convo.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/44_model_switching_in_convo.py
+"""Mid-conversation model switching.
+
+Usage:
+    uv run examples/01_standalone_sdk/44_model_switching_in_convo.py
+"""
+
+import os
+
+from openhands.sdk import LLM, Agent, LocalConversation, Tool
+from openhands.sdk.llm.llm_profile_store import LLMProfileStore
+from openhands.tools.terminal import TerminalTool
+
+
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+store = LLMProfileStore()
+
+store.save(
+    "gpt",
+    LLM(model="openhands/gpt-5.2", api_key=LLM_API_KEY),
+    include_secrets=True,
+)
+
+agent = Agent(
+    llm=LLM(
+        model=os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929"),
+        api_key=LLM_API_KEY,
+    ),
+    tools=[Tool(name=TerminalTool.name)],
+)
+conversation = LocalConversation(agent=agent, workspace=os.getcwd())
+
+# Send a message with the default model
+conversation.send_message("Say hello in one sentence.")
+conversation.run()
+
+# Switch to a different model and send another message
+conversation.switch_profile("gpt")
+print(f"Switched to: {conversation.agent.llm.model}")
+
+conversation.send_message("Say goodbye in one sentence.")
+conversation.run()
+
+# Print metrics per model
+for usage_id, metrics in conversation.state.stats.usage_to_metrics.items():
+    print(f"  [{usage_id}] cost=${metrics.accumulated_cost:.6f}")
+
+combined = conversation.state.stats.get_combined_metrics()
+print(f"Total cost: ${combined.accumulated_cost:.6f}")
+print(f"EXAMPLE_COST: {combined.accumulated_cost}")
+
+store.delete("gpt")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/44_model_switching_in_convo.py"/>
 
 ## Next Steps
 
@@ -20558,6 +21040,395 @@ uv run python examples/01_standalone_sdk/27_observability_laminar.py
 - **[LLM Registry](/sdk/guides/llm-registry)** - Track multiple LLMs used in your application
 - **[Security](/sdk/guides/security)** - Add security validation to your traced agent executions
 
+### Parallel Tool Execution
+Source: https://docs.openhands.dev/sdk/guides/parallel-tool-execution.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+<Warning>
+**Experimental Feature**: Parallel tool execution is still experimental. By default, `tool_concurrency_limit` is set to `1` (sequential execution). Increasing this value may improve runtime performance, but use at your own risk. Concurrent execution can lead to race conditions or unexpected behavior for tools that share state.
+</Warning>
+
+## Overview
+
+When an LLM requests multiple tool calls in a single response, the SDK can execute them concurrently rather than sequentially. This is controlled by the `tool_concurrency_limit` parameter on the `Agent` class.
+
+**Benefits:**
+- Faster execution when tools are independent (e.g., reading multiple files)
+- Better utilization of I/O-bound operations
+- Enables parallel sub-agent delegation
+
+**When to use:**
+- Running multiple read-only operations simultaneously
+- Delegating to multiple sub-agents at once
+- Executing independent API calls or file operations
+
+## Configuration
+
+### Setting the Concurrency Limit
+
+Configure `tool_concurrency_limit` when creating an `Agent`:
+
+```python icon="python" wrap focus={11, 17, 18}
+import os
+from openhands.sdk import Agent, LLM, Tool
+from openhands.tools.terminal import TerminalTool
+from openhands.tools.file_editor import FileEditorTool
+
+llm = LLM(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=os.getenv("LLM_API_KEY"),
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    # Execute up to 4 tools concurrently
+    tool_concurrency_limit=4,
+)
+```
+
+### Concurrency Limit Values
+
+| Value | Behavior |
+|-------|----------|
+| `1` (default) | Sequential execution—tools run one at a time |
+| `2-8` | Moderate parallelism—good for most use cases |
+| `>8` | High parallelism—only for I/O-heavy workloads with independent tools. Risk of resource exhaustion. |
+
+<Note>
+The optimal value depends on your workload. Start with a lower value (e.g., `4`) and increase if needed.
+</Note>
+
+## Use Cases
+
+### Parallel File Operations
+
+When reading multiple independent files:
+
+```python icon="python" wrap
+# Agent can read multiple files concurrently
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=FileEditorTool.name)],
+    tool_concurrency_limit=4,
+)
+
+# The agent might request:
+# - file_editor view /path/to/file1.py
+# - file_editor view /path/to/file2.py
+# - file_editor view /path/to/file3.py
+# All three execute concurrently
+```
+
+### Parallel Sub-Agent Delegation
+
+Combine with [sub-agent delegation](/sdk/guides/agent-delegation) for parallel task processing:
+
+```python icon="python" wrap focus={6,7,11}
+from openhands.tools.task import TaskToolSet
+
+# Orchestrator with high concurrency for delegation
+main_agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TaskToolSet.name),
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    tool_concurrency_limit=8,  # Handle multiple delegations at once
+)
+```
+
+### Sub-Agents with Their Own Parallelism
+
+Each sub-agent can have its own concurrency limit:
+
+```python icon="python" wrap
+def create_analysis_agent(llm: LLM) -> Agent:
+    """Sub-agent that runs multiple analysis tools in parallel."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,  # Sub-agent also runs tools in parallel
+    )
+```
+
+## Considerations
+
+### Thread Safety
+
+<Warning>
+Not all tools are safe to run concurrently. Be careful with:
+- Tools that modify shared state
+- Tools that write to the same files
+- Tools with external side effects that depend on execution order
+- Deadlocks when tools wait on resources held by other concurrent tools
+- Resource exhaustion (file handles, memory, network connections)
+</Warning>
+
+### When NOT to Use
+
+- Tools that must execute in a specific order
+- Operations that modify the same files
+- Workflows where one tool's output feeds into another
+
+## Ready-to-run Example
+
+This example demonstrates parallel tool execution with an orchestrator agent that delegates to multiple sub-agents, each running their own tools concurrently.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/45_parallel_tool_execution.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/45_parallel_tool_execution.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/45_parallel_tool_execution.py
+"""Example: Parallel tool execution with tool_concurrency_limit.
+
+Demonstrates how setting tool_concurrency_limit on an Agent enables
+concurrent tool execution within a single step. The orchestrator agent
+delegates to multiple sub-agents in parallel, and each sub-agent itself
+runs tools concurrently. This stress-tests the parallel execution system
+end-to-end.
+"""
+
+import json
+import os
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    AgentContext,
+    Conversation,
+    Tool,
+    register_agent,
+)
+from openhands.sdk.context import Skill
+from openhands.tools.delegate import DelegationVisualizer
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task import TaskToolSet
+from openhands.tools.terminal import TerminalTool
+
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    usage_id="parallel-tools-demo",
+)
+
+
+# --- Sub-agents ---
+
+
+def create_code_analyst(llm: LLM) -> Agent:
+    """Sub-agent that analyzes code structure."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="code_analysis",
+                    content=(
+                        "You analyze code structure. Use the terminal to count files, "
+                        "lines of code, and list directory structure. Use the file "
+                        "editor to read key files. Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+def create_doc_reviewer(llm: LLM) -> Agent:
+    """Sub-agent that reviews documentation."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="doc_review",
+                    content=(
+                        "You review project documentation. Check README files, "
+                        "docstrings, and inline comments. Use the terminal and "
+                        "file editor to inspect files. Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+def create_dependency_checker(llm: LLM) -> Agent:
+    """Sub-agent that checks project dependencies."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="dependency_check",
+                    content=(
+                        "You analyze project dependencies. Read pyproject.toml, "
+                        "requirements files, and package configs. Summarize key "
+                        "dependencies, their purposes, and any version constraints. "
+                        "Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+# Register sub-agents
+register_agent(
+    name="code_analyst",
+    factory_func=create_code_analyst,
+    description="Analyzes code structure, file counts, and directory layout.",
+)
+register_agent(
+    name="doc_reviewer",
+    factory_func=create_doc_reviewer,
+    description="Reviews documentation quality and completeness.",
+)
+register_agent(
+    name="dependency_checker",
+    factory_func=create_dependency_checker,
+    description="Checks and summarizes project dependencies.",
+)
+# --- Orchestrator agent with parallel execution ---
+main_agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TaskToolSet.name),
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    tool_concurrency_limit=8,
+)
+
+persistence_dir = Path(tempfile.mkdtemp(prefix="parallel_example_"))
+
+conversation = Conversation(
+    agent=main_agent,
+    workspace=Path.cwd(),
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+    persistence_dir=persistence_dir,
+)
+
+print("=" * 80)
+print("Parallel Tool Execution Stress Test")
+print("=" * 80)
+
+conversation.send_message("""
+Analyze the current project by delegating to ALL THREE sub-agents IN PARALLEL:
+
+1. code_analyst: Analyze the project structure (file counts, key directories)
+2. doc_reviewer: Review documentation quality (README, docstrings)
+3. dependency_checker: Check dependencies (pyproject.toml, requirements)
+
+IMPORTANT: Delegate to all three agents at the same time using parallel tool calls.
+Do NOT delegate one at a time - call all three delegate tools in a single response.
+
+Once all three have reported back, write a consolidated summary to
+project_analysis_report.txt in the working directory. The report should have
+three sections (Code Structure, Documentation, Dependencies) with the key
+findings from each sub-agent.
+""")
+conversation.run()
+
+# --- Analyze persisted events for parallelism ---
+#
+# Walk the persistence directory to find all conversations (main + sub-agents).
+# Each conversation stores events as event-*.json files under an events/ dir.
+# We parse ActionEvent entries and group by llm_response_id — batches with 2+
+# actions sharing the same response ID prove the LLM requested parallel calls
+# and the executor handled them concurrently.
+
+print("\n" + "=" * 80)
+print("Parallelism Report")
+print("=" * 80)
+
+
+def _analyze_conversation(events_dir: Path) -> dict[str, list[str]]:
+    """Return {llm_response_id: [tool_name, ...]} for multi-tool batches."""
+    batches: dict[str, list[str]] = defaultdict(list)
+    for event_file in sorted(events_dir.glob("event-*.json")):
+        data = json.loads(event_file.read_text())
+        if data.get("kind") == "ActionEvent" and "llm_response_id" in data:
+            batches[data["llm_response_id"]].append(data.get("tool_name", "?"))
+    return {rid: tools for rid, tools in batches.items() if len(tools) >= 2}
+
+
+for events_dir in sorted(persistence_dir.rglob("events")):
+    if not events_dir.is_dir():
+        continue
+    # Derive a label from the path (main conv vs sub-agent)
+    rel = events_dir.parent.relative_to(persistence_dir)
+    is_subagent = "subagents" in rel.parts
+    label = "sub-agent" if is_subagent else "main agent"
+
+    multi_batches = _analyze_conversation(events_dir)
+    if multi_batches:
+        for resp_id, tools in multi_batches.items():
+            print(f"\n  {label} batch ({resp_id[:16]}...):")
+            print(f"    Parallel tools: {tools}")
+    else:
+        print(f"\n  {label}: no parallel batches")
+
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nTotal cost: ${cost:.4f}")
+print(f"EXAMPLE_COST: {cost:.4f}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/45_parallel_tool_execution.py"/>
+
+### Understanding the Example
+
+The example demonstrates a two-level parallel execution pattern:
+
+1. **Orchestrator Level**: The main agent has `tool_concurrency_limit=8`, allowing it to delegate to all three sub-agents simultaneously
+
+2. **Sub-Agent Level**: Each sub-agent has `tool_concurrency_limit=4`, allowing them to run their own tools (terminal commands, file reads) in parallel
+
+3. **Verification**: The example includes a parallelism report that analyzes persisted events to confirm tools actually ran concurrently
+
+## Next Steps
+
+- **[Sub-Agent Delegation](/sdk/guides/agent-delegation)** - Delegate work to specialized sub-agents
+- **[Custom Tools](/sdk/guides/custom-tools)** - Create thread-safe custom tools
+- **[Agent Architecture](/sdk/arch/agent)** - Understand the agent execution model
+
 ### Plugins
 Source: https://docs.openhands.dev/sdk/guides/plugins.md
 
@@ -20754,7 +21625,7 @@ Brief explanation on how to use a plugin with an agent.
 
 ## Ready-to-run Example
 
-The example below demonstrates plugin loading via Conversation and plugin management utilities (install, list, update, uninstall).
+The example below demonstrates plugin loading via Conversation and plugin management utilities (install, list, load, enable, disable, and uninstall).
 
 <Note>
 This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
@@ -20763,11 +21634,14 @@ This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_
 ```python icon="python" expandable examples/05_skills_and_plugins/02_loading_plugins/main.py
 """Example: Loading and Managing Plugins
 
-This example demonstrates plugin loading and management in the SDK:
+This example demonstrates plugin loading and lifecycle management in the SDK:
 
-1. Loading plugins via Conversation (PluginSource)
-2. Installing plugins to persistent storage
-3. Listing, updating, and uninstalling plugins
+1. Loading a plugin from GitHub via Conversation (PluginSource)
+2. Installing plugins to persistent storage (local and GitHub)
+3. Listing tracked plugins and loading only the enabled ones
+4. Inspecting the `.installed.json` metadata file and `enabled` flag
+5. Disabling and re-enabling a plugin without reinstalling it
+6. Uninstalling plugins from persistent storage
 
 Plugins bundle skills, hooks, and MCP config together.
 
@@ -20781,6 +21655,7 @@ Supported plugin sources:
 For full documentation, see: https://docs.all-hands.dev/sdk/guides/plugins
 """
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -20791,6 +21666,8 @@ from openhands.sdk import LLM, Agent, Conversation
 from openhands.sdk.plugin import (
     PluginFetchError,
     PluginSource,
+    disable_plugin,
+    enable_plugin,
     install_plugin,
     list_installed_plugins,
     load_installed_plugins,
@@ -20801,27 +21678,39 @@ from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
 
-# Locate example plugin directory
 script_dir = Path(__file__).parent
 local_plugin_path = script_dir / "example_plugins" / "code-quality"
 
 
-def demo_conversation_with_plugins(llm: LLM) -> None:
-    """Demo 1: Load plugins via Conversation's plugins parameter.
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted plugin state."""
+    print(f"\n{label}")
+    print("-" * len(label))
 
-    This is the recommended way to use plugins - they are loaded lazily
-    when the conversation starts.
-    """
+    installed = list_installed_plugins(installed_dir=installed_dir)
+    print("Tracked plugins:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled}, source={info.source})")
+
+    loaded = load_installed_plugins(installed_dir=installed_dir)
+    print(f"Loaded plugins: {[plugin.name for plugin in loaded]}")
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    print("Metadata file:")
+    print(json.dumps(metadata, indent=2))
+
+
+def demo_conversation_with_github_plugin(llm: LLM) -> None:
+    """Demo 1: Load plugin from GitHub via Conversation."""
     print("\n" + "=" * 60)
-    print("DEMO 1: Loading plugins via Conversation")
+    print("DEMO 1: Loading plugin from GitHub via Conversation")
     print("=" * 60)
 
-    # Define plugins to load
     plugins = [
-        PluginSource(source=str(local_plugin_path)),
-        # Examples of other sources:
-        # PluginSource(source="github:owner/repo", ref="v1.0.0"),
-        # PluginSource(source="github:owner/monorepo", repo_path="plugins/my-plugin"),
+        PluginSource(
+            source="github:anthropics/skills",
+            ref="main",
+        ),
     ]
 
     agent = Agent(
@@ -20830,31 +21719,43 @@ def demo_conversation_with_plugins(llm: LLM) -> None:
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        conversation = Conversation(
-            agent=agent,
-            workspace=tmpdir,
-            plugins=plugins,
-        )
+        try:
+            conversation = Conversation(
+                agent=agent,
+                workspace=tmpdir,
+                plugins=plugins,
+            )
 
-        # The "lint" keyword triggers the python-linting skill
-        conversation.send_message("How do I lint Python code? Brief answer please.")
+            conversation.send_message(
+                "What's the best way to create a PowerPoint presentation "
+                "programmatically? Check the skill before you answer."
+            )
 
-        # Verify skills were loaded
-        skills = (
-            conversation.agent.agent_context.skills
-            if conversation.agent.agent_context
-            else []
-        )
-        print(f"✓ Loaded {len(skills)} skill(s) from plugins")
+            skills = (
+                conversation.agent.agent_context.skills
+                if conversation.agent.agent_context
+                else []
+            )
+            print(f"✓ Loaded {len(skills)} skill(s) from GitHub plugin")
+            for skill in skills[:5]:
+                print(f"  - {skill.name}")
+            if len(skills) > 5:
+                print(f"  ... and {len(skills) - 5} more skills")
 
-        conversation.run()
+            if conversation.resolved_plugins:
+                print("Resolved plugin refs:")
+                for resolved in conversation.resolved_plugins:
+                    print(f"  - {resolved.source} @ {resolved.resolved_ref}")
+
+            conversation.run()
+
+        except PluginFetchError as e:
+            print(f"⚠ Could not fetch from GitHub: {e}")
+            print("  Skipping this demo (network or rate limiting issue)")
 
 
-def demo_install_local_plugin(installed_dir: Path) -> None:
-    """Demo 2: Install a plugin from a local path.
-
-    Useful for development or local-only plugins.
-    """
+def demo_install_local_plugin(installed_dir: Path) -> str:
+    """Demo 2: Install a plugin from a local path."""
     print("\n" + "=" * 60)
     print("DEMO 2: Installing plugin from local path")
     print("=" * 60)
@@ -20863,22 +21764,18 @@ def demo_install_local_plugin(installed_dir: Path) -> None:
     print(f"✓ Installed: {info.name} v{info.version}")
     print(f"  Source: {info.source}")
     print(f"  Path: {info.install_path}")
+    return info.name
 
 
 def demo_install_github_plugin(installed_dir: Path) -> None:
-    """Demo 3: Install a plugin from GitHub.
-
-    Demonstrates the github:owner/repo shorthand with repo_path for monorepos.
-    """
+    """Demo 3: Install a plugin from GitHub to persistent storage."""
     print("\n" + "=" * 60)
     print("DEMO 3: Installing plugin from GitHub")
     print("=" * 60)
 
     try:
-        # Install from anthropics/skills repository
         info = install_plugin(
             source="github:anthropics/skills",
-            repo_path="skills/pptx",
             ref="main",
             installed_dir=installed_dir,
         )
@@ -20886,23 +21783,34 @@ def demo_install_github_plugin(installed_dir: Path) -> None:
         print(f"  Source: {info.source}")
         print(f"  Resolved ref: {info.resolved_ref}")
 
+        plugins = load_installed_plugins(installed_dir=installed_dir)
+        for plugin in plugins:
+            if plugin.name != info.name:
+                continue
+
+            skills = plugin.get_all_skills()
+            print(f"  Skills: {len(skills)}")
+            for skill in skills[:5]:
+                desc = skill.description or "(no description)"
+                print(f"    - {skill.name}: {desc[:50]}...")
+            if len(skills) > 5:
+                print(f"    ... and {len(skills) - 5} more skills")
+
     except PluginFetchError as e:
         print(f"⚠ Could not fetch from GitHub: {e}")
         print("  (Network or rate limiting issue)")
 
 
 def demo_list_and_load_plugins(installed_dir: Path) -> None:
-    """Demo 4: List and load installed plugins."""
+    """Demo 4: List tracked plugins and load the enabled ones."""
     print("\n" + "=" * 60)
-    print("DEMO 4: List and load installed plugins")
+    print("DEMO 4: Listing and loading installed plugins")
     print("=" * 60)
 
-    # List installed plugins
-    print("Installed plugins:")
+    print("Tracked plugins:")
     for info in list_installed_plugins(installed_dir=installed_dir):
-        print(f"  - {info.name} v{info.version} ({info.source})")
+        print(f"  - {info.name} v{info.version} (enabled={info.enabled})")
 
-    # Load plugins as Plugin objects
     plugins = load_installed_plugins(installed_dir=installed_dir)
     print(f"\nLoaded {len(plugins)} plugin(s):")
     for plugin in plugins:
@@ -20910,10 +21818,37 @@ def demo_list_and_load_plugins(installed_dir: Path) -> None:
         print(f"  - {plugin.name}: {len(skills)} skill(s)")
 
 
-def demo_uninstall_plugins(installed_dir: Path) -> None:
-    """Demo 5: Uninstall plugins."""
+def demo_enable_disable_plugin(installed_dir: Path, plugin_name: str) -> None:
+    """Demo 5: Disable then re-enable a plugin without reinstalling it."""
     print("\n" + "=" * 60)
-    print("DEMO 5: Uninstalling plugins")
+    print("DEMO 5: Disabling and re-enabling a plugin")
+    print("=" * 60)
+
+    print_state("Before disable", installed_dir)
+
+    assert disable_plugin(plugin_name, installed_dir=installed_dir) is True
+    print_state("After disable", installed_dir)
+    assert plugin_name not in [
+        plugin.name for plugin in load_installed_plugins(installed_dir=installed_dir)
+    ]
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["plugins"][plugin_name]["enabled"] is False
+
+    assert enable_plugin(plugin_name, installed_dir=installed_dir) is True
+    print_state("After re-enable", installed_dir)
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["plugins"][plugin_name]["enabled"] is True
+    assert plugin_name in [
+        plugin.name for plugin in load_installed_plugins(installed_dir=installed_dir)
+    ]
+
+
+def demo_uninstall_plugins(installed_dir: Path) -> None:
+    """Demo 6: Uninstall all tracked plugins."""
+    print("\n" + "=" * 60)
+    print("DEMO 6: Uninstalling plugins")
     print("=" * 60)
 
     for info in list_installed_plugins(installed_dir=installed_dir):
@@ -20924,12 +21859,11 @@ def demo_uninstall_plugins(installed_dir: Path) -> None:
     print(f"\nRemaining plugins: {len(remaining)}")
 
 
-# Main execution
 if __name__ == "__main__":
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
         print("Set LLM_API_KEY to run the full example")
-        print("Running install/uninstall demos only...")
+        print("Running install and lifecycle demos only...")
         llm = None
     else:
         model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
@@ -20941,17 +21875,16 @@ if __name__ == "__main__":
         )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        installed_dir = Path(tmpdir) / "installed"
+        installed_dir = Path(tmpdir) / "installed-plugins"
         installed_dir.mkdir()
 
-        # Demo 1: Conversation with plugins (requires LLM)
         if llm:
-            demo_conversation_with_plugins(llm)
+            demo_conversation_with_github_plugin(llm)
 
-        # Demo 2-5: Plugin management (no LLM required)
-        demo_install_local_plugin(installed_dir)
+        local_plugin_name = demo_install_local_plugin(installed_dir)
         demo_install_github_plugin(installed_dir)
         demo_list_and_load_plugins(installed_dir)
+        demo_enable_disable_plugin(installed_dir, local_plugin_name)
         demo_uninstall_plugins(installed_dir)
 
     print("\n" + "=" * 60)
@@ -20968,9 +21901,25 @@ if __name__ == "__main__":
 
 ## Installing Plugins to Persistent Storage
 
-The SDK provides utilities to install plugins to a local directory (`~/.openhands/plugins/installed/` by default). Installed plugins are tracked in `.installed.json`, which stores metadata including a persistent enabled flag.
+The SDK provides utilities to install plugins to a local directory
+(`~/.openhands/plugins/installed/` by default). Installed plugins are tracked
+in `.installed.json`, which stores metadata including a persistent enabled
+flag.
 
-Use `list_installed_plugins()` to see all tracked plugins (enabled and disabled). Use `load_installed_plugins()` to load only enabled plugins. Toggle plugins on/off with `enable_plugin()` and `disable_plugin()` without uninstalling.
+Use `list_installed_plugins()` to see all tracked plugins (enabled and
+disabled). Use `load_installed_plugins()` to load only enabled plugins.
+`install_plugin()`, `enable_plugin()`, `disable_plugin()`, and
+`uninstall_plugin()` are exposed from `openhands.sdk.plugin`, which gives the
+CLI a clean SDK surface for `/plugin install`, `/plugin enable`,
+`/plugin disable`, and `/plugin uninstall`.
+
+### Installed Plugin Lifecycle
+
+The ready-to-run example above already demonstrates the full
+installed-plugin lifecycle, including toggling the persistent `enabled`
+flag in `.installed.json` before uninstalling the plugin.
+
+Use the same APIs directly when you need a narrower flow:
 
 ```python icon="python"
 from openhands.sdk.plugin import (
@@ -20982,27 +21931,12 @@ from openhands.sdk.plugin import (
     uninstall_plugin,
 )
 
-# Install from local path or GitHub
-install_plugin(source="/path/to/plugin")
-install_plugin(source="github:owner/repo", ref="v1.0.0")
-
-# List installed plugins (includes enabled + disabled)
-for info in list_installed_plugins():
-    status = "enabled" if info.enabled else "disabled"
-    print(f"{info.name} v{info.version} ({status})")
-
-# Disable a plugin (won't be loaded until re-enabled)
-disable_plugin("plugin-name")
-
-# Load only enabled plugins for your agent
-plugins = load_installed_plugins()
-
-# Later: re-enable and reload
-enable_plugin("plugin-name")
-plugins = load_installed_plugins()
-
-# Uninstall
-uninstall_plugin("plugin-name")
+info = install_plugin(source="/path/to/plugin")
+tracked_plugins = list_installed_plugins()
+disable_plugin(info.name)
+enabled_plugins = load_installed_plugins()
+enable_plugin(info.name)
+uninstall_plugin(info.name)
 ```
 
 ## Next Steps
@@ -21877,13 +22811,48 @@ Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic i
 
 ## Managing Installed Skills
 
-You can install AgentSkills into a persistent directory and list/update them
-using `openhands.sdk.skills`. Skills are stored under
+You can install AgentSkills into a persistent directory and manage them through
+`openhands.sdk.skills`. Skills are stored under
 `~/.openhands/skills/installed/` with a `.installed.json` metadata file that
-records an `enabled` flag. `list_installed_skills` returns all installed skills,
-while `load_installed_skills` returns only those with `enabled=true`.
+records an `enabled` flag. `list_installed_skills()` returns all installed
+skills, while `load_installed_skills()` returns only those with
+`enabled=true`.
 
-```python icon="python"
+The public lifecycle API includes `install_skill()`, `update_skill()`,
+`enable_skill()`, `disable_skill()`, and `uninstall_skill()`, which gives the
+CLI a clean SDK surface for `/skill install`, `/skill enable`,
+`/skill disable`, and `/skill uninstall`.
+
+### Installed Skill Lifecycle Example
+
+This example mirrors the installed-plugin lifecycle example, but for
+AgentSkills. It installs sample skills, lists them, toggles the
+persistent `enabled` flag, and uninstalls one skill while leaving the
+other available.
+
+<Note>
+Source: [examples/05_skills_and_plugins/03_managing_installed_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/03_managing_installed_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/03_managing_installed_skills/main.py
+"""Example: Installing and Managing Skills
+
+This example demonstrates installed skill lifecycle operations in the SDK:
+
+1. Install skills from local paths into persistent storage
+2. List tracked skills and load only the enabled ones
+3. Inspect the `.installed.json` metadata file and `enabled` flag
+4. Disable and re-enable a skill without reinstalling it
+5. Uninstall a skill while leaving other installed skills available
+
+For marketplace installation flows, see:
+`examples/01_standalone_sdk/43_mixed_marketplace_skills/`.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
 from openhands.sdk.skills import (
     disable_skill,
     enable_skill,
@@ -21891,32 +22860,272 @@ from openhands.sdk.skills import (
     list_installed_skills,
     load_installed_skills,
     uninstall_skill,
-    update_skill,
 )
 
-# Install from GitHub (supports git URLs, local paths, and repo_path for monorepos)
-info = install_skill("github:owner/my-skill", ref="v1.0.0")
-print(f"Installed {info.name} from {info.source}")
 
-# List installed skills
-for skill_info in list_installed_skills():
-    print(f"{skill_info.name}: {skill_info.description}")
+script_dir = Path(__file__).resolve().parent
+example_skills_dir = script_dir.parent / "01_loading_agentskills" / "example_skills"
 
-# Enable/disable controls which skills load (state persisted in .installed.json)
 
-# Disable a skill temporarily (e.g., while debugging or if it conflicts)
-disable_skill("my-skill")
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted skill state."""
+    print(f"\n{label}")
+    print("-" * len(label))
 
-# Load installed skills for an AgentContext (only enabled skills load)
-skills = load_installed_skills()
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled}, source={info.source})")
 
-# Re-enable when needed
-# enable_skill("my-skill")
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"Loaded skills: {[skill.name for skill in loaded]}")
 
-# Update or uninstall
-update_skill("my-skill")
-uninstall_skill("my-skill")
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    print("Metadata file:")
+    print(json.dumps(metadata, indent=2))
+
+
+def demo_install_skills(installed_dir: Path) -> list[str]:
+    """Install the sample skills into the isolated installed directory."""
+    print("\n" + "=" * 60)
+    print("DEMO 1: Installing local skills")
+    print("=" * 60)
+
+    installed_names: list[str] = []
+    for skill_dir in sorted(example_skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        info = install_skill(source=str(skill_dir), installed_dir=installed_dir)
+        installed_names.append(info.name)
+        print(f"✓ Installed: {info.name}")
+        print(f"  Source: {info.source}")
+        print(f"  Path: {info.install_path}")
+
+    return installed_names
+
+
+def demo_list_and_load_skills(installed_dir: Path) -> None:
+    """List tracked skills and load them as runtime Skill objects."""
+    print("\n" + "=" * 60)
+    print("DEMO 2: Listing and loading installed skills")
+    print("=" * 60)
+
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        desc = (info.description or "No description")[:60]
+        print(f"  - {info.name} (enabled={info.enabled})")
+        print(f"    Description: {desc}...")
+
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"\nLoaded {len(loaded)} skill(s):")
+    for skill in loaded:
+        desc = (skill.description or "No description")[:60]
+        print(f"  - {skill.name}: {desc}...")
+
+
+def demo_enable_disable_skill(installed_dir: Path, skill_name: str) -> None:
+    """Disable then re-enable a skill and show the persisted metadata."""
+    print("\n" + "=" * 60)
+    print("DEMO 3: Disabling and re-enabling a skill")
+    print("=" * 60)
+
+    print_state("Before disable", installed_dir)
+
+    assert disable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After disable", installed_dir)
+    assert skill_name not in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is False
+
+    assert enable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After re-enable", installed_dir)
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is True
+    assert skill_name in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+
+def demo_uninstall_skill(
+    installed_dir: Path, skill_name: str, remaining_skill_name: str
+) -> None:
+    """Uninstall one skill and confirm the other skill remains available."""
+    print("\n" + "=" * 60)
+    print("DEMO 4: Uninstalling a skill")
+    print("=" * 60)
+
+    assert uninstall_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After uninstall", installed_dir)
+
+    assert not (installed_dir / skill_name).exists()
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert skill_name not in metadata["skills"]
+    assert remaining_skill_name in metadata["skills"]
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-skills"
+        installed_dir.mkdir(parents=True)
+
+        installed_names = demo_install_skills(installed_dir)
+        demo_list_and_load_skills(installed_dir)
+        demo_enable_disable_skill(installed_dir, skill_name="rot13-encryption")
+        demo_uninstall_skill(
+            installed_dir,
+            skill_name="rot13-encryption",
+            remaining_skill_name="code-style-guide",
+        )
+
+        remaining_names = [
+            info.name for info in list_installed_skills(installed_dir=installed_dir)
+        ]
+        assert remaining_names == ["code-style-guide"]
+        assert sorted(installed_names) == ["code-style-guide", "rot13-encryption"]
+
+    print("\nEXAMPLE_COST: 0")
 ```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/03_managing_installed_skills/main.py"/>
+
+### Installing Skills from a Marketplace
+
+Use a marketplace when you want to install a curated mix of local and remote
+AgentSkills in one step. The example below shows how to define a marketplace,
+install all listed skills, and inspect the installed metadata.
+
+<Note>
+Source: [examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py
+"""Example: Mixed Marketplace with Local and Remote Skills
+
+This example demonstrates how to create a marketplace that includes both:
+1. Local skills hosted in your project directory
+2. Remote skills from GitHub (OpenHands/extensions repository)
+
+The marketplace.json schema supports source paths in these formats:
+- Local paths: ./path, ../path, /absolute/path, ~/path, file:///path
+- GitHub URLs: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+
+This pattern is useful for teams that want to:
+- Maintain their own custom skills locally
+- Reference specific skills from remote repositories
+- Create a curated skill set for their specific workflows
+
+Directory Structure:
+    43_mixed_marketplace_skills/
+    ├── .plugin/
+    │   └── marketplace.json     # Marketplace with local and remote skills
+    ├── skills/
+    │   └── greeting-helper/
+    │       └── SKILL.md         # Local skill content
+    ├── main.py                  # This file
+    └── README.md                # Documentation
+
+Usage:
+    # Install all skills from marketplace to ~/.openhands/skills/installed/
+    python main.py --install
+
+    # Force reinstall (overwrite existing)
+    python main.py --install --force
+
+    # Show installed skills
+    python main.py --list
+"""
+
+import sys
+from pathlib import Path
+
+from openhands.sdk.plugin import Marketplace
+from openhands.sdk.skills import (
+    install_skills_from_marketplace,
+    list_installed_skills,
+)
+
+
+def main():
+    script_dir = Path(__file__).parent
+
+    if "--list" in sys.argv:
+        # List installed skills
+        print("=" * 80)
+        print("Installed Skills")
+        print("=" * 80)
+        installed = list_installed_skills()
+        if not installed:
+            print("\nNo skills installed.")
+            print("Run with --install to install skills from the marketplace.")
+        else:
+            for info in installed:
+                desc = (info.description or "No description")[:60]
+                print(f"\n  {info.name}")
+                print(f"    Description: {desc}...")
+                print(f"    Source: {info.source}")
+        return
+
+    if "--install" in sys.argv:
+        # Install skills from marketplace
+        print("=" * 80)
+        print("Installing Skills from Marketplace")
+        print("=" * 80)
+        print(f"\nMarketplace directory: {script_dir}")
+
+        force = "--force" in sys.argv
+        installed = install_skills_from_marketplace(script_dir, force=force)
+
+        print(f"\n\nInstalled {len(installed)} skills:")
+        for info in installed:
+            print(f"  - {info.name}")
+
+        # Show all installed skills
+        print("\n" + "=" * 80)
+        print("All Installed Skills")
+        print("=" * 80)
+        all_installed = list_installed_skills()
+        for info in all_installed:
+            desc = (info.description or "No description")[:50]
+            print(f"  - {info.name}: {desc}...")
+        return
+
+    # Default: show marketplace info
+    print("=" * 80)
+    print("Marketplace Information")
+    print("=" * 80)
+    print(f"\nMarketplace directory: {script_dir}")
+
+    marketplace = Marketplace.load(script_dir)
+    print(f"Name: {marketplace.name}")
+    print(f"Description: {marketplace.description}")
+    print(f"Skills defined: {len(marketplace.skills)}")
+
+    print("\nSkills:")
+    for entry in marketplace.skills:
+        source_type = "remote" if entry.source.startswith("http") else "local"
+        print(f"  - {entry.name} ({source_type})")
+        print(f"    Source: {entry.source}")
+        if entry.description:
+            print(f"    Description: {entry.description}")
+
+    print("\n" + "-" * 80)
+    print("Usage:")
+    print("  python main.py --install        # Install all skills")
+    print("  python main.py --install --force # Force reinstall")
+    print("  python main.py --list           # List installed skills")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py"/>
+
 
 ---
 
@@ -24543,9 +25752,10 @@ After making configuration changes, restart the conversation in Zed to apply the
 ### Installation
 Source: https://docs.openhands.dev/openhands/usage/cli/installation.md
 
-<Warning>
-**Windows Users:** The OpenHands CLI requires WSL (Windows Subsystem for Linux). Native Windows is not officially supported. Please [install WSL](https://learn.microsoft.com/en-us/windows/wsl/install) first, then run all commands inside your WSL terminal.
-</Warning>
+<Note>
+**Windows users:** All commands below should be run inside the WSL terminal (Ubuntu). Use `wsl -d Ubuntu` in PowerShell or search "Ubuntu" in the Start menu to access the Ubuntu terminal. We also have a [step-by-step video tutorial](https://youtu.be/Kp40Qqz4ZPw) available.
+</Note>
+
 
 ## Installation Methods
 
@@ -29440,7 +30650,7 @@ For an overview of the key features available inside a conversation, please refe
 ### Setup
 Source: https://docs.openhands.dev/openhands/usage/run-openhands/local-setup.md
 
-## Recommended Methods for Running Openhands on Your Local System
+## Recommended Methods for Running OpenHands on Your Local System
 
 ### System Requirements
 
@@ -29476,10 +30686,13 @@ A system with a modern processor and a minimum of **4GB RAM** is recommended to 
 
 <Accordion title="Windows">
 
+  <Note>
+  Looking for a video guide? Check out this [step-by-step Windows setup tutorial](https://youtu.be/Kp40Qqz4ZPw).
+  </Note>
   **WSL**
 
   1. [Install WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
-  2. Run `wsl --version` in powershell and confirm `Default Version: 2`.
+  2. Run `wsl --version` in PowerShell and confirm `Default Version: 2`.
 
   **Ubuntu (Linux Distribution)**
 
@@ -30566,6 +31779,14 @@ After the GitHub organization rename from `All-Hands-AI` to `OpenHands`, you may
 ### COBOL Modernization
 Source: https://docs.openhands.dev/openhands/usage/use-cases/cobol-modernization.md
 
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/cobol-modernization"
+>
+  Check out the complete COBOL modernization plugin with ready-to-use code and configuration.
+</Card>
+
 Legacy COBOL systems power critical business operations across banking, insurance, government, and retail. OpenHands can help you understand, document, and modernize these systems while preserving their essential business logic.
 
 <Note>
@@ -30733,6 +31954,14 @@ For real-world COBOL files, you can use the [AWS CardDemo application](https://g
 ### Automated Code Review
 Source: https://docs.openhands.dev/openhands/usage/use-cases/code-review.md
 
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/pr-review"
+>
+  Check out the complete PR review plugin with ready-to-use code and configuration.
+</Card>
+
 Automated code review helps maintain code quality, catch bugs early, and enforce coding standards consistently across your team. OpenHands provides a GitHub Actions workflow powered by the [Software Agent SDK](/sdk/index) that automatically reviews pull requests and posts inline comments directly on your PRs.
 
 ## Overview
@@ -30833,9 +32062,9 @@ Choose between two review styles:
 
 The workflow uses a reusable composite action from the Software Agent SDK that handles all the setup automatically:
 
-- Checking out the SDK at the specified version
+- Checking out the extensions repository at the specified version
 - Setting up Python and dependencies
-- Running the PR review agent
+- Running the PR review agent (from extensions repo)
 - Uploading logs as artifacts
 
 ### Action Inputs
@@ -30845,13 +32074,13 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 | `llm-model` | LLM model to use | Yes | - |
 | `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
 | `review-style` | Review style: `standard` or `roasted` | No | `roasted` |
-| `sdk-version` | Git ref for SDK (tag, branch, or commit SHA) | No | `main` |
-| `sdk-repo` | SDK repository (owner/repo) | No | `OpenHands/software-agent-sdk` |
+| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
 | `llm-api-key` | LLM API key | Yes | - |
 | `github-token` | GitHub token for API access | Yes | - |
 
 <Note>
-Use `sdk-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features.
+Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features. The extensions repository contains the PR review plugin scripts.
 </Note>
 
 ## Customization
@@ -30920,8 +32149,8 @@ Customize the workflow by modifying the action inputs:
     llm-base-url: https://your-llm-proxy.example.com
     # Switch to "roasted" style for brutally honest reviews
     review-style: roasted
-    # Pin to a specific SDK version for stability
-    sdk-version: main
+    # Pin to a specific extensions version for stability
+    extensions-version: main
     # Secrets
     llm-api-key: ${{ secrets.LLM_API_KEY }}
     github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -31282,6 +32511,14 @@ addressing breaking changes in the correct order.
 ### Incident Triage
 Source: https://docs.openhands.dev/openhands/usage/use-cases/incident-triage.md
 
+<Card
+  title="View Example Workflow"
+  icon="github"
+  href="https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/04_datadog_debugging"
+>
+  Check out the complete Datadog debugging workflow with ready-to-use code and configuration.
+</Card>
+
 When production incidents occur, speed matters. OpenHands can help you quickly investigate issues, analyze logs and errors, identify root causes, and generate fixes—reducing your mean time to resolution (MTTR).
 
 <Note>
@@ -31587,6 +32824,14 @@ OpenHands supports a wide variety of software development tasks. Here are some o
 ### Spark Migrations
 Source: https://docs.openhands.dev/openhands/usage/use-cases/spark-migrations.md
 
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/migration-scoring"
+>
+  Check out the migration scoring plugin to evaluate and validate your Spark migration quality.
+</Card>
+
 Apache Spark is constantly evolving, and keeping your data pipelines up to date is essential for performance, security, and access to new features. OpenHands can help you analyze, migrate, and validate Spark applications.
 
 ## Overview
@@ -31733,6 +32978,14 @@ In each case, the key principle is the same: build a structured inventory of wha
 
 ### Vulnerability Remediation
 Source: https://docs.openhands.dev/openhands/usage/use-cases/vulnerability-remediation.md
+
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/vulnerability-remediation"
+>
+  Check out the complete vulnerability remediation plugin with ready-to-use code and configuration.
+</Card>
 
 Security vulnerabilities are a constant challenge for software teams. Every day, new security issues are discovered—from vulnerabilities in dependencies to code security flaws detected by static analysis tools. The National Vulnerability Database (NVD) reports thousands of new vulnerabilities annually, and organizations struggle to keep up with this constant influx.
 
@@ -33508,56 +34761,6 @@ We believe in the power of open source to democratize access to cutting-edge AI 
 
 If this resonates with you, we'd love to have you join us in our quest!
 
-## What Can You Build?
-
-There are countless ways to contribute to OpenHands. Whether you're a seasoned developer, a researcher, a designer, or someone just getting started, there's a place for you in our community.
-
-### Frontend & UI/UX
-Make OpenHands more beautiful and user-friendly:
-- **React & TypeScript Development** - Improve the web interface
-- **UI/UX Design** - Enhance user experience and accessibility  
-- **Mobile Responsiveness** - Make OpenHands work great on all devices
-- **Component Libraries** - Build reusable UI components
-
-*Small fixes are always welcome! For bigger changes, join our **#eng-ui-ux** channel in [Slack](https://openhands.dev/joinslack) first.*
-
-### Agent Development
-Help make our AI agents smarter and more capable:
-- **Prompt Engineering** - Improve how agents understand and respond
-- **New Agent Types** - Create specialized agents for different tasks
-- **Agent Evaluation** - Develop better ways to measure agent performance
-- **Multi-Agent Systems** - Enable agents to work together
-
-*We use [SWE-bench](https://www.swebench.com/) to evaluate our agents. Join our  [Slack](https://openhands.dev/joinslack) to learn more.*
-
-### Backend & Infrastructure
-Build the foundation that powers OpenHands:
-- **Python Development** - Core functionality and APIs
-- **Runtime Systems** - Docker containers and sandboxes
-- **Cloud Integrations** - Support for different cloud providers
-- **Performance Optimization** - Make everything faster and more efficient
-
-### Testing & Quality Assurance
-Help us maintain high quality:
-- **Unit Testing** - Write tests for new features
-- **Integration Testing** - Ensure components work together
-- **Bug Hunting** - Find and report issues
-- **Performance Testing** - Identify bottlenecks and optimization opportunities
-
-### Documentation & Education
-Help others learn and contribute:
-- **Technical Documentation** - API docs, guides, and tutorials
-- **Video Tutorials** - Create learning content
-- **Translation** - Make OpenHands accessible in more languages
-- **Community Support** - Help other users and contributors
-
-### Research & Innovation
-Push the boundaries of what's possible:
-- **Academic Research** - Publish papers using OpenHands
-- **Benchmarking** - Develop new evaluation methods
-- **Experimental Features** - Try cutting-edge AI techniques
-- **Data Analysis** - Study how developers use AI tools
-
 ## 🚀 Getting Started
 
 Ready to contribute? Here's your path to making an impact:
@@ -33629,6 +34832,67 @@ We recommend the following for smooth reviews but they're not required. Just kno
 - Link to related issues
 - Include screenshots for UI changes
 - Add changelog entry for user-facing changes
+
+## What Can You Build?
+
+There are countless ways to contribute to OpenHands. Whether you're a seasoned developer, a researcher, a designer, or someone just getting started, there's a place for you in our community.
+
+### Frontend & UI/UX
+Make OpenHands more beautiful and user-friendly:
+- **React & TypeScript Development** - Improve the web interface
+- **UI/UX Design** - Enhance user experience and accessibility  
+- **Mobile Responsiveness** - Make OpenHands work great on all devices
+- **Component Libraries** - Build reusable UI components
+
+*Small fixes are always welcome! For bigger changes, join our **#eng-ui-ux** channel in [Slack](https://openhands.dev/joinslack) first.*
+
+### Agent Development
+Help make our AI agents smarter and more capable:
+- **Prompt Engineering** - Improve how agents understand and respond
+- **New Agent Types** - Create specialized agents for different tasks
+- **Agent Evaluation** - Develop better ways to measure agent performance
+- **Multi-Agent Systems** - Enable agents to work together
+
+*We use [SWE-bench](https://www.swebench.com/) to evaluate our agents. Join our  [Slack](https://openhands.dev/joinslack) to learn more.*
+
+### Backend & Infrastructure
+Build the foundation that powers OpenHands:
+- **Python Development** - Core functionality and APIs
+- **Runtime Systems** - Docker containers and sandboxes
+- **Cloud Integrations** - Support for different cloud providers
+- **Performance Optimization** - Make everything faster and more efficient
+
+### Testing & Quality Assurance
+Help us maintain high quality:
+- **Unit Testing** - Write tests for new features
+- **Integration Testing** - Ensure components work together
+- **Bug Hunting** - Find and report issues
+- **Performance Testing** - Identify bottlenecks and optimization opportunities
+
+### Documentation & Education
+Help others learn and contribute:
+- **Technical Documentation** - API docs, guides, and tutorials
+- **Video Tutorials** - Create learning content
+- **Translation** - Make OpenHands accessible in more languages
+- **Community Support** - Help other users and contributors
+
+### Research & Innovation
+Push the boundaries of what's possible:
+- **Academic Research** - Publish papers using OpenHands
+- **Benchmarking** - Develop new evaluation methods
+- **Experimental Features** - Try cutting-edge AI techniques
+- **Data Analysis** - Study how developers use AI tools
+
+## Becoming a Maintainer
+
+For contributors who have made significant and sustained contributions to the project, there is a possibility of joining the maintainer team.
+The process for this is as follows:
+
+1. Any contributor who has made sustained and high-quality contributions to the codebase can be nominated by any maintainer. If you feel that you may qualify you can reach out to any of the maintainers that have reviewed your PRs and ask if you can be nominated.
+2. Once a maintainer nominates a new maintainer, there will be a discussion period among the maintainers for at least 3 days.
+3. If no concerns are raised the nomination will be accepted by acclamation, and if concerns are raised there will be a discussion and possible vote.
+
+Note that just making many PRs does not immediately imply that you will become a maintainer. We will be looking at sustained high-quality contributions over a period of time, as well as good teamwork and adherence to our [Code of Conduct](https://github.com/OpenHands/OpenHands/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 
@@ -34369,3 +35633,103 @@ Always make sure the tests are passing before committing changes. You can run th
 ```
 
 [See more examples of general skills at OpenHands Skills registry.](https://github.com/OpenHands/extensions)
+
+## Other
+
+### OpenHands Enterprise
+Source: https://docs.openhands.dev/enterprise.md
+
+OpenHands Enterprise allows you to run AI coding agents directly on your own
+servers or in your private cloud. Unlike the SaaS version, the enterprise
+deployment gives you complete control over your AI development environment.
+
+## What is OpenHands Enterprise?
+
+OpenHands Enterprise brings the power of autonomous coding agents to your
+organization with the governance, security, and compliance your enterprise
+demands.
+
+<CardGroup cols={2}>
+  <Card title="Complete Data Control" icon="lock">
+    All code and conversations stay on your infrastructure. Nothing leaves your
+    environment.
+  </Card>
+  <Card title="Custom Configuration" icon="sliders">
+    Configure LLM providers, security settings, and runtime environments to
+    match your requirements.
+  </Card>
+  <Card title="Enterprise Security" icon="shield-halved">
+    Deploy behind your firewall with your security policies. Fine-grained access
+    control and auditability.
+  </Card>
+  <Card title="Cost Control" icon="coins">
+    Use your own compute resources and LLM API keys. No per-seat licensing.
+  </Card>
+</CardGroup>
+
+## Why Choose Enterprise?
+
+### Self-Hosted or Private Cloud Deployment
+
+Deploy OpenHands on your own infrastructure—whether on-premises, in your private
+cloud, or in your VPC. You maintain full control over where your code and data
+reside.
+
+### Bring Your Own LLM
+
+Connect to your preferred LLM provider—Anthropic, OpenAI, AWS Bedrock, Azure
+OpenAI, Google Vertex AI, or any other provider. Use your existing enterprise
+agreements and API keys.
+
+### Enterprise Integrations
+
+OpenHands Enterprise integrates with your existing enterprise ecosystem:
+
+- **Identity & Access**: Enterprise SAML/SSO for centralized authentication
+- **Source Control**: GitHub Enterprise, GitLab, Bitbucket
+- **Project Management**: Jira, and other ticketing systems
+- **Communication**: Slack integration for notifications and workflows
+
+### Containerized Sandbox Runtime
+
+Every agent runs in an isolated, containerized sandbox environment. This
+provides safe autonomy—agents can execute code and make changes without risking
+your production systems.
+
+### Dedicated Support
+
+Enterprise customers receive:
+
+- Priority support with guaranteed response times
+- Named Customer Engineer for your account
+- Shared Slack channel for direct communication
+- Assistance with deployment, configuration, and optimization
+
+## OpenHands Deployment Options
+
+| Feature | Open Source | Cloud (SaaS) | Enterprise |
+|---------|-------------|--------------|------------|
+| **Deployment** | Local | Hosted SaaS | Self-hosted / Private Cloud |
+| **Users** | 1 | 1 | Unlimited |
+| **Data Location** | Your machine | OpenHands Cloud | Your infrastructure |
+| **LLM Options** | BYOK | BYOK or OpenHands provider | BYOK |
+| **SSO/SAML** | — | — | ✓ |
+| **Multi-user RBAC** | — | — | ✓ |
+| **Priority Support** | — | — | ✓ |
+
+## Getting Started
+
+<Card
+  title="Contact Us"
+  icon="envelope"
+  href="https://openhands.dev/contact"
+>
+  Ready to bring OpenHands to your organization? Contact our team to discuss
+  your requirements and get started with a deployment plan.
+</Card>
+
+## Additional Resources
+
+- [OpenHands Documentation](/overview/introduction) — Learn how to use OpenHands
+- [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
+- [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
