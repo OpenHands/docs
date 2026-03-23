@@ -383,6 +383,133 @@ cd agent-sdk
 uv run python examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
 ```
 
+## SaaS Runtime Mode
+
+Use `saas_runtime_mode=True` when your SDK script is **already running inside** an OpenHands Cloud sandbox — for example, as part of an automation workflow deployed to the cloud.
+
+### When to Use This Mode
+
+| Scenario | Normal Mode | SaaS Runtime Mode |
+|----------|-------------|-------------------|
+| Script runs on your local machine | ✅ | ❌ |
+| Script runs in CI (GitHub Actions runner) | ✅ | ❌ |
+| Script deployed to run inside Cloud sandbox | ❌ | ✅ |
+| Automation service executes your script | ❌ | ✅ |
+
+### How It Differs from Normal Mode
+
+In **normal mode**, `OpenHandsCloudWorkspace` provisions a new sandbox via the Cloud API:
+
+```
+┌─────────────────┐         ┌─────────────────────────┐
+│  Your Machine   │  ←───→  │  OpenHands Cloud        │
+│  (SDK script)   │   API   │  (provisions sandbox)   │
+└─────────────────┘         └─────────────────────────┘
+```
+
+In **SaaS runtime mode**, your script is already inside the sandbox and connects to the local agent-server:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 OpenHands Cloud Sandbox             │
+│  ┌───────────────────────────────────────────────┐  │
+│  │  Your SDK script (saas_runtime_mode=True)     │  │
+│  │  └── connects to localhost:60000              │  │
+│  │  └── agent-server already running here        │  │
+│  └───────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+Key differences:
+- **No sandbox provisioning** — skips create/wait/delete lifecycle
+- **Connects to localhost** — talks to the agent-server already running in the sandbox
+- **SaaS credentials still work** — `get_llm()` and `get_secrets()` call the Cloud API
+
+### Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `saas_runtime_mode` | `bool` | `False` | Skip sandbox provisioning, connect to localhost |
+| `agent_server_port` | `int` | `60000` | Port of the local agent-server |
+| `automation_callback_url` | `str \| None` | `None` | URL to POST completion status on exit |
+| `automation_run_id` | `str \| None` | `None` | ID included in callback payload |
+
+### Environment Variables
+
+When running inside a Cloud sandbox, these environment variables are set automatically:
+
+| Variable | Description |
+|----------|-------------|
+| `SANDBOX_ID` | Sandbox identifier for `get_llm()` / `get_secrets()` |
+| `SESSION_API_KEY` | Session auth key (fallback: `OH_SESSION_API_KEYS_0`) |
+| `AGENT_SERVER_PORT` | Port override (optional) |
+
+### Example: Automation Script Inside a Cloud Sandbox
+
+This script is designed to be uploaded and executed inside an OpenHands Cloud sandbox:
+
+```python icon="python"
+# my_automation.py — runs INSIDE a Cloud sandbox
+import os
+from openhands.workspace import OpenHandsCloudWorkspace
+from openhands.sdk import Conversation
+from openhands.tools.preset.default import get_default_agent
+
+with OpenHandsCloudWorkspace(
+    saas_runtime_mode=True,
+    cloud_api_url="https://app.all-hands.dev",
+    cloud_api_key=os.environ["OPENHANDS_API_KEY"],
+    automation_callback_url=os.environ.get("CALLBACK_URL"),
+    automation_run_id=os.environ.get("RUN_ID"),
+) as workspace:
+    # No sandbox created — connects to local agent-server at localhost:60000
+    
+    # SaaS credentials still work
+    llm = workspace.get_llm()
+    secrets = workspace.get_secrets()
+    
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    conversation = Conversation(agent=agent, workspace=workspace)
+    
+    if secrets:
+        conversation.update_secrets(secrets)
+    
+    conversation.send_message("Perform the automation task")
+    conversation.run()
+    conversation.close()
+
+# On exit: completion callback sent automatically (if callback URL configured)
+```
+
+### Orchestration Pattern
+
+To deploy an automation script that uses SaaS runtime mode:
+
+1. **Create a sandbox** using normal mode (from your local machine or CI):
+   ```python
+   with OpenHandsCloudWorkspace(
+       cloud_api_url="https://app.all-hands.dev",
+       cloud_api_key=api_key,
+       keep_alive=True,  # Don't delete after setup
+   ) as workspace:
+       workspace.file_upload("my_automation.py", "/workspace/my_automation.py")
+   ```
+
+2. **Execute the script** inside the sandbox:
+   ```python
+   workspace.execute_command("python /workspace/my_automation.py")
+   ```
+
+3. The script uses `saas_runtime_mode=True` to connect to the local agent-server
+
+4. **Receive callback** when the script completes (optional)
+
+This pattern enables fire-and-forget automation where your orchestrator doesn't need to maintain a connection for the entire agent session.
+
+<Note>
+SaaS runtime mode is primarily used by the OpenHands automation service. For most SDK users, normal mode with `get_llm()` and `get_secrets()` provides a simpler experience.
+</Note>
+
 ## Next Steps
 
 - **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Connect to Runtime API service
