@@ -9138,6 +9138,22 @@ Because the ACP server manages its own tools and context, these `AgentBase` feat
 
 Passing any of these raises `NotImplementedError` at initialization.
 
+## ACPAgent with RemoteConversation
+
+`ACPAgent` also works with remote agent-server deployments such as `APIRemoteWorkspace`, `DockerWorkspace`, and other `RemoteWorkspace`-backed setups.
+
+When `RemoteConversation` detects an `ACPAgent`, it automatically uses the ACP-capable conversation routes for:
+
+- conversation creation
+- conversation info reads
+- conversation counting
+
+The rest of the lifecycle, including events, runs, pauses, and secrets, continues to use the standard agent-server routes. This keeps the existing remote execution flow intact while isolating the schema-sensitive ACP contract under `/api/acp/conversations`.
+
+<Warning>
+If you attach to an existing conversation by `conversation_id`, use `ACPAgent` for ACP-backed conversations. Attaching with a regular `Agent` to an ACP conversation ID is rejected explicitly to avoid mixing the standard and ACP conversation contracts.
+</Warning>
+
 ## How It Works
 
 - **Subprocess delegation**: `ACPAgent` spawns the ACP server and communicates via JSON-RPC over stdin/stdout
@@ -9362,6 +9378,10 @@ export RUNTIME_API_URL="https://runtime.eval.all-hands.dev"
 cd software-agent-sdk
 uv run python examples/02_remote_agent_server/09_acp_agent_with_remote_runtime.py
 ```
+
+<Note>
+On the agent-server side, the ACP-capable REST surface lives under `/api/acp/conversations`, including `POST`, `GET`, `search`, `batch get`, and `count`.
+</Note>
 
 ## Next Steps
 
@@ -10831,6 +10851,14 @@ assert isinstance(conversation, RemoteConversation)
 
 All agent execution happens on the remote runtime infrastructure.
 
+<Note>
+The same runtime flow also supports `ACPAgent`. For an end-to-end example, see the [ACP Agent guide](/sdk/guides/agent-acp#remote-runtime-example).
+</Note>
+
+<Warning>
+ACP-backed remote conversations use the ACP-capable conversation endpoints under `/api/acp/conversations` for creation, reads, and counts. If you reconnect to an existing ACP conversation by `conversation_id`, use `ACPAgent` rather than a standard `Agent`.
+</Warning>
+
 ## Ready-to-run Example
 
 <Note>
@@ -11299,6 +11327,48 @@ logger.info(f"Command completed: {result.exit_code}, {result.stdout}")
 
 This verifies connectivity to the cloud sandbox and ensures the environment is ready.
 
+### Inheriting SaaS Credentials
+
+Instead of providing your own `LLM_API_KEY`, you can inherit the LLM configuration and secrets from your OpenHands Cloud account. This means you only need `OPENHANDS_CLOUD_API_KEY` — no separate LLM key required.
+
+#### `get_llm()`
+
+Fetches your account's LLM settings (model, API key, base URL) and returns a ready-to-use `LLM` instance:
+
+```python icon="python" focus={2-3}
+with OpenHandsCloudWorkspace(...) as workspace:
+    llm = workspace.get_llm()
+    agent = Agent(llm=llm, tools=get_default_tools())
+```
+
+You can override any parameter:
+
+```python icon="python"
+llm = workspace.get_llm(model="gpt-4o", temperature=0.5)
+```
+
+Under the hood, `get_llm()` calls `GET /api/v1/users/me?expose_secrets=true`, sending your Cloud API key in the `Authorization` header plus the sandbox's `X-Session-API-Key`. That session key is issued by OpenHands Cloud for the running sandbox, so it scopes the request to that sandbox rather than acting like a separately provisioned second credential.
+
+#### `get_secrets()`
+
+Builds `LookupSecret` references for your SaaS-configured secrets. Raw values **never transit through the SDK client** — they are resolved lazily by the agent-server inside the sandbox:
+
+```python icon="python" focus={2-3}
+with OpenHandsCloudWorkspace(...) as workspace:
+    secrets = workspace.get_secrets()
+    conversation.update_secrets(secrets)
+```
+
+You can also filter to specific secrets:
+
+```python icon="python"
+gh_secrets = workspace.get_secrets(names=["GITHUB_TOKEN"])
+```
+
+<Tip>
+See the [SaaS Credentials example](#saas-credentials-example) below for a complete working example.
+</Tip>
+
 ## Comparison with Other Workspace Types
 
 | Feature | OpenHandsCloudWorkspace | APIRemoteWorkspace | DockerWorkspace |
@@ -11425,6 +11495,141 @@ export OPENHANDS_CLOUD_API_KEY="your-cloud-api-key"
 # export OPENHANDS_SANDBOX_SPEC_ID="your-sandbox-spec-id"
 cd agent-sdk
 uv run python examples/02_remote_agent_server/07_convo_with_cloud_workspace.py
+```
+
+## SaaS Credentials Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py)
+</Note>
+
+This example demonstrates the simplified flow where your OpenHands Cloud account's LLM configuration and secrets are inherited automatically — no need to provide `LLM_API_KEY` separately:
+
+```python icon="python" expandable examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
+"""Example: Inherit SaaS credentials via OpenHandsCloudWorkspace.
+
+This example shows the simplified flow where your OpenHands Cloud account's
+LLM configuration and secrets are inherited automatically — no need to
+provide LLM_API_KEY separately.
+
+Compared to 07_convo_with_cloud_workspace.py (which requires a separate
+LLM_API_KEY), this approach uses:
+  - workspace.get_llm()     → fetches LLM config from your SaaS account
+  - workspace.get_secrets()  → builds lazy LookupSecret references for your secrets
+
+Raw secret values never transit through the SDK client. The agent-server
+inside the sandbox resolves them on demand.
+
+Usage:
+  uv run examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
+
+Requirements:
+  - OPENHANDS_CLOUD_API_KEY: API key for OpenHands Cloud (the only credential needed)
+
+Optional:
+  - OPENHANDS_CLOUD_API_URL: Override the Cloud API URL (default: https://app.all-hands.dev)
+  - LLM_MODEL: Override the model from your SaaS settings
+"""
+
+import os
+import time
+
+from openhands.sdk import (
+    Conversation,
+    RemoteConversation,
+    get_logger,
+)
+from openhands.tools.preset.default import get_default_agent
+from openhands.workspace import OpenHandsCloudWorkspace
+
+
+logger = get_logger(__name__)
+
+
+cloud_api_key = os.getenv("OPENHANDS_CLOUD_API_KEY")
+if not cloud_api_key:
+    logger.error("OPENHANDS_CLOUD_API_KEY required")
+    exit(1)
+
+cloud_api_url = os.getenv("OPENHANDS_CLOUD_API_URL", "https://app.all-hands.dev")
+logger.info(f"Using OpenHands Cloud API: {cloud_api_url}")
+
+with OpenHandsCloudWorkspace(
+    cloud_api_url=cloud_api_url,
+    cloud_api_key=cloud_api_key,
+) as workspace:
+    # --- LLM from SaaS account settings ---
+    # get_llm() calls GET /users/me?expose_secrets=true,
+    # sending your Cloud API key plus the sandbox session
+    # key that OpenHands Cloud issued for this workspace.
+    # It returns a fully configured LLM instance.
+    # Override any parameter: workspace.get_llm(model="gpt-4o")
+    llm = workspace.get_llm()
+    logger.info(f"LLM configured: model={llm.model}")
+
+    # --- Secrets from SaaS account ---
+    # get_secrets() fetches secret *names* (not values) and builds LookupSecret
+    # references. Values are resolved lazily inside the sandbox.
+    secrets = workspace.get_secrets()
+    logger.info(f"Available secrets: {list(secrets.keys())}")
+
+    # Build agent and conversation
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    conversation = Conversation(
+        agent=agent, workspace=workspace, callbacks=[event_callback]
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    # Inject SaaS secrets into the conversation
+    if secrets:
+        conversation.update_secrets(secrets)
+        logger.info(f"Injected {len(secrets)} secrets into conversation")
+
+    # Build a prompt that exercises the injected secrets by asking the agent to
+    # print the last 50% of each token — proves values resolved without leaking
+    # full secrets in logs.
+    secret_names = list(secrets.keys()) if secrets else []
+    if secret_names:
+        names_str = ", ".join(f"${name}" for name in secret_names)
+        prompt = (
+            f"For each of these environment variables: {names_str} — "
+            "print the variable name and the LAST 50% of its value "
+            "(i.e. the second half of the string). "
+            "Then write a short summary into SECRETS_CHECK.txt."
+        )
+    else:
+        # No secret was configured on OpenHands Cloud
+        prompt = "Tell me, is there any secret configured for you?"
+
+    try:
+        conversation.send_message(prompt)
+        conversation.run()
+
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+
+        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        print(f"EXAMPLE_COST: {cost}")
+    finally:
+        conversation.close()
+
+    logger.info("✅ Conversation completed successfully.")
+    logger.info(f"Total {len(received_events)} events received during conversation.")
+```
+
+```bash Running the SaaS Credentials Example
+export OPENHANDS_CLOUD_API_KEY="your-cloud-api-key"
+# Optional: override LLM model from your SaaS settings
+# export LLM_MODEL="gpt-4o"
+cd agent-sdk
+uv run python examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
 ```
 
 ## Next Steps
@@ -18687,8 +18892,8 @@ Define a profile once, reuse it everywhere — across scripts, sessions, and eve
         ```
 
         <Info>
-        API keys are **excluded** by default for security. Pass `include_secrets=True` to the save method if you wish to
-        persist them; otherwise, they will be read from the environment at load time.
+        Secret fields are **masked** by default for security, so the saved JSON keeps the field shape without exposing the
+        real value. Pass `include_secrets=True` to persist the actual secret values.
         </Info>
     </Step>
     <Step>
@@ -18722,77 +18927,75 @@ Profile names must be simple filenames (no slashes, no dots at the start).
 ## Ready-to-run Example
 
 <Note>
-This example is available on GitHub: [examples/01_standalone_sdk/37_llm_profile_store.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/37_llm_profile_store.py)
+This example is available on GitHub: [examples/01_standalone_sdk/37_llm_profile_store/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/37_llm_profile_store/main.py)
 </Note>
 
-```python icon="python" expandable examples/01_standalone_sdk/37_llm_profile_store.py
+This directory-based example ships with a pre-generated `profiles/fast.json` file created from a normal save, then creates a second profile at runtime in a temporary store.
+
+```python icon="python" expandable examples/01_standalone_sdk/37_llm_profile_store/main.py
 """Example: Using LLMProfileStore to save and reuse LLM configurations.
 
-LLMProfileStore persists LLM configurations as JSON files, so you can define
-a profile once and reload it across sessions without repeating setup code.
+This example ships with one pre-generated profile JSON file and creates another
+profile at runtime. The checked-in profile comes from a normal save, so secrets
+are masked instead of exposed and non-secret fields like `base_url` are kept
+when present.
 """
 
 import os
+import shutil
 import tempfile
+from pathlib import Path
 
 from pydantic import SecretStr
 
 from openhands.sdk import LLM, LLMProfileStore
 
 
-# Use a temporary directory so this example doesn't pollute your home folder.
-# In real usage you can omit base_dir to use the default (~/.openhands/profiles).
-store = LLMProfileStore(base_dir=tempfile.mkdtemp())
+SCRIPT_DIR = Path(__file__).parent
+EXAMPLE_PROFILES_DIR = SCRIPT_DIR / "profiles"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 
-# 1. Create two LLM profiles with different usage
+profile_store_dir = Path(tempfile.mkdtemp()) / "profiles"
+shutil.copytree(EXAMPLE_PROFILES_DIR, profile_store_dir)
+store = LLMProfileStore(base_dir=profile_store_dir)
+
+print(f"Seeded profiles: {store.list()}")
 
 api_key = os.getenv("LLM_API_KEY")
-assert api_key is not None, "LLM_API_KEY environment variable is not set."
-base_url = os.getenv("LLM_BASE_URL")
-model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
-
-fast_llm = LLM(
-    usage_id="fast",
-    model=model,
-    api_key=SecretStr(api_key),
-    base_url=base_url,
-    temperature=0.0,
-)
-
 creative_llm = LLM(
     usage_id="creative",
-    model=model,
-    api_key=SecretStr(api_key),
-    base_url=base_url,
+    model=os.getenv("LLM_MODEL", DEFAULT_MODEL),
+    api_key=SecretStr(api_key) if api_key else None,
+    base_url=os.getenv("LLM_BASE_URL"),
     temperature=0.9,
 )
 
-# 2. Save profiles
-
-# Note that secrets are excluded by default for safety.
-store.save("fast", fast_llm)
+# The checked-in fast.json was generated with a normal save, so its api_key is
+# masked and any configured base_url would be preserved. This runtime profile
+# also avoids persisting the real API key because secrets are masked by default.
 store.save("creative", creative_llm)
-
-# To persist the API key as well, pass `include_secrets=True`:
-# store.save("fast", fast_llm, include_secrets=True)
-
-# 3. List available persisted profiles
+creative_profile_json = (profile_store_dir / "creative.json").read_text()
+if api_key is not None:
+    assert api_key not in creative_profile_json
 
 print(f"Stored profiles: {store.list()}")
 
-# 4. Load a profile
+fast_profile = store.load("fast")
+creative_profile = store.load("creative")
 
-loaded = store.load("fast")
-assert isinstance(loaded, LLM)
 print(
-    "Loaded profile. "
-    f"usage:{loaded.usage_id}, "
-    f"model: {loaded.model}, "
-    f"temperature: {loaded.temperature}."
+    "Loaded fast profile. "
+    f"usage: {fast_profile.usage_id}, "
+    f"model: {fast_profile.model}, "
+    f"temperature: {fast_profile.temperature}."
 )
-
-# 5. Delete a profile
+print(
+    "Loaded creative profile. "
+    f"usage: {creative_profile.usage_id}, "
+    f"model: {creative_profile.model}, "
+    f"temperature: {creative_profile.temperature}."
+)
 
 store.delete("creative")
 print(f"After deletion: {store.list()}")
@@ -18800,7 +19003,7 @@ print(f"After deletion: {store.list()}")
 print("EXAMPLE_COST: 0")
 ```
 
-<RunExampleCode path_to_script="examples/01_standalone_sdk/37_llm_profile_store.py"/>
+<RunExampleCode path_to_script="examples/01_standalone_sdk/37_llm_profile_store/main.py"/>
 
 ## Mid-Conversation Model Switching
 
@@ -20836,6 +21039,395 @@ uv run python examples/01_standalone_sdk/27_observability_laminar.py
 - **[Metrics Tracking](/sdk/guides/metrics)** - Monitor token usage and costs alongside traces
 - **[LLM Registry](/sdk/guides/llm-registry)** - Track multiple LLMs used in your application
 - **[Security](/sdk/guides/security)** - Add security validation to your traced agent executions
+
+### Parallel Tool Execution
+Source: https://docs.openhands.dev/sdk/guides/parallel-tool-execution.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+<Warning>
+**Experimental Feature**: Parallel tool execution is still experimental. By default, `tool_concurrency_limit` is set to `1` (sequential execution). Increasing this value may improve runtime performance, but use at your own risk. Concurrent execution can lead to race conditions or unexpected behavior for tools that share state.
+</Warning>
+
+## Overview
+
+When an LLM requests multiple tool calls in a single response, the SDK can execute them concurrently rather than sequentially. This is controlled by the `tool_concurrency_limit` parameter on the `Agent` class.
+
+**Benefits:**
+- Faster execution when tools are independent (e.g., reading multiple files)
+- Better utilization of I/O-bound operations
+- Enables parallel sub-agent delegation
+
+**When to use:**
+- Running multiple read-only operations simultaneously
+- Delegating to multiple sub-agents at once
+- Executing independent API calls or file operations
+
+## Configuration
+
+### Setting the Concurrency Limit
+
+Configure `tool_concurrency_limit` when creating an `Agent`:
+
+```python icon="python" wrap focus={11, 17, 18}
+import os
+from openhands.sdk import Agent, LLM, Tool
+from openhands.tools.terminal import TerminalTool
+from openhands.tools.file_editor import FileEditorTool
+
+llm = LLM(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=os.getenv("LLM_API_KEY"),
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    # Execute up to 4 tools concurrently
+    tool_concurrency_limit=4,
+)
+```
+
+### Concurrency Limit Values
+
+| Value | Behavior |
+|-------|----------|
+| `1` (default) | Sequential execution—tools run one at a time |
+| `2-8` | Moderate parallelism—good for most use cases |
+| `>8` | High parallelism—only for I/O-heavy workloads with independent tools. Risk of resource exhaustion. |
+
+<Note>
+The optimal value depends on your workload. Start with a lower value (e.g., `4`) and increase if needed.
+</Note>
+
+## Use Cases
+
+### Parallel File Operations
+
+When reading multiple independent files:
+
+```python icon="python" wrap
+# Agent can read multiple files concurrently
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=FileEditorTool.name)],
+    tool_concurrency_limit=4,
+)
+
+# The agent might request:
+# - file_editor view /path/to/file1.py
+# - file_editor view /path/to/file2.py
+# - file_editor view /path/to/file3.py
+# All three execute concurrently
+```
+
+### Parallel Sub-Agent Delegation
+
+Combine with [sub-agent delegation](/sdk/guides/agent-delegation) for parallel task processing:
+
+```python icon="python" wrap focus={6,7,11}
+from openhands.tools.task import TaskToolSet
+
+# Orchestrator with high concurrency for delegation
+main_agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TaskToolSet.name),
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    tool_concurrency_limit=8,  # Handle multiple delegations at once
+)
+```
+
+### Sub-Agents with Their Own Parallelism
+
+Each sub-agent can have its own concurrency limit:
+
+```python icon="python" wrap
+def create_analysis_agent(llm: LLM) -> Agent:
+    """Sub-agent that runs multiple analysis tools in parallel."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,  # Sub-agent also runs tools in parallel
+    )
+```
+
+## Considerations
+
+### Thread Safety
+
+<Warning>
+Not all tools are safe to run concurrently. Be careful with:
+- Tools that modify shared state
+- Tools that write to the same files
+- Tools with external side effects that depend on execution order
+- Deadlocks when tools wait on resources held by other concurrent tools
+- Resource exhaustion (file handles, memory, network connections)
+</Warning>
+
+### When NOT to Use
+
+- Tools that must execute in a specific order
+- Operations that modify the same files
+- Workflows where one tool's output feeds into another
+
+## Ready-to-run Example
+
+This example demonstrates parallel tool execution with an orchestrator agent that delegates to multiple sub-agents, each running their own tools concurrently.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/45_parallel_tool_execution.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/45_parallel_tool_execution.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/45_parallel_tool_execution.py
+"""Example: Parallel tool execution with tool_concurrency_limit.
+
+Demonstrates how setting tool_concurrency_limit on an Agent enables
+concurrent tool execution within a single step. The orchestrator agent
+delegates to multiple sub-agents in parallel, and each sub-agent itself
+runs tools concurrently. This stress-tests the parallel execution system
+end-to-end.
+"""
+
+import json
+import os
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    AgentContext,
+    Conversation,
+    Tool,
+    register_agent,
+)
+from openhands.sdk.context import Skill
+from openhands.tools.delegate import DelegationVisualizer
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task import TaskToolSet
+from openhands.tools.terminal import TerminalTool
+
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    usage_id="parallel-tools-demo",
+)
+
+
+# --- Sub-agents ---
+
+
+def create_code_analyst(llm: LLM) -> Agent:
+    """Sub-agent that analyzes code structure."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="code_analysis",
+                    content=(
+                        "You analyze code structure. Use the terminal to count files, "
+                        "lines of code, and list directory structure. Use the file "
+                        "editor to read key files. Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+def create_doc_reviewer(llm: LLM) -> Agent:
+    """Sub-agent that reviews documentation."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="doc_review",
+                    content=(
+                        "You review project documentation. Check README files, "
+                        "docstrings, and inline comments. Use the terminal and "
+                        "file editor to inspect files. Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+def create_dependency_checker(llm: LLM) -> Agent:
+    """Sub-agent that checks project dependencies."""
+    return Agent(
+        llm=llm,
+        tools=[
+            Tool(name=TerminalTool.name),
+            Tool(name=FileEditorTool.name),
+        ],
+        tool_concurrency_limit=4,
+        agent_context=AgentContext(
+            skills=[
+                Skill(
+                    name="dependency_check",
+                    content=(
+                        "You analyze project dependencies. Read pyproject.toml, "
+                        "requirements files, and package configs. Summarize key "
+                        "dependencies, their purposes, and any version constraints. "
+                        "Run multiple commands at once."
+                    ),
+                    trigger=None,
+                )
+            ],
+            system_message_suffix="Be concise. Report findings in bullet points.",
+        ),
+    )
+
+
+# Register sub-agents
+register_agent(
+    name="code_analyst",
+    factory_func=create_code_analyst,
+    description="Analyzes code structure, file counts, and directory layout.",
+)
+register_agent(
+    name="doc_reviewer",
+    factory_func=create_doc_reviewer,
+    description="Reviews documentation quality and completeness.",
+)
+register_agent(
+    name="dependency_checker",
+    factory_func=create_dependency_checker,
+    description="Checks and summarizes project dependencies.",
+)
+# --- Orchestrator agent with parallel execution ---
+main_agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TaskToolSet.name),
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    tool_concurrency_limit=8,
+)
+
+persistence_dir = Path(tempfile.mkdtemp(prefix="parallel_example_"))
+
+conversation = Conversation(
+    agent=main_agent,
+    workspace=Path.cwd(),
+    visualizer=DelegationVisualizer(name="Orchestrator"),
+    persistence_dir=persistence_dir,
+)
+
+print("=" * 80)
+print("Parallel Tool Execution Stress Test")
+print("=" * 80)
+
+conversation.send_message("""
+Analyze the current project by delegating to ALL THREE sub-agents IN PARALLEL:
+
+1. code_analyst: Analyze the project structure (file counts, key directories)
+2. doc_reviewer: Review documentation quality (README, docstrings)
+3. dependency_checker: Check dependencies (pyproject.toml, requirements)
+
+IMPORTANT: Delegate to all three agents at the same time using parallel tool calls.
+Do NOT delegate one at a time - call all three delegate tools in a single response.
+
+Once all three have reported back, write a consolidated summary to
+project_analysis_report.txt in the working directory. The report should have
+three sections (Code Structure, Documentation, Dependencies) with the key
+findings from each sub-agent.
+""")
+conversation.run()
+
+# --- Analyze persisted events for parallelism ---
+#
+# Walk the persistence directory to find all conversations (main + sub-agents).
+# Each conversation stores events as event-*.json files under an events/ dir.
+# We parse ActionEvent entries and group by llm_response_id — batches with 2+
+# actions sharing the same response ID prove the LLM requested parallel calls
+# and the executor handled them concurrently.
+
+print("\n" + "=" * 80)
+print("Parallelism Report")
+print("=" * 80)
+
+
+def _analyze_conversation(events_dir: Path) -> dict[str, list[str]]:
+    """Return {llm_response_id: [tool_name, ...]} for multi-tool batches."""
+    batches: dict[str, list[str]] = defaultdict(list)
+    for event_file in sorted(events_dir.glob("event-*.json")):
+        data = json.loads(event_file.read_text())
+        if data.get("kind") == "ActionEvent" and "llm_response_id" in data:
+            batches[data["llm_response_id"]].append(data.get("tool_name", "?"))
+    return {rid: tools for rid, tools in batches.items() if len(tools) >= 2}
+
+
+for events_dir in sorted(persistence_dir.rglob("events")):
+    if not events_dir.is_dir():
+        continue
+    # Derive a label from the path (main conv vs sub-agent)
+    rel = events_dir.parent.relative_to(persistence_dir)
+    is_subagent = "subagents" in rel.parts
+    label = "sub-agent" if is_subagent else "main agent"
+
+    multi_batches = _analyze_conversation(events_dir)
+    if multi_batches:
+        for resp_id, tools in multi_batches.items():
+            print(f"\n  {label} batch ({resp_id[:16]}...):")
+            print(f"    Parallel tools: {tools}")
+    else:
+        print(f"\n  {label}: no parallel batches")
+
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nTotal cost: ${cost:.4f}")
+print(f"EXAMPLE_COST: {cost:.4f}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/45_parallel_tool_execution.py"/>
+
+### Understanding the Example
+
+The example demonstrates a two-level parallel execution pattern:
+
+1. **Orchestrator Level**: The main agent has `tool_concurrency_limit=8`, allowing it to delegate to all three sub-agents simultaneously
+
+2. **Sub-Agent Level**: Each sub-agent has `tool_concurrency_limit=4`, allowing them to run their own tools (terminal commands, file reads) in parallel
+
+3. **Verification**: The example includes a parallelism report that analyzes persisted events to confirm tools actually ran concurrently
+
+## Next Steps
+
+- **[Sub-Agent Delegation](/sdk/guides/agent-delegation)** - Delegate work to specialized sub-agents
+- **[Custom Tools](/sdk/guides/custom-tools)** - Create thread-safe custom tools
+- **[Agent Architecture](/sdk/arch/agent)** - Understand the agent execution model
 
 ### Plugins
 Source: https://docs.openhands.dev/sdk/guides/plugins.md
@@ -31187,6 +31779,14 @@ After the GitHub organization rename from `All-Hands-AI` to `OpenHands`, you may
 ### COBOL Modernization
 Source: https://docs.openhands.dev/openhands/usage/use-cases/cobol-modernization.md
 
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/cobol-modernization"
+>
+  Check out the complete COBOL modernization plugin with ready-to-use code and configuration.
+</Card>
+
 Legacy COBOL systems power critical business operations across banking, insurance, government, and retail. OpenHands can help you understand, document, and modernize these systems while preserving their essential business logic.
 
 <Note>
@@ -31353,6 +31953,14 @@ For real-world COBOL files, you can use the [AWS CardDemo application](https://g
 
 ### Automated Code Review
 Source: https://docs.openhands.dev/openhands/usage/use-cases/code-review.md
+
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/pr-review"
+>
+  Check out the complete PR review plugin with ready-to-use code and configuration.
+</Card>
 
 Automated code review helps maintain code quality, catch bugs early, and enforce coding standards consistently across your team. OpenHands provides a GitHub Actions workflow powered by the [Software Agent SDK](/sdk/index) that automatically reviews pull requests and posts inline comments directly on your PRs.
 
@@ -31903,6 +32511,14 @@ addressing breaking changes in the correct order.
 ### Incident Triage
 Source: https://docs.openhands.dev/openhands/usage/use-cases/incident-triage.md
 
+<Card
+  title="View Example Workflow"
+  icon="github"
+  href="https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/04_datadog_debugging"
+>
+  Check out the complete Datadog debugging workflow with ready-to-use code and configuration.
+</Card>
+
 When production incidents occur, speed matters. OpenHands can help you quickly investigate issues, analyze logs and errors, identify root causes, and generate fixes—reducing your mean time to resolution (MTTR).
 
 <Note>
@@ -32208,6 +32824,14 @@ OpenHands supports a wide variety of software development tasks. Here are some o
 ### Spark Migrations
 Source: https://docs.openhands.dev/openhands/usage/use-cases/spark-migrations.md
 
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/migration-scoring"
+>
+  Check out the migration scoring plugin to evaluate and validate your Spark migration quality.
+</Card>
+
 Apache Spark is constantly evolving, and keeping your data pipelines up to date is essential for performance, security, and access to new features. OpenHands can help you analyze, migrate, and validate Spark applications.
 
 ## Overview
@@ -32354,6 +32978,14 @@ In each case, the key principle is the same: build a structured inventory of wha
 
 ### Vulnerability Remediation
 Source: https://docs.openhands.dev/openhands/usage/use-cases/vulnerability-remediation.md
+
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/vulnerability-remediation"
+>
+  Check out the complete vulnerability remediation plugin with ready-to-use code and configuration.
+</Card>
 
 Security vulnerabilities are a constant challenge for software teams. Every day, new security issues are discovered—from vulnerabilities in dependencies to code security flaws detected by static analysis tools. The National Vulnerability Database (NVD) reports thousands of new vulnerabilities annually, and organizations struggle to keep up with this constant influx.
 
@@ -34129,56 +34761,6 @@ We believe in the power of open source to democratize access to cutting-edge AI 
 
 If this resonates with you, we'd love to have you join us in our quest!
 
-## What Can You Build?
-
-There are countless ways to contribute to OpenHands. Whether you're a seasoned developer, a researcher, a designer, or someone just getting started, there's a place for you in our community.
-
-### Frontend & UI/UX
-Make OpenHands more beautiful and user-friendly:
-- **React & TypeScript Development** - Improve the web interface
-- **UI/UX Design** - Enhance user experience and accessibility  
-- **Mobile Responsiveness** - Make OpenHands work great on all devices
-- **Component Libraries** - Build reusable UI components
-
-*Small fixes are always welcome! For bigger changes, join our **#eng-ui-ux** channel in [Slack](https://openhands.dev/joinslack) first.*
-
-### Agent Development
-Help make our AI agents smarter and more capable:
-- **Prompt Engineering** - Improve how agents understand and respond
-- **New Agent Types** - Create specialized agents for different tasks
-- **Agent Evaluation** - Develop better ways to measure agent performance
-- **Multi-Agent Systems** - Enable agents to work together
-
-*We use [SWE-bench](https://www.swebench.com/) to evaluate our agents. Join our  [Slack](https://openhands.dev/joinslack) to learn more.*
-
-### Backend & Infrastructure
-Build the foundation that powers OpenHands:
-- **Python Development** - Core functionality and APIs
-- **Runtime Systems** - Docker containers and sandboxes
-- **Cloud Integrations** - Support for different cloud providers
-- **Performance Optimization** - Make everything faster and more efficient
-
-### Testing & Quality Assurance
-Help us maintain high quality:
-- **Unit Testing** - Write tests for new features
-- **Integration Testing** - Ensure components work together
-- **Bug Hunting** - Find and report issues
-- **Performance Testing** - Identify bottlenecks and optimization opportunities
-
-### Documentation & Education
-Help others learn and contribute:
-- **Technical Documentation** - API docs, guides, and tutorials
-- **Video Tutorials** - Create learning content
-- **Translation** - Make OpenHands accessible in more languages
-- **Community Support** - Help other users and contributors
-
-### Research & Innovation
-Push the boundaries of what's possible:
-- **Academic Research** - Publish papers using OpenHands
-- **Benchmarking** - Develop new evaluation methods
-- **Experimental Features** - Try cutting-edge AI techniques
-- **Data Analysis** - Study how developers use AI tools
-
 ## 🚀 Getting Started
 
 Ready to contribute? Here's your path to making an impact:
@@ -34250,6 +34832,67 @@ We recommend the following for smooth reviews but they're not required. Just kno
 - Link to related issues
 - Include screenshots for UI changes
 - Add changelog entry for user-facing changes
+
+## What Can You Build?
+
+There are countless ways to contribute to OpenHands. Whether you're a seasoned developer, a researcher, a designer, or someone just getting started, there's a place for you in our community.
+
+### Frontend & UI/UX
+Make OpenHands more beautiful and user-friendly:
+- **React & TypeScript Development** - Improve the web interface
+- **UI/UX Design** - Enhance user experience and accessibility  
+- **Mobile Responsiveness** - Make OpenHands work great on all devices
+- **Component Libraries** - Build reusable UI components
+
+*Small fixes are always welcome! For bigger changes, join our **#eng-ui-ux** channel in [Slack](https://openhands.dev/joinslack) first.*
+
+### Agent Development
+Help make our AI agents smarter and more capable:
+- **Prompt Engineering** - Improve how agents understand and respond
+- **New Agent Types** - Create specialized agents for different tasks
+- **Agent Evaluation** - Develop better ways to measure agent performance
+- **Multi-Agent Systems** - Enable agents to work together
+
+*We use [SWE-bench](https://www.swebench.com/) to evaluate our agents. Join our  [Slack](https://openhands.dev/joinslack) to learn more.*
+
+### Backend & Infrastructure
+Build the foundation that powers OpenHands:
+- **Python Development** - Core functionality and APIs
+- **Runtime Systems** - Docker containers and sandboxes
+- **Cloud Integrations** - Support for different cloud providers
+- **Performance Optimization** - Make everything faster and more efficient
+
+### Testing & Quality Assurance
+Help us maintain high quality:
+- **Unit Testing** - Write tests for new features
+- **Integration Testing** - Ensure components work together
+- **Bug Hunting** - Find and report issues
+- **Performance Testing** - Identify bottlenecks and optimization opportunities
+
+### Documentation & Education
+Help others learn and contribute:
+- **Technical Documentation** - API docs, guides, and tutorials
+- **Video Tutorials** - Create learning content
+- **Translation** - Make OpenHands accessible in more languages
+- **Community Support** - Help other users and contributors
+
+### Research & Innovation
+Push the boundaries of what's possible:
+- **Academic Research** - Publish papers using OpenHands
+- **Benchmarking** - Develop new evaluation methods
+- **Experimental Features** - Try cutting-edge AI techniques
+- **Data Analysis** - Study how developers use AI tools
+
+## Becoming a Maintainer
+
+For contributors who have made significant and sustained contributions to the project, there is a possibility of joining the maintainer team.
+The process for this is as follows:
+
+1. Any contributor who has made sustained and high-quality contributions to the codebase can be nominated by any maintainer. If you feel that you may qualify you can reach out to any of the maintainers that have reviewed your PRs and ask if you can be nominated.
+2. Once a maintainer nominates a new maintainer, there will be a discussion period among the maintainers for at least 3 days.
+3. If no concerns are raised the nomination will be accepted by acclamation, and if concerns are raised there will be a discussion and possible vote.
+
+Note that just making many PRs does not immediately imply that you will become a maintainer. We will be looking at sustained high-quality contributions over a period of time, as well as good teamwork and adherence to our [Code of Conduct](https://github.com/OpenHands/OpenHands/blob/main/CODE_OF_CONDUCT.md).
 
 ## License
 
