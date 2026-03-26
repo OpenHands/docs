@@ -25,7 +25,7 @@ This guide focuses on the two loader APIs used in the example:
 
 ## Example repository layout
 
-The example repository separates local skills from the marketplace configuration that filters public skills:
+The example repository separates local skills from the marketplace configuration that describes which remote skills should be included:
 
 ```text
 43_mixed_marketplace_skills/
@@ -40,11 +40,34 @@ The example repository separates local skills from the marketplace configuration
 
 ## Marketplace format note
 
-The `.plugin/marketplace.json` file follows the Claude Code plugin marketplace schema. In OpenHands, plugin entry names are used as a filter list for which public skills to load from OpenHands/extensions, while local skills live in `local_skills/` and are merged separately.
+The `.plugin/marketplace.json` file follows the Claude Code plugin marketplace schema, with an OpenHands extension for direct `skills[]` entries. A minimal mixed example looks like this:
 
-The guide below starts with the simplest direct loader calls (`load_skills_from_dir()` and `load_public_skills()`) so you can see exactly what each source contributes. The example repository still includes `.plugin/marketplace.json` because that is the configuration file used for repository-managed marketplace filtering.
+```json
+{
+  "name": "mixed-skills-marketplace",
+  "plugins": [],
+  "skills": [
+    {
+      "name": "greeting-helper",
+      "source": "./local_skills/greeting-helper",
+      "description": "A local greeting skill"
+    },
+    {
+      "name": "github",
+      "source": "https://github.com/OpenHands/extensions/blob/main/skills/github",
+      "description": "GitHub best practices from OpenHands/extensions"
+    }
+  ]
+}
+```
 
-Additionally, OpenHands extends the schema with an optional `skills[]` array for listing skills directly (these are treated as direct skill sources, not plugin bundles).
+That file is the repository-managed configuration that expresses the mixed marketplace itself.
+
+The code example below focuses on the two underlying loader APIs (`load_skills_from_dir()` and `load_public_skills()`) so you can see exactly what each source contributes. In other words:
+
+- `load_skills_from_dir(local_skills_dir)` reads local `SKILL.md` files from your repository.
+- `load_public_skills()` reads from the SDK's default OpenHands/extensions marketplace.
+- `.plugin/marketplace.json` is the place where you would encode an equivalent curated mix when you want the repository to own that marketplace configuration.
 
 ## Example: Combining Local and Remote Skills
 
@@ -78,9 +101,9 @@ Directory Structure:
 ├── main.py                   # This example script
 └── README.md
 
-The marketplace.json lists which remote skills to include. In OpenHands, entries
-in `skills[]` or `plugins[]` should point directly to skill directories containing
-`SKILL.md`; local skills live in `local_skills/` and are loaded separately.
+The `.plugin/marketplace.json` file shown earlier is where you would encode the
+mixed marketplace itself. In this example script we intentionally call the loader
+APIs directly so you can see each source in isolation before combining them.
 """
 
 import argparse
@@ -144,8 +167,9 @@ def main():
 
     print("\nLoading public skills from https://github.com/OpenHands/extensions...")
 
-    # Load public skills from the OpenHands extensions repository
-    # This pulls from the default marketplace at OpenHands/extensions
+    # Load public skills from the OpenHands extensions repository.
+    # This call uses the SDK's default OpenHands/extensions marketplace,
+    # not the `.plugin/marketplace.json` file shown above.
     public_skills = load_public_skills()
 
     print(f"\nLoaded {len(public_skills)} public skills from OpenHands/extensions:")
@@ -162,17 +186,15 @@ def main():
     print("Part 3: Combining Local and Remote Skills")
     print("=" * 80)
 
-    # Combine skills with local skills taking precedence
-    # This allows local skills to override public skills with the same name
+    # Combine skills with local skills taking precedence.
     combined_skills = list(local_skills.values()) + public_skills
 
-    # Remove duplicates (keep first occurrence = local takes precedence)
-    seen_names: set[str] = set()
-    unique_skills = []
+    # Use dict insertion order to keep the first occurrence of each skill name,
+    # which means local skills win over public skills with the same name.
+    unique_skills_by_name = {}
     for skill in combined_skills:
-        if skill.name not in seen_names:
-            seen_names.add(skill.name)
-            unique_skills.append(skill)
+        unique_skills_by_name.setdefault(skill.name, skill)
+    unique_skills = list(unique_skills_by_name.values())
 
     print(f"\nTotal combined skills: {len(unique_skills)}")
     print(f"  - Local skills: {len(local_skills)}")
