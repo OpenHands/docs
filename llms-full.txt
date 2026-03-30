@@ -10471,6 +10471,34 @@ Use the fetch tool to retrieve web content and save findings to files.
 
 The `mcp_servers` field uses the same format as the [MCP configuration](/sdk/guides/mcp) — each key is a server name, and the value contains `command` and `args` for launching the server.
 
+#### Environment Variable Resolution
+
+All string values in MCP server configurations support `${VAR}` (and `$VAR`) environment variable references, which are resolved from `os.environ` at load time. This lets you forward secrets and dynamic paths without hard-coding them in Markdown:
+
+```markdown icon="markdown"
+---
+name: api-agent
+description: Agent with MCP server using environment-based secrets.
+mcp_servers:
+  my-server:
+    command: ${PLUGIN_ROOT}/bin/server
+    args:
+      - --config
+      - ${PLUGIN_ROOT}/config.json
+    env:
+      API_KEY: ${MY_API_KEY}
+  remote:
+    type: http
+    url: ${API_BASE}/mcp
+    headers:
+      Authorization: Bearer ${AUTH_TOKEN}
+---
+
+An agent that connects to MCP servers configured via environment variables.
+```
+
+Environment variable resolution applies recursively to all string fields — `command`, `args`, `url`, `headers`, `env`, and any other string values in the server config. If a referenced variable is not set, the placeholder is left unchanged (e.g., `${NONEXISTENT_VAR}` stays as-is).
+
 ### Hooks
 
 File-based agents can define [lifecycle hooks](/sdk/guides/hooks) that run at specific points during execution:
@@ -20705,6 +20733,7 @@ Source: https://docs.openhands.dev/sdk/guides/observability.md
 The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowing you to monitor and debug your agent's execution in real-time. You can send traces to any OTLP-compatible observability platform including:
 
 - **[Laminar](https://laminar.sh/)** - AI-focused observability with browser session replay support
+- **[MLflow](https://mlflow.org/)** - Open-source AI platform with tracing, evaluation, and LLM governance
 - **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
 - **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
 
@@ -20730,20 +20759,27 @@ export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 
 That's it! Run your agent code normally and traces will be sent to Laminar automatically.
 
-### Using Honeycomb or Other OTLP Backends
+### Using OpenTelemetry (OTLP) Backends
 
-For Honeycomb, Jaeger, or any other OTLP-compatible backend:
+For OpenTelemetry (OTLP) compatible backends, set the following environment variables:
 
 ```bash icon="terminal" wrap
 # Required: Set the OTLP endpoint
-export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://your-otlp-backend/v1/traces"
 
-# Required: Set authentication headers (format: comma-separated key=value pairs, URL-encoded)
-export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=your-api-key"
+# Required: Set additional headers required by your backend (format: comma-separated key=value pairs, URL-encoded)
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="key=value,key2=value2"
 
 # Recommended: Explicitly set the protocol (most OTLP backends require HTTP)
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"  # use "grpc" only if your backend supports it
 ```
+
+View the platform-specific configuration sections below for which values to use.
+
+- **[MLflow](#mlflow-setup)** - Open-source AI platform with tracing, evaluation, and governance
+- **[Honeycomb](#honeycomb-setup)** - High-performance distributed tracing
+- **[Jaeger](#jaeger-setup)** - Open-source distributed tracing
+- **[Generic OTLP Collector](#generic-otlp-collector)** - For other backends
 
 ### Alternative Configuration Methods
 
@@ -20852,6 +20888,30 @@ export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 ```
 
 **Browser Session Replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
+
+### MLflow Setup
+
+[MLflow](https://mlflow.org/) is an open-source AI platform that accepts OpenTelemetry traces out of the box, alongside evaluation and LLM governance capabilities.
+
+1. Start your MLflow tracking server:
+
+```bash icon="terminal" wrap
+uvx mlflow server
+```
+
+<Note>
+For other deployment options (pip, Docker Compose, etc.), see [Set Up MLflow Server](https://mlflow.org/docs/latest/genai/getting-started/connect-environment/).
+</Note>
+
+2. Configure the environment variables:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:5000"
+export OTEL_EXPORTER_OTLP_HEADERS="x-mlflow-experiment-id=123"  # Replace "123" with your MLflow experiment ID
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+Navigate to the MLflow UI (e.g., `http://localhost:5000`), select the experiment, and open the **Traces** tab to view the recorded traces.
 
 ### Honeycomb Setup
 
@@ -23904,7 +23964,6 @@ When the parent agent calls the task tool, it provides these parameters:
 | `subagent_type` | `str` | No | Which registered agent type to use (default: `"default"`) |
 | `description` | `str` | No | Short label (3-5 words) for display and tracking |
 | `resume` | `str` | No | Task ID from a previous invocation to continue |
-| `max_turns` | `int` | No | Maximum agent iterations before stopping (default: 500) |
 
 ## Task Observation
 
@@ -35643,6 +35702,11 @@ OpenHands Enterprise allows you to run AI coding agents directly on your own
 servers or in your private cloud. Unlike the SaaS version, the enterprise
 deployment gives you complete control over your AI development environment.
 
+<Card title="Start a Free 30-Day Trial" icon="rocket" href="/enterprise/quick-start">
+  Deploy OpenHands Enterprise on your own infrastructure in under an hour.
+  No credit card required.
+</Card>
+
 ## What is OpenHands Enterprise?
 
 OpenHands Enterprise brings the power of autonomous coding agents to your
@@ -35687,7 +35751,7 @@ OpenHands Enterprise integrates with your existing enterprise ecosystem:
 
 - **Identity & Access**: Enterprise SAML/SSO for centralized authentication
 - **Source Control**: GitHub Enterprise, GitLab, Bitbucket
-- **Project Management**: Jira, and other ticketing systems
+- **Project Management**: Jira and other ticketing systems
 - **Communication**: Slack integration for notifications and workflows
 
 ### Containerized Sandbox Runtime
@@ -35719,17 +35783,374 @@ Enterprise customers receive:
 
 ## Getting Started
 
-<Card
-  title="Contact Us"
-  icon="envelope"
-  href="https://openhands.dev/contact"
->
-  Ready to bring OpenHands to your organization? Contact our team to discuss
-  your requirements and get started with a deployment plan.
-</Card>
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/enterprise/quick-start"
+  >
+    Trial OpenHands Enterprise for free!
+  </Card>
+  <Card
+    title="Contact Us"
+    icon="envelope"
+    href="https://openhands.dev/contact"
+  >
+    Ready to bring OpenHands to your organization? Contact our team to discuss
+    your requirements and get started with a deployment plan.
+  </Card>
+</CardGroup>
 
 ## Additional Resources
 
 - [OpenHands Documentation](/overview/introduction) — Learn how to use OpenHands
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
+
+### Quick Start
+Source: https://docs.openhands.dev/enterprise/quick-start.md
+
+This guide walks you through trialing OpenHands Enterprise on AWS. You'll provision
+infrastructure with Terraform, configure GitHub for user authentication, and set up
+Anthropic as your LLM provider.
+
+## Prerequisites
+
+Before you begin, make sure you have the following ready:
+
+- **Anthropic API key** from the [Anthropic Console](https://console.anthropic.com/)
+- **A GitHub account** with permission to create GitHub Apps
+- **An AWS account** with permissions to create EC2, VPC, and Route53 resources
+
+## Provision Infrastructure
+
+You will need a VM to host OpenHands Enterprise. Choose one of the options below to provision your infrastructure.
+
+<Tabs>
+  <Tab title="AWS with Terraform (Recommended)">
+    We provide a [Terraform module](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws) that provisions a properly configured environment
+    for OpenHands Enterprise, including the EC2 instance, DNS records, and TLS certificates.
+
+    <Card title="OpenHands AWS Terraform Module" icon="github" href="https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws">
+      Follow the README instructions to configure and apply the Terraform configuration.
+    </Card>
+  </Tab>
+
+  <Tab title="Manual VM Setup">
+    If you are provisioning a VM manually (on-premises or on another cloud provider),
+    it must meet the requirements below.
+
+    <Accordion title="System requirements">
+      | Resource | Requirement |
+      |----------|-------------|
+      | **vCPUs** | 16 |
+      | **Memory** | 64 GB |
+      | **Disk** | 200 GB |
+      | **Disk P99 write latency** | 10 ms maximum |
+      | **OS** | Linux (x86-64 architecture) |
+      | **Init system** | systemd |
+      | **Access** | Root access (sudo) required |
+    </Accordion>
+
+    <Accordion title="Network requirements">
+      **Firewall inbound rules** -- the following ports must be open:
+
+      | Port | Protocol | Purpose |
+      |------|----------|---------|
+      | 80 | TCP | HTTP |
+      | 443 | TCP | HTTPS |
+      | 30000 | TCP | Admin Console |
+
+      **Local ports** -- the following ports must be available for local processes (no firewall rules needed):
+
+      `2379/TCP`, `7443/TCP`, `9099/TCP`, `10248/TCP`, `10257/TCP`, `10259/TCP`
+
+      **Outbound access** -- the VM must be able to reach:
+
+      - `replicated.app`
+      - `proxy.replicated.com`
+      - `images.r9.all-hands.dev`
+      - `install.r9.all-hands.dev`
+      - `charts.r9.all-hands.dev`
+      - `updates.r9.all-hands.dev`
+      - `github.com`
+      - `docker.io`
+      - `docker.dev`
+      - `ghcr.io`
+    </Accordion>
+
+    <Accordion title="System directories created by the installer">
+      The installation creates directories and files in the following locations:
+
+      ```
+      /etc/cni
+      /etc/k0s
+      /opt/cni
+      /opt/containerd
+      /run/calico
+      /run/containerd
+      /run/k0s
+      /sys/fs/cgroup/kubepods
+      /sys/fs/cgroup/system.slice/containerd.service
+      /sys/fs/cgroup/system.slice/k0scontroller.service
+      /usr/libexec/k0s
+      /usr/local/bin/k0s
+      /var/lib/calico
+      /var/lib/cni
+      /var/lib/containers
+      /var/lib/embedded-cluster
+      /var/lib/kubelet
+      /var/log/calico
+      /var/log/containers
+      /var/log/embedded-cluster
+      /var/log/pods
+      ```
+    </Accordion>
+
+    ### DNS and TLS Setup
+
+    Once your VM is running, configure DNS and TLS before starting the installer.
+
+    **Create DNS A records** pointing to your VM's public IP address:
+
+    | Record | Example |
+    |--------|---------|
+    | `<your-domain>` | `openhands.example.com` |
+    | `app.<your-domain>` | `app.openhands.example.com` |
+    | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
+    | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
+    | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
+    | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
+
+    **Obtain a TLS certificate** with SANs (Subject Alternative Names) for all of the above domains,
+    then copy the certificate (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM.
+
+    <Warning>
+      If you don't provide TLS certificates during installation, the Admin Console will use a
+      self-signed certificate and your browser will display a security warning. You can still
+      upload your certificate afterward through the Admin Console.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Run the Installer
+
+### 1. Access the Installer Dashboard
+
+[Register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup), then
+log in to the installer dashboard. You will see the dashboard below.
+Click **"View install guide"** in the Install tile.
+
+![Installer Dashboard](./images/admin-dashboard.png)
+
+### 2. Name your instance
+
+Enter a name for your instance (e.g., your company name or environment identifier).
+Select **"Outbound requests allowed"** for Network Availability, then click **Continue**.
+
+![Instance name and network availability](./images/install-instance-name.png)
+
+### 3. Run the installation commands
+
+The install guide provides commands to run on your VM. SSH into your VM and execute them in order:
+
+1. **Select a version** -- the latest version is pre-selected
+2. **Download the installation assets** -- copy and run the `curl` command shown
+3. **Extract the installation assets** -- run the `tar` command shown (this includes your license file)
+4. **Install** -- run the install command shown
+
+<Warning>
+  **We recommend providing your TLS certificates during installation.** If you used the
+  Terraform module, the certificates are in your home directory:
+
+  ```bash
+  sudo ./openhands install --license license.yaml \
+    --tls-cert ~/certificate.pem \
+    --tls-key ~/private-key.pem
+  ```
+
+  If you provisioned manually and have your own certificates on the VM, pass them the same way.
+  You can also omit the `--tls-cert` and `--tls-key` flags and upload certificates later through
+  the Admin Console.
+</Warning>
+
+![Installation commands](./images/install-commands.png)
+
+### 4. Access the Admin Console
+
+Once the install command completes, the Admin Console is available at:
+- `https://<your-base-domain>:30000` (if you provided TLS certificates)
+- `http://<your-vm-ip>:30000` (if you did not use the `--tls-cert` and `--tls-key` flags on the `install` command)
+
+If you did not provide TLS certificates with the `install` command, your browser will display a security warning.
+Click **Advanced**, then **Proceed** to continue to the Admin Console.
+
+![Self-signed certificate warning](./images/self-signed-cert-warning.png)
+
+### 5. Upload TLS certificate (if not provided with the install command)
+
+If you did not provide certificates with the `install` command, select **"Upload your own"**,
+enter your base domain under **Hostname**, upload your private key and SSL certificate, then click **Continue**.
+
+![Upload TLS certificate](./images/upload-tls-certificate.png)
+
+### 6. Log in to the Admin Console
+
+Enter the password you set during installation and click **Log in**.
+
+![Admin Console login](./images/admin-console-login.png)
+
+### 7. Configure the cluster
+
+You will be prompted to add additional nodes to the cluster.
+For a single-node deployment, click **Continue** to skip this step.
+
+![Configure cluster nodes](./images/configure-cluster-nodes.png)
+
+## Configure OpenHands
+
+You should now see the application configuration page.
+
+![Configure OpenHands](./images/configure-openhands.png)
+
+### Domain Configuration
+
+- Select **"Derive hostnames from domain (recommended)"**
+- Enter your base domain (e.g., `openhands.example.com`)
+
+### Certificate Configuration
+
+- Upload your **TLS Certificate** (`.crt` or `.pem`)
+- Upload your **TLS Private Key** (`.key` or `.pem`)
+- Optionally upload the root **CA Certificate** for your TLS certificates
+
+### LLM Configuration
+
+Enter your Anthropic API key from the [Anthropic Console](https://console.anthropic.com/).
+
+### GitHub Authentication
+
+Enable GitHub Authentication in the Admin Console, then follow these steps to create and
+configure a GitHub App.
+
+#### Create a GitHub App
+
+1. Go to [github.com/settings/apps](https://github.com/settings/apps) and click **New GitHub App**.
+
+2. Set a unique **GitHub App name** (e.g., `ACME Corp OpenHands`).
+
+3. Set the **Homepage URL** to `https://app.<YOUR_BASE_DOMAIN>`.
+
+4. Under **Identifying and authorizing users**:
+   - Set the **Callback URL** to:
+     ```
+     https://auth.app.<YOUR_BASE_DOMAIN>/realms/allhands/broker/github/endpoint
+     ```
+   - Check the box for **Request user authorization (OAuth) during installation**
+
+5. Under **Webhook**:
+   - Set the **Webhook URL** to:
+     ```
+     https://app.<YOUR_BASE_DOMAIN>/integration/github/events
+     ```
+   - Generate a webhook secret:
+     ```bash
+     export WEBHOOK_SECRET=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 32)
+     echo $WEBHOOK_SECRET
+     ```
+   - Paste the generated value into the **Secret** field
+
+   <Warning>
+     Save the webhook secret value -- you will need to enter it in the Admin Console configuration.
+   </Warning>
+
+6. Under **Permissions**, configure the following:
+
+   **Repository permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Actions | Read and write |
+   | Commit statuses | Read and write |
+   | Contents | Read and write |
+   | Issues | Read and write |
+   | Pull requests | Read and write |
+   | Webhooks | Read and write |
+   | Workflows | Read and write |
+
+   **Organization permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Events | Read-only |
+
+   **Account permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Email addresses | Read-only |
+
+7. Click **Create GitHub App**.
+
+8. On the GitHub App page, under **Client secrets**, click **Generate a new client secret**.
+   Save this value.
+
+9. Under **Private keys**, click **Generate a private key**. The `.pem` file downloads
+   automatically -- note its location.
+
+#### Map GitHub App values to Admin Console
+
+Go back to the Installer Admin Console in your browser and enter the following values:
+
+| GitHub App Value | Admin Console Field |
+|-----------------|-------------------|
+| Client ID (shown on app page) | GitHub OAuth Client ID |
+| Client secret (from step 8) | GitHub OAuth Client Secret |
+| App ID (shown on app page) | GitHub App ID |
+| Webhook secret (from step 5) | GitHub App Webhook Secret |
+| Private key file (from step 9) | GitHub App Private Key (file upload) |
+
+After filling in all fields, click **Continue** at the bottom of the page.
+
+## Deploy and Verify
+
+OpenHands will begin deploying. You can expect the deployment status to transition from
+**Missing** to **Unavailable** to **Ready**. This typically takes 5-10 minutes.
+
+![Deployment in progress](./images/deployment-in-progress.png)
+
+Click **Details** next to the deployment status to monitor individual resources. Resources
+shown in orange are still deploying -- wait until all resources are ready.
+
+![Deployment status details](./images/deployment-status-details.png)
+
+## First Login
+
+Once the deployment status shows **Ready**, navigate to `https://app.<your-base-domain>`
+and click the **Login with GitHub** tile.
+
+
+Accept the Terms of Service and click **Continue**.
+
+![Accept Terms of Service](./images/accept-terms-of-service.png)
+
+OpenHands Enterprise is now running. You can open a repository or start a new conversation.
+
+![OpenHands is ready](./images/openhands-ready.png)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Enterprise Overview" icon="building" href="/enterprise/index">
+    Learn about OpenHands Enterprise features, integrations, and deployment options.
+  </Card>
+  <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
+    Get the most out of your AI coding agents with effective prompting techniques.
+  </Card>
+  <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
+    Reach out to the OpenHands team for deployment assistance or questions.
+  </Card>
+  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
+    Explore the full OpenHands documentation for usage guides and features.
+  </Card>
+</CardGroup>
