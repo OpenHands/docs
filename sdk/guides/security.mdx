@@ -446,130 +446,139 @@ agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
 
 ### Defense-in-Depth Security Analyzer
 
-The LLM-based analyzer above relies on the model to assess risk. But what if
-the model itself is compromised, or the action contains encoding evasions that
-trick the LLM into rating a dangerous command as safe?
+#### The problem
 
-A **defense-in-depth** approach stacks multiple independent layers so each
-covers the others' blind spots. The example below implements four layers in
-a single file, using the standard library plus the SDK and Pydantic — no
-model calls, no external services, and no extra dependencies beyond the
-SDK's normal runtime environment.
+Your agent is about to run a tool call. Is it safe?
 
-1. **Extraction with two corpora** — separates *what the agent will do*
-   (tool metadata and tool-call content) from *what it thought about*
-   (reasoning, summary).
-   Shell-destructive patterns only scan executable fields, so an agent that
-   thinks "I should avoid rm -rf /" while running `ls /tmp` is correctly
-   rated LOW, not HIGH.
+The `LLMSecurityAnalyzer` asks the model itself — but the model can be
+manipulated, and encoding tricks can hide dangerous commands from it.
+You need a layer that does not depend on model judgment: something
+deterministic, local, and fast.
 
-2. **Unicode normalization** — strips invisible characters (zero-width spaces,
-   bidi controls, word joiners) and applies NFKC compatibility normalization
-   so fullwidth and ligature evasions collapse to ASCII before matching.
+#### What this gives you
 
-3. **Deterministic policy rails** — fast, segment-aware rules that
-   short-circuit before pattern scanning. Composed conditions like "sudo AND
-   rm" require both tokens in the same extraction segment, preventing
-   cross-field false positives. At the SDK boundary, internal rail outcomes
-   like "DENY" and "CONFIRM" both map to `SecurityRisk.HIGH`. Under
-   `ConfirmRisky`, that means "ask before proceeding," not "hard-block
-   execution." True blocking requires hook-based enforcement.
+Three composable analyzers that classify actions at the boundary —
+before the tool runs, not after. No network calls, no model inference,
+no extra dependencies. They return a `SecurityRisk` level; your
+`ConfirmRisky` policy decides whether to prompt the user.
 
-4. **Pattern scanning with ensemble fusion** — regex patterns categorized as
-   HIGH or MEDIUM, fused across analyzers via max-severity. UNKNOWN is
-   preserved as first-class, never promoted to HIGH.
+| Analyzer | What it catches | How it works |
+|----------|----------------|--------------|
+| `PatternSecurityAnalyzer` | Known threat signatures (rm -rf, eval, curl\|sh) | Regex patterns on two corpora: shell patterns scan executable fields only; injection patterns scan all fields |
+| `PolicyRailSecurityAnalyzer` | Composed threats (fetch piped to exec, raw disk writes, catastrophic deletes) | Deterministic rules evaluated per-segment — both tokens must appear in the same field |
+| `EnsembleSecurityAnalyzer` | Nothing on its own — it combines the others | Takes the highest concrete risk across all child analyzers |
 
-#### When to use this vs. the LLM analyzer
+#### Quick start
 
-The LLM analyzer generalizes to novel threats but costs an API call per
-action. The pattern analyzer is free, deterministic, and catches known threat
-categories reliably. In practice, you combine both in an ensemble — the
-pattern analyzer catches the obvious threats instantly, the LLM analyzer
-can cover novel or ambiguous cases the deterministic layer does not, and
-max-severity fusion takes the worst case.
+You must configure both the analyzer and the confirmation policy.
+Setting an analyzer does not automatically change confirmation behavior.
 
-#### Wiring into a conversation
-
-The classes below (`PatternSecurityAnalyzer`, `EnsembleSecurityAnalyzer`)
-are defined in the [ready-to-run example](#ready-to-run-example):
-
-```python icon="python" focus={7-11}
+```python icon="python" focus={7-18}
 from openhands.sdk import Conversation
-from openhands.sdk.security.confirmation_policy import ConfirmRisky
+from openhands.sdk.security import (
+    PatternSecurityAnalyzer,
+    PolicyRailSecurityAnalyzer,
+    EnsembleSecurityAnalyzer,
+    ConfirmRisky,
+    SecurityRisk,
+)
 
-# PatternSecurityAnalyzer and EnsembleSecurityAnalyzer are defined
-# in the example file below — copy them into your project or import
-# from the example module.
-pattern = PatternSecurityAnalyzer()
-ensemble = EnsembleSecurityAnalyzer(analyzers=[pattern])
+# Create the analyzer — rails catch composed threats,
+# patterns catch individual signatures
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+    ]
+)
 
+# Tell the SDK when to ask the user
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.MEDIUM)
+
+# Wire both into the conversation
 conversation = Conversation(agent=agent, workspace=".")
-conversation.set_security_analyzer(ensemble)
-conversation.set_confirmation_policy(ConfirmRisky())
-
-# Every agent action now passes through the analyzer.
-# HIGH -> confirmation prompt. MEDIUM -> allowed.
-# UNKNOWN -> confirmed by default (confirm_unknown=True).
+conversation.set_security_analyzer(security_analyzer)
+conversation.set_confirmation_policy(confirmation_policy)
 ```
 
+After this, every agent action passes through the analyzer before
+execution. HIGH triggers a confirmation prompt. MEDIUM triggers
+confirmation (threshold=MEDIUM). LOW is allowed. UNKNOWN is confirmed
+by default.
+
+#### Adding the LLM analyzer for deeper coverage
+
+The pattern analyzer catches known threats instantly. The LLM analyzer
+can catch novel or ambiguous cases. Composing both gives you speed and
+breadth:
+
+```python
+from openhands.sdk.security import LLMSecurityAnalyzer
+
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+        LLMSecurityAnalyzer(),
+    ]
+)
+
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.HIGH)
+```
+
+The ensemble takes the worst case across all analyzers. If the pattern
+analyzer says HIGH and the LLM says LOW, the result is HIGH.
+
 <Warning>
-`conversation.execute_tool()` bypasses the analyzer and confirmation policy.
-This example protects normal agent actions in the conversation loop; hard
-enforcement for direct tool calls requires hooks.
+`conversation.execute_tool()` bypasses the analyzer and confirmation
+policy. These analyzers protect normal agent actions in the conversation
+loop. Hard enforcement for direct tool calls requires hooks.
 </Warning>
 
-#### Key design decisions
+#### Why it works this way
 
-Understanding *why* the example is built this way helps you decide what to
-keep, modify, or replace when adapting it:
+**Two corpora, not one.** An agent that runs `ls /tmp` but thinks
+"I should avoid rm -rf /" must not be flagged HIGH. Shell patterns
+only see what the agent will *execute*. Injection patterns like
+"ignore all previous instructions" scan everything, because they
+target the model's instruction-following regardless of where they
+appear.
 
-- **Two corpora, not one.** Shell patterns on reasoning text produce false
-  positives whenever the model discusses dangerous commands it chose not to
-  run. Injection patterns (instruction overrides, mode switching) are
-  textual attacks that make sense in any field. The split eliminates the
-  first problem without losing the second.
+**Max-severity, not averaging.** The analyzers scan the same input —
+they are correlated, not independent. The highest concrete risk wins.
+That is simpler and more auditable than probabilistic fusion.
 
-- **Max-severity, not noisy-OR.** The analyzers scan the same input, so
-  they're correlated. Noisy-OR assumes independence. Max-severity is
-  simpler, correct, and auditable.
+**UNKNOWN means "I don't know," not "safe."** If all analyzers return
+UNKNOWN, the ensemble preserves it. Under the default `ConfirmRisky`
+policy, UNKNOWN triggers confirmation. Promoting UNKNOWN to HIGH
+would make optional analyzers unusable.
 
-- **UNKNOWN is first-class.** Some analyzers may return UNKNOWN when they
-  cannot assess an action or are not fully configured. The ensemble
-  preserves UNKNOWN unless at least one analyzer returns a concrete risk.
-  If the ensemble promoted UNKNOWN to HIGH, composing with optional
-  analyzers would be unusable.
+**Confirm, don't block.** The analyzers return a risk level. The
+confirmation policy decides what happens. The analyzer does not
+prevent execution — it classifies risk for the policy layer to act on.
+Pair with Docker isolation for stronger safety guarantees.
 
-- **Stdlib-only normalization.** NFKC normalization plus invisible/bidi
-  stripping covers the most common encoding evasions. Full confusable
-  detection (TR39) is documented as a known limitation, not silently
-  omitted.
+#### What this does not do
+
+This is a deterministic action-boundary control. It is not:
+
+- A complete prompt-injection solution
+- A full shell parser or AST interpreter
+- A sandbox replacement
+- A guarantee against novel threats the patterns do not cover
+
+It is additive to `LLMSecurityAnalyzer` and `GraySwanAnalyzer`, not a
+replacement for either.
 
 #### Known limitations
 
-The example documents its boundaries explicitly:
-
-| Limitation | Why it exists | What would fix it |
+| Limitation | Why | What would fix it |
 |---|---|---|
-| No hard-deny at the `SecurityAnalyzer` boundary | The SDK analyzer returns `SecurityRisk`, not block/allow decisions | Hook-based enforcement |
-| `conversation.execute_tool()` bypasses analyzer checks | Direct tool execution skips the normal agent decision path | Avoid bypass path or enforce through hooks |
-| No Cyrillic/homoglyph detection | NFKC maps compatibility variants, not cross-script confusables | Unicode TR39 tables (not in stdlib) |
-| Content beyond the 30k extraction cap is not scanned | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
-| `thinking_blocks` not scanned | Scanning reasoning artifacts would create high false-positive risk by treating internal deliberation as executable intent | Separate injection-only scan of CoT |
-| `curl \| node` not detected | Interpreter list covers sh/bash/python/perl/ruby only | Expand the list (increases false positives) |
-
-#### Ready-to-run example
-
-<Note>
-Full defense-in-depth example: [examples/01_standalone_sdk/45_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/45_defense_in_depth_security.py)
-</Note>
-
-The full example lives here:
-
-```python icon="python" expandable examples/01_standalone_sdk/45_defense_in_depth_security.py
-<code will be auto-synced from agent-sdk>
-```
-
-<RunExampleCode path_to_script="examples/01_standalone_sdk/45_defense_in_depth_security.py"/>
+| No hard-deny at the analyzer boundary | SDK analyzers return `SecurityRisk`, not block/allow | Hook-based enforcement |
+| `execute_tool()` bypasses checks | Direct tool execution skips the conversation loop | Hooks |
+| No Cyrillic/homoglyph detection | NFKC maps compatibility forms, not cross-script confusables | Unicode TR39 confusable tables |
+| Content past 30k chars is invisible | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
+| `thinking_blocks` not scanned | Scanning model reasoning risks false positives on deliberation | Separate injection-only CoT scan |
 
 
 ---
