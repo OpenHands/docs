@@ -1055,6 +1055,114 @@ Follow these guidelines:
 - Pass variables to the template via `system_prompt_kwargs`
 - The `system_message_suffix` from `AgentContext` is automatically appended after your custom prompt
 
+## Dynamic Command Execution
+
+Skills support inline shell command execution for injecting dynamic context at render time. This is useful for including repository state, environment information, or computed values in skill content.
+
+### Basic Syntax
+
+Use `` !`command` `` to execute a shell command and replace it with stdout:
+
+```markdown icon="markdown"
+---
+name: repo-context
+description: Injects current repository state
+triggers:
+  - git
+  - commit
+---
+
+# Repository Context
+
+Current branch: !`git branch --show-current`
+Last commit: !`git log -1 --oneline`
+```
+
+When triggered, the skill content becomes:
+
+```markdown
+# Repository Context
+
+Current branch: main
+Last commit: a1b2c3d Fix authentication bug
+```
+
+### Safety Rules
+
+**Code blocks are never executed.** Both fenced and inline code blocks are preserved:
+
+```markdown icon="markdown"
+# Safe Examples
+
+Regular inline code: `git status` → preserved as-is
+Fenced block: → preserved as-is
+```bash
+!`echo "not executed"`
+```
+
+Dynamic command: !`echo "executed"` → replaced with "executed"
+```
+
+**Unclosed fenced blocks protect trailing content.** If a fenced block isn't closed (odd number of ``` delimiters), everything after it is treated as inside the fence:
+
+```markdown icon="markdown"
+```
+!`echo "inside fence - not executed"`
+```
+!`echo "between fences - executed"`
+```
+!`echo "unclosed fence - not executed"`
+```
+
+### Escape Syntax
+
+Use `` \!`cmd` `` to output the literal text `` !`cmd` `` without execution:
+
+```markdown icon="markdown"
+# Documenting the Syntax
+
+To execute a command, use \!`command` syntax.
+For example: \!`git status` shows the current git state.
+```
+
+Output:
+```markdown
+# Documenting the Syntax
+
+To execute a command, use !`command` syntax.
+For example: !`git status` shows the current git state.
+```
+
+### Error Handling
+
+Failed commands return inline error markers:
+
+| Scenario | Output |
+|----------|--------|
+| Command fails | `[Error: Command `xyz` exited with code 1: error message]` |
+| Command times out | `[Error: Command `xyz` timed out after 10s]` |
+| Large output (>50KB) | Output truncated with `... [output truncated]` |
+
+### Programmatic Rendering
+
+When using skills programmatically, call `render_content()` to execute commands:
+
+```python icon="python" focus={6-7}
+from openhands.sdk.context import Skill
+
+skill = Skill.load("/path/to/skill/SKILL.md")
+
+# Render with command execution
+rendered = skill.render_content(working_dir="/path/to/repo")
+print(rendered)  # Commands replaced with output
+```
+
+The `working_dir` parameter sets the current directory for command execution, enabling workspace-relative commands like `git status`.
+
+<Warning>
+**Security**: Commands execute with full shell privileges. Only use this feature with trusted skill sources. User-provided content should never be passed to command execution.
+</Warning>
+
 ## Next Steps
 
 - **[Custom Tools](/sdk/guides/custom-tools)** - Create specialized tools
