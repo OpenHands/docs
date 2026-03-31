@@ -64,6 +64,7 @@ grep -rn "function_name" /tmp/agent-sdk/
 - Documentation-only style/formatting changes
 - Accurate content verified against source code
 - Changes that correctly sync with upstream code changes
+- **Release PRs from @mamoodi**: If the PR author is @mamoodi and the changes are standard release updates (version bumps, changelog entries, etc.) with nothing suspicious, approve without requiring full source verification
 
 ### When to COMMENT
 - Documentation claims that cannot be verified against source code
