@@ -1,0 +1,386 @@
+---
+title: Hooks
+description: Use lifecycle hooks to control agent behavior — block dangerous commands, enforce quality checks before stopping, inject context, and more.
+---
+
+## Overview
+
+Hooks let you run custom shell scripts at key moments during an OpenHands session. They are configured per-repository
+via a `.openhands/hooks.json` file and work across **Cloud**, **CLI**, and **local GUI** setups.
+
+Common use cases include:
+- **Blocking dangerous commands** before execution (e.g., preventing `rm -rf /`)
+- **Enforcing quality gates** before the agent finishes (e.g., requiring linting or tests to pass)
+- **Logging and auditing** tool usage for compliance
+- **Injecting context** into user prompts (e.g., appending git status)
+
+## Hook Types
+
+| Hook | When It Runs | Can Block? |
+|------|-------------|------------|
+| `PreToolUse` | Before the agent executes a tool | Yes |
+| `PostToolUse` | After a tool finishes executing | No |
+| `UserPromptSubmit` | Before a user message is processed | Yes |
+| `Stop` | When the agent tries to finish | Yes |
+| `SessionStart` | When a conversation begins | No |
+| `SessionEnd` | When a conversation ends | No |
+
+**Blocking** means the hook can prevent the operation from proceeding. For example, a `Stop` hook can force the agent
+to keep working if linting checks haven't passed yet.
+
+## Quick Start
+
+### 1. Create the Hooks Directory
+
+In your repository root, create the `.openhands` directory if it doesn't already exist:
+
+```bash
+mkdir -p .openhands/hooks
+```
+
+### 2. Write a Hook Script
+
+Create a shell script for your hook. For example, a Stop hook that requires linting to pass before the agent can finish:
+
+```bash .openhands/hooks/lint_check.sh
+#!/bin/bash
+# Stop hook: Don't let the agent stop if linting fails
+
+cd /workspace
+
+# Run your linter
+if ! npm run lint 2>&1; then
+    echo '{"decision": "deny", "reason": "Linting failed. Please fix the issues before finishing."}'
+    exit 2
+fi
+
+exit 0
+```
+
+Make the script executable:
+
+```bash
+chmod +x .openhands/hooks/lint_check.sh
+```
+
+### 3. Create `hooks.json`
+
+Create `.openhands/hooks.json` to register your hooks:
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "command": ".openhands/hooks/lint_check.sh",
+          "timeout": 120
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 4. Commit to Your Repository
+
+```bash
+git add .openhands/hooks.json .openhands/hooks/
+git commit -m "Add OpenHands hooks"
+```
+
+The next time OpenHands works on your repository, the hooks will be active automatically.
+
+## Configuration Reference
+
+### `hooks.json` Format
+
+The `.openhands/hooks.json` file maps hook event types to matchers and commands.
+
+Both `snake_case` and `PascalCase` keys are supported:
+
+<Tabs>
+  <Tab title="snake_case (recommended)">
+```json
+{
+  "pre_tool_use": [
+    {
+      "matcher": "terminal",
+      "hooks": [
+        { "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }
+      ]
+    }
+  ],
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/require_tests.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+  </Tab>
+  <Tab title="PascalCase">
+```json
+{
+  "PreToolUse": [
+    {
+      "matcher": "terminal",
+      "hooks": [
+        { "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/require_tests.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+  </Tab>
+</Tabs>
+
+### Hook Definition Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `command` | string | *(required)* | Shell command or path to script to execute |
+| `timeout` | integer | `60` | Maximum execution time in seconds |
+| `async` | boolean | `false` | Run in background without waiting for result |
+
+### Matcher Patterns
+
+The `matcher` field determines which tools trigger the hook (only relevant for `PreToolUse` and `PostToolUse`):
+
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| `*` | Matches all tools | `"matcher": "*"` |
+| Exact name | Matches a specific tool | `"matcher": "terminal"` |
+| Regex | Auto-detected or wrapped in `/` | `"matcher": "/terminal\|browser/"` |
+
+For hooks that aren't tool-specific (`Stop`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`), set the matcher to `"*"` or omit it.
+
+## How Hook Scripts Work
+
+### Input
+
+Hook scripts receive a JSON payload on **stdin** with details about the event:
+
+```json
+{
+  "event_type": "PreToolUse",
+  "tool_name": "terminal",
+  "tool_input": { "command": "rm -rf /tmp/data" },
+  "session_id": "abc-123",
+  "working_dir": "/workspace"
+}
+```
+
+The following **environment variables** are also set:
+
+| Variable | Description |
+|----------|-------------|
+| `OPENHANDS_EVENT_TYPE` | The hook event type (e.g., `PreToolUse`) |
+| `OPENHANDS_TOOL_NAME` | The tool being used (for tool hooks) |
+| `OPENHANDS_PROJECT_DIR` | The project working directory |
+| `OPENHANDS_SESSION_ID` | The current session ID |
+
+### Output
+
+Hook scripts communicate results through **exit codes** and optional **JSON on stdout**:
+
+**Exit codes:**
+- `0` — Success. The operation proceeds normally.
+- `2` — Block. The operation is denied.
+- Any other code — Error. The operation proceeds, but the error is logged.
+
+**JSON output (optional):**
+
+```json
+{
+  "decision": "deny",
+  "reason": "rm -rf commands are blocked for safety",
+  "additionalContext": "Extra context to pass to the agent"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `decision` | `"allow"` or `"deny"` — overrides the exit code |
+| `reason` | Human-readable explanation shown in the UI |
+| `additionalContext` | Additional context injected into the agent's prompt |
+
+## Examples
+
+### Block Dangerous Commands (PreToolUse)
+
+Prevent the agent from running destructive shell commands:
+
+```bash .openhands/hooks/block_dangerous.sh
+#!/bin/bash
+# Read JSON input from stdin
+input=$(cat)
+command=$(echo "$input" | jq -r '.tool_input.command // ""')
+
+if [[ "$command" =~ "rm -rf" ]]; then
+    echo '{"decision": "deny", "reason": "rm -rf commands are blocked for safety"}'
+    exit 2
+fi
+
+exit 0
+```
+
+```json .openhands/hooks.json
+{
+  "pre_tool_use": [
+    {
+      "matcher": "terminal",
+      "hooks": [{ "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }]
+    }
+  ]
+}
+```
+
+### Enforce Linting Before Stop
+
+Don't let the agent finish until linting passes — this is what prevents linting errors from being committed:
+
+```bash .openhands/hooks/lint_on_stop.sh
+#!/bin/bash
+cd /workspace
+
+# Run pre-commit or your linter
+if ! pre-commit run --all-files 2>&1; then
+    echo '{"decision": "deny", "reason": "Linting failed. Fix the issues before finishing."}'
+    exit 2
+fi
+
+exit 0
+```
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [{ "command": ".openhands/hooks/lint_on_stop.sh", "timeout": 120 }]
+    }
+  ]
+}
+```
+
+### Log All Tool Usage (PostToolUse)
+
+Log every tool the agent uses for auditing:
+
+```bash .openhands/hooks/log_tools.sh
+#!/bin/bash
+echo "[$(date)] Tool: $OPENHANDS_TOOL_NAME" >> /tmp/tool_usage.log
+exit 0
+```
+
+```json .openhands/hooks.json
+{
+  "post_tool_use": [
+    {
+      "matcher": "*",
+      "hooks": [{ "command": ".openhands/hooks/log_tools.sh", "timeout": 5 }]
+    }
+  ]
+}
+```
+
+### Inject Git Context (UserPromptSubmit)
+
+Automatically include git status when the user asks about code changes:
+
+```bash .openhands/hooks/inject_git_context.sh
+#!/bin/bash
+input=$(cat)
+
+if echo "$input" | grep -qiE "(changes|diff|git|commit|modified)"; then
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        status=$(git status --short 2>/dev/null | head -10)
+        if [ -n "$status" ]; then
+            escaped=$(echo "$status" | sed 's/"/\\"/g' | tr '\n' ' ')
+            echo "{\"additionalContext\": \"Current git status: $escaped\"}"
+        fi
+    fi
+fi
+
+exit 0
+```
+
+### Combine Multiple Hooks
+
+You can configure multiple hook types and multiple hooks per event:
+
+```json .openhands/hooks.json
+{
+  "pre_tool_use": [
+    {
+      "matcher": "terminal",
+      "hooks": [
+        { "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }
+      ]
+    }
+  ],
+  "post_tool_use": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/log_tools.sh", "timeout": 5, "async": true }
+      ]
+    }
+  ],
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/lint_on_stop.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+## Viewing Active Hooks
+
+<Tabs>
+  <Tab title="CLI">
+    Use the `/skills` command in the CLI to see loaded skills, hooks, and MCPs for the current session.
+  </Tab>
+  <Tab title="Cloud / Web">
+    Active hooks are loaded automatically when a conversation starts. Hook execution events appear in the
+    conversation log, showing whether each hook allowed or blocked an operation.
+  </Tab>
+</Tabs>
+
+## Tips
+
+- **Keep hooks fast.** Hooks run synchronously (unless marked `async`) and add latency to agent actions.
+  Use reasonable timeouts.
+- **Use `jq` for JSON parsing.** Hook scripts receive JSON input on stdin. The `jq` tool is available in the
+  sandbox for parsing fields like `tool_input.command`.
+- **Use environment variables for simple hooks.** For PostToolUse hooks that only need the tool name,
+  `$OPENHANDS_TOOL_NAME` avoids the need for JSON parsing.
+- **Test hooks locally.** You can test hook scripts by piping JSON to them:
+  ```bash
+  echo '{"event_type":"Stop"}' | bash .openhands/hooks/lint_on_stop.sh
+  echo "Exit code: $?"
+  ```
+- **Async hooks can't block.** Hooks with `"async": true` run in the background and cannot block operations.
+  Use async for logging or telemetry, not for enforcement.
+
+## See Also
+
+- [Repository Customization](/openhands/usage/customization/repository) — Setup scripts and pre-commit hooks
+- [Skills](/overview/skills) — Extend agent behavior with prompt-based skills
+- [Hooks (SDK Guide)](/sdk/guides/hooks) — Programmatic hooks for SDK developers
