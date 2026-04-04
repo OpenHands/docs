@@ -1,0 +1,740 @@
+---
+title: V0 to V1 Migration Guide
+description: Complete guide for migrating from OpenHands V0 APIs to V1 APIs
+---
+
+<Warning>
+  The V0 API (`/api/conversations`) is deprecated and scheduled for removal on **April 1, 2026**.
+  Please migrate to the V1 API as soon as possible.
+</Warning>
+
+## Overview
+
+This guide walks you through migrating from OpenHands V0 APIs to the new V1 APIs. We'll take you step-by-step through a typical migration, showing exactly what changes and why.
+
+### What's Different in V1?
+
+The most important change: **Conversations and Sandboxes are now decoupled**.
+
+In V0, creating a conversation automatically created and managed the underlying sandbox (runtime environment). In V1, sandboxes are independent resources you can:
+- Pause and resume without losing state
+- Reuse across multiple conversations
+- Manage with explicit lifecycle controls
+
+V1 also introduces two levels of API:
+- **App Server API** (`app.all-hands.dev`) - Manage conversations and sandboxes (this guide's focus)
+- **Agent Server API** (per-sandbox URL) - Direct access to workspace and runtime operations
+
+<Accordion title="Why Migrate? Key Benefits">
+
+| Theme | Key Result |
+|-------|------------|
+| **Reliability** | 61% reduction in system failures — eliminated entire classes of infrastructure errors |
+| **Performance** | Lighter-weight runtime with co-located execution — removes inter-pod communication overhead |
+| **Developer Experience** | Modern API patterns — dedicated search, filtering, batch operations, webhooks, and flexible sandbox controls |
+
+**Reliability Details**
+- 61% reduction in system-attributable failures (78.0 → 30.0 errors per 1k conversations)
+- Eliminated infrastructure errors from inter-pod communication
+- Event-sourced state enables replay-based recovery
+
+**Performance Details**
+- Lighter-weight agent server reduces resource overhead
+- Independent sandbox lifecycle for better resource control
+
+**Developer Experience Details**
+- Pause/resume sandboxes, explicit status tracking (`STARTING`, `RUNNING`, `PAUSED`, `ERROR`)
+- Dedicated search and count endpoints
+- Batch operations and enhanced filtering
+- Webhook support for lifecycle events
+- Stream conversation updates from creation
+
+</Accordion>
+
+---
+
+## Migration Walkthrough
+
+Follow along as we migrate a typical V0 integration to V1. Each step shows your existing V0 code and the V1 equivalent.
+
+### Step 1: Create and Start a Conversation
+
+**V0 Approach**
+
+In V0, you called a single endpoint and got a conversation ID immediately:
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/conversations" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "initial_user_msg": "Check the README.md file",
+    "repository": "yourusername/your-repo"
+  }'
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "conversation_id": "abc1234"
+}
+```
+
+**V1 Approach**
+
+In V1, conversation startup is asynchronous—you get a start task that tracks initialization:
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/v1/app-conversations" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "initial_message": {
+      "content": [{"type": "text", "text": "Check the README.md file"}]
+    },
+    "selected_repository": "yourusername/your-repo"
+  }'
+```
+
+Response:
+```json
+{
+  "id": "start-task-uuid",
+  "status": "WORKING",
+  "app_conversation_id": null,
+  "sandbox_id": null,
+  "created_at": "2025-01-15T10:30:00Z"
+}
+```
+
+<Note>
+**Key Changes:**
+- Endpoint: `/api/conversations` → `/api/v1/app-conversations`
+- Field: `initial_user_msg` (string) → `initial_message` (object with content array)
+- Field: `repository` → `selected_repository`
+- Response field: `conversation_id` → `app_conversation_id`
+- The conversation ID isn't immediately available—see Step 2
+</Note>
+
+---
+
+### Step 2: Track Conversation Startup
+
+In V0, your conversation was ready immediately. In V1, you need to wait for initialization to complete. You have two options:
+
+**Option A: Poll for Readiness**
+
+```bash
+curl "https://app.all-hands.dev/api/v1/app-conversations/start-tasks?ids={start_task_id}" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Response when ready:
+```json
+[
+  {
+    "id": "start-task-uuid",
+    "status": "READY",
+    "app_conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+    "sandbox_id": "sandbox-abc123",
+    "agent_server_url": "https://sandbox-abc123.runtime.all-hands.dev",
+    "created_at": "2025-01-15T10:30:00Z"
+  }
+]
+```
+
+The `status` field tells you where things stand:
+- `WORKING` → Initial processing
+- `WAITING_FOR_SANDBOX` → Waiting for sandbox to be ready
+- `PREPARING_REPOSITORY` → Cloning/setting up the repository
+- `RUNNING_SETUP_SCRIPT` → Running initialization scripts
+- `SETTING_UP_GIT_HOOKS` → Configuring git hooks
+- `SETTING_UP_SKILLS` → Loading skills and plugins
+- `STARTING_CONVERSATION` → Starting the conversation
+- `READY` → Conversation is ready, use `app_conversation_id` for subsequent calls
+- `ERROR` → Something went wrong, check the `detail` field
+
+**Option B: Stream from the Start**
+
+For real-time updates (recommended for user-facing apps), use the streaming endpoint:
+
+```bash
+curl -N "https://app.all-hands.dev/api/v1/app-conversations/stream-start" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "initial_message": {
+      "content": [{"type": "text", "text": "Check the README.md file"}]
+    },
+    "selected_repository": "yourusername/your-repo"
+  }'
+```
+
+This returns a **streaming JSON response** (not SSE/EventSource). The response is a JSON array that streams incrementally—each element is an `AppConversationStartTask` object with updated status. Parse it as a JSON array; elements arrive as the conversation initializes:
+
+```json
+[
+  {"id": "task-uuid", "status": "WORKING", "app_conversation_id": null, ...},
+  {"id": "task-uuid", "status": "WAITING_FOR_SANDBOX", "app_conversation_id": null, ...},
+  {"id": "task-uuid", "status": "READY", "app_conversation_id": "conv-uuid", "agent_server_url": "https://...", ...}
+]
+```
+
+<Tip>
+Streaming is recommended for user-facing applications where you want to show progress immediately rather than waiting for initialization to complete. Note that this is a streaming JSON response, not Server-Sent Events—use a streaming JSON parser or read incrementally, not `EventSource`.
+</Tip>
+
+---
+
+### Step 3: Work with Events and Messages
+
+Once your conversation is ready, here's how to send messages and retrieve events.
+
+**Sending Messages**
+
+<Note>
+**Big improvement in V1:** In V0, sending messages to a running conversation typically requires establishing a WebSocket (Socket.IO) connection. V1 provides a simple REST endpoint on the Agent Server, making programmatic message sending much easier.
+</Note>
+
+<Tabs>
+  <Tab title="V0 (Deprecated)">
+    V0 requires a WebSocket connection to send messages to a running conversation. While a REST endpoint exists, the standard approach uses Socket.IO:
+
+    ```javascript
+    // V0 requires Socket.IO WebSocket connection
+    const socket = io(serverUrl, {
+      query: { conversation_id: id, latest_event_id: -1 }
+    });
+    socket.emit("oh_user_action", {
+      action: "message",
+      args: { content: "Now check the package.json" }
+    });
+    ```
+  </Tab>
+  <Tab title="V1 (Recommended)">
+    V1 uses a simple REST call to the Agent Server (see [Step 5](#step-5-access-the-agent-server-when-needed) for how to get the Agent Server URL):
+
+    ```bash
+    curl -X POST "{agent_server_url}/api/conversations/{id}/events" \
+      -H "X-Session-API-Key: {session_api_key}" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "content": [{"type": "text", "text": "Now check the package.json"}],
+        "run": true
+      }'
+    ```
+
+    The `run: true` option automatically starts the agent loop to process your message.
+  </Tab>
+</Tabs>
+
+**Retrieving Events**
+
+V1 introduces dedicated search and count endpoints with enhanced filtering:
+
+<Tabs>
+  <Tab title="V0 (Deprecated)">
+    ```bash
+    # Get all events
+    curl "https://app.all-hands.dev/api/conversations/{id}/events" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+  <Tab title="V1 (Recommended)">
+    ```bash
+    # Search events with filtering
+    curl "https://app.all-hands.dev/api/v1/conversation/{id}/events/search?limit=50" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+
+    # Get event count (useful for pagination)
+    curl "https://app.all-hands.dev/api/v1/conversation/{id}/events/count" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+
+    # Batch get specific events by ID
+    curl "https://app.all-hands.dev/api/v1/conversation/{id}/events?id=evt1&id=evt2" \
+      -H "Authorization: Bearer YOUR_API_KEY"
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### Step 4: Manage Sandbox Lifecycle
+
+This is entirely new in V1. You now have explicit control over sandbox resources.
+
+**Search for Your Sandboxes**
+
+```bash
+curl "https://app.all-hands.dev/api/v1/sandboxes/search?limit=10" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Pause a Sandbox** (stop billing, preserve state)
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/v1/sandboxes/{sandbox_id}/pause" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Resume a Sandbox** (continue where you left off)
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/v1/sandboxes/{sandbox_id}/resume" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+**Delete a Sandbox** (clean up resources)
+
+```bash
+curl -X DELETE "https://app.all-hands.dev/api/v1/sandboxes/{sandbox_id}" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+<Note>
+**Sandbox Status Values:**
+- `STARTING` - Sandbox is initializing
+- `RUNNING` - Sandbox is active and ready
+- `PAUSED` - Sandbox is suspended (no billing)
+- `ERROR` - Something went wrong
+- `MISSING` - Sandbox no longer exists
+</Note>
+
+---
+
+### Step 5: Access the Agent Server (When Needed)
+
+For direct workspace operations (file uploads, bash commands, git operations), you'll use the Agent Server API. This runs on each sandbox and requires a different authentication method.
+
+**Getting the Agent Server URL**
+
+First, get your sandbox details:
+
+```bash
+curl "https://app.all-hands.dev/api/v1/sandboxes?id={sandbox_id}" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Response:
+```json
+{
+  "id": "sandbox-abc123",
+  "status": "RUNNING",
+  "session_api_key": "session-key-xyz",
+  "exposed_urls": [
+    {"name": "AGENT_SERVER", "url": "https://sandbox-abc123.runtime.all-hands.dev", "port": 3000},
+    {"name": "VSCODE", "url": "https://vscode-abc123.runtime.all-hands.dev", "port": 8080}
+  ]
+}
+```
+
+<Note>
+`exposed_urls` is an **array** of `{name, url, port}` objects. To find the Agent Server URL, filter for the entry where `name == "AGENT_SERVER"`.
+</Note>
+
+**Making Agent Server Calls**
+
+Use the `session_api_key` with the `X-Session-API-Key` header:
+
+```bash
+# Execute a bash command
+curl -X POST "https://sandbox-abc123.runtime.all-hands.dev/api/bash/execute_bash_command" \
+  -H "X-Session-API-Key: session-key-xyz" \
+  -H "Content-Type: application/json" \
+  -d '{"command": "ls -la"}'
+
+# Download a file (using query parameter, not path)
+curl "https://sandbox-abc123.runtime.all-hands.dev/api/file/download?path=/workspace/README.md" \
+  -H "X-Session-API-Key: session-key-xyz"
+
+# Upload a file (using query parameter, not path)
+curl -X POST "https://sandbox-abc123.runtime.all-hands.dev/api/file/upload?path=/workspace/config.json" \
+  -H "X-Session-API-Key: session-key-xyz" \
+  -F "file=@local-config.json"
+```
+
+<Tip>
+The Agent Server's OpenAPI spec is available at `{agent_server_url}/openapi.json` for complete endpoint documentation.
+</Tip>
+
+---
+
+### Step 6: Handle Files and Workspace
+
+File operations have moved from the App Server to the Agent Server in V1.
+
+| V0 Operation | V1 Equivalent |
+|--------------|---------------|
+| `GET /api/conversations/{id}/list-files` | Agent Server: `POST /api/bash/execute_bash_command` with `ls` |
+| `GET /api/conversations/{id}/select-file` | Agent Server: `GET /api/file/download?path=...` |
+| `POST /api/conversations/{id}/upload-files` | Agent Server: `POST /api/file/upload?path=...` |
+| `GET /api/conversations/{id}/zip-directory` | Agent Server: Download files individually via `GET /api/file/download?path=...` |
+
+<Note>
+The Agent Server file routes use **query parameters** (`?path=...`), not path-style URLs (`/{path}`). Path-style routes are deprecated.
+</Note>
+
+**Example: List Files in Workspace**
+
+```bash
+# Get Agent Server URL first (see Step 5), then:
+curl -X POST "https://sandbox-abc123.runtime.all-hands.dev/api/bash/execute_bash_command" \
+  -H "X-Session-API-Key: session-key-xyz" \
+  -H "Content-Type: application/json" \
+  -d '{"command": "find /workspace -type f -name \"*.py\" | head -20"}'
+```
+
+**Alternative: Use the OpenHands SDK**
+
+The [OpenHands SDK](https://github.com/OpenHands/software-agent-sdk) provides a `RemoteWorkspace` class for Agent Server operations:
+
+```python
+from openhands.sdk.workspace import RemoteWorkspace
+
+# Connect to an Agent Server (get host and api_key from sandbox info)
+workspace = RemoteWorkspace(
+    host="https://sandbox-abc123.runtime.all-hands.dev",
+    api_key="session-key-xyz",
+    working_dir="/workspace"
+)
+
+# Execute commands
+result = workspace.execute_command("ls -la")
+print(result.stdout)
+
+# Upload a file
+workspace.file_upload("/local/path/to/file.txt", "/workspace/file.txt")
+
+# Download a file
+workspace.file_download("/workspace/output.txt", "/local/path/output.txt")
+
+# Git operations
+changes = workspace.git_changes("/workspace")
+diff = workspace.git_diff("/workspace/modified_file.py")
+```
+
+---
+
+### Step 7: Monitor Conversations and Fetch Events
+
+If you're building custom dashboards, CI/CD integrations, or alternative visualizations, you'll need to fetch conversation events. V1 provides a much more flexible approach than V0.
+
+**V0 Approach: Trajectory Download**
+
+In V0, you fetched all events at once using the trajectory endpoint:
+
+```bash
+curl "https://app.all-hands.dev/api/conversations/{id}/trajectory" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+This returned the entire conversation history in a single payload—simple, but inefficient for large conversations or real-time monitoring.
+
+**V1 Approach: Events Search API**
+
+V1 introduces a powerful events search endpoint with filtering, pagination, and sorting:
+
+```bash
+curl "https://app.all-hands.dev/api/v1/conversation/{id}/events/search?limit=100&sort_order=TIMESTAMP_DESC" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Response:
+```json
+{
+  "items": [
+    {"id": "evt-123", "kind": "MessageEvent", "timestamp": "2025-01-15T10:30:05Z", ...},
+    {"id": "evt-122", "kind": "ActionEvent", "timestamp": "2025-01-15T10:30:03Z", ...}
+  ],
+  "next_page_id": "page_xyz"
+}
+```
+
+**Available filters:**
+- `limit` - Max results per page (up to 100)
+- `sort_order` - `TIMESTAMP` (oldest first) or `TIMESTAMP_DESC` (newest first)
+- `timestamp__gte` - Events at or after this time
+- `timestamp__lt` - Events before this time
+- `kind__eq` - Filter by event type (`MessageEvent`, `ActionEvent`, `ObservationEvent`, etc.)
+- `page_id` - For pagination through large result sets
+
+**Example: Fetch All Events (Bulk)**
+
+To fetch all events in a conversation (equivalent to V0 trajectory):
+
+```python
+import requests
+
+def fetch_all_events(conversation_id: str, api_key: str) -> list:
+    """Fetch all events from a conversation."""
+    base_url = "https://app.all-hands.dev"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    all_events = []
+    page_id = None
+    
+    while True:
+        params = {"limit": 100, "sort_order": "TIMESTAMP"}
+        if page_id:
+            params["page_id"] = page_id
+        
+        response = requests.get(
+            f"{base_url}/api/v1/conversation/{conversation_id}/events/search",
+            params=params,
+            headers=headers
+        )
+        data = response.json()
+        all_events.extend(data["items"])
+        
+        page_id = data.get("next_page_id")
+        if not page_id:
+            break
+    
+    return all_events
+```
+
+**Example: Efficient Polling for Real-Time Monitoring**
+
+For dashboards or live displays, poll for only new events since your last fetch:
+
+```python
+import requests
+import time
+from datetime import datetime, timedelta
+
+def monitor_conversation(conversation_id: str, api_key: str, poll_interval: float = 1.0):
+    """Poll for new events in real-time."""
+    base_url = "https://app.all-hands.dev"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    last_event_id = None
+    last_timestamp = None
+    
+    while True:
+        params = {"limit": 100, "sort_order": "TIMESTAMP"}
+        if last_timestamp:
+            params["timestamp__gte"] = last_timestamp
+        
+        response = requests.get(
+            f"{base_url}/api/v1/conversation/{conversation_id}/events/search",
+            params=params,
+            headers=headers
+        )
+        
+        events = response.json()["items"]
+        
+        for event in events:
+            # Skip if we've already seen this event
+            if event["id"] == last_event_id:
+                continue
+            
+            # Process the new event (your visualization logic here)
+            print(f"[{event['kind']}] {event.get('timestamp')}")
+            
+            last_event_id = event["id"]
+            last_timestamp = event["timestamp"]
+        
+        time.sleep(poll_interval)
+```
+
+<Note>
+**Why V1 is better for monitoring:**
+- **Incremental fetches** - Only get new events using `timestamp__gte`, not the entire history
+- **Flexible filtering** - Filter by event type, time range, or paginate through results
+- **Lower latency** - Smaller payloads mean faster responses
+- **Works without active sandbox** - App Server events persist even when sandbox is paused
+</Note>
+
+---
+
+## Quick Reference: Endpoint Mapping
+
+Use this section to look up specific endpoint mappings when you need them.
+
+### Conversation Lifecycle
+
+| Operation | V0 Endpoint | V1 Endpoint |
+|-----------|-------------|-------------|
+| Create conversation | `POST /api/conversations` | `POST /api/v1/app-conversations` |
+| Start (streaming) | `POST /api/conversations/{id}/start` | `POST /api/v1/app-conversations/stream-start` |
+| Search conversations | `GET /api/conversations` | `GET /api/v1/app-conversations/search` |
+| Get by ID | `GET /api/conversations/{id}` | `GET /api/v1/app-conversations?id={id}` |
+| Get count | N/A | `GET /api/v1/app-conversations/count` |
+| Update | `PATCH /api/conversations/{id}` | `PATCH /api/v1/app-conversations/{id}` |
+| Delete | `DELETE /api/conversations/{id}` | `DELETE /api/v1/app-conversations/{id}` |
+
+### Events & Messages
+
+| Operation | V0 Endpoint | V1 Endpoint |
+|-----------|-------------|-------------|
+| Send message | WebSocket (Socket.IO) required | Agent Server: `POST /api/conversations/{id}/events` |
+| Get trajectory | `GET /api/conversations/{id}/trajectory` | `GET /api/v1/conversation/{id}/events/search` (paginated) |
+| Search events | `GET /api/conversations/{id}/events` | `GET /api/v1/conversation/{id}/events/search` |
+| Get event count | N/A | `GET /api/v1/conversation/{id}/events/count` |
+| Batch get events | N/A | `GET /api/v1/conversation/{id}/events` |
+
+### Sandbox Management (New in V1)
+
+| Operation | V1 Endpoint |
+|-----------|-------------|
+| Create sandbox | `POST /api/v1/sandboxes` |
+| Search sandboxes | `GET /api/v1/sandboxes/search` |
+| Get sandboxes | `GET /api/v1/sandboxes` |
+| Pause | `POST /api/v1/sandboxes/{id}/pause` |
+| Resume | `POST /api/v1/sandboxes/{id}/resume` |
+| Delete | `DELETE /api/v1/sandboxes/{id}` |
+
+### Development Tools
+
+| Operation | V0 Endpoint | V1 Equivalent |
+|-----------|-------------|---------------|
+| Get VSCode URL | `GET /api/conversations/{id}/vscode-url` | Get sandbox, find `VSCODE` in `exposed_urls` |
+| Get web hosts | `GET /api/conversations/{id}/web-hosts` | Get sandbox, find `AGENT_SERVER` in `exposed_urls` |
+
+### Health & Status (Unchanged)
+
+| Operation | Endpoint |
+|-----------|----------|
+| Health check | `GET /health` |
+| Alive check | `GET /alive` |
+| Ready check | `GET /ready` |
+
+---
+
+## Agent Server API Reference
+
+The Agent Server runs on each sandbox and provides direct access to workspace operations.
+
+### Authentication
+
+Use the `session_api_key` from your sandbox info with the `X-Session-API-Key` header.
+
+### Available Endpoints
+
+<Accordion title="File Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/file/upload?path=...` | Upload files to workspace |
+| `GET /api/file/download?path=...` | Download individual files |
+| `GET /api/file/download-trajectory/{conversation_id}` | Download conversation trajectory |
+
+</Accordion>
+
+<Accordion title="Git Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/git/changes/{path}` | Get git changes |
+| `GET /api/git/diff/{path}` | Get git diff |
+
+</Accordion>
+
+<Accordion title="Bash Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/bash/execute_bash_command` | Execute bash command (blocking) |
+| `POST /api/bash/start_bash_command` | Start bash command (async) |
+| `GET /api/bash/bash_events/search` | Search bash events |
+
+</Accordion>
+
+<Accordion title="Conversation Operations">
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/conversations/{id}/events` | Send user message |
+| `GET /api/conversations/{id}/events/search` | Search events |
+| `GET /api/conversations/{id}/events/count` | Count events |
+| `POST /api/conversations/{id}/pause` | Pause conversation |
+| `POST /api/conversations/{id}/run` | Resume/run conversation |
+| `DELETE /api/conversations/{id}` | Delete conversation |
+
+</Accordion>
+
+<Accordion title="Development Tools">
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/vscode/url` | Get VSCode URL |
+| `GET /api/vscode/status` | Check VSCode status |
+| `GET /api/desktop/url` | Get desktop URL |
+| `GET /api/tools/` | List available tools |
+
+</Accordion>
+
+<Note>
+The Agent Server requires an active (running) sandbox. For operations on paused or inactive sandboxes, use the App Server API.
+</Note>
+
+### Accessing Agent Server API Documentation
+
+The Agent Server provides its own Swagger UI and OpenAPI specification, but you need a running sandbox to access them.
+
+**Step 1: Get the Agent Server URL**
+
+First, retrieve your sandbox info to get the Agent Server URL (see [Step 5](#step-5-access-the-agent-server-directly) above):
+
+```bash
+curl "https://app.all-hands.dev/api/v1/sandboxes?id={sandbox_id}" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+From the response, extract the `AGENT_SERVER` URL from `exposed_urls`.
+
+**Step 2: Access the Documentation**
+
+Once you have the Agent Server URL, you can access:
+
+| Resource | URL |
+|----------|-----|
+| Swagger UI | `{agent_server_url}/docs` |
+| OpenAPI JSON | `{agent_server_url}/openapi.json` |
+
+For example, if your Agent Server URL is `https://sandbox-abc123.runtime.all-hands.dev`:
+
+```bash
+# View the OpenAPI spec
+curl "https://sandbox-abc123.runtime.all-hands.dev/openapi.json" \
+  -H "X-Session-API-Key: session-key-xyz"
+
+# Or open in browser for interactive Swagger UI:
+# https://sandbox-abc123.runtime.all-hands.dev/docs
+```
+
+<Tip>
+The Agent Server's Swagger UI doesn't require authentication to view, but you'll need the `X-Session-API-Key` header to execute requests.
+</Tip>
+
+---
+
+## Known Gaps and Workarounds
+
+Some V0 capabilities don't have direct V1 App Server equivalents yet:
+
+| Gap | V0 Endpoint | Workaround |
+|-----|-------------|------------|
+| Download workspace as zip | `GET /api/conversations/{id}/zip-directory` | Use Agent Server `GET /api/file/download?path=...` for individual files, or create a tar/zip via bash command |
+| Get trajectory (inactive runtime) | `GET /api/conversations/{id}/trajectory` | Trajectory available while sandbox is active via Agent Server `GET /api/file/download-trajectory/{conversation_id}` |
+| List workspace files | `GET /api/conversations/{id}/list-files` | Use Agent Server `POST /api/bash/execute_bash_command` with `ls` or `find` |
+
+---
+
+## Authentication Summary
+
+| API | Authentication |
+|-----|----------------|
+| **App Server** (both V0 and V1) | API key via `Authorization: Bearer YOUR_API_KEY` header |
+| **Agent Server** | Session API key via `X-Session-API-Key: {session_api_key}` header |
+
+API keys are created via the settings page or `/api/keys` endpoint and work for both V0 and V1 App Server APIs.
+
+---
+
+## Additional Resources
+
+- [V1 REST API Overview](/openhands/usage/api/v1)
+- [Cloud API Guide](/openhands/usage/cloud/cloud-api)
+- [OpenHands SDK](https://github.com/OpenHands/software-agent-sdk) — Python SDK with `RemoteWorkspace` for file operations, command execution, and git operations
+- [V1 API Swagger Docs](https://app.all-hands.dev/docs) — Interactive API documentation
+- [V1 API OpenAPI Spec](https://app.all-hands.dev/openapi.json) — OpenAPI JSON specification for the App Server
