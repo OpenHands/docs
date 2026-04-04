@@ -19,7 +19,7 @@ LLM providers format errors differently (status codes, messages, exception class
 
 Agent-driven conversations are the common entry point. Exceptions from the underlying LLM calls bubble up from `conversation.run()` and `conversation.send_message(...)` when a condenser is not configured.
 
-```python icon="python"
+```python icon="python" wrap
 from pydantic import SecretStr
 from openhands.sdk import Agent, Conversation, LLM
 from openhands.sdk.llm.exceptions import (
@@ -34,10 +34,16 @@ from openhands.sdk.llm.exceptions import (
 
 llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-key"))
 agent = Agent(llm=llm, tools=[])
-conversation = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
+conversation = Conversation(
+    agent=agent,
+    persistence_dir="./.conversations",
+    workspace=".",
+)
 
 try:
-    conversation.send_message("Continue the long analysis we started earlier…")
+    conversation.send_message(
+        "Continue the long analysis we started earlier…"
+    )
     conversation.run()
 
 except LLMContextWindowExceedError:
@@ -48,7 +54,10 @@ except LLMContextWindowExceedError:
     print("Hit the context limit. Consider enabling a condenser.")
 
 except LLMAuthenticationError:
-    print("Invalid or missing API credentials. Check your API key or auth setup.")
+    print(
+        "Invalid or missing API credentials."
+        "Check your API key or auth setup."
+    )
 
 except LLMRateLimitError:
     print("Rate limit exceeded. Back off and retry later.")
@@ -73,7 +82,7 @@ except LLMError as e:
 
 If a condenser is configured, the SDK emits a condensation request event instead of raising `LLMContextWindowExceedError`. The agent will summarize older history and continue.
 
-```python icon="python" highlight={5-10}
+```python icon="python" focus={5-6, 9-14} wrap
 from openhands.sdk.context.condenser import LLMSummarizingCondenser
 
 condenser = LLMSummarizingCondenser(
@@ -83,18 +92,24 @@ condenser = LLMSummarizingCondenser(
 )
 
 agent = Agent(llm=llm, tools=[], condenser=condenser)
-conversation = Conversation(agent=agent, persistence_dir="./.conversations", workspace=".")
+conversation = Conversation(
+    agent=agent,
+    persistence_dir="./.conversations",
+    workspace=".",
+)
 ```
 
-See the dedicated guide: [Context Condenser](/sdk/guides/context-condenser).
+<Tip>
+    See the dedicated guide: [Context Condenser](/sdk/guides/context-condenser).
+</Tip>
 
 ## Handling errors with direct LLM calls
 
 The same exceptions are raised from both `LLM.completion()` and `LLM.responses()` paths, so you can share handlers.
 
-### Example: Using completion()
+### Example: Using `.completion()`
 
-```python icon="python"
+```python icon="python" wrap
 from pydantic import SecretStr
 from openhands.sdk import LLM
 from openhands.sdk.llm import Message, TextContent
@@ -132,9 +147,9 @@ except LLMError as e:
     print(f"Unhandled LLM error: {e}")
 ```
 
-### Example: Using responses()
+### Example: Using `.responses()`
 
-```python icon="python"
+```python icon="python" wrap
 from pydantic import SecretStr
 from openhands.sdk import LLM
 from openhands.sdk.llm import Message, TextContent
@@ -144,7 +159,9 @@ llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-key"))
 
 try:
     resp = llm.responses([
-        Message.user([TextContent(text="Write a one-line haiku about code.")])
+        Message.user(
+            [TextContent(text="Write a one-line haiku about code.")]
+        )
     ])
     print(resp.message)
 except LLMContextWindowExceedError:
@@ -157,26 +174,27 @@ except LLMError as e:
 
 All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
 
-- Provider/transport mapping (provider‑agnostic):
-  - `LLMContextWindowExceedError` — Conversation exceeds the model’s context window. Without a condenser, thrown for both Chat and Responses paths.
-  - `LLMAuthenticationError` — Invalid or missing credentials (401/403 patterns).
-  - `LLMRateLimitError` — Provider rate limit exceeded.
-  - `LLMTimeoutError` — SDK/lower‑level timeout while waiting for the provider.
-  - `LLMServiceUnavailableError` — Temporary connectivity/service outage (e.g., 5xx, connection issues).
-  - `LLMBadRequestError` — Client‑side request issues (invalid params, malformed input).
+| Category | Error | Description |
+|--------|------|-------------|
+| **Provider / transport (provider-agnostic)** | `LLMContextWindowExceedError` | Conversation exceeds the model’s context window. Without a condenser, thrown for both Chat and Responses paths. |
+|  | `LLMAuthenticationError` | Invalid or missing credentials (401/403 patterns). |
+|  | `LLMRateLimitError` | Provider rate limit exceeded. |
+|  | `LLMTimeoutError` | SDK or lower-level timeout while waiting for the provider. |
+|  | `LLMServiceUnavailableError` | Temporary connectivity or service outage (e.g., 5xx responses, connection issues). |
+|  | `LLMBadRequestError` | Client-side request issues (invalid parameters, malformed input). |
+| **Response parsing / validation** | `LLMMalformedActionError` | Model returned a malformed action. |
+|  | `LLMNoActionError` | Model did not return an action when one was expected. |
+|  | `LLMResponseError` | Could not extract an action from the response. |
+|  | `FunctionCallConversionError` | Failed converting tool/function call payloads. |
+|  | `FunctionCallValidationError` | Tool/function call arguments failed validation. |
+|  | `FunctionCallNotExistsError` | Model referenced an unknown tool or function. |
+|  | `LLMNoResponseError` | Provider returned an empty or invalid response (rare; observed with some Gemini models). |
+| **Cancellation** | `UserCancelledError` | A user explicitly aborted the operation. |
+|  | `OperationCancelled` | A running operation was cancelled programmatically. |
 
-- Response parsing/validation:
-  - `LLMMalformedActionError` — Model returned a malformed action.
-  - `LLMNoActionError` — Model did not return an action when one was expected.
-  - `LLMResponseError` — Could not extract an action from the response.
-  - `FunctionCallConversionError` — Failed converting tool/function call payloads.
-  - `FunctionCallValidationError` — Tool/function call arguments failed validation.
-  - `FunctionCallNotExistsError` — Model referenced an unknown tool/function.
-  - `LLMNoResponseError` — Provider returned an empty/invalid response (seen rarely, e.g., some Gemini models).
+<Tip>
+    All of the above (except the explicit cancellation types) inherit from `LLMError`, so you can implement a catch‑all
+    for unexpected SDK LLM errors while still keeping fine‑grained handlers for the most common cases.
+</Tip>
 
-- Cancellation:
-  - `UserCancelledError` — A user aborted the operation.
-  - `OperationCancelled` — A running operation was cancelled programmatically.
-
-All of the above (except the explicit cancellation types) inherit from `LLMError`, so you can implement a catch‑all for unexpected SDK LLM errors while still keeping fine‑grained handlers for the most common cases.
 

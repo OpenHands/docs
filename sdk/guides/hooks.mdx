@@ -1,0 +1,277 @@
+---
+title: Hooks
+description: Use lifecycle hooks to observe, log, and customize agent execution.
+---
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+Hooks let you observe and customize key lifecycle moments in the SDK without forking core code. Typical uses include:
+- Logging and analytics
+- Emitting custom metrics
+- Auditing or compliance
+- Tracing and debugging
+
+## Hook Types
+
+| Hook | When it runs | Can block? |
+|------|--------------|------------|
+| PreToolUse | Before tool execution | Yes (exit 2) |
+| PostToolUse | After tool execution | No |
+| UserPromptSubmit | Before processing user message | Yes (exit 2) |
+| Stop | When agent tries to finish | Yes (exit 2) |
+| SessionStart | When conversation starts | No |
+| SessionEnd | When conversation ends | No |
+
+## Key Concepts
+
+- Registration points: subscribe to events or attach pre/post hooks around LLM calls and tool execution
+- Isolation: hooks run outside the agent loop logic, avoiding core modifications
+- Composition: enable or disable hooks per environment (local vs. prod)
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/33_hooks](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/33_hooks/)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/33_hooks/33_hooks.py
+"""OpenHands Agent SDK — Hooks Example
+
+Demonstrates the OpenHands hooks system.
+Hooks are shell scripts that run at key lifecycle events:
+
+- PreToolUse: Block dangerous commands before execution
+- PostToolUse: Log tool usage after execution
+- UserPromptSubmit: Inject context into user messages
+- Stop: Enforce task completion criteria
+
+The hook scripts are in the scripts/ directory alongside this file.
+"""
+
+import os
+import signal
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation
+from openhands.sdk.hooks import HookConfig, HookDefinition, HookMatcher
+from openhands.tools.preset.default import get_default_agent
+
+
+signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+SCRIPT_DIR = Path(__file__).parent / "hook_scripts"
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Create temporary workspace with git repo
+with tempfile.TemporaryDirectory() as tmpdir:
+    workspace = Path(tmpdir)
+    os.system(f"cd {workspace} && git init -q && echo 'test' > file.txt")
+
+    log_file = workspace / "tool_usage.log"
+    summary_file = workspace / "summary.txt"
+
+    # Configure hooks using the typed approach (recommended)
+    # This provides better type safety and IDE support
+    hook_config = HookConfig(
+        pre_tool_use=[
+            HookMatcher(
+                matcher="terminal",
+                hooks=[
+                    HookDefinition(
+                        command=str(SCRIPT_DIR / "block_dangerous.sh"),
+                        timeout=10,
+                    )
+                ],
+            )
+        ],
+        post_tool_use=[
+            HookMatcher(
+                matcher="*",
+                hooks=[
+                    HookDefinition(
+                        command=(f"LOG_FILE={log_file} {SCRIPT_DIR / 'log_tools.sh'}"),
+                        timeout=5,
+                    )
+                ],
+            )
+        ],
+        user_prompt_submit=[
+            HookMatcher(
+                hooks=[
+                    HookDefinition(
+                        command=str(SCRIPT_DIR / "inject_git_context.sh"),
+                    )
+                ],
+            )
+        ],
+        stop=[
+            HookMatcher(
+                hooks=[
+                    HookDefinition(
+                        command=(
+                            f"SUMMARY_FILE={summary_file} "
+                            f"{SCRIPT_DIR / 'require_summary.sh'}"
+                        ),
+                    )
+                ],
+            )
+        ],
+    )
+
+    # Alternative: You can also use .from_dict() for loading from JSON config files
+    # Example with a single hook matcher:
+    # hook_config = HookConfig.from_dict({
+    #     "hooks": {
+    #         "PreToolUse": [{
+    #             "matcher": "terminal",
+    #             "hooks": [{"command": "path/to/script.sh", "timeout": 10}]
+    #         }]
+    #     }
+    # })
+
+    agent = get_default_agent(llm=llm)
+    conversation = Conversation(
+        agent=agent,
+        workspace=str(workspace),
+        hook_config=hook_config,
+    )
+
+    # Demo 1: Safe command (PostToolUse logs it)
+    print("=" * 60)
+    print("Demo 1: Safe command - logged by PostToolUse")
+    print("=" * 60)
+    conversation.send_message("Run: echo 'Hello from hooks!'")
+    conversation.run()
+
+    if log_file.exists():
+        print(f"\n[Log: {log_file.read_text().strip()}]")
+
+    # Demo 2: Dangerous command (PreToolUse blocks it)
+    print("\n" + "=" * 60)
+    print("Demo 2: Dangerous command - blocked by PreToolUse")
+    print("=" * 60)
+    conversation.send_message("Run: rm -rf /tmp/test")
+    conversation.run()
+
+    # Demo 3: Context injection + Stop hook enforcement
+    print("\n" + "=" * 60)
+    print("Demo 3: Context injection + Stop hook")
+    print("=" * 60)
+    print("UserPromptSubmit injects git status; Stop requires summary.txt\n")
+    conversation.send_message(
+        "Check what files have changes, then create summary.txt describing the repo."
+    )
+    conversation.run()
+
+    if summary_file.exists():
+        print(f"\n[summary.txt: {summary_file.read_text()[:80]}...]")
+
+    print("\n" + "=" * 60)
+    print("Example Complete!")
+    print("=" * 60)
+
+    cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+    print(f"\nEXAMPLE_COST: {cost}")
+```
+<RunExampleCode path_to_script="examples/01_standalone_sdk/33_hooks/33_hooks.py"/>
+
+
+### Hook Scripts
+
+The example uses external hook scripts in the `hook_scripts/` directory:
+
+<Accordion title="block_dangerous.sh - PreToolUse hook">
+```bash
+#!/bin/bash
+# PreToolUse hook: Block dangerous rm -rf commands
+# Uses jq for JSON parsing (needed for nested fields like tool_input.command)
+
+input=$(cat)
+command=$(echo "$input" | jq -r '.tool_input.command // ""')
+
+# Block rm -rf commands
+if [[ "$command" =~ "rm -rf" ]]; then
+    echo '{"decision": "deny", "reason": "rm -rf commands are blocked for safety"}'
+    exit 2  # Exit code 2 = block the operation
+fi
+
+exit 0  # Exit code 0 = allow the operation
+```
+</Accordion>
+
+<Accordion title="log_tools.sh - PostToolUse hook">
+```bash
+#!/bin/bash
+# PostToolUse hook: Log all tool usage
+# Uses OPENHANDS_TOOL_NAME env var (no jq/python needed!)
+
+# LOG_FILE should be set by the calling script
+LOG_FILE="${LOG_FILE:-/tmp/tool_usage.log}"
+
+echo "[$(date)] Tool used: $OPENHANDS_TOOL_NAME" >> "$LOG_FILE"
+exit 0
+```
+</Accordion>
+
+<Accordion title="inject_git_context.sh - UserPromptSubmit hook">
+```bash
+#!/bin/bash
+# UserPromptSubmit hook: Inject git status when user asks about code changes
+
+input=$(cat)
+
+# Check if user is asking about changes, diff, or git
+if echo "$input" | grep -qiE "(changes|diff|git|commit|modified)"; then
+    # Get git status if in a git repo
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        status=$(git status --short 2>/dev/null | head -10)
+        if [ -n "$status" ]; then
+            # Escape for JSON
+            escaped=$(echo "$status" | sed 's/"/\\"/g' | tr '\n' ' ')
+            echo "{\"additionalContext\": \"Current git status: $escaped\"}"
+        fi
+    fi
+fi
+exit 0
+```
+</Accordion>
+
+<Accordion title="require_summary.sh - Stop hook">
+```bash
+#!/bin/bash
+# Stop hook: Require a summary.txt file before allowing agent to finish
+# SUMMARY_FILE should be set by the calling script
+
+SUMMARY_FILE="${SUMMARY_FILE:-./summary.txt}"
+
+if [ ! -f "$SUMMARY_FILE" ]; then
+    echo '{"decision": "deny", "additionalContext": "Create summary.txt first."}'
+    exit 2
+fi
+exit 0
+```
+</Accordion>
+
+
+## Next Steps
+
+- See also: [Metrics and Observability](/sdk/guides/metrics)
+- Architecture: [Events](/sdk/arch/events)

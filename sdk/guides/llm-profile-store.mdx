@@ -1,0 +1,239 @@
+---
+title: LLM Profile Store
+description: Save, load, and manage reusable LLM configurations so you never repeat setup code again.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+The `LLMProfileStore` class provides a centralized mechanism for managing `LLM` configurations.
+Define a profile once, reuse it everywhere — across scripts, sessions, and even machines.
+
+## Benefits
+- **Persistence:** Saves model parameters (API keys, temperature, max tokens, ...) to a stable disk format.
+- **Reusability:** Import a defined profile into any script or session with a single identifier.
+- **Portability:** Simplifies the synchronization of model configurations across different machines or deployment environments.
+
+## How It Works
+
+<Steps>
+    <Step>
+        ### Create a Store
+
+        The store manages a directory of JSON profile files. By default it uses `~/.openhands/profiles`,
+        but you can point it anywhere.
+
+        ```python icon="python" focus={3, 4, 6, 7}
+        from openhands.sdk import LLMProfileStore
+
+        # Default location: ~/.openhands/profiles
+        store = LLMProfileStore()
+
+        # Or bring your own directory
+        store = LLMProfileStore(base_dir="./my-profiles")
+        ```
+    </Step>
+    <Step>
+        ### Save a Profile
+
+        Got an LLM configured just right? Save it for later.
+
+        ```python icon="python" focus={11, 12}
+        from pydantic import SecretStr
+        from openhands.sdk import LLM, LLMProfileStore
+
+        fast_llm = LLM(
+            usage_id="fast",
+            model="anthropic/claude-sonnet-4-5-20250929",
+            api_key=SecretStr("sk-..."),
+            temperature=0.0,
+        )
+
+        store = LLMProfileStore()
+        store.save("fast", fast_llm)
+        ```
+
+        <Info>
+        Secret fields are **masked** by default for security, so the saved JSON keeps the field shape without exposing the
+        real value. Pass `include_secrets=True` to persist the actual secret values.
+        </Info>
+    </Step>
+    <Step>
+        ### Load a Profile
+
+        Next time you need that LLM, just load it:
+
+        ```python icon="python"
+        # Same model, ready to go.
+        llm = store.load("fast")
+        ```
+    </Step>
+    <Step>
+        ### List and Clean Up
+
+        See what you've got, delete what you don't need:
+
+        ```python icon="python" focus={1, 3, 4}
+        print(store.list())   # ['fast.json', 'creative.json']
+
+        store.delete("creative")
+        print(store.list())   # ['fast.json']
+        ```
+    </Step>
+</Steps>
+
+## Good to Know
+
+Profile names must be simple filenames (no slashes, no dots at the start).
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/37_llm_profile_store/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/37_llm_profile_store/main.py)
+</Note>
+
+This directory-based example ships with a pre-generated `profiles/fast.json` file created from a normal save, then creates a second profile at runtime in a temporary store.
+
+```python icon="python" expandable examples/01_standalone_sdk/37_llm_profile_store/main.py
+"""Example: Using LLMProfileStore to save and reuse LLM configurations.
+
+This example ships with one pre-generated profile JSON file and creates another
+profile at runtime. The checked-in profile comes from a normal save, so secrets
+are masked instead of exposed and non-secret fields like `base_url` are kept
+when present.
+"""
+
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, LLMProfileStore
+
+
+SCRIPT_DIR = Path(__file__).parent
+EXAMPLE_PROFILES_DIR = SCRIPT_DIR / "profiles"
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
+
+
+profile_store_dir = Path(tempfile.mkdtemp()) / "profiles"
+shutil.copytree(EXAMPLE_PROFILES_DIR, profile_store_dir)
+store = LLMProfileStore(base_dir=profile_store_dir)
+
+print(f"Seeded profiles: {store.list()}")
+
+api_key = os.getenv("LLM_API_KEY")
+creative_llm = LLM(
+    usage_id="creative",
+    model=os.getenv("LLM_MODEL", DEFAULT_MODEL),
+    api_key=SecretStr(api_key) if api_key else None,
+    base_url=os.getenv("LLM_BASE_URL"),
+    temperature=0.9,
+)
+
+# The checked-in fast.json was generated with a normal save, so its api_key is
+# masked and any configured base_url would be preserved. This runtime profile
+# also avoids persisting the real API key because secrets are masked by default.
+store.save("creative", creative_llm)
+creative_profile_json = (profile_store_dir / "creative.json").read_text()
+if api_key is not None:
+    assert api_key not in creative_profile_json
+
+print(f"Stored profiles: {store.list()}")
+
+fast_profile = store.load("fast")
+creative_profile = store.load("creative")
+
+print(
+    "Loaded fast profile. "
+    f"usage: {fast_profile.usage_id}, "
+    f"model: {fast_profile.model}, "
+    f"temperature: {fast_profile.temperature}."
+)
+print(
+    "Loaded creative profile. "
+    f"usage: {creative_profile.usage_id}, "
+    f"model: {creative_profile.model}, "
+    f"temperature: {creative_profile.temperature}."
+)
+
+store.delete("creative")
+print(f"After deletion: {store.list()}")
+
+print("EXAMPLE_COST: 0")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/37_llm_profile_store/main.py"/>
+
+## Mid-Conversation Model Switching
+
+You can use a saved profile to switch the active model on a running conversation between turns. This is useful when you want to start with one model, then switch to another for later user messages while keeping the same conversation history and combined usage metrics.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/44_model_switching_in_convo.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/44_model_switching_in_convo.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/44_model_switching_in_convo.py
+"""Mid-conversation model switching.
+
+Usage:
+    uv run examples/01_standalone_sdk/44_model_switching_in_convo.py
+"""
+
+import os
+
+from openhands.sdk import LLM, Agent, LocalConversation, Tool
+from openhands.sdk.llm.llm_profile_store import LLMProfileStore
+from openhands.tools.terminal import TerminalTool
+
+
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+store = LLMProfileStore()
+
+store.save(
+    "gpt",
+    LLM(model="openhands/gpt-5.2", api_key=LLM_API_KEY),
+    include_secrets=True,
+)
+
+agent = Agent(
+    llm=LLM(
+        model=os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929"),
+        api_key=LLM_API_KEY,
+    ),
+    tools=[Tool(name=TerminalTool.name)],
+)
+conversation = LocalConversation(agent=agent, workspace=os.getcwd())
+
+# Send a message with the default model
+conversation.send_message("Say hello in one sentence.")
+conversation.run()
+
+# Switch to a different model and send another message
+conversation.switch_profile("gpt")
+print(f"Switched to: {conversation.agent.llm.model}")
+
+conversation.send_message("Say goodbye in one sentence.")
+conversation.run()
+
+# Print metrics per model
+for usage_id, metrics in conversation.state.stats.usage_to_metrics.items():
+    print(f"  [{usage_id}] cost=${metrics.accumulated_cost:.6f}")
+
+combined = conversation.state.stats.get_combined_metrics()
+print(f"Total cost: ${combined.accumulated_cost:.6f}")
+print(f"EXAMPLE_COST: {combined.accumulated_cost}")
+
+store.delete("gpt")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/44_model_switching_in_convo.py"/>
+
+## Next Steps
+
+- **[LLM Registry](/sdk/guides/llm-registry)** - Manage multiple LLMs in memory at runtime
+- **[LLM Routing](/sdk/guides/llm-routing)** - Automatically route to different models
+- **[Exception Handling](/sdk/guides/llm-error-handling)** - Handle LLM errors gracefully

@@ -3,17 +3,64 @@ title: Security & Action Confirmation
 description: Control agent action execution through confirmation policy and security analyzer.
 ---
 
-Agent actions can be controlled through two complementary mechanisms: **confirmation policy** that determine when user approval is required, and **security analyzer** that evaluates action risk levels. Together, they provide flexible control over agent behavior while maintaining safety.
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+Agent actions can be controlled through two complementary mechanisms: **confirmation policy** that determine when user
+approval is required, and **security analyzer** that evaluates action risk levels. Together, they provide flexible control over agent behavior while maintaining safety.
 
 ## Confirmation Policy
+> A ready-to-run example is available [here](#ready-to-run-example-confirmation)!
 
 Confirmation policy controls whether actions require user approval before execution. They provide a simple way to ensure safe agent operation by requiring explicit permission for actions.
+
+### Setting Confirmation Policy
+
+Set the confirmation policy on your conversation:
+
+```python icon="python" focus={4}
+from openhands.sdk.security.confirmation_policy import AlwaysConfirm
+
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_confirmation_policy(AlwaysConfirm())
+```
+
+Available policies:
+- **`AlwaysConfirm()`** - Require approval for all actions
+- **`NeverConfirm()`** - Execute all actions without approval
+- **`ConfirmRisky()`** - Only require approval for risky actions (requires security analyzer)
+
+### Custom Confirmation Handler
+
+Implement your approval logic by checking conversation status:
+
+```python icon="python" focus={2-3,5}
+while conversation.state.agent_status != AgentExecutionStatus.FINISHED:
+    if conversation.state.agent_status == AgentExecutionStatus.WAITING_FOR_CONFIRMATION:
+        pending = ConversationState.get_unmatched_actions(conversation.state.events)
+        if not confirm_in_console(pending):
+            conversation.reject_pending_actions("User rejected")
+            continue
+    conversation.run()
+```
+
+### Rejecting Actions
+
+Provide feedback when rejecting to help the agent try a different approach:
+
+```python icon="python" focus={2-5}
+if not user_approved:
+    conversation.reject_pending_actions(
+        "User rejected because actions seem too risky."
+        "Please try a safer approach."
+    )
+```
+
+### Ready-to-run Example Confirmation
 
 <Note>
 Full confirmation example: [examples/01_standalone_sdk/04_confirmation_mode_example.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/04_confirmation_mode_example.py)
 </Note>
-
-### Basic Confirmation Example
 
 Require user approval before executing agent actions:
 
@@ -160,52 +207,7 @@ print("- Simple responses work normally without actions")
 print("- Confirmation policy is toggled with conversation.set_confirmation_policy()")
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/01_standalone_sdk/04_confirmation_mode_example.py
-```
-
-### Setting Confirmation Policy
-
-Set the confirmation policy on your conversation:
-
-```python highlight={4}
-from openhands.sdk.security.confirmation_policy import AlwaysConfirm
-
-conversation = Conversation(agent=agent, workspace=".")
-conversation.set_confirmation_policy(AlwaysConfirm())
-```
-
-Available policies:
-- **`AlwaysConfirm()`** - Require approval for all actions
-- **`NeverConfirm()`** - Execute all actions without approval
-- **`ConfirmRisky()`** - Only require approval for risky actions (requires security analyzer)
-
-### Custom Confirmation Handler
-
-Implement your approval logic by checking conversation status:
-
-```python highlight={2-3,5}
-while conversation.state.agent_status != AgentExecutionStatus.FINISHED:
-    if conversation.state.agent_status == AgentExecutionStatus.WAITING_FOR_CONFIRMATION:
-        pending = ConversationState.get_unmatched_actions(conversation.state.events)
-        if not confirm_in_console(pending):
-            conversation.reject_pending_actions("User rejected")
-            continue
-    conversation.run()
-```
-
-### Rejecting Actions
-
-Provide feedback when rejecting to help the agent try a different approach:
-
-```python highlight={2-4}
-if not user_approved:
-    conversation.reject_pending_actions(
-        "User rejected because actions seem too risky. Please try a safer approach."
-    )
-```
+<RunExampleCode path_to_script="examples/01_standalone_sdk/04_confirmation_mode_example.py"/>
 
 ---
 
@@ -222,13 +224,38 @@ Security analyzer work in conjunction with confirmation policy (like `ConfirmRis
 
 ### LLM Security Analyzer
 
+> A ready-to-run example is available [here](#ready-to-run-example-security-analyzer)!
+
 The **LLMSecurityAnalyzer** is the default implementation provided in the agent-sdk. It leverages the LLM's understanding of action context to provide lightweight security analysis. The LLM can annotate actions with security risk levels during generation, which the analyzer then uses to make security decisions.
+
+#### Security Analyzer Configuration
+
+Create an LLM-based security analyzer to review actions before execution:
+
+```python icon="python" focus={9}
+from openhands.sdk import LLM
+from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
+llm = LLM(
+    usage_id="security-analyzer",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+security_analyzer = LLMSecurityAnalyzer(llm=security_llm)
+agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+```
+
+The security analyzer:
+- Reviews each action before execution
+- Flags potentially dangerous operations
+- Can be configured with custom security policy
+- Uses a separate LLM to avoid conflicts with the main agent
+
+#### Ready-to-run Example Security Analyzer
 
 <Note>
 Full security analyzer example: [examples/01_standalone_sdk/16_llm_security_analyzer.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/16_llm_security_analyzer.py)
 </Note>
-
-#### Security Analyzer Example
 
 Automatically analyze agent actions for security risks before execution:
 
@@ -367,34 +394,7 @@ conversation.send_message(
 run_until_finished_with_security(conversation, confirm_high_risk_in_console)
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/01_standalone_sdk/16_llm_security_analyzer.py
-```
-
-#### Security Analyzer Configuration
-
-Create an LLM-based security analyzer to review actions before execution:
-
-```python highlight={9}
-from openhands.sdk import LLM
-from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
-llm = LLM(
-    usage_id="security-analyzer",
-    model=model,
-    base_url=base_url,
-    api_key=SecretStr(api_key),
-)
-security_analyzer = LLMSecurityAnalyzer(llm=security_llm)
-agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
-```
-
-The security analyzer:
-- Reviews each action before execution
-- Flags potentially dangerous operations
-- Can be configured with custom security policy
-- Uses a separate LLM to avoid conflicts with the main agent
+<RunExampleCode path_to_script="examples/01_standalone_sdk/16_llm_security_analyzer.py"/>
 
 ### Custom Security Analyzer Implementation
 
@@ -404,7 +404,7 @@ You can extend the security analyzer functionality by creating your own implemen
 
 To create a custom security analyzer, inherit from `SecurityAnalyzerBase` and implement the `security_risk()` method:
 
-```python
+```python icon="python" focus={5, 8}
 from openhands.sdk.security.analyzer import SecurityAnalyzerBase
 from openhands.sdk.security.risk import SecurityRisk
 from openhands.sdk.event.llm_convertible import ActionEvent
@@ -440,38 +440,189 @@ security_analyzer = CustomSecurityAnalyzer()
 agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
 ```
 
-For more details on the base class implementation, see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py).
+<Tip>
+    For more details on the base class implementation, see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py).
+</Tip>
+
+### Defense-in-Depth Security Analyzer
+
+#### The problem
+
+Your agent is about to run a tool call. Is it safe?
+
+The `LLMSecurityAnalyzer` asks the model itself — but the model can be
+manipulated, and encoding tricks can hide dangerous commands from it.
+You need a layer that does not depend on model judgment: something
+deterministic, local, and fast.
+
+#### What this gives you
+
+Three composable analyzers that classify actions at the boundary —
+before the tool runs, not after. No network calls, no model inference,
+no extra dependencies. They return a `SecurityRisk` level; your
+`ConfirmRisky` policy decides whether to prompt the user.
+
+| Analyzer | What it catches | How it works |
+|----------|----------------|--------------|
+| `PatternSecurityAnalyzer` | Known threat signatures (rm -rf, eval, curl\|sh) | Regex patterns on two corpora: shell patterns scan executable fields only; injection patterns scan all fields |
+| `PolicyRailSecurityAnalyzer` | Composed threats (fetch piped to exec, raw disk writes, catastrophic deletes) | Deterministic rules evaluated per-segment — both tokens must appear in the same field |
+| `EnsembleSecurityAnalyzer` | Nothing on its own — it combines the others | Takes the highest concrete risk across all child analyzers |
+
+#### Quick start
+
+You must configure both the analyzer and the confirmation policy.
+Setting an analyzer does not automatically change confirmation behavior.
+
+```python icon="python" focus={7-18}
+from openhands.sdk import Conversation
+from openhands.sdk.security import (
+    PatternSecurityAnalyzer,
+    PolicyRailSecurityAnalyzer,
+    EnsembleSecurityAnalyzer,
+    ConfirmRisky,
+    SecurityRisk,
+)
+
+# Create the analyzer — rails catch composed threats,
+# patterns catch individual signatures
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+    ]
+)
+
+# Tell the SDK when to ask the user — HIGH is the recommended baseline
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.HIGH)
+
+# Wire both into the conversation
+# Assumes `agent` is already configured — see Quick Start guide
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_security_analyzer(security_analyzer)
+conversation.set_confirmation_policy(confirmation_policy)
+```
+
+After this, every agent action passes through the analyzer before
+execution. HIGH-risk actions trigger a confirmation prompt — the user
+sees the risk level and can approve or reject before the tool runs.
+MEDIUM and LOW are allowed. UNKNOWN is confirmed by default
+(`confirm_unknown=True`).
+
+For security-sensitive environments, lower the threshold to catch more:
+
+```python
+# Stricter posture — MEDIUM and above require confirmation
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.MEDIUM)
+```
+
+You can also require confirmation when any analyzer cannot assess risk:
+
+```python
+# If any analyzer returns UNKNOWN, require confirmation
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+    ],
+    propagate_unknown=True,
+)
+```
+
+<Warning>
+`conversation.execute_tool()` bypasses the analyzer and confirmation
+policy. These analyzers protect agent actions in the conversation
+loop, not direct tool calls.
+</Warning>
+
+#### Adding the LLM analyzer for deeper coverage
+
+The pattern analyzer catches known threats instantly. The LLM analyzer
+can catch novel or ambiguous cases. Composing both gives you speed and
+breadth:
+
+```python
+from openhands.sdk.security import LLMSecurityAnalyzer
+
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+        LLMSecurityAnalyzer(),
+    ]
+)
+
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.HIGH)
+```
+
+The ensemble takes the worst case across all analyzers. If the pattern
+analyzer says HIGH and the LLM says LOW, the result is HIGH.
+
+#### Why it works this way
+
+**Two corpora, not one.** An agent that runs `ls /tmp` but thinks
+"I should avoid rm -rf /" is not flagged — shell patterns only see
+the `ls /tmp` that will actually execute. Injection patterns like
+"ignore all previous instructions" scan everything, because they
+target the model's instruction-following regardless of where they
+appear.
+
+**Max-severity, not averaging.** The analyzers scan the same input —
+they are correlated, not independent. The highest concrete risk wins.
+That is simpler and more auditable than probabilistic fusion.
+
+**UNKNOWN means "I don't know," not "safe."** By default, if all
+analyzers return UNKNOWN the ensemble preserves it, and `ConfirmRisky`
+triggers confirmation. If any analyzer returns a concrete level,
+UNKNOWN results are filtered out. For stricter environments, set
+`propagate_unknown=True` so that any single UNKNOWN triggers
+confirmation regardless of other results.
+
+**Confirm, don't block.** The analyzers return a risk level. The
+confirmation policy decides what happens. The analyzer does not
+prevent execution — it classifies risk for the policy layer to act on.
+Pair with Docker isolation for stronger safety guarantees.
+
+#### What this does not do
+
+This is a deterministic action-boundary control. It is not:
+
+- A complete prompt-injection solution
+- A full shell parser or AST interpreter
+- A sandbox replacement
+- A guarantee against novel threats the patterns do not cover
+
+It is additive to `LLMSecurityAnalyzer` and `GraySwanAnalyzer`, not a
+replacement for either.
+
+#### Known limitations
+
+| Limitation | Why | What would fix it |
+|---|---|---|
+| No hard-deny at the analyzer boundary | SDK analyzers return `SecurityRisk`, not block/allow | Hook-based enforcement |
+| `execute_tool()` bypasses checks | Direct tool execution skips the conversation loop | Hooks |
+| No Cyrillic/homoglyph detection | NFKC maps compatibility forms, not cross-script confusables | Unicode TR39 confusable tables |
+| Content past 30k chars is invisible | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
+| `thinking_blocks` not scanned | Scanning model reasoning risks false positives on deliberation | Separate injection-only CoT scan |
+
+<Note>
+Ready-to-run example: [examples/01_standalone_sdk/47_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/47_defense_in_depth_security.py)
+</Note>
 
 ---
 
 ## Configurable Security Policy
 
+> A ready-to-run example is available [here](#ready-to-run-example-security-policy)!
+
 Agents use security policies to guide their risk assessment of actions. The SDK provides a default security policy template, but you can customize it to match your specific security requirements and guidelines.
 
-<Note>
-Full configurable security policy example: [examples/01_standalone_sdk/32_configurable_security_policy.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/32_configurable_security_policy.py)
-</Note>
-
-### Security Policy Example
-
-Define custom security risk guidelines for your agent:
-
-```python icon="python" expandable examples/01_standalone_sdk/32_configurable_security_policy.py
-```
-
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/01_standalone_sdk/32_configurable_security_policy.py
-```
 
 ### Using Custom Security Policies
 
 You can provide a custom security policy template when creating an agent:
 
-```python highlight={10-11}
+```python focus={9-13} icon="python"
 from openhands.sdk import Agent, LLM
-from pathlib import Path
 
 llm = LLM(
     usage_id="agent",
@@ -480,7 +631,11 @@ llm = LLM(
 )
 
 # Provide a custom security policy template file
-agent = Agent(llm=llm, tools=tools, security_policy_filename="my_security_policy.j2")
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    security_policy_filename="my_security_policy.j2",
+)
 ```
 
 Custom security policies allow you to:
@@ -490,6 +645,175 @@ Custom security policies allow you to:
 - Tailor risk evaluation to your use case
 
 The security policy is provided as a Jinja2 template that gets rendered into the agent's system prompt, guiding how it evaluates the security risk of its actions.
+
+### Ready-to-run Example Security Policy
+
+<Note>
+Full configurable security policy example: [examples/01_standalone_sdk/32_configurable_security_policy.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/32_configurable_security_policy.py)
+</Note>
+
+Define custom security risk guidelines for your agent:
+
+```python icon="python" expandable examples/01_standalone_sdk/32_configurable_security_policy.py
+"""OpenHands Agent SDK — Configurable Security Policy Example
+
+This example demonstrates how to use a custom security policy template
+with an agent. Security policies define risk assessment guidelines that
+help agents evaluate the safety of their actions.
+
+By default, agents use the built-in security_policy.j2 template. This
+example shows how to:
+1. Use the default security policy
+2. Provide a custom security policy template embedded in the script
+3. Apply the custom policy to guide agent behavior
+"""
+
+import os
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Agent,
+    Conversation,
+    Event,
+    LLMConvertibleEvent,
+    get_logger,
+)
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+logger = get_logger(__name__)
+
+# Define a custom security policy template inline
+CUSTOM_SECURITY_POLICY = (
+    "# 🔐 Custom Security Risk Policy\n"
+    "When using tools that support the security_risk parameter, assess the "
+    "safety risk of your actions:\n"
+    "\n"
+    "- **LOW**: Safe read-only actions.\n"
+    "  - Viewing files, calculations, documentation.\n"
+    "- **MEDIUM**: Moderate container-scoped actions.\n"
+    "  - File modifications, package installations.\n"
+    "- **HIGH**: Potentially dangerous actions.\n"
+    "  - Network access, system modifications, data exfiltration.\n"
+    "\n"
+    "**Custom Rules**\n"
+    "- Always prioritize user data safety.\n"
+    "- Escalate to **HIGH** for any external data transmission.\n"
+)
+
+# Configure LLM
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    usage_id="agent",
+    model=model,
+    base_url=base_url,
+    api_key=SecretStr(api_key),
+)
+
+# Tools
+cwd = os.getcwd()
+tools = [
+    Tool(name=TerminalTool.name),
+    Tool(name=FileEditorTool.name),
+]
+
+# Example 1: Agent with default security policy
+print("=" * 100)
+print("Example 1: Agent with default security policy")
+print("=" * 100)
+default_agent = Agent(llm=llm, tools=tools)
+print(f"Security policy filename: {default_agent.security_policy_filename}")
+print("\nDefault security policy is embedded in the agent's system message.")
+
+# Example 2: Agent with custom security policy
+print("\n" + "=" * 100)
+print("Example 2: Agent with custom security policy")
+print("=" * 100)
+
+# Create a temporary file for the custom security policy
+with tempfile.NamedTemporaryFile(
+    mode="w", suffix=".j2", delete=False, encoding="utf-8"
+) as temp_file:
+    temp_file.write(CUSTOM_SECURITY_POLICY)
+    custom_policy_path = temp_file.name
+
+try:
+    # Create agent with custom security policy (using absolute path)
+    custom_agent = Agent(
+        llm=llm,
+        tools=tools,
+        security_policy_filename=custom_policy_path,
+    )
+    print(f"Security policy filename: {custom_agent.security_policy_filename}")
+    print("\nCustom security policy loaded from temporary file.")
+
+    # Verify the custom policy is in the system message
+    system_message = custom_agent.static_system_message
+    if "Custom Security Risk Policy" in system_message:
+        print("✓ Custom security policy successfully embedded in system message.")
+    else:
+        print("✗ Custom security policy not found in system message.")
+
+    # Run a conversation with the custom agent
+    print("\n" + "=" * 100)
+    print("Running conversation with custom security policy")
+    print("=" * 100)
+
+    llm_messages = []  # collect raw LLM messages
+
+    def conversation_callback(event: Event):
+        if isinstance(event, LLMConvertibleEvent):
+            llm_messages.append(event.to_llm_message())
+
+    conversation = Conversation(
+        agent=custom_agent,
+        callbacks=[conversation_callback],
+        workspace=".",
+    )
+
+    conversation.send_message(
+        "Please create a simple Python script named hello.py that prints "
+        "'Hello, World!'. Make sure to follow security best practices."
+    )
+    conversation.run()
+
+    print("\n" + "=" * 100)
+    print("Conversation finished.")
+    print(f"Total LLM messages: {len(llm_messages)}")
+    print("=" * 100)
+
+    # Report cost
+    cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+    print(f"EXAMPLE_COST: {cost}")
+
+finally:
+    # Clean up temporary file
+    Path(custom_policy_path).unlink(missing_ok=True)
+
+print("\n" + "=" * 100)
+print("Example Summary")
+print("=" * 100)
+print("This example demonstrated:")
+print("1. Using the default security policy (security_policy.j2)")
+print("2. Creating a custom security policy template")
+print("3. Applying the custom policy via security_policy_filename parameter")
+print("4. Running a conversation with the custom security policy")
+print(
+    "\nYou can customize security policies to match your organization's "
+    "specific requirements."
+)
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/32_configurable_security_policy.py"/>
 
 ## Next Steps
 

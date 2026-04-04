@@ -76,13 +76,13 @@ class SimpleAPIDocGenerator:
         """Fix MDX syntax issues in agent-sdk files to prevent Mintlify parsing errors."""
         logger.info("Fixing MDX syntax issues in agent-sdk files...")
         
-        # Fix email addresses in repo.md
-        repo_md = self.agent_sdk_dir / ".openhands" / "microagents" / "repo.md"
-        if repo_md.exists():
-            content = repo_md.read_text()
+        # Fix email addresses in AGENTS.md
+        agents_md = self.agent_sdk_dir / "AGENTS.md"
+        if agents_md.exists():
+            content = agents_md.read_text()
             # Fix unescaped @ symbols in email addresses
             content = re.sub(r'<([^<>]*@[^<>]*)>', r'&lt;\1&gt;', content)
-            repo_md.write_text(content)
+            agents_md.write_text(content)
             
         # Fix README.md
         readme_md = self.agent_sdk_dir / "README.md"
