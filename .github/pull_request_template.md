@@ -3,6 +3,7 @@
 <!-- AI/LLM agents: be concise and specific. Do not check the box below. -->
 
 - [ ] A human has tested these changes.
+- [ ] For significant changes, I have previewed the docs site locally (`mint dev`) and confirmed rendering
 
 ---
 
@@ -21,16 +22,15 @@
 ## How to Test
 
 <!--
-Required. Share the steps for the reviewer to be able to test your PR. e.g. You can test by running `npm install` then `npm build dev`.
-
-If you could not test this, say why.
+For code changes: Share steps to test your changes.
+For simple documentation fixes (typos, formatting, links): You can skip this or briefly state what you verified.
 -->
 
 ## Video/Screenshots
 
 <!--
-Provide a video or screenshots of testing your PR. e.g. you added a new feature to the gui, show us the video of you testing it successfully.
-
+For GUI/visual changes: Provide screenshots or video.
+For documentation content: Provide a screenshot of the rendered page if the change affects layout/formatting, or state "N/A - text-only change".
 -->
 
 ## Type
