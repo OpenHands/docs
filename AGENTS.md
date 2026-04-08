@@ -152,6 +152,18 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 
+### SDK guide file naming
+
+SDK guide files under `sdk/guides/` use a **category prefix** to group related pages:
+
+| Prefix | Category | Examples |
+|--------|----------|----------|
+| `llm-` | LLM features (model configuration, providers, streaming, presets) | `llm-reasoning.mdx`, `llm-gpt5-preset.mdx` |
+| `agent-` | Agent features (customization, delegation, browser, settings) | `agent-custom.mdx`, `agent-delegation.mdx` |
+| `convo-` | Conversation features (async, persistence, pause/resume) | `convo-async.mdx`, `convo-persistence.mdx` |
+
+When adding a new SDK guide, always use the appropriate prefix so that related files sort together and the sidebar grouping in `docs.json` stays consistent.
+
 ## LLM API Key Options
 
 The SDK documentation maintains three ways for users to obtain LLM access:
