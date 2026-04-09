@@ -192,10 +192,86 @@ llm = LLM(
 
 For a complete example, see the [image input example](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/17_image_input.py) in the SDK repository.
 
+## How do I handle MessageEvent in one-off tasks?
+
+**The SDK provides utilities to automatically respond to agent messages when running tasks end-to-end.**
+
+When running one-off tasks, some models may send a `MessageEvent` (proposing an action or asking for confirmation) instead of directly using tools. This causes `conversation.run()` to return, even though the agent hasn't finished the task.
+
+<Accordion title="Understanding the Problem" icon="circle-question">
+
+When an agent sends a message (via `MessageEvent`) instead of using the `finish` tool, the conversation ends because it's waiting for user input. In automated pipelines, there's no human to respond, so the task appears incomplete.
+
+**Key event types:**
+- `ActionEvent`: Agent uses a tool (terminal, file editor, etc.)
+- `MessageEvent`: Agent sends a text message (waiting for user response)
+- `FinishAction`: Agent explicitly signals task completion
+
+The solution is to automatically send a "fake user response" when the agent sends a message, prompting it to continue.
+
+</Accordion>
+
+<Accordion title="Solution: Auto-respond to Agent Messages" icon="code">
+
+The [`run_conversation_with_fake_user_response`](https://github.com/OpenHands/benchmarks/blob/main/benchmarks/utils/fake_user_response.py) function wraps your conversation and automatically handles agent messages:
+
+```python
+from openhands.sdk.conversation.state import ConversationExecutionStatus
+from openhands.sdk.event import ActionEvent, MessageEvent
+from openhands.sdk.tool.builtins.finish import FinishAction
+
+def run_conversation_with_fake_user_response(conversation, max_responses: int = 10):
+    """Run conversation, auto-responding to agent messages until finish or limit."""
+    for _ in range(max_responses):
+        conversation.run()
+        if conversation.state.execution_status != ConversationExecutionStatus.FINISHED:
+            break
+        events = list(conversation.state.events)
+        # Check if agent used finish tool
+        if any(isinstance(e, ActionEvent) and isinstance(e.action, FinishAction) for e in reversed(events)):
+            break
+        # Check if agent sent a message (needs response)
+        if not any(isinstance(e, MessageEvent) and e.source == "agent" for e in reversed(events)):
+            break
+        # Send continuation prompt
+        conversation.send_message(
+            "Please continue. Use the finish tool when done. DO NOT ask for human help."
+        )
+```
+
+</Accordion>
+
+<Accordion title="Usage Example" icon="play">
+
+```python
+from openhands.sdk import Agent, Conversation, LLM
+from openhands.workspace import DockerWorkspace
+from openhands.tools.preset.default import get_default_tools
+
+llm = LLM(model="anthropic/claude-sonnet-4-20250514", api_key="...")
+agent = Agent(llm=llm, tools=get_default_tools())
+workspace = DockerWorkspace()
+conversation = Conversation(agent=agent, workspace=workspace, max_iteration_per_run=100)
+
+conversation.send_message("Fix the bug in src/utils.py")
+run_conversation_with_fake_user_response(conversation, max_responses=10)
+# Results available in conversation.state.events
+```
+
+</Accordion>
+
+<Tip>
+**Pro tip:** Add a hint to your task prompt:
+> "If you're 100% done with the task, use the finish action. Otherwise, keep going until you're finished."
+
+This encourages the agent to use the finish tool rather than asking for confirmation.
+</Tip>
+
+For the full implementation used in OpenHands benchmarks, see the [fake_user_response.py](https://github.com/OpenHands/benchmarks/blob/main/benchmarks/utils/fake_user_response.py) module.
+
 ## More questions?
 
 If you have additional questions:
 
 - **[Join our Slack Community](https://openhands.dev/joinslack)** - Ask questions and get help from the community
-- **[GitHub Discussions](https://github.com/OpenHands/software-agent-sdk/discussions)** - Start a discussion
-- **[GitHub Issues](https://github.com/OpenHands/software-agent-sdk/issues)** - Report bugs or request features
+- **[GitHub Issues](https://github.com/OpenHands/software-agent-sdk/issues)** - Report bugs, request features, or start a discussion

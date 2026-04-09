@@ -3,6 +3,8 @@ title: Agent Skills & Context
 description: Skills add specialized behaviors, domain knowledge, and context-aware triggers to your agent through structured prompts.
 ---
 
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
 This guide shows how to implement skills in the SDK. For conceptual overview, see [Skills Overview](/overview/skills).
 
 OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
@@ -19,11 +21,11 @@ OpenHands supports an **extended version** of the [AgentSkills standard](https:/
 
 Content that's always in the system prompt.
 
-### Option 1: AGENTS.md (Auto-loaded)
+### Option 1: `AGENTS.md` (Auto-loaded)
 
 Place `AGENTS.md` at your repo root - it's loaded automatically. See [Permanent Context](/overview/skills/repo).
 
-```python
+```python icon="python" focus={3, 4}
 from openhands.sdk.context.skills import load_project_skills
 
 # Automatically finds AGENTS.md, CLAUDE.md, GEMINI.md at workspace root
@@ -33,7 +35,7 @@ agent_context = AgentContext(skills=skills)
 
 ### Option 2: Inline Skill (Code-defined)
 
-```python
+```python icon="python" focus={5-11}
 from openhands.sdk import AgentContext
 from openhands.sdk.context import Skill
 
@@ -52,7 +54,7 @@ agent_context = AgentContext(
 
 Content injected when keywords appear in user messages. See [Keyword-Triggered Skills](/overview/skills/keyword).
 
-```python
+```python icon="python" focus={6}
 from openhands.sdk.context import Skill, KeywordTrigger
 
 Skill(
@@ -64,7 +66,7 @@ Skill(
 
 When user says "encrypt this", the content is injected into the message:
 
-```xml
+```xml icon="file"
 <EXTRA_INFO>
 The following information has been included based on a keyword match for "encrypt".
 Skill location: /path/to/encryption-helper
@@ -77,7 +79,7 @@ Use the encrypt.sh script to encrypt messages.
 
 For the agent to trigger skills, use the [AgentSkills standard](https://agentskills.io/specification) `SKILL.md` format. The agent sees a summary and reads full content on demand.
 
-```python
+```python icon="python"
 from openhands.sdk.context.skills import load_skills_from_dir
 
 # Load SKILL.md files from a directory
@@ -86,7 +88,7 @@ agent_context = AgentContext(skills=list(agent_skills.values()))
 ```
 
 Skills are listed in the system prompt:
-```xml
+```xml icon="file"
 <available_skills>
   <skill>
     <name>code-style</name>
@@ -99,6 +101,324 @@ Skills are listed in the system prompt:
 <Tip>
 Add `triggers` to a SKILL.md for **both** progressive disclosure AND automatic injection when keywords match.
 </Tip>
+
+## Managing Installed Skills
+
+You can install AgentSkills into a persistent directory and manage them through
+`openhands.sdk.skills`. Skills are stored under
+`~/.openhands/skills/installed/` with a `.installed.json` metadata file that
+records an `enabled` flag. `list_installed_skills()` returns all installed
+skills, while `load_installed_skills()` returns only those with
+`enabled=true`.
+
+The public lifecycle API includes `install_skill()`, `update_skill()`,
+`enable_skill()`, `disable_skill()`, and `uninstall_skill()`, which gives the
+CLI a clean SDK surface for `/skill install`, `/skill enable`,
+`/skill disable`, and `/skill uninstall`.
+
+### Installed Skill Lifecycle Example
+
+This example mirrors the installed-plugin lifecycle example, but for
+AgentSkills. It installs sample skills, lists them, toggles the
+persistent `enabled` flag, and uninstalls one skill while leaving the
+other available.
+
+<Note>
+Source: [examples/05_skills_and_plugins/03_managing_installed_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/03_managing_installed_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/03_managing_installed_skills/main.py
+"""Example: Installing and Managing Skills
+
+This example demonstrates installed skill lifecycle operations in the SDK:
+
+1. Install skills from local paths into persistent storage
+2. List tracked skills and load only the enabled ones
+3. Inspect the `.installed.json` metadata file and `enabled` flag
+4. Disable and re-enable a skill without reinstalling it
+5. Uninstall a skill while leaving other installed skills available
+
+For marketplace installation flows, see:
+`examples/01_standalone_sdk/43_mixed_marketplace_skills/`.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
+from openhands.sdk.skills import (
+    disable_skill,
+    enable_skill,
+    install_skill,
+    list_installed_skills,
+    load_installed_skills,
+    uninstall_skill,
+)
+
+
+script_dir = Path(__file__).resolve().parent
+example_skills_dir = script_dir.parent / "01_loading_agentskills" / "example_skills"
+
+
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted skill state."""
+    print(f"\n{label}")
+    print("-" * len(label))
+
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled}, source={info.source})")
+
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"Loaded skills: {[skill.name for skill in loaded]}")
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    print("Metadata file:")
+    print(json.dumps(metadata, indent=2))
+
+
+def demo_install_skills(installed_dir: Path) -> list[str]:
+    """Install the sample skills into the isolated installed directory."""
+    print("\n" + "=" * 60)
+    print("DEMO 1: Installing local skills")
+    print("=" * 60)
+
+    installed_names: list[str] = []
+    for skill_dir in sorted(example_skills_dir.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        info = install_skill(source=str(skill_dir), installed_dir=installed_dir)
+        installed_names.append(info.name)
+        print(f"✓ Installed: {info.name}")
+        print(f"  Source: {info.source}")
+        print(f"  Path: {info.install_path}")
+
+    return installed_names
+
+
+def demo_list_and_load_skills(installed_dir: Path) -> None:
+    """List tracked skills and load them as runtime Skill objects."""
+    print("\n" + "=" * 60)
+    print("DEMO 2: Listing and loading installed skills")
+    print("=" * 60)
+
+    installed = list_installed_skills(installed_dir=installed_dir)
+    print("Tracked skills:")
+    for info in installed:
+        desc = (info.description or "No description")[:60]
+        print(f"  - {info.name} (enabled={info.enabled})")
+        print(f"    Description: {desc}...")
+
+    loaded = load_installed_skills(installed_dir=installed_dir)
+    print(f"\nLoaded {len(loaded)} skill(s):")
+    for skill in loaded:
+        desc = (skill.description or "No description")[:60]
+        print(f"  - {skill.name}: {desc}...")
+
+
+def demo_enable_disable_skill(installed_dir: Path, skill_name: str) -> None:
+    """Disable then re-enable a skill and show the persisted metadata."""
+    print("\n" + "=" * 60)
+    print("DEMO 3: Disabling and re-enabling a skill")
+    print("=" * 60)
+
+    print_state("Before disable", installed_dir)
+
+    assert disable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After disable", installed_dir)
+    assert skill_name not in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is False
+
+    assert enable_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After re-enable", installed_dir)
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["skills"][skill_name]["enabled"] is True
+    assert skill_name in [
+        skill.name for skill in load_installed_skills(installed_dir=installed_dir)
+    ]
+
+
+def demo_uninstall_skill(
+    installed_dir: Path, skill_name: str, remaining_skill_name: str
+) -> None:
+    """Uninstall one skill and confirm the other skill remains available."""
+    print("\n" + "=" * 60)
+    print("DEMO 4: Uninstalling a skill")
+    print("=" * 60)
+
+    assert uninstall_skill(skill_name, installed_dir=installed_dir) is True
+    print_state("After uninstall", installed_dir)
+
+    assert not (installed_dir / skill_name).exists()
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert skill_name not in metadata["skills"]
+    assert remaining_skill_name in metadata["skills"]
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-skills"
+        installed_dir.mkdir(parents=True)
+
+        installed_names = demo_install_skills(installed_dir)
+        demo_list_and_load_skills(installed_dir)
+        demo_enable_disable_skill(installed_dir, skill_name="rot13-encryption")
+        demo_uninstall_skill(
+            installed_dir,
+            skill_name="rot13-encryption",
+            remaining_skill_name="code-style-guide",
+        )
+
+        remaining_names = [
+            info.name for info in list_installed_skills(installed_dir=installed_dir)
+        ]
+        assert remaining_names == ["code-style-guide"]
+        assert sorted(installed_names) == ["code-style-guide", "rot13-encryption"]
+
+    print("\nEXAMPLE_COST: 0")
+```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/03_managing_installed_skills/main.py"/>
+
+### Installing Skills from a Marketplace
+
+Use a marketplace when you want to install a curated mix of local and remote
+AgentSkills in one step. The example below shows how to define a marketplace,
+install all listed skills, and inspect the installed metadata.
+
+<Note>
+Source: [examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py
+"""Example: Mixed Marketplace with Local and Remote Skills
+
+This example demonstrates how to create a marketplace that includes both:
+1. Local skills hosted in your project directory
+2. Remote skills from GitHub (OpenHands/extensions repository)
+
+The marketplace.json schema supports source paths in these formats:
+- Local paths: ./path, ../path, /absolute/path, ~/path, file:///path
+- GitHub URLs: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+
+This pattern is useful for teams that want to:
+- Maintain their own custom skills locally
+- Reference specific skills from remote repositories
+- Create a curated skill set for their specific workflows
+
+Directory Structure:
+    43_mixed_marketplace_skills/
+    ├── .plugin/
+    │   └── marketplace.json     # Marketplace with local and remote skills
+    ├── skills/
+    │   └── greeting-helper/
+    │       └── SKILL.md         # Local skill content
+    ├── main.py                  # This file
+    └── README.md                # Documentation
+
+Usage:
+    # Install all skills from marketplace to ~/.openhands/skills/installed/
+    python main.py --install
+
+    # Force reinstall (overwrite existing)
+    python main.py --install --force
+
+    # Show installed skills
+    python main.py --list
+"""
+
+import sys
+from pathlib import Path
+
+from openhands.sdk.plugin import Marketplace
+from openhands.sdk.skills import (
+    install_skills_from_marketplace,
+    list_installed_skills,
+)
+
+
+def main():
+    script_dir = Path(__file__).parent
+
+    if "--list" in sys.argv:
+        # List installed skills
+        print("=" * 80)
+        print("Installed Skills")
+        print("=" * 80)
+        installed = list_installed_skills()
+        if not installed:
+            print("\nNo skills installed.")
+            print("Run with --install to install skills from the marketplace.")
+        else:
+            for info in installed:
+                desc = (info.description or "No description")[:60]
+                print(f"\n  {info.name}")
+                print(f"    Description: {desc}...")
+                print(f"    Source: {info.source}")
+        return
+
+    if "--install" in sys.argv:
+        # Install skills from marketplace
+        print("=" * 80)
+        print("Installing Skills from Marketplace")
+        print("=" * 80)
+        print(f"\nMarketplace directory: {script_dir}")
+
+        force = "--force" in sys.argv
+        installed = install_skills_from_marketplace(script_dir, force=force)
+
+        print(f"\n\nInstalled {len(installed)} skills:")
+        for info in installed:
+            print(f"  - {info.name}")
+
+        # Show all installed skills
+        print("\n" + "=" * 80)
+        print("All Installed Skills")
+        print("=" * 80)
+        all_installed = list_installed_skills()
+        for info in all_installed:
+            desc = (info.description or "No description")[:50]
+            print(f"  - {info.name}: {desc}...")
+        return
+
+    # Default: show marketplace info
+    print("=" * 80)
+    print("Marketplace Information")
+    print("=" * 80)
+    print(f"\nMarketplace directory: {script_dir}")
+
+    marketplace = Marketplace.load(script_dir)
+    print(f"Name: {marketplace.name}")
+    print(f"Description: {marketplace.description}")
+    print(f"Skills defined: {len(marketplace.skills)}")
+
+    print("\nSkills:")
+    for entry in marketplace.skills:
+        source_type = "remote" if entry.source.startswith("http") else "local"
+        print(f"  - {entry.name} ({source_type})")
+        print(f"    Source: {entry.source}")
+        if entry.description:
+            print(f"    Description: {entry.description}")
+
+    print("\n" + "-" * 80)
+    print("Usage:")
+    print("  python main.py --install        # Install all skills")
+    print("  python main.py --install --force # Force reinstall")
+    print("  python main.py --list           # List installed skills")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/43_mixed_marketplace_skills/main.py"/>
+
 
 ---
 
@@ -199,7 +519,7 @@ agent_context = AgentContext(
     # user_message_suffix is appended to each user message
     user_message_suffix="The first character of your response should be 'I'",
     # You can also enable automatic load skills from
-    # public registry at https://github.com/OpenHands/skills
+    # public registry at https://github.com/OpenHands/extensions
     load_public_skills=True,
 )
 
@@ -245,17 +565,13 @@ cost = llm.metrics.accumulated_cost
 print(f"EXAMPLE_COST: {cost}")
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/01_standalone_sdk/03_activate_skill.py
-```
+<RunExampleCode path_to_script="examples/01_standalone_sdk/03_activate_skill.py"/>
 
 ### Creating Skills
 
 Skills are defined with a name, content (the instructions), and an optional trigger:
 
-```python highlight={3-14}
+```python icon="python" focus={3-14}
 agent_context = AgentContext(
     skills=[
         Skill(
@@ -278,7 +594,7 @@ agent_context = AgentContext(
 
 Use `KeywordTrigger` to activate skills only when specific words appear:
 
-```python highlight={4}
+```python icon="python" focus={4}
 Skill(
     name="magic-word",
     content="Special instructions when magic word is detected",
@@ -287,8 +603,7 @@ Skill(
 ```
 
 
-
-## File-Based Skills (SKILL.md)
+## File-Based Skills (`SKILL.md`)
 
 For reusable skills, use the [AgentSkills standard](https://agentskills.io/specification) directory format.
 
@@ -300,22 +615,37 @@ Full example: [examples/05_skills_and_plugins/01_loading_agentskills/main.py](ht
 
 Each skill is a directory containing:
 
-```
-my-skill/
-├── SKILL.md          # Required: Skill definition with frontmatter
-├── scripts/          # Optional: Executable scripts
-│   └── helper.sh
-├── references/       # Optional: Reference documentation
-│   └── examples.md
-└── assets/           # Optional: Static assets
-    └── config.json
-```
+<Tree>
+    <Tree.Folder name="my-skill/" defaultOpen>
+        <Tree.File name="SKILL.md" />
+        <Tree.Folder name="scripts/" defaultOpen>
+            <Tree.File name="helper.sh" />
+        </Tree.Folder>
+        <Tree.Folder name="references/" defaultOpen>
+            <Tree.File name="examples.md" />
+        </Tree.Folder>
+        <Tree.Folder name="assets/" defaultOpen>
+            <Tree.File name="config.json" />
+        </Tree.Folder>
+    </Tree.Folder>
+</Tree>
 
-### SKILL.md Format
+where
+
+| Component | Required | Description |
+|-------|----------|-------------|
+| `SKILL.md` | Yes | Skill definition with frontmatter |
+| `scripts/` | No | Executable scripts |
+| `references/` | No | Reference documentation |
+| `assets/` | No | Static assets |
+
+
+
+### `SKILL.md` Format
 
 The `SKILL.md` file defines the skill with YAML frontmatter:
 
-```yaml
+```md icon="markdown"
 ---
 name: my-skill                    # Required (standard)
 description: >                    # Required (standard)
@@ -378,6 +708,7 @@ when triggered, plus the agent can proactively read them anytime.
 """
 
 import os
+import sys
 from pathlib import Path
 
 from pydantic import SecretStr
@@ -392,115 +723,106 @@ from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
 
-def main():
-    # Get the directory containing this script
-    script_dir = Path(__file__).parent
-    example_skills_dir = script_dir / "example_skills"
+# Get the directory containing this script
+script_dir = Path(__file__).parent
+example_skills_dir = script_dir / "example_skills"
 
-    # =========================================================================
-    # Part 1: Loading Skills from a Directory
-    # =========================================================================
-    print("=" * 80)
-    print("Part 1: Loading Skills from a Directory")
-    print("=" * 80)
+# =========================================================================
+# Part 1: Loading Skills from a Directory
+# =========================================================================
+print("=" * 80)
+print("Part 1: Loading Skills from a Directory")
+print("=" * 80)
 
-    print(f"Loading skills from: {example_skills_dir}")
+print(f"Loading skills from: {example_skills_dir}")
 
-    # Discover resources in the skill directory
-    skill_subdir = example_skills_dir / "rot13-encryption"
-    resources = discover_skill_resources(skill_subdir)
-    print("\nDiscovered resources in rot13-encryption/:")
-    print(f"  - scripts: {resources.scripts}")
-    print(f"  - references: {resources.references}")
-    print(f"  - assets: {resources.assets}")
+# Discover resources in the skill directory
+skill_subdir = example_skills_dir / "rot13-encryption"
+resources = discover_skill_resources(skill_subdir)
+print("\nDiscovered resources in rot13-encryption/:")
+print(f"  - scripts: {resources.scripts}")
+print(f"  - references: {resources.references}")
+print(f"  - assets: {resources.assets}")
 
-    # Load skills from the directory
-    repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(
-        example_skills_dir
-    )
+# Load skills from the directory
+repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(example_skills_dir)
 
-    print("\nLoaded skills from directory:")
-    print(f"  - Repo skills: {list(repo_skills.keys())}")
-    print(f"  - Knowledge skills: {list(knowledge_skills.keys())}")
-    print(f"  - Agent skills (SKILL.md): {list(agent_skills.keys())}")
+print("\nLoaded skills from directory:")
+print(f"  - Repo skills: {list(repo_skills.keys())}")
+print(f"  - Knowledge skills: {list(knowledge_skills.keys())}")
+print(f"  - Agent skills (SKILL.md): {list(agent_skills.keys())}")
 
-    # Access the loaded skill and show all AgentSkills standard fields
-    if agent_skills:
-        skill_name = list(agent_skills.keys())[0]
-        loaded_skill = agent_skills[skill_name]
-        print(f"\nDetails for '{skill_name}' (AgentSkills standard fields):")
-        print(f"  - Name: {loaded_skill.name}")
-        desc = loaded_skill.description or ""
-        print(f"  - Description: {desc[:70]}...")
-        print(f"  - License: {loaded_skill.license}")
-        print(f"  - Compatibility: {loaded_skill.compatibility}")
-        print(f"  - Metadata: {loaded_skill.metadata}")
-        if loaded_skill.resources:
-            print("  - Resources:")
-            print(f"    - Scripts: {loaded_skill.resources.scripts}")
-            print(f"    - References: {loaded_skill.resources.references}")
-            print(f"    - Assets: {loaded_skill.resources.assets}")
-            print(f"    - Skill root: {loaded_skill.resources.skill_root}")
+# Access the loaded skill and show all AgentSkills standard fields
+if agent_skills:
+    skill_name = next(iter(agent_skills))
+    loaded_skill = agent_skills[skill_name]
+    print(f"\nDetails for '{skill_name}' (AgentSkills standard fields):")
+    print(f"  - Name: {loaded_skill.name}")
+    desc = loaded_skill.description or ""
+    print(f"  - Description: {desc[:70]}...")
+    print(f"  - License: {loaded_skill.license}")
+    print(f"  - Compatibility: {loaded_skill.compatibility}")
+    print(f"  - Metadata: {loaded_skill.metadata}")
+    if loaded_skill.resources:
+        print("  - Resources:")
+        print(f"    - Scripts: {loaded_skill.resources.scripts}")
+        print(f"    - References: {loaded_skill.resources.references}")
+        print(f"    - Assets: {loaded_skill.resources.assets}")
+        print(f"    - Skill root: {loaded_skill.resources.skill_root}")
 
-    # =========================================================================
-    # Part 2: Using Skills with an Agent
-    # =========================================================================
-    print("\n" + "=" * 80)
-    print("Part 2: Using Skills with an Agent")
-    print("=" * 80)
+# =========================================================================
+# Part 2: Using Skills with an Agent
+# =========================================================================
+print("\n" + "=" * 80)
+print("Part 2: Using Skills with an Agent")
+print("=" * 80)
 
-    # Check for API key
-    api_key = os.getenv("LLM_API_KEY")
-    if not api_key:
-        print("Skipping agent demo (LLM_API_KEY not set)")
-        print("\nTo run the full demo, set the LLM_API_KEY environment variable:")
-        print("  export LLM_API_KEY=your-api-key")
-        return
+# Check for API key
+api_key = os.getenv("LLM_API_KEY")
+if not api_key:
+    print("Skipping agent demo (LLM_API_KEY not set)")
+    print("\nTo run the full demo, set the LLM_API_KEY environment variable:")
+    print("  export LLM_API_KEY=your-api-key")
+    sys.exit(0)
 
-    # Configure LLM
-    model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
-    llm = LLM(
-        usage_id="skills-demo",
-        model=model,
-        api_key=SecretStr(api_key),
-        base_url=os.getenv("LLM_BASE_URL"),
-    )
+# Configure LLM
+model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+llm = LLM(
+    usage_id="skills-demo",
+    model=model,
+    api_key=SecretStr(api_key),
+    base_url=os.getenv("LLM_BASE_URL"),
+)
 
-    # Create agent context with loaded skills
-    agent_context = AgentContext(
-        skills=list(agent_skills.values()),
-        # Disable public skills for this demo to keep output focused
-        load_public_skills=False,
-    )
+# Create agent context with loaded skills
+agent_context = AgentContext(
+    skills=list(agent_skills.values()),
+    # Disable public skills for this demo to keep output focused
+    load_public_skills=False,
+)
 
-    # Create agent with tools so it can read skill resources
-    tools = [
-        Tool(name=TerminalTool.name),
-        Tool(name=FileEditorTool.name),
-    ]
-    agent = Agent(llm=llm, tools=tools, agent_context=agent_context)
+# Create agent with tools so it can read skill resources
+tools = [
+    Tool(name=TerminalTool.name),
+    Tool(name=FileEditorTool.name),
+]
+agent = Agent(llm=llm, tools=tools, agent_context=agent_context)
 
-    # Create conversation
-    conversation = Conversation(agent=agent, workspace=os.getcwd())
+# Create conversation
+conversation = Conversation(agent=agent, workspace=os.getcwd())
 
-    # Test the skill (triggered by "encrypt" keyword)
-    # The skill provides instructions and a script for ROT13 encryption
-    print("\nSending message with 'encrypt' keyword to trigger skill...")
-    conversation.send_message("Encrypt the message 'hello world'.")
-    conversation.run()
+# Test the skill (triggered by "encrypt" keyword)
+# The skill provides instructions and a script for ROT13 encryption
+print("\nSending message with 'encrypt' keyword to trigger skill...")
+conversation.send_message("Encrypt the message 'hello world'.")
+conversation.run()
 
-    print(f"\nTotal cost: ${llm.metrics.accumulated_cost:.4f}")
-
-
-if __name__ == "__main__":
-    main()
+print(f"\nTotal cost: ${llm.metrics.accumulated_cost:.4f}")
+print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
 ```
 
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/05_skills_and_plugins/01_loading_agentskills/main.py
-```
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/01_loading_agentskills/main.py"/>
+
 
 ### Key Functions
 
@@ -508,7 +830,7 @@ uv run python examples/05_skills_and_plugins/01_loading_agentskills/main.py
 
 Loads all skills from a directory, returning three dictionaries:
 
-```python
+```python icon="python" focus={3}
 from openhands.sdk.context.skills import load_skills_from_dir
 
 repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
@@ -522,7 +844,7 @@ repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
 
 Discovers resource files in a skill directory:
 
-```python
+```python icon="python" focus={3}
 from openhands.sdk.context.skills import discover_skill_resources
 
 resources = discover_skill_resources(skill_dir)
@@ -554,7 +876,7 @@ This enables skills to reference their own scripts and resources using relative 
 Here's a skill with triggers (OpenHands extension):
 
 **SKILL.md:**
-```yaml
+```markdown icon="markdown"
 ---
 name: rot13-encryption
 description: >
@@ -575,7 +897,7 @@ Run the [encrypt.sh](scripts/encrypt.sh) script with your message:
 ```
 
 **scripts/encrypt.sh:**
-```bash
+```bash icon="sh"
 #!/bin/bash
 echo "$1" | tr 'A-Za-z' 'N-ZA-Mn-za-m'
 ```
@@ -584,13 +906,13 @@ When the user says "encrypt", the skill is triggered and the agent can use the p
 
 ## Loading Public Skills
 
-OpenHands maintains a [public skills repository](https://github.com/OpenHands/skills) with community-contributed skills. You can automatically load these skills without waiting for SDK updates.
+OpenHands maintains a [public skills repository](https://github.com/OpenHands/extensions) with community-contributed skills. You can automatically load these skills without waiting for SDK updates.
 
 ### Automatic Loading via AgentContext
 
 Enable public skills loading in your `AgentContext`:
 
-```python highlight={2}
+```python icon="python" focus={2}
 agent_context = AgentContext(
     load_public_skills=True,  # Auto-load from public registry
     skills=[
@@ -604,13 +926,35 @@ When enabled, the SDK will:
 2. Load all available skills from the repository
 3. Merge them with your explicitly defined skills
 
-**Skill Precedence**: If a skill name conflicts, your explicitly defined skills take precedence over public skills.
+### Skill Naming and Triggers
+
+**Skill Precedence by Name**: If a skill name conflicts, your explicitly defined skills take precedence over public skills. For example, if you define a skill named `code-review`, the public `code-review` skill will be skipped entirely.
+
+**Multiple Skills with Same Trigger**: Skills with different names but the same trigger can coexist and will ALL be activated when the trigger matches. To add project-specific guidelines alongside public skills, use a unique name (e.g., `custom-codereview-guide` instead of `code-review`). Both skills will be triggered together.
+
+```python icon="python"
+# Both skills will be triggered by "/codereview"
+agent_context = AgentContext(
+    load_public_skills=True,  # Loads public "code-review" skill
+    skills=[
+        Skill(
+            name="custom-codereview-guide",  # Different name = coexists
+            content="Project-specific guidelines...",
+            trigger=KeywordTrigger(keywords=["/codereview"]),
+        ),
+    ]
+)
+```
+
+<Tip>
+**Skill Activation Behavior**: When multiple skills share a trigger, all matching skills are loaded. Content is concatenated into the agent's context with public skills first, then explicitly defined skills. There is no smart merging—if guidelines conflict, the agent sees both.
+</Tip>
 
 ### Programmatic Loading
 
 You can also load public skills manually and have more control:
 
-```python
+```python icon="python"
 from openhands.sdk.context.skills import load_public_skills
 
 # Load all public skills
@@ -630,7 +974,7 @@ agent_context = AgentContext(skills=my_skills + public_skills)
 
 You can load skills from your own repository:
 
-```python
+```python icon="python" focus={3-7}
 from openhands.sdk.context.skills import load_public_skills
 
 # Load from a custom repository
@@ -651,7 +995,7 @@ The `load_public_skills()` function uses git-based caching for efficiency:
 This approach is more efficient than fetching individual skill files via HTTP and ensures you always have access to the latest community skills.
 
 <Note>
-Explore available public skills at [github.com/OpenHands/skills](https://github.com/OpenHands/skills). These skills cover various domains like GitHub integration, Python development, debugging, and more.
+Explore available public skills at [github.com/OpenHands/extensions](https://github.com/OpenHands/extensions). These skills cover various domains like GitHub integration, Python development, debugging, and more.
 </Note>
 
 ## Customizing Agent Context
@@ -660,7 +1004,7 @@ Explore available public skills at [github.com/OpenHands/skills](https://github.
 
 Append custom instructions to the system prompt or user messages via `AgentContext`:
 
-```python
+```python icon="python"
 agent_context = AgentContext(
     system_message_suffix="""
 <REPOSITORY_INFO>
@@ -679,7 +1023,7 @@ Branch: feature/new-api
 
 For complete control, provide a custom Jinja2 template via the `Agent` class:
 
-```python
+```python icon="python" focus={6}
 from openhands.sdk import Agent
 
 agent = Agent(
@@ -710,6 +1054,116 @@ Follow these guidelines:
 - Use absolute paths (e.g., `"/path/to/prompt.j2"`) to load from any location
 - Pass variables to the template via `system_prompt_kwargs`
 - The `system_message_suffix` from `AgentContext` is automatically appended after your custom prompt
+
+## Dynamic Command Execution
+
+Skills support inline shell command execution for injecting dynamic context at render time. This is useful for including repository state, environment information, or computed values in skill content.
+
+<Warning>
+**Security**: Commands execute with full shell privileges. Only use this feature with trusted skill sources. User-provided content should never be passed to command execution.
+</Warning>
+
+### Basic Syntax
+
+Use `` !`command` `` to execute a shell command and replace it with stdout:
+
+```markdown icon="markdown"
+---
+name: repo-context
+description: Injects current repository state
+triggers:
+  - git
+  - commit
+---
+
+# Repository Context
+
+Current branch: !`git branch --show-current`
+Last commit: !`git log -1 --oneline`
+```
+
+When triggered, the skill content becomes:
+
+```markdown icon="markdown"
+# Repository Context
+
+Current branch: main
+Last commit: a1b2c3d Fix authentication bug
+```
+
+### Safety Rules
+
+**Code blocks are never executed.** Both fenced and inline code blocks are preserved:
+
+````markdown icon="markdown"
+# Safe Examples
+
+Regular inline code: `git status` → preserved as-is
+Fenced block: → preserved as-is
+```bash
+!`echo "not executed"`
+```
+
+Dynamic command: !`echo "executed"` → replaced with "executed"
+````
+
+**Unclosed fenced blocks protect trailing content.** If a fenced block isn't closed (odd number of ``` delimiters), everything after it is treated as inside the fence:
+
+````markdown icon="markdown"
+```bash
+!`echo "inside fence - not executed"`
+```
+
+!`echo "between fences - executed"`
+
+```bash
+!`echo "unclosed fence - not executed"`
+````
+
+### Escape Syntax
+
+Use `` \!`cmd` `` to output the literal text `` !`cmd` `` without execution:
+
+```markdown icon="markdown"
+# Documenting the Syntax
+
+To execute a command, use \!`command` syntax.
+For example: \!`git status` shows the current git state.
+```
+
+Output:
+```markdown
+# Documenting the Syntax
+
+To execute a command, use !`command` syntax.
+For example: !`git status` shows the current git state.
+```
+
+### Error Handling
+
+Failed commands return inline error markers:
+
+| Scenario | Output |
+|----------|--------|
+| Command fails | `[Error: Command `xyz` exited with code 1: error message]` |
+| Command times out | `[Error: Command `xyz` timed out after 10s]` |
+| Large output (>50KB) | Output truncated with `... [output truncated]` |
+
+### Programmatic Rendering
+
+When using skills programmatically, call `render_content()` to execute commands:
+
+```python icon="python" focus={6-7}
+from openhands.sdk.context import Skill
+
+skill = Skill.load("/path/to/skill/SKILL.md")
+
+# Render with command execution
+rendered = skill.render_content(working_dir="/path/to/repo")
+print(rendered)  # Commands replaced with output
+```
+
+The `working_dir` parameter sets the current directory for command execution, enabling workspace-relative commands like `git status`.
 
 ## Next Steps
 

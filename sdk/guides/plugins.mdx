@@ -3,9 +3,7 @@ title: Plugins
 description: Plugins bundle skills, hooks, MCP servers, agents, and commands into reusable packages that extend agent capabilities.
 ---
 
-<Note>
-This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
-</Note>
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 Plugins provide a way to package and distribute multiple agent components together. A single plugin can include:
 
@@ -17,209 +15,6 @@ Plugins provide a way to package and distribute multiple agent components togeth
 
 The plugin format is compatible with the [Claude Code plugin structure](https://github.com/anthropics/claude-code/tree/main/plugins).
 
-## Loading Plugins
-
-```python icon="python" expandable examples/05_skills_and_plugins/02_loading_plugins/main.py
-"""Example: Loading Plugins
-
-This example demonstrates how to load plugins that bundle multiple components:
-- Skills (specialized knowledge and workflows)
-- Hooks (event handlers for tool lifecycle)
-- MCP configuration (external tool servers)
-- Agents (specialized agent definitions)
-- Commands (slash commands)
-
-Plugins follow the Claude Code plugin structure for compatibility.
-See the example_plugins/ directory for a complete plugin structure.
-"""
-
-import os
-import sys
-import tempfile
-from pathlib import Path
-
-from pydantic import SecretStr
-
-from openhands.sdk import LLM, Agent, AgentContext, Conversation
-from openhands.sdk.plugin import Plugin
-from openhands.sdk.tool import Tool
-from openhands.tools.file_editor import FileEditorTool
-from openhands.tools.terminal import TerminalTool
-
-
-# Get the directory containing this script
-script_dir = Path(__file__).parent
-example_plugins_dir = script_dir / "example_plugins"
-
-# =============================================================================
-# Part 1: Loading a Single Plugin
-# =============================================================================
-print("=" * 80)
-print("Part 1: Loading a Single Plugin")
-print("=" * 80)
-
-plugin_path = example_plugins_dir / "code-quality"
-print(f"Loading plugin from: {plugin_path}")
-
-plugin = Plugin.load(plugin_path)
-
-print("\nPlugin loaded successfully!")
-print(f"  Name: {plugin.name}")
-print(f"  Version: {plugin.version}")
-print(f"  Description: {plugin.description}")
-
-# Show manifest details (extra fields are accessible via model_extra)
-print("\nManifest details:")
-print(f"  Author: {plugin.manifest.author}")
-extra = plugin.manifest.model_extra or {}
-print(f"  License: {extra.get('license', 'N/A')}")
-print(f"  Repository: {extra.get('repository', 'N/A')}")
-
-# =============================================================================
-# Part 2: Exploring Plugin Components
-# =============================================================================
-print("\n" + "=" * 80)
-print("Part 2: Exploring Plugin Components")
-print("=" * 80)
-
-# Skills
-print(f"\nSkills ({len(plugin.skills)}):")
-for skill in plugin.skills:
-    desc = skill.description or ""
-    print(f"  - {skill.name}: {desc[:60]}...")
-    if skill.trigger:
-        print(f"    Triggers: {skill.trigger}")
-
-# Hooks
-print(f"\nHooks: {'Configured' if plugin.hooks else 'None'}")
-if plugin.hooks:
-    for event_type, matchers in plugin.hooks.hooks.items():
-        print(f"  - {event_type}: {len(matchers)} matcher(s)")
-
-# MCP Config
-print(f"\nMCP Config: {'Configured' if plugin.mcp_config else 'None'}")
-if plugin.mcp_config is not None:
-    servers = plugin.mcp_config.get("mcpServers", {})
-    for server_name in servers:
-        print(f"  - {server_name}")
-
-# Agents
-print(f"\nAgents ({len(plugin.agents)}):")
-for agent_def in plugin.agents:
-    print(f"  - {agent_def.name}: {agent_def.description[:60]}...")
-
-# Commands
-print(f"\nCommands ({len(plugin.commands)}):")
-for cmd in plugin.commands:
-    print(f"  - /{cmd.name}: {cmd.description[:60]}...")
-
-# =============================================================================
-# Part 3: Loading All Plugins from a Directory
-# =============================================================================
-print("\n" + "=" * 80)
-print("Part 3: Loading All Plugins from a Directory")
-print("=" * 80)
-
-plugins = Plugin.load_all(example_plugins_dir)
-print(f"\nLoaded {len(plugins)} plugin(s) from {example_plugins_dir}")
-for p in plugins:
-    print(f"  - {p.name} v{p.version}")
-
-# =============================================================================
-# Part 4: Using Plugin Components with an Agent
-# =============================================================================
-print("\n" + "=" * 80)
-print("Part 4: Using Plugin Components with an Agent")
-print("=" * 80)
-
-# Check for API key
-api_key = os.getenv("LLM_API_KEY")
-if not api_key:
-    print("Skipping agent demo (LLM_API_KEY not set)")
-    print("\nTo run the full demo, set the LLM_API_KEY environment variable:")
-    print("  export LLM_API_KEY=your-api-key")
-    sys.exit(0)
-
-# Configure LLM
-model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
-llm = LLM(
-    usage_id="plugin-demo",
-    model=model,
-    api_key=SecretStr(api_key),
-)
-
-# Create agent context with plugin skills
-agent_context = AgentContext(
-    skills=plugin.skills,
-    load_public_skills=False,  # Only use plugin skills for this demo
-)
-
-# Create agent with tools and plugin MCP config
-tools = [
-    Tool(name=TerminalTool.name),
-    Tool(name=FileEditorTool.name),
-]
-agent = Agent(
-    llm=llm,
-    tools=tools,
-    agent_context=agent_context,
-    mcp_config=plugin.mcp_config or {},  # Use MCP servers from plugin
-)
-
-# Create a temporary directory for the demo
-with tempfile.TemporaryDirectory() as tmpdir:
-    # Create conversation with plugin hooks
-    conversation = Conversation(
-        agent=agent,
-        workspace=tmpdir,
-        hook_config=plugin.hooks,  # Use hooks from plugin
-    )
-
-    # Demo 1: Test the skill (triggered by "lint" keyword)
-    print("\n--- Demo 1: Skill Triggering ---")
-    print("Sending message with 'lint' keyword to trigger skill...")
-    conversation.send_message(
-        "How do I lint Python code? Just give a brief explanation."
-    )
-    conversation.run()
-
-    # Demo 2: Test hooks by using file_editor (triggers PostToolUse hook)
-    print("\n--- Demo 2: Hook Execution ---")
-    print("Creating a file to trigger PostToolUse hook on file_editor...")
-    conversation.send_message(
-        "Create a file called hello.py with a simple print statement."
-    )
-    conversation.run()
-
-    # Demo 3: Test MCP by using fetch tool
-    print("\n--- Demo 3: MCP Tool Usage ---")
-    print("Using fetch MCP tool to retrieve a URL...")
-    conversation.send_message(
-        "Use the fetch tool to get the content from https://httpbin.org/get "
-        "and tell me what the 'origin' field contains."
-    )
-    conversation.run()
-
-    # Verify hooks executed by checking the hook log file
-    print("\n--- Verifying Hook Execution ---")
-    hook_log_path = os.path.join(tmpdir, ".hook_log")
-    if os.path.exists(hook_log_path):
-        print("Hook log file found! Contents:")
-        with open(hook_log_path) as f:
-            for line in f:
-                print(f"  {line.strip()}")
-    else:
-        print("No hook log file found (hooks may not have executed)")
-
-    print(f"\nTotal cost: ${llm.metrics.accumulated_cost:.4f}")
-```
-
-```bash Running the Example
-export LLM_API_KEY="your-api-key"
-cd agent-sdk
-uv run python examples/05_skills_and_plugins/02_loading_plugins/main.py
-```
-
 ## Plugin Structure
 
 <Note>
@@ -228,28 +23,37 @@ See the [example_plugins directory](https://github.com/OpenHands/software-agent-
 
 A plugin follows this directory structure:
 
-```
-plugin-name/
-├── .plugin/
-│   └── plugin.json          # Plugin metadata (required)
-├── skills/                   # Skills directory (optional)
-│   └── skill-name/
-│       └── SKILL.md         # Skill definition
-├── hooks/                    # Hooks directory (optional)
-│   └── hooks.json           # Hook definitions
-├── agents/                   # Agents directory (optional)
-│   └── agent-name.md        # Agent definition
-├── commands/                 # Commands directory (optional)
-│   └── command-name.md      # Command definition
-├── .mcp.json                 # MCP server config (optional)
-└── README.md                 # Plugin documentation
-```
+<Tree>
+    <Tree.Folder name={"plugin-name"} defaultOpen>
+        <Tree.Folder name=".plugin" defaultOpen>
+            <Tree.File name="plugin.json" />
+        </Tree.Folder>
+        <Tree.Folder name="skills" defaultOpen>
+        <Tree.Folder name="skill-name">
+          <Tree.File name="SKILL.md" />
+        </Tree.Folder>
+        </Tree.Folder>
+        <Tree.Folder name="hooks" defaultOpen>
+            <Tree.File name="hooks.json" />
+        </Tree.Folder>
+        <Tree.Folder name="agents" defaultOpen>
+            <Tree.File name="agent-name.md" />
+        </Tree.Folder>
+        <Tree.Folder name="commands" defaultOpen>
+            <Tree.File name="command-name.md" />
+        </Tree.Folder>
+        <Tree.File name=".mcp.json" />
+        <Tree.File name="README.md" />
+    </Tree.Folder>
+</Tree>
 
-### Plugin Manifest (plugin.json)
+Note that the plugin metadata, i.e., `plugin-name/.plugin/plugin.json`, is required.
 
-The manifest file defines plugin metadata:
+### Plugin Manifest
 
-```json
+The manifest file `plugin-name/.plugin/plugin.json` defines plugin metadata:
+
+```json icon="file-code" wrap
 {
   "name": "code-quality",
   "version": "1.0.0",
@@ -264,7 +68,7 @@ The manifest file defines plugin metadata:
 
 Skills are defined in markdown files with YAML frontmatter:
 
-```markdown
+```markdown icon="file-code"
 ---
 name: python-linting
 description: Instructions for linting Python code
@@ -289,7 +93,7 @@ ruff check .
 
 Hooks are defined in `hooks/hooks.json`:
 
-```json
+```json icon="file-code" wrap
 {
   "hooks": {
     "PostToolUse": [
@@ -312,7 +116,7 @@ Hooks are defined in `hooks/hooks.json`:
 
 MCP servers are configured in `.mcp.json`:
 
-```json
+```json wrap icon="file-code"
 {
   "mcpServers": {
     "fetch": {
@@ -325,56 +129,385 @@ MCP servers are configured in `.mcp.json`:
 
 ## Using Plugin Components
 
-### Loading a Plugin
+> The ready-to-run example is available [here](#ready-to-run-example)!
 
-```python
-from openhands.sdk.plugin import Plugin
+Brief explanation on how to use a plugin with an agent.
 
-# Load a single plugin
-plugin = Plugin.load("/path/to/plugin")
+<Steps>
+    <Step>
+        ### Loading a Plugin
+        First, load the desired plugins.
 
-# Load all plugins from a directory
-plugins = Plugin.load_all("/path/to/plugins")
+        ```python icon="python"
+        from openhands.sdk.plugin import Plugin
+
+        # Load a single plugin
+        plugin = Plugin.load("/path/to/plugin")
+
+        # Load all plugins from a directory
+        plugins = Plugin.load_all("/path/to/plugins")
+        ```
+    </Step>
+    <Step>
+        ### Accessing Components
+        You can access the different plugin components to see which ones are available.
+
+        ```python icon="python"
+        # Skills
+        for skill in plugin.skills:
+            print(f"Skill: {skill.name}")
+
+        # Hooks configuration
+        if plugin.hooks:
+            print(f"Hooks configured: {plugin.hooks}")
+
+        # MCP servers
+        if plugin.mcp_config:
+            servers = plugin.mcp_config.get("mcpServers", {})
+            print(f"MCP servers: {list(servers.keys())}")
+        ```
+    </Step>
+    <Step>
+        ### Using with an Agent
+        You can now feed your agent with your preferred plugin.
+
+        ```python focus={3,10,17} icon="python"
+        # Create agent context with plugin skills
+        agent_context = AgentContext(
+            skills=plugin.skills,
+        )
+
+        # Create agent with plugin MCP config
+        agent = Agent(
+            llm=llm,
+            tools=tools,
+            mcp_config=plugin.mcp_config or {},
+            agent_context=agent_context,
+        )
+
+        # Create conversation with plugin hooks
+        conversation = Conversation(
+            agent=agent,
+            hook_config=plugin.hooks,
+        )
+        ```
+    </Step>
+</Steps>
+
+## Ready-to-run Example
+
+The example below demonstrates plugin loading via Conversation and plugin management utilities (install, list, load, enable, disable, and uninstall).
+
+<Note>
+This example is available on GitHub: [examples/05_skills_and_plugins/02_loading_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/02_loading_plugins/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/02_loading_plugins/main.py
+"""Example: Loading and Managing Plugins
+
+This example demonstrates plugin loading and lifecycle management in the SDK:
+
+1. Loading a plugin from GitHub via Conversation (PluginSource)
+2. Installing plugins to persistent storage (local and GitHub)
+3. Listing tracked plugins and loading only the enabled ones
+4. Inspecting the `.installed.json` metadata file and `enabled` flag
+5. Disabling and re-enabling a plugin without reinstalling it
+6. Uninstalling plugins from persistent storage
+
+Plugins bundle skills, hooks, and MCP config together.
+
+Supported plugin sources:
+- Local path: /path/to/plugin
+- GitHub shorthand: github:owner/repo
+- Git URL: https://github.com/owner/repo.git
+- With ref: branch, tag, or commit SHA
+- With repo_path: subdirectory for monorepos
+
+For full documentation, see: https://docs.all-hands.dev/sdk/guides/plugins
+"""
+
+import json
+import os
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation
+from openhands.sdk.plugin import (
+    PluginFetchError,
+    PluginSource,
+    disable_plugin,
+    enable_plugin,
+    install_plugin,
+    list_installed_plugins,
+    load_installed_plugins,
+    uninstall_plugin,
+)
+from openhands.sdk.tool import Tool
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+script_dir = Path(__file__).parent
+local_plugin_path = script_dir / "example_plugins" / "code-quality"
+
+
+def print_state(label: str, installed_dir: Path) -> None:
+    """Print tracked, loaded, and persisted plugin state."""
+    print(f"\n{label}")
+    print("-" * len(label))
+
+    installed = list_installed_plugins(installed_dir=installed_dir)
+    print("Tracked plugins:")
+    for info in installed:
+        print(f"  - {info.name} (enabled={info.enabled}, source={info.source})")
+
+    loaded = load_installed_plugins(installed_dir=installed_dir)
+    print(f"Loaded plugins: {[plugin.name for plugin in loaded]}")
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    print("Metadata file:")
+    print(json.dumps(metadata, indent=2))
+
+
+def demo_conversation_with_github_plugin(llm: LLM) -> None:
+    """Demo 1: Load plugin from GitHub via Conversation."""
+    print("\n" + "=" * 60)
+    print("DEMO 1: Loading plugin from GitHub via Conversation")
+    print("=" * 60)
+
+    plugins = [
+        PluginSource(
+            source="github:anthropics/skills",
+            ref="main",
+        ),
+    ]
+
+    agent = Agent(
+        llm=llm,
+        tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            conversation = Conversation(
+                agent=agent,
+                workspace=tmpdir,
+                plugins=plugins,
+            )
+
+            conversation.send_message(
+                "What's the best way to create a PowerPoint presentation "
+                "programmatically? Check the skill before you answer."
+            )
+
+            skills = (
+                conversation.agent.agent_context.skills
+                if conversation.agent.agent_context
+                else []
+            )
+            print(f"✓ Loaded {len(skills)} skill(s) from GitHub plugin")
+            for skill in skills[:5]:
+                print(f"  - {skill.name}")
+            if len(skills) > 5:
+                print(f"  ... and {len(skills) - 5} more skills")
+
+            if conversation.resolved_plugins:
+                print("Resolved plugin refs:")
+                for resolved in conversation.resolved_plugins:
+                    print(f"  - {resolved.source} @ {resolved.resolved_ref}")
+
+            conversation.run()
+
+        except PluginFetchError as e:
+            print(f"⚠ Could not fetch from GitHub: {e}")
+            print("  Skipping this demo (network or rate limiting issue)")
+
+
+def demo_install_local_plugin(installed_dir: Path) -> str:
+    """Demo 2: Install a plugin from a local path."""
+    print("\n" + "=" * 60)
+    print("DEMO 2: Installing plugin from local path")
+    print("=" * 60)
+
+    info = install_plugin(source=str(local_plugin_path), installed_dir=installed_dir)
+    print(f"✓ Installed: {info.name} v{info.version}")
+    print(f"  Source: {info.source}")
+    print(f"  Path: {info.install_path}")
+    return info.name
+
+
+def demo_install_github_plugin(installed_dir: Path) -> None:
+    """Demo 3: Install a plugin from GitHub to persistent storage."""
+    print("\n" + "=" * 60)
+    print("DEMO 3: Installing plugin from GitHub")
+    print("=" * 60)
+
+    try:
+        info = install_plugin(
+            source="github:anthropics/skills",
+            ref="main",
+            installed_dir=installed_dir,
+        )
+        print(f"✓ Installed: {info.name} v{info.version}")
+        print(f"  Source: {info.source}")
+        print(f"  Resolved ref: {info.resolved_ref}")
+
+        plugins = load_installed_plugins(installed_dir=installed_dir)
+        for plugin in plugins:
+            if plugin.name != info.name:
+                continue
+
+            skills = plugin.get_all_skills()
+            print(f"  Skills: {len(skills)}")
+            for skill in skills[:5]:
+                desc = skill.description or "(no description)"
+                print(f"    - {skill.name}: {desc[:50]}...")
+            if len(skills) > 5:
+                print(f"    ... and {len(skills) - 5} more skills")
+
+    except PluginFetchError as e:
+        print(f"⚠ Could not fetch from GitHub: {e}")
+        print("  (Network or rate limiting issue)")
+
+
+def demo_list_and_load_plugins(installed_dir: Path) -> None:
+    """Demo 4: List tracked plugins and load the enabled ones."""
+    print("\n" + "=" * 60)
+    print("DEMO 4: Listing and loading installed plugins")
+    print("=" * 60)
+
+    print("Tracked plugins:")
+    for info in list_installed_plugins(installed_dir=installed_dir):
+        print(f"  - {info.name} v{info.version} (enabled={info.enabled})")
+
+    plugins = load_installed_plugins(installed_dir=installed_dir)
+    print(f"\nLoaded {len(plugins)} plugin(s):")
+    for plugin in plugins:
+        skills = plugin.get_all_skills()
+        print(f"  - {plugin.name}: {len(skills)} skill(s)")
+
+
+def demo_enable_disable_plugin(installed_dir: Path, plugin_name: str) -> None:
+    """Demo 5: Disable then re-enable a plugin without reinstalling it."""
+    print("\n" + "=" * 60)
+    print("DEMO 5: Disabling and re-enabling a plugin")
+    print("=" * 60)
+
+    print_state("Before disable", installed_dir)
+
+    assert disable_plugin(plugin_name, installed_dir=installed_dir) is True
+    print_state("After disable", installed_dir)
+    assert plugin_name not in [
+        plugin.name for plugin in load_installed_plugins(installed_dir=installed_dir)
+    ]
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["plugins"][plugin_name]["enabled"] is False
+
+    assert enable_plugin(plugin_name, installed_dir=installed_dir) is True
+    print_state("After re-enable", installed_dir)
+
+    metadata = json.loads((installed_dir / ".installed.json").read_text())
+    assert metadata["plugins"][plugin_name]["enabled"] is True
+    assert plugin_name in [
+        plugin.name for plugin in load_installed_plugins(installed_dir=installed_dir)
+    ]
+
+
+def demo_uninstall_plugins(installed_dir: Path) -> None:
+    """Demo 6: Uninstall all tracked plugins."""
+    print("\n" + "=" * 60)
+    print("DEMO 6: Uninstalling plugins")
+    print("=" * 60)
+
+    for info in list_installed_plugins(installed_dir=installed_dir):
+        uninstall_plugin(info.name, installed_dir=installed_dir)
+        print(f"✓ Uninstalled: {info.name}")
+
+    remaining = list_installed_plugins(installed_dir=installed_dir)
+    print(f"\nRemaining plugins: {len(remaining)}")
+
+
+if __name__ == "__main__":
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        print("Set LLM_API_KEY to run the full example")
+        print("Running install and lifecycle demos only...")
+        llm = None
+    else:
+        model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+        llm = LLM(
+            usage_id="plugin-demo",
+            model=model,
+            api_key=SecretStr(api_key),
+            base_url=os.getenv("LLM_BASE_URL"),
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        installed_dir = Path(tmpdir) / "installed-plugins"
+        installed_dir.mkdir()
+
+        if llm:
+            demo_conversation_with_github_plugin(llm)
+
+        local_plugin_name = demo_install_local_plugin(installed_dir)
+        demo_install_github_plugin(installed_dir)
+        demo_list_and_load_plugins(installed_dir)
+        demo_enable_disable_plugin(installed_dir, local_plugin_name)
+        demo_uninstall_plugins(installed_dir)
+
+    print("\n" + "=" * 60)
+    print("EXAMPLE COMPLETED SUCCESSFULLY")
+    print("=" * 60)
+
+    if llm:
+        print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
+    else:
+        print("EXAMPLE_COST: 0")
 ```
 
-### Accessing Components
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/02_loading_plugins/main.py"/>
 
-```python
-# Skills
-for skill in plugin.skills:
-    print(f"Skill: {skill.name}")
+## Installing Plugins to Persistent Storage
 
-# Hooks configuration
-if plugin.hooks:
-    print(f"Hooks configured: {plugin.hooks}")
+The SDK provides utilities to install plugins to a local directory
+(`~/.openhands/plugins/installed/` by default). Installed plugins are tracked
+in `.installed.json`, which stores metadata including a persistent enabled
+flag.
 
-# MCP servers
-if plugin.mcp_config:
-    servers = plugin.mcp_config.get("mcpServers", {})
-    print(f"MCP servers: {list(servers.keys())}")
-```
+Use `list_installed_plugins()` to see all tracked plugins (enabled and
+disabled). Use `load_installed_plugins()` to load only enabled plugins.
+`install_plugin()`, `enable_plugin()`, `disable_plugin()`, and
+`uninstall_plugin()` are exposed from `openhands.sdk.plugin`, which gives the
+CLI a clean SDK surface for `/plugin install`, `/plugin enable`,
+`/plugin disable`, and `/plugin uninstall`.
 
-### Using with an Agent
+### Installed Plugin Lifecycle
 
-```python highlight={3,10,17}
-# Create agent context with plugin skills
-agent_context = AgentContext(
-    skills=plugin.skills,
+The ready-to-run example above already demonstrates the full
+installed-plugin lifecycle, including toggling the persistent `enabled`
+flag in `.installed.json` before uninstalling the plugin.
+
+Use the same APIs directly when you need a narrower flow:
+
+```python icon="python"
+from openhands.sdk.plugin import (
+    disable_plugin,
+    enable_plugin,
+    install_plugin,
+    list_installed_plugins,
+    load_installed_plugins,
+    uninstall_plugin,
 )
 
-# Create agent with plugin MCP config
-agent = Agent(
-    llm=llm,
-    tools=tools,
-    mcp_config=plugin.mcp_config or {},
-    agent_context=agent_context,
-)
-
-# Create conversation with plugin hooks
-conversation = Conversation(
-    agent=agent,
-    hook_config=plugin.hooks,
-)
+info = install_plugin(source="/path/to/plugin")
+tracked_plugins = list_installed_plugins()
+disable_plugin(info.name)
+enabled_plugins = load_installed_plugins()
+enable_plugin(info.name)
+uninstall_plugin(info.name)
 ```
 
 ## Next Steps

@@ -9,12 +9,13 @@ The **Skill** system provides a mechanism for injecting reusable, specialized kn
 
 ## Core Responsibilities
 
-The Skill system has four primary responsibilities:
+The Skill system has five primary responsibilities:
 
 1. **Context Injection** - Add specialized prompts to agent context based on triggers
 2. **Trigger Evaluation** - Determine when skills should activate (always, keyword, task)
-3. **MCP Integration** - Load MCP tools associated with repository skills
-4. **Third-Party Support** - Parse `.cursorrules`, `agents.md`, and other skill formats
+3. **Dynamic Content Rendering** - Execute inline shell commands for dynamic context injection
+4. **MCP Integration** - Load MCP tools associated with repository skills
+5. **Third-Party Support** - Parse `.cursorrules`, `agents.md`, and other skill formats
 
 ## Architecture
 
@@ -35,6 +36,7 @@ flowchart TB
     
     subgraph Content["Skill Content"]
         Markdown["Markdown with Frontmatter"]
+        Dynamic["Dynamic Commands<br><i>!`command` execution</i>"]
         MCPTools["MCP Tools Config<br><i>Repo skills only</i>"]
         Inputs["Input Metadata<br><i>Task skills only</i>"]
     end
@@ -52,20 +54,24 @@ flowchart TB
     Keyword --> Markdown
     TaskMatch --> Markdown
     
+    Markdown -.->|Optional| Dynamic
     Repo -.->|Optional| MCPTools
     Task -.->|Requires| Inputs
     
     Markdown --> Context
+    Dynamic --> Context
     MCPTools --> Context
     Context --> Prompt
     
     classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
     classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
     classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    classDef dynamic fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
     
     class Repo,Knowledge,Task primary
     class Always,Keyword,TaskMatch secondary
     class Context tertiary
+    class Dynamic dynamic
 ```
 
 ### Key Components
@@ -76,6 +82,7 @@ flowchart TB
 | **[`KeywordTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Keyword-based activation | String matching on user messages |
 | **[`TaskTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Task-based activation | Special type of KeywordTrigger for skills with user inputs |
 | **[`InputMetadata`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/types.py)** | Task input parameters | Defines user inputs for task skills |
+| **[`render_content_with_commands`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/execute.py)** | Dynamic content | Executes inline `!`command`` patterns |
 | **Skill Loader** | File parsing | Reads markdown with frontmatter, validates schema |
 
 ## Skill Types
@@ -106,7 +113,7 @@ flowchart LR
 - **Trigger:** `None` (always active)
 - **Purpose:** Project conventions, coding standards, architecture rules
 - **MCP Tools:** Can include MCP tool configuration
-- **Location:** `AGENTS.md` (recommended) and/or `.openhands/skills/*.md` (supported)
+- **Location:** `AGENTS.md` (recommended) and/or `.agents/skills/*.md` (supported)
 
 **Example Files (permanent context):**
 - `AGENTS.md` - General agent instructions
@@ -297,6 +304,27 @@ mcp_tools:
 4. **Register Tools:** Add MCP tools to agent's tool registry
 5. **Inject Context:** Add skill content to agent prompt
 
+## Dynamic Content Rendering
+
+Skills support inline command execution for injecting dynamic context at render time:
+
+1. Parse content for `` !`cmd` `` patterns outside code blocks
+2. Execute each command via subprocess
+3. Replace pattern with stdout (or error marker)
+4. Return rendered content
+
+**Syntax:**
+- `` !`command` `` - Executes command and replaces with stdout
+- `` \!`command` `` - Escapes to literal `` !`command` `` text
+- Fenced (```) and inline (`) code blocks are never executed
+
+**Safety:**
+- Unclosed fenced blocks (odd ``` count) extend to EOF, protecting trailing content
+- Failed commands return `[Error: ...]` markers
+- Output truncated at 50KB per command
+
+See [Dynamic Command Execution](/sdk/guides/skill#dynamic-command-execution) for usage details.
+
 ## Skill File Format
 
 Skills are defined in markdown files with YAML frontmatter:
@@ -312,6 +340,7 @@ trigger:
 # Skill Content
 
 This is the instruction text that will be added to the agent's context.
+Dynamic values: !`git branch --show-current`
 ```
 
 **Frontmatter Fields:**
