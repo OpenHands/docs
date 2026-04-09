@@ -6,7 +6,7 @@ icon: rocket
 
 This guide walks you through trialing OpenHands Enterprise on your own infrastructure.
 You'll provision infrastructure (AWS Terraform or a manual VM setup), configure
-GitHub for user authentication, and set up Anthropic as your LLM provider.
+GitHub or GitLab for user authentication, and set up Anthropic as your LLM provider.
 
 ## Who This Is For
 
@@ -173,11 +173,15 @@ for h in \
 done
 ```
 
+Expected: each hostname above resolves to your VM's public IP address (or your load balancer's IP, if used).
+
 Test that a runtime wildcard hostname resolves:
 
 ```bash
 getent hosts "test.runtime.${BASE_DOMAIN}" || nslookup "test.runtime.${BASE_DOMAIN}"
 ```
+
+Expected: `test.runtime.${BASE_DOMAIN}` resolves to the same target as `${BASE_DOMAIN}`.
 
 ### Outbound connectivity checks
 
@@ -196,6 +200,7 @@ urls=(
 )
 
 for u in "${urls[@]}"; do
+  # HTTP 000 means connection failure (DNS failure, timeout, or blocked network path).
   code=$(curl -sSIL --max-time 15 -o /dev/null -w "%{http_code}" "$u" || true)
   if [ "$code" = "000" ]; then
     echo "FAIL $u"
@@ -205,9 +210,13 @@ for u in "${urls[@]}"; do
 done
 ```
 
-If any check fails, stop and resolve before continuing. If installation still fails after
-network and DNS fixes, run `sudo ./openhands support-bundle` and share the resulting bundle
-with support.
+Any HTTP response code other than `000` is acceptable for reachability checks
+(for example `200`, `301`, `302`, `401`, `403`, `405`).
+
+If any check fails, stop and resolve before continuing:
+- DNS failures: Verify records are created, point to the right target, and have finished propagating
+- Outbound connectivity failures: Check firewall egress rules, proxy settings, and TLS inspection policies
+- If all checks pass but installation still fails: run `sudo ./openhands support-bundle` and share it with support
 
 ## Reasons for Requirements
 
@@ -221,13 +230,9 @@ with support.
 | `images.r9...`, `charts.r9...`, `updates.r9...`, `install.r9...` | Vendor distribution image/chart/update/install endpoints |
 | `traefik.github.io` | Embedded cluster ingress chart repository |
 | `ghcr.io`, `registry-1.docker.io` | Container image pulls for platform components |
-| `github.com` | GitHub App setup/auth/webhooks (when GitHub integration is enabled) |
+| `github.com` | GitHub App setup/auth/webhooks (if GitHub authentication is enabled) |
 
 ## Run the Installer
-
-<Warning>
-  Do not run the installer until preflight checks pass.
-</Warning>
 
 ### 1. Access the Installer Dashboard
 
