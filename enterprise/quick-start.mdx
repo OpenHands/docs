@@ -4,17 +4,27 @@ description: Get started with a 30-day trial of OpenHands Enterprise.
 icon: rocket
 ---
 
-This guide walks you through trialing OpenHands Enterprise on AWS. You'll provision
-infrastructure with Terraform, configure GitHub for user authentication, and set up
-Anthropic as your LLM provider.
+This guide walks you through trialing OpenHands Enterprise on your own infrastructure.
+You'll provision infrastructure (AWS Terraform or a manual VM setup), configure
+GitHub for user authentication, and set up Anthropic as your LLM provider.
 
-## Prerequisites
+## Who This Is For
+
+This guide is **not** for single-user local laptop installs. It is for a **30-day Trial of OpenHands Enterprise** on a
+**dedicated VM/server** in your own infrastructure. The deployment requires DNS records, network, and compute setup before installation.
+
+If you want to use OpenHands immediately without infrastructure setup:
+
+- Use OpenHands Cloud (SaaS)
+- Run OpenHands open-source locally using Docker, CLI or SDK
+
+### Accounts and Credentials
 
 Before you begin, make sure you have the following ready:
 
 - **Anthropic API key** from the [Anthropic Console](https://console.anthropic.com/)
-- **A GitHub account** with permission to create GitHub Apps
-- **An AWS account** with permissions to create EC2, VPC, and Route53 resources
+- **A GitHub account** (or GitLab account) with permission to create integration apps
+- **An AWS account** with permissions to create EC2, VPC, and Route53 resources (**if using the AWS with Terraform path**)
 
 ## Provision Infrastructure
 
@@ -51,7 +61,7 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
 
       | Port | Protocol | Purpose |
       |------|----------|---------|
-      | 80 | TCP | HTTP |
+      | 80 | TCP | HTTP ingress/redirect |
       | 443 | TCP | HTTPS |
       | 30000 | TCP | Admin Console |
 
@@ -68,8 +78,8 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
       - `charts.r9.all-hands.dev`
       - `updates.r9.all-hands.dev`
       - `github.com`
-      - `docker.io`
-      - `docker.dev`
+      - `traefik.github.io`
+      - `registry-1.docker.io`
       - `ghcr.io`
     </Accordion>
 
@@ -127,7 +137,97 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
   </Tab>
 </Tabs>
 
+## Preflight Validation
+
+All items below must be completed before running the installer:
+
+- VM meets CPU, memory, disk, and OS requirements
+- DNS records are created and resolve from the VM
+- Inbound ports are open: `80`, `443`, and `30000`
+- Outbound domains are reachable from the VM
+- GitHub or GitLab app prerequisites are prepared if you will enable those integrations
+
+<Warning>
+  Do not run the installer until preflight checks pass.
+</Warning>
+
+### DNS checks
+
+Run the checks below on the target VM before opening the installer dashboard.
+
+Export your base domain:
+
+```bash
+export BASE_DOMAIN="openhands.example.com"
+```
+Test DNS:
+```bash
+for h in \
+  "${BASE_DOMAIN}" \
+  "app.${BASE_DOMAIN}" \
+  "auth.app.${BASE_DOMAIN}" \
+  "llm-proxy.${BASE_DOMAIN}" \
+  "runtime-api.${BASE_DOMAIN}"; do
+  echo "[DNS] $h"
+  getent hosts "$h" || nslookup "$h"
+done
+```
+
+Test that a runtime wildcard hostname resolves:
+
+```bash
+getent hosts "test.runtime.${BASE_DOMAIN}" || nslookup "test.runtime.${BASE_DOMAIN}"
+```
+
+### Outbound connectivity checks
+
+```bash
+urls=(
+  "https://replicated.app"
+  "https://proxy.replicated.com/v2/"
+  "https://images.r9.all-hands.dev/v2/"
+  "https://install.r9.all-hands.dev"
+  "https://charts.r9.all-hands.dev"
+  "https://updates.r9.all-hands.dev"
+  "https://github.com"
+  "https://traefik.github.io/charts/index.yaml"
+  "https://registry-1.docker.io/v2/"
+  "https://ghcr.io/v2/"
+)
+
+for u in "${urls[@]}"; do
+  code=$(curl -sSIL --max-time 15 -o /dev/null -w "%{http_code}" "$u" || true)
+  if [ "$code" = "000" ]; then
+    echo "FAIL $u"
+  else
+    echo "OK   $u (HTTP $code)"
+  fi
+done
+```
+
+If any check fails, stop and resolve before continuing. If installation still fails after
+network and DNS fixes, run `sudo ./openhands support-bundle` and share the resulting bundle
+with support.
+
+## Reasons for Requirements
+
+| Requirement | Why It Exists |
+|------------|----------------|
+| `443/TCP` inbound | Primary HTTPS entrypoint for users and service hostnames |
+| `30000/TCP` inbound | Replicated/KOTS Admin Console for install and configuration |
+| `80/TCP` inbound | HTTP entrypoint used for ingress/redirect behavior |
+| `*.runtime.<domain>` DNS + cert SAN | Runtime sandboxes are addressed by dynamic runtime-specific hostnames |
+| `replicated.app`, `proxy.replicated.com` | Replicated control-plane/license/install paths |
+| `images.r9...`, `charts.r9...`, `updates.r9...`, `install.r9...` | Vendor distribution image/chart/update/install endpoints |
+| `traefik.github.io` | Embedded cluster ingress chart repository |
+| `ghcr.io`, `registry-1.docker.io` | Container image pulls for platform components |
+| `github.com` | GitHub App setup/auth/webhooks (when GitHub integration is enabled) |
+
 ## Run the Installer
+
+<Warning>
+  Do not run the installer until preflight checks pass.
+</Warning>
 
 ### 1. Access the Installer Dashboard
 
