@@ -151,6 +151,7 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Follow the style rules in `openhands/DOC_STYLE_GUIDE.md`.
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
+- Cloud integration docs live under `openhands/usage/cloud/`, and pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
 
 ### SDK guide file naming
 
