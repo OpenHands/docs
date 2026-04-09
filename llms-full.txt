@@ -7536,12 +7536,13 @@ The **Skill** system provides a mechanism for injecting reusable, specialized kn
 
 ## Core Responsibilities
 
-The Skill system has four primary responsibilities:
+The Skill system has five primary responsibilities:
 
 1. **Context Injection** - Add specialized prompts to agent context based on triggers
 2. **Trigger Evaluation** - Determine when skills should activate (always, keyword, task)
-3. **MCP Integration** - Load MCP tools associated with repository skills
-4. **Third-Party Support** - Parse `.cursorrules`, `agents.md`, and other skill formats
+3. **Dynamic Content Rendering** - Execute inline shell commands for dynamic context injection
+4. **MCP Integration** - Load MCP tools associated with repository skills
+5. **Third-Party Support** - Parse `.cursorrules`, `agents.md`, and other skill formats
 
 ## Architecture
 
@@ -7562,6 +7563,7 @@ flowchart TB
     
     subgraph Content["Skill Content"]
         Markdown["Markdown with Frontmatter"]
+        Dynamic["Dynamic Commands<br><i>!`command` execution</i>"]
         MCPTools["MCP Tools Config<br><i>Repo skills only</i>"]
         Inputs["Input Metadata<br><i>Task skills only</i>"]
     end
@@ -7579,20 +7581,24 @@ flowchart TB
     Keyword --> Markdown
     TaskMatch --> Markdown
     
+    Markdown -.->|Optional| Dynamic
     Repo -.->|Optional| MCPTools
     Task -.->|Requires| Inputs
     
     Markdown --> Context
+    Dynamic --> Context
     MCPTools --> Context
     Context --> Prompt
     
     classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
     classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
     classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    classDef dynamic fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
     
     class Repo,Knowledge,Task primary
     class Always,Keyword,TaskMatch secondary
     class Context tertiary
+    class Dynamic dynamic
 ```
 
 ### Key Components
@@ -7603,6 +7609,7 @@ flowchart TB
 | **[`KeywordTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Keyword-based activation | String matching on user messages |
 | **[`TaskTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Task-based activation | Special type of KeywordTrigger for skills with user inputs |
 | **[`InputMetadata`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/types.py)** | Task input parameters | Defines user inputs for task skills |
+| **[`render_content_with_commands`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/execute.py)** | Dynamic content | Executes inline `!`command`` patterns |
 | **Skill Loader** | File parsing | Reads markdown with frontmatter, validates schema |
 
 ## Skill Types
@@ -7824,6 +7831,27 @@ mcp_tools:
 4. **Register Tools:** Add MCP tools to agent's tool registry
 5. **Inject Context:** Add skill content to agent prompt
 
+## Dynamic Content Rendering
+
+Skills support inline command execution for injecting dynamic context at render time:
+
+1. Parse content for `` !`cmd` `` patterns outside code blocks
+2. Execute each command via subprocess
+3. Replace pattern with stdout (or error marker)
+4. Return rendered content
+
+**Syntax:**
+- `` !`command` `` - Executes command and replaces with stdout
+- `` \!`command` `` - Escapes to literal `` !`command` `` text
+- Fenced (```) and inline (`) code blocks are never executed
+
+**Safety:**
+- Unclosed fenced blocks (odd ``` count) extend to EOF, protecting trailing content
+- Failed commands return `[Error: ...]` markers
+- Output truncated at 50KB per command
+
+See [Dynamic Command Execution](/sdk/guides/skill#dynamic-command-execution) for usage details.
+
 ## Skill File Format
 
 Skills are defined in markdown files with YAML frontmatter:
@@ -7839,6 +7867,7 @@ trigger:
 # Skill Content
 
 This is the instruction text that will be added to the agent's context.
+Dynamic values: !`git branch --show-current`
 ```
 
 **Frontmatter Fields:**
@@ -8917,7 +8946,7 @@ The SDK requires an LLM API key from any [LiteLLM-supported provider](https://do
   </Accordion>
 
   <Accordion title="Option 2: OpenHands Cloud (Recommended)" icon="cloud">
-    Sign up for [OpenHands Cloud](https://app.all-hands.dev) and get an LLM API key from the [API keys page](https://app.all-hands.dev/settings/api-keys). This gives you access to models verified to work well with OpenHands, with no markup.
+    Sign up for [OpenHands Cloud](https://app.all-hands.dev), add credits to your account, and get your OpenHands LLM API key from the [API keys page](https://app.all-hands.dev/settings/api-keys). This gives you access to models verified to work well with OpenHands, with no markup.
 
     Example:
     ```bash
@@ -10470,6 +10499,34 @@ Use the fetch tool to retrieve web content and save findings to files.
 ```
 
 The `mcp_servers` field uses the same format as the [MCP configuration](/sdk/guides/mcp) — each key is a server name, and the value contains `command` and `args` for launching the server.
+
+#### Environment Variable Resolution
+
+All string values in MCP server configurations support `${VAR}` (and `$VAR`) environment variable references, which are resolved from `os.environ` at load time. This lets you forward secrets and dynamic paths without hard-coding them in Markdown:
+
+```markdown icon="markdown"
+---
+name: api-agent
+description: Agent with MCP server using environment-based secrets.
+mcp_servers:
+  my-server:
+    command: ${PLUGIN_ROOT}/bin/server
+    args:
+      - --config
+      - ${PLUGIN_ROOT}/config.json
+    env:
+      API_KEY: ${MY_API_KEY}
+  remote:
+    type: http
+    url: ${API_BASE}/mcp
+    headers:
+      Authorization: Bearer ${AUTH_TOKEN}
+---
+
+An agent that connects to MCP servers configured via environment variables.
+```
+
+Environment variable resolution applies recursively to all string fields — `command`, `args`, `url`, `headers`, `env`, and any other string values in the server config. If a referenced variable is not set, the placeholder is left unchanged (e.g., `${NONEXISTENT_VAR}` stays as-is).
 
 ### Hooks
 
@@ -13328,6 +13385,184 @@ Explore different deployment options:
 
 For architectural details:
 - **[Agent Server Package Architecture](/sdk/arch/agent-server)** - Remote execution architecture and deployment
+
+### Agent Settings
+Source: https://docs.openhands.dev/sdk/guides/agent-settings.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+`AgentSettings` gives you a structured, serializable way to define an agent's model, tools, and optional subsystems like the condenser. Use it when you want to store agent configuration in JSON, send it over an API, or rebuild agents from validated settings later.
+
+## Why Use AgentSettings
+
+- Keep agent configuration as data instead of wiring everything together imperatively.
+- Validate settings with Pydantic before creating an agent.
+- Serialize and deserialize settings for storage, transport, or UI-driven configuration.
+- Create different agent variants by changing only the settings payload.
+
+## Build Settings
+
+Create an `AgentSettings` object with the same ingredients you would normally pass to an `Agent`.
+
+```python icon="python" focus={8, 11, 12, 13}
+from pydantic import SecretStr
+
+from openhands.sdk import AgentSettings, LLM, Tool
+from openhands.sdk.settings import CondenserSettings
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+settings = AgentSettings(
+    llm=LLM(
+        model="anthropic/claude-sonnet-4-5-20250929",
+        api_key=SecretStr("your-api-key"),
+    ),
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    condenser=CondenserSettings(enabled=True, max_size=50),
+)
+```
+
+## Serialize and Restore Settings
+
+Because `AgentSettings` is a Pydantic model, you can dump it to JSON-compatible data and restore it later.
+
+```python icon="python" focus={1, 2}
+payload = settings.model_dump(mode="json")
+restored = AgentSettings.model_validate(payload)
+```
+
+This is useful when:
+
+- Saving agent configuration in a database
+- Sending settings through an API
+- Letting users edit agent configuration in a form-based UI
+- Rehydrating the same agent setup in another process
+
+## Create an Agent from Settings
+
+Once validated, create a working agent directly from the settings object.
+
+```python icon="python" focus={1}
+agent = settings.create_agent()
+```
+
+You can then pass that agent into a `Conversation`, or derive another agent by changing the settings payload. For example, the full example below also shows how removing `FileEditorTool` and disabling the condenser produces a different agent configuration without rewriting the rest of the setup.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/46_agent_settings.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/46_agent_settings.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/46_agent_settings.py
+"""Create, serialize, and deserialize AgentSettings, then build a working agent.
+
+Demonstrates:
+1. Configuring an agent entirely through AgentSettings (LLM, tools, condenser).
+2. Serializing settings to JSON and restoring them.
+3. Building an Agent from settings via ``create_agent()``.
+4. Running a short conversation to prove the settings take effect.
+5. Changing the tool list and showing the agent's capabilities change.
+"""
+
+import json
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, AgentSettings, Conversation, Tool
+from openhands.sdk.settings import CondenserSettings
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# ── 1. Build settings ────────────────────────────────────────────────────
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+settings = AgentSettings(
+    llm=LLM(
+        model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+        api_key=SecretStr(api_key),
+        base_url=os.getenv("LLM_BASE_URL"),
+    ),
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+    ],
+    condenser=CondenserSettings(enabled=True, max_size=50),
+)
+
+# ── 2. Serialize → JSON → deserialize ────────────────────────────────────
+payload = settings.model_dump(mode="json")
+print("Serialized settings (JSON):")
+print(json.dumps(payload, indent=2, default=str)[:800], "…")
+print()
+
+restored = AgentSettings.model_validate(payload)
+assert restored.condenser.enabled is True
+assert restored.condenser.max_size == 50
+assert len(restored.tools) == 2
+print("✓ Roundtrip deserialization successful — all fields preserved")
+print()
+
+# ── 3. Create agent from settings and run a task ─────────────────────────
+agent = settings.create_agent()
+print(f"Agent created: llm.model={agent.llm.model}")
+print(f"  tools={[t.name for t in agent.tools]}")
+print(f"  condenser={type(agent.condenser).__name__}")
+print()
+
+cwd = os.getcwd()
+conversation = Conversation(agent=agent, workspace=cwd)
+conversation.send_message(
+    "Create a file called hello_settings.txt containing "
+    "'Agent settings work!' then confirm the file exists with ls."
+)
+conversation.run()
+
+# Verify the agent actually wrote the file
+assert os.path.exists(os.path.join(cwd, "hello_settings.txt")), (
+    "Agent should have created hello_settings.txt"
+)
+print("✓ Agent created hello_settings.txt — settings drove real behavior")
+print()
+
+# ── 4. Different settings → different behavior ───────────────────────────
+# Now create settings with ONLY the terminal tool and condenser disabled.
+terminal_only_settings = AgentSettings(
+    llm=settings.llm,
+    tools=[Tool(name=TerminalTool.name)],
+    condenser=CondenserSettings(enabled=False),
+)
+
+terminal_agent = terminal_only_settings.create_agent()
+print(f"Terminal-only agent tools: {[t.name for t in terminal_agent.tools]}")
+assert len(terminal_agent.tools) == 1
+assert terminal_agent.condenser is None  # condenser disabled in these settings
+print("✓ Different settings produce different agent configuration")
+print()
+
+# ── Cleanup ──────────────────────────────────────────────────────────────
+os.remove(os.path.join(cwd, "hello_settings.txt"))
+
+# Report cost
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nEXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/46_agent_settings.py"/>
+
+## Next Steps
+
+- **[Getting Started](/sdk/getting-started)** - Start from a minimal agent and conversation setup
+- **[Context Condenser](/sdk/guides/context-condenser)** - Control conversation compaction behavior
+- **[Agent Delegation](/sdk/guides/agent-delegation)** - Compose specialized agents for larger tasks
 
 ### Stuck Detector
 Source: https://docs.openhands.dev/sdk/guides/agent-stuck-detector.md
@@ -18685,6 +18920,87 @@ print(f"EXAMPLE_COST: {metrics.accumulated_cost}")
 - **[Exception Handling](/sdk/guides/llm-error-handling)** — Handle LLM errors in your application
 - **[LLM Metrics](/sdk/guides/metrics)** — Track token usage and costs across models
 
+### GPT-5 Preset (ApplyPatchTool)
+Source: https://docs.openhands.dev/sdk/guides/llm-gpt5-preset.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+The GPT-5 preset is an opt-in agent preset for patch-based file editing. Calling `get_gpt5_agent(llm)` creates an agent that uses `ApplyPatchTool` instead of the standard `FileEditorTool`, while leaving the default preset unchanged for everything else.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/04_llm_specific_tools/01_gpt5_apply_patch_preset.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/04_llm_specific_tools/01_gpt5_apply_patch_preset.py)
+</Note>
+
+```python icon="python" expandable examples/04_llm_specific_tools/01_gpt5_apply_patch_preset.py
+"""Example: Using GPT-5 preset with ApplyPatchTool for file editing.
+
+This example demonstrates how to enable the GPT-5 preset, which swaps the
+standard claude-style FileEditorTool for ApplyPatchTool.
+
+Usage:
+    export OPENAI_API_KEY=...  # or set LLM_API_KEY
+    # Optionally set a model (we recommend a mini variant if available):
+    # export LLM_MODEL=(
+    #   "openai/gpt-5.2-mini"  # or fallback: "openai/gpt-5.1-mini" or "openai/gpt-5.1"
+    # )
+
+    uv run python examples/04_llm_specific_tools/01_gpt5_apply_patch_preset.py
+"""
+
+import os
+
+from openhands.sdk import LLM, Agent, Conversation
+from openhands.tools.preset.gpt5 import get_gpt5_agent
+
+
+# Resolve API key from env
+api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise SystemExit("Please set OPENAI_API_KEY or LLM_API_KEY to run this example.")
+
+model = os.getenv("LLM_MODEL", "openai/gpt-5.1")
+base_url = os.getenv("LLM_BASE_URL", None)
+
+llm = LLM(model=model, api_key=api_key, base_url=base_url)
+
+# Build an agent with the GPT-5 preset (ApplyPatchTool-based editing)
+agent: Agent = get_gpt5_agent(llm)
+
+# Run in the current working directory
+cwd = os.getcwd()
+conversation = Conversation(agent=agent, workspace=cwd)
+
+conversation.send_message(
+    "Create (or update) a file named GPT5_DEMO.txt at the repo root with "
+    "two short lines describing this repository."
+)
+conversation.run()
+
+# Report cost
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/04_llm_specific_tools/01_gpt5_apply_patch_preset.py"/>
+
+<Tip>
+You can optionally set `LLM_MODEL` to a GPT-5 variant such as `openai/gpt-5.2-mini`, `openai/gpt-5.1-mini`, or `openai/gpt-5.1`.
+</Tip>
+
+## What this preset changes
+
+- Replaces the standard `FileEditorTool` with `ApplyPatchTool`
+- Keeps the GPT-5-specific configuration explicit via `get_gpt5_agent(llm)`
+- Leaves the default preset unchanged unless you opt into this one
+
+## See Also
+
+- **[LLM Reasoning](/sdk/guides/llm-reasoning)** - Learn more about newer OpenAI model behavior and the Responses API
+- **[LLM Subscriptions](/sdk/guides/llm-subscriptions)** - Use supported OpenAI subscription-backed models without API credits
+- **[Custom Tools](/sdk/guides/custom-tools)** - Understand the standard SDK tool system and presets
+
 ### Image Input
 Source: https://docs.openhands.dev/sdk/guides/llm-image-input.md
 
@@ -20705,6 +21021,7 @@ Source: https://docs.openhands.dev/sdk/guides/observability.md
 The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowing you to monitor and debug your agent's execution in real-time. You can send traces to any OTLP-compatible observability platform including:
 
 - **[Laminar](https://laminar.sh/)** - AI-focused observability with browser session replay support
+- **[MLflow](https://mlflow.org/)** - Open-source AI platform with tracing, evaluation, and LLM governance
 - **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
 - **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
 
@@ -20730,20 +21047,35 @@ export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 
 That's it! Run your agent code normally and traces will be sent to Laminar automatically.
 
-### Using Honeycomb or Other OTLP Backends
+For **self-hosted Laminar** deployments, you can also configure custom ports:
 
-For Honeycomb, Jaeger, or any other OTLP-compatible backend:
+```bash icon="terminal" wrap
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_HTTP_PORT=8000
+export LMNR_GRPC_PORT=8001
+```
+
+### Using OpenTelemetry (OTLP) Backends
+
+For OpenTelemetry (OTLP) compatible backends, set the following environment variables:
 
 ```bash icon="terminal" wrap
 # Required: Set the OTLP endpoint
-export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://your-otlp-backend/v1/traces"
 
-# Required: Set authentication headers (format: comma-separated key=value pairs, URL-encoded)
-export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=your-api-key"
+# Required: Set additional headers required by your backend (format: comma-separated key=value pairs, URL-encoded)
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="key=value,key2=value2"
 
 # Recommended: Explicitly set the protocol (most OTLP backends require HTTP)
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"  # use "grpc" only if your backend supports it
 ```
+
+View the platform-specific configuration sections below for which values to use.
+
+- **[MLflow](#mlflow-setup)** - Open-source AI platform with tracing, evaluation, and governance
+- **[Honeycomb](#honeycomb-setup)** - High-performance distributed tracing
+- **[Jaeger](#jaeger-setup)** - Open-source distributed tracing
+- **[Generic OTLP Collector](#generic-otlp-collector)** - For other backends
 
 ### Alternative Configuration Methods
 
@@ -20812,6 +21144,8 @@ The SDK checks for these environment variables (in order of precedence):
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `LMNR_PROJECT_API_KEY` | Laminar project API key | `your-laminar-api-key` |
+| `LMNR_HTTP_PORT` | HTTP port for self-hosted Laminar | `8000` |
+| `LMNR_GRPC_PORT` | gRPC port for self-hosted Laminar | `8001` |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL | `https://api.honeycomb.io:443/v1/traces` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint (traces path appended) | `http://localhost:4317` |
 | `OTEL_ENDPOINT` | Short form endpoint | `http://localhost:4317` |
@@ -20851,7 +21185,39 @@ The SDK supports both HTTP and gRPC protocols:
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 ```
 
+**Self-Hosted Laminar**: If you are running a self-hosted Laminar instance, you can configure the HTTP and gRPC ports via environment variables:
+
+```bash icon="terminal" wrap
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_HTTP_PORT=8000
+export LMNR_GRPC_PORT=8001
+```
+
 **Browser Session Replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
+
+### MLflow Setup
+
+[MLflow](https://mlflow.org/) is an open-source AI platform that accepts OpenTelemetry traces out of the box, alongside evaluation and LLM governance capabilities.
+
+1. Start your MLflow tracking server:
+
+```bash icon="terminal" wrap
+uvx mlflow server
+```
+
+<Note>
+For other deployment options (pip, Docker Compose, etc.), see [Set Up MLflow Server](https://mlflow.org/docs/latest/genai/getting-started/connect-environment/).
+</Note>
+
+2. Configure the environment variables:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:5000"
+export OTEL_EXPORTER_OTLP_HEADERS="x-mlflow-experiment-id=123"  # Replace "123" with your MLflow experiment ID
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+Navigate to the MLflow UI (e.g., `http://localhost:5000`), select the experiment, and open the **Traces** tab to view the recorded traces.
 
 ### Honeycomb Setup
 
@@ -22494,6 +22860,169 @@ agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
     For more details on the base class implementation, see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/security/analyzer.py).
 </Tip>
 
+### Defense-in-Depth Security Analyzer
+
+#### The problem
+
+Your agent is about to run a tool call. Is it safe?
+
+The `LLMSecurityAnalyzer` asks the model itself — but the model can be
+manipulated, and encoding tricks can hide dangerous commands from it.
+You need a layer that does not depend on model judgment: something
+deterministic, local, and fast.
+
+#### What this gives you
+
+Three composable analyzers that classify actions at the boundary —
+before the tool runs, not after. No network calls, no model inference,
+no extra dependencies. They return a `SecurityRisk` level; your
+`ConfirmRisky` policy decides whether to prompt the user.
+
+| Analyzer | What it catches | How it works |
+|----------|----------------|--------------|
+| `PatternSecurityAnalyzer` | Known threat signatures (rm -rf, eval, curl\|sh) | Regex patterns on two corpora: shell patterns scan executable fields only; injection patterns scan all fields |
+| `PolicyRailSecurityAnalyzer` | Composed threats (fetch piped to exec, raw disk writes, catastrophic deletes) | Deterministic rules evaluated per-segment — both tokens must appear in the same field |
+| `EnsembleSecurityAnalyzer` | Nothing on its own — it combines the others | Takes the highest concrete risk across all child analyzers |
+
+#### Quick start
+
+You must configure both the analyzer and the confirmation policy.
+Setting an analyzer does not automatically change confirmation behavior.
+
+```python icon="python" focus={7-18}
+from openhands.sdk import Conversation
+from openhands.sdk.security import (
+    PatternSecurityAnalyzer,
+    PolicyRailSecurityAnalyzer,
+    EnsembleSecurityAnalyzer,
+    ConfirmRisky,
+    SecurityRisk,
+)
+
+# Create the analyzer — rails catch composed threats,
+# patterns catch individual signatures
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+    ]
+)
+
+# Tell the SDK when to ask the user — HIGH is the recommended baseline
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.HIGH)
+
+# Wire both into the conversation
+# Assumes `agent` is already configured — see Quick Start guide
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_security_analyzer(security_analyzer)
+conversation.set_confirmation_policy(confirmation_policy)
+```
+
+After this, every agent action passes through the analyzer before
+execution. HIGH-risk actions trigger a confirmation prompt — the user
+sees the risk level and can approve or reject before the tool runs.
+MEDIUM and LOW are allowed. UNKNOWN is confirmed by default
+(`confirm_unknown=True`).
+
+For security-sensitive environments, lower the threshold to catch more:
+
+```python
+# Stricter posture — MEDIUM and above require confirmation
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.MEDIUM)
+```
+
+You can also require confirmation when any analyzer cannot assess risk:
+
+```python
+# If any analyzer returns UNKNOWN, require confirmation
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+    ],
+    propagate_unknown=True,
+)
+```
+
+<Warning>
+`conversation.execute_tool()` bypasses the analyzer and confirmation
+policy. These analyzers protect agent actions in the conversation
+loop, not direct tool calls.
+</Warning>
+
+#### Adding the LLM analyzer for deeper coverage
+
+The pattern analyzer catches known threats instantly. The LLM analyzer
+can catch novel or ambiguous cases. Composing both gives you speed and
+breadth:
+
+```python
+from openhands.sdk.security import LLMSecurityAnalyzer
+
+security_analyzer = EnsembleSecurityAnalyzer(
+    analyzers=[
+        PolicyRailSecurityAnalyzer(),
+        PatternSecurityAnalyzer(),
+        LLMSecurityAnalyzer(),
+    ]
+)
+
+confirmation_policy = ConfirmRisky(threshold=SecurityRisk.HIGH)
+```
+
+The ensemble takes the worst case across all analyzers. If the pattern
+analyzer says HIGH and the LLM says LOW, the result is HIGH.
+
+#### Why it works this way
+
+**Two corpora, not one.** An agent that runs `ls /tmp` but thinks
+"I should avoid rm -rf /" is not flagged — shell patterns only see
+the `ls /tmp` that will actually execute. Injection patterns like
+"ignore all previous instructions" scan everything, because they
+target the model's instruction-following regardless of where they
+appear.
+
+**Max-severity, not averaging.** The analyzers scan the same input —
+they are correlated, not independent. The highest concrete risk wins.
+That is simpler and more auditable than probabilistic fusion.
+
+**UNKNOWN means "I don't know," not "safe."** By default, if all
+analyzers return UNKNOWN the ensemble preserves it, and `ConfirmRisky`
+triggers confirmation. If any analyzer returns a concrete level,
+UNKNOWN results are filtered out. For stricter environments, set
+`propagate_unknown=True` so that any single UNKNOWN triggers
+confirmation regardless of other results.
+
+**Confirm, don't block.** The analyzers return a risk level. The
+confirmation policy decides what happens. The analyzer does not
+prevent execution — it classifies risk for the policy layer to act on.
+Pair with Docker isolation for stronger safety guarantees.
+
+#### What this does not do
+
+This is a deterministic action-boundary control. It is not:
+
+- A complete prompt-injection solution
+- A full shell parser or AST interpreter
+- A sandbox replacement
+- A guarantee against novel threats the patterns do not cover
+
+It is additive to `LLMSecurityAnalyzer` and `GraySwanAnalyzer`, not a
+replacement for either.
+
+#### Known limitations
+
+| Limitation | Why | What would fix it |
+|---|---|---|
+| No hard-deny at the analyzer boundary | SDK analyzers return `SecurityRisk`, not block/allow | Hook-based enforcement |
+| `execute_tool()` bypasses checks | Direct tool execution skips the conversation loop | Hooks |
+| No Cyrillic/homoglyph detection | NFKC maps compatibility forms, not cross-script confusables | Unicode TR39 confusable tables |
+| Content past 30k chars is invisible | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
+| `thinking_blocks` not scanned | Scanning model reasoning risks false positives on deliberation | Separate injection-only CoT scan |
+
+<Note>
+Ready-to-run example: [examples/01_standalone_sdk/47_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/47_defense_in_depth_security.py)
+</Note>
 
 ---
 
@@ -23762,6 +24291,116 @@ Follow these guidelines:
 - Pass variables to the template via `system_prompt_kwargs`
 - The `system_message_suffix` from `AgentContext` is automatically appended after your custom prompt
 
+## Dynamic Command Execution
+
+Skills support inline shell command execution for injecting dynamic context at render time. This is useful for including repository state, environment information, or computed values in skill content.
+
+<Warning>
+**Security**: Commands execute with full shell privileges. Only use this feature with trusted skill sources. User-provided content should never be passed to command execution.
+</Warning>
+
+### Basic Syntax
+
+Use `` !`command` `` to execute a shell command and replace it with stdout:
+
+```markdown icon="markdown"
+---
+name: repo-context
+description: Injects current repository state
+triggers:
+  - git
+  - commit
+---
+
+# Repository Context
+
+Current branch: !`git branch --show-current`
+Last commit: !`git log -1 --oneline`
+```
+
+When triggered, the skill content becomes:
+
+```markdown icon="markdown"
+# Repository Context
+
+Current branch: main
+Last commit: a1b2c3d Fix authentication bug
+```
+
+### Safety Rules
+
+**Code blocks are never executed.** Both fenced and inline code blocks are preserved:
+
+````markdown icon="markdown"
+# Safe Examples
+
+Regular inline code: `git status` → preserved as-is
+Fenced block: → preserved as-is
+```bash
+!`echo "not executed"`
+```
+
+Dynamic command: !`echo "executed"` → replaced with "executed"
+````
+
+**Unclosed fenced blocks protect trailing content.** If a fenced block isn't closed (odd number of ``` delimiters), everything after it is treated as inside the fence:
+
+````markdown icon="markdown"
+```bash
+!`echo "inside fence - not executed"`
+```
+
+!`echo "between fences - executed"`
+
+```bash
+!`echo "unclosed fence - not executed"`
+````
+
+### Escape Syntax
+
+Use `` \!`cmd` `` to output the literal text `` !`cmd` `` without execution:
+
+```markdown icon="markdown"
+# Documenting the Syntax
+
+To execute a command, use \!`command` syntax.
+For example: \!`git status` shows the current git state.
+```
+
+Output:
+```markdown
+# Documenting the Syntax
+
+To execute a command, use !`command` syntax.
+For example: !`git status` shows the current git state.
+```
+
+### Error Handling
+
+Failed commands return inline error markers:
+
+| Scenario | Output |
+|----------|--------|
+| Command fails | `[Error: Command `xyz` exited with code 1: error message]` |
+| Command times out | `[Error: Command `xyz` timed out after 10s]` |
+| Large output (>50KB) | Output truncated with `... [output truncated]` |
+
+### Programmatic Rendering
+
+When using skills programmatically, call `render_content()` to execute commands:
+
+```python icon="python" focus={6-7}
+from openhands.sdk.context import Skill
+
+skill = Skill.load("/path/to/skill/SKILL.md")
+
+# Render with command execution
+rendered = skill.render_content(working_dir="/path/to/repo")
+print(rendered)  # Commands replaced with output
+```
+
+The `working_dir` parameter sets the current directory for command execution, enabling workspace-relative commands like `git status`.
+
 ## Next Steps
 
 - **[Custom Tools](/sdk/guides/custom-tools)** - Create specialized tools
@@ -23904,7 +24543,6 @@ When the parent agent calls the task tool, it provides these parameters:
 | `subagent_type` | `str` | No | Which registered agent type to use (default: `"default"`) |
 | `description` | `str` | No | Short label (3-5 words) for display and tracking |
 | `resume` | `str` | No | Task ID from a previous invocation to continue |
-| `max_turns` | `int` | No | Maximum agent iterations before stopping (default: 500) |
 
 ## Task Observation
 
@@ -27162,6 +27800,394 @@ Key aspects of the plugin system:
 4. Initialization: Plugins are initialized asynchronously when the runtime starts and are accessible to actions
 5. Usage: Plugins extend capabilities (e.g., Jupyter for IPython cells); the server exposes any web endpoints (ports) via host port mapping
 
+### Hooks
+Source: https://docs.openhands.dev/openhands/usage/customization/hooks.md
+
+## Overview
+
+Hooks let you run custom shell scripts at key moments during an OpenHands session. They are configured per-repository
+via a `.openhands/hooks.json` file and work across **Cloud**, **CLI**, and **local GUI** setups. The hooks format is
+compatible with [Claude Code hooks](https://code.claude.com/docs/en/hooks), so you can reuse hook scripts across both tools.
+
+Common use cases include:
+- **Blocking dangerous commands** before execution (e.g., preventing `rm -rf /`)
+- **Enforcing quality gates** before the agent finishes (e.g., requiring linting or tests to pass)
+- **Logging and auditing** tool usage for compliance
+- **Injecting context** into user prompts (e.g., appending git status)
+
+## Hook Types
+
+| Hook | When It Runs | Can Block? |
+|------|-------------|------------|
+| `PreToolUse` | Before the agent executes a tool | Yes |
+| `PostToolUse` | After a tool finishes executing | No |
+| `UserPromptSubmit` | Before a user message is processed | Yes |
+| `Stop` | When the agent tries to finish | Yes |
+| `SessionStart` | When a conversation begins | No |
+| `SessionEnd` | When a conversation ends | No |
+
+**Blocking** means the hook can prevent the operation from proceeding. For example, a `Stop` hook can force the agent
+to keep working if linting checks haven't passed yet. Note that hooks with `"async": true` run in the background and
+can never block, regardless of event type.
+
+## Quick Start
+
+<Steps>
+  <Step>
+    ### Create the Hooks Directory
+
+    In your repository root, create the `.openhands` directory if it doesn't already exist:
+
+    ```bash
+    mkdir -p .openhands/hooks
+    ```
+  </Step>
+  <Step>
+    ### Write a Hook Script
+
+    Create a shell script for your hook. For example, a Stop hook that requires linting to pass before the agent can finish:
+
+    ```bash .openhands/hooks/lint_check.sh
+    #!/bin/bash
+    # Stop hook: Don't let the agent stop if linting fails
+
+    cd "$OPENHANDS_PROJECT_DIR"
+
+    # Run your linter
+    if ! npm run lint 2>&1; then
+        echo '{"decision": "deny", "reason": "Linting failed. Please fix the issues before finishing."}'
+        exit 2
+    fi
+
+    exit 0
+    ```
+
+    Make the script executable:
+
+    ```bash
+    chmod +x .openhands/hooks/lint_check.sh
+    ```
+  </Step>
+  <Step>
+    ### Create `hooks.json`
+
+    Create `.openhands/hooks.json` to register your hooks:
+
+    ```json .openhands/hooks.json
+    {
+      "stop": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "command": ".openhands/hooks/lint_check.sh",
+              "timeout": 120
+            }
+          ]
+        }
+      ]
+    }
+    ```
+  </Step>
+  <Step>
+    ### Commit to Your Repository
+
+    ```bash
+    git add .openhands/hooks.json .openhands/hooks/
+    git commit -m "Add OpenHands hooks"
+    ```
+
+    The next time OpenHands works on your repository, the hooks will be active automatically.
+  </Step>
+</Steps>
+
+## Configuration Reference
+
+### `hooks.json` Format
+
+The `.openhands/hooks.json` file maps hook event types to matchers and commands using `snake_case` keys:
+
+```json
+{
+  "pre_tool_use": [
+    {
+      "matcher": "terminal",
+      "hooks": [
+        { "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }
+      ]
+    }
+  ],
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/require_tests.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+### Claude Code Compatibility
+
+The hooks format is compatible with [Claude Code hooks](https://code.claude.com/docs/en/hooks). PascalCase event
+keys (e.g., `PreToolUse`) and the `{"hooks": {...}}` wrapper are both supported, so you can share hook scripts
+between the two tools. The main differences are the file location (`.openhands/hooks.json` vs `.claude/settings.json`)
+and tool names (e.g., `terminal` vs `Bash`).
+
+### Hook Definition Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | string | `"command"` | Hook type (currently only `"command"` is supported) |
+| `command` | string | *(required)* | Shell command or path to script to execute |
+| `timeout` | integer | `60` | Maximum execution time in seconds |
+| `async` | boolean | `false` | Run in background without waiting for result |
+
+### Matcher Patterns
+
+The `matcher` field determines which tools trigger the hook (only relevant for `PreToolUse` and `PostToolUse`):
+
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| `*` | Matches all tools | `"matcher": "*"` |
+| Exact name | Matches a specific tool | `"matcher": "terminal"` |
+| Regex | Auto-detected or wrapped in `/` | `"matcher": "/terminal\|browser/"` |
+
+For hooks that aren't tool-specific (`Stop`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`), set the matcher to `"*"` or omit it.
+
+## How Hook Scripts Work
+
+### Input
+
+Hook scripts receive a JSON payload on **stdin** with details about the event:
+
+```json
+{
+  "event_type": "PreToolUse",
+  "tool_name": "terminal",
+  "tool_input": { "command": "rm -rf /tmp/data" },
+  "session_id": "abc-123",
+  "working_dir": "/workspace"
+}
+```
+
+<Note>
+Additional fields may be present depending on the hook event type (e.g., `tool_response` for PostToolUse, `message` for UserPromptSubmit).
+</Note>
+
+The following **environment variables** are also set:
+
+| Variable | Description |
+|----------|-------------|
+| `OPENHANDS_EVENT_TYPE` | The hook event type (e.g., `PreToolUse`) |
+| `OPENHANDS_TOOL_NAME` | The tool being used (for tool hooks) |
+| `OPENHANDS_PROJECT_DIR` | The project working directory |
+| `OPENHANDS_SESSION_ID` | The current session ID |
+
+### Output
+
+Hook scripts communicate results through **exit codes** and optional **JSON on stdout**:
+
+**Exit codes:**
+- `0` - Success. The operation proceeds normally.
+- `2` - Block. The operation is denied.
+- Any other code - Error. The operation proceeds, but the error is logged.
+
+**JSON output (optional):**
+
+```json
+{
+  "decision": "deny",
+  "reason": "rm -rf commands are blocked for safety",
+  "additionalContext": "Extra context to pass to the agent"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `decision` | `"allow"` or `"deny"` - overrides the exit code |
+| `reason` | Human-readable explanation shown in the UI |
+| `additionalContext` | Additional context injected into the agent's prompt |
+
+## Real-World Example
+
+The OpenHands Agent SDK repository uses a Stop hook that runs pre-commit checks, targeted pytest suites, and GitHub CI
+status verification before allowing the agent to finish:
+
+- [`.openhands/hooks.json`](https://github.com/OpenHands/software-agent-sdk/blob/main/.openhands/hooks.json) - hook configuration
+- [`.openhands/hooks/on_stop.sh`](https://github.com/OpenHands/software-agent-sdk/blob/main/.openhands/hooks/on_stop.sh) - the stop hook script
+
+This hook setup prevents the agent from finishing if pre-commit, tests, or CI are failing.
+
+## More Examples
+
+### Block Dangerous Commands (PreToolUse)
+
+Prevent the agent from running destructive shell commands:
+
+```bash .openhands/hooks/block_dangerous.sh
+#!/bin/bash
+# Read JSON input from stdin
+input=$(cat)
+command=$(echo "$input" | jq -r '.tool_input.command // ""')
+
+if [[ "$command" =~ "rm -rf" ]]; then
+    echo '{"decision": "deny", "reason": "rm -rf commands are blocked for safety"}'
+    exit 2
+fi
+
+exit 0
+```
+
+```json .openhands/hooks.json
+{
+  "pre_tool_use": [
+    {
+      "matcher": "terminal",
+      "hooks": [{ "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }]
+    }
+  ]
+}
+```
+
+### Enforce Linting Before Stop
+
+Don't let the agent finish until linting passes - this is what prevents linting errors from being committed:
+
+```bash .openhands/hooks/lint_on_stop.sh
+#!/bin/bash
+cd "$OPENHANDS_PROJECT_DIR"
+
+# Run pre-commit or your linter
+if ! pre-commit run --all-files 2>&1; then
+    echo '{"decision": "deny", "reason": "Linting failed. Fix the issues before finishing."}'
+    exit 2
+fi
+
+exit 0
+```
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [{ "command": ".openhands/hooks/lint_on_stop.sh", "timeout": 120 }]
+    }
+  ]
+}
+```
+
+### Log All Tool Usage (PostToolUse)
+
+Log every tool the agent uses for auditing:
+
+```bash .openhands/hooks/log_tools.sh
+#!/bin/bash
+echo "[$(date)] Tool: $OPENHANDS_TOOL_NAME" >> /tmp/tool_usage.log
+exit 0
+```
+
+```json .openhands/hooks.json
+{
+  "post_tool_use": [
+    {
+      "matcher": "*",
+      "hooks": [{ "command": ".openhands/hooks/log_tools.sh", "timeout": 5 }]
+    }
+  ]
+}
+```
+
+### Inject Git Context (UserPromptSubmit)
+
+Automatically include git status when the user asks about code changes:
+
+```bash .openhands/hooks/inject_git_context.sh
+#!/bin/bash
+input=$(cat)
+
+if echo "$input" | grep -qiE "(changes|diff|git|commit|modified)"; then
+    if git rev-parse --git-dir > /dev/null 2>&1; then
+        status=$(git status --short 2>/dev/null | head -10)
+        if [ -n "$status" ]; then
+            escaped=$(echo "$status" | sed 's/"/\\"/g' | tr '\n' ' ')
+            echo "{\"additionalContext\": \"Current git status: $escaped\"}"
+        fi
+    fi
+fi
+
+exit 0
+```
+
+### Combine Multiple Hooks
+
+You can configure multiple hook types and multiple hooks per event:
+
+```json .openhands/hooks.json
+{
+  "pre_tool_use": [
+    {
+      "matcher": "terminal",
+      "hooks": [
+        { "command": ".openhands/hooks/block_dangerous.sh", "timeout": 10 }
+      ]
+    }
+  ],
+  "post_tool_use": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/log_tools.sh", "timeout": 5, "async": true }
+      ]
+    }
+  ],
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/lint_on_stop.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+## Viewing Active Hooks
+
+<Tabs>
+  <Tab title="CLI">
+    Use the `/skills` command in the CLI to see loaded skills, hooks, and MCPs for the current session.
+  </Tab>
+  <Tab title="Cloud / Web">
+    Active hooks are loaded automatically when a conversation starts. Hook execution events appear in the
+    conversation log, showing whether each hook allowed or blocked an operation.
+  </Tab>
+</Tabs>
+
+## Tips
+
+- **Keep hooks fast.** Hooks run synchronously (unless marked `async`) and add latency to agent actions.
+  Use reasonable timeouts.
+- **Use `jq` for JSON parsing.** Hook scripts receive JSON input on stdin. The `jq` tool is available in the
+  sandbox for parsing fields like `tool_input.command`.
+- **Use environment variables for simple hooks.** For PostToolUse hooks that only need the tool name,
+  `$OPENHANDS_TOOL_NAME` avoids the need for JSON parsing.
+- **Test hooks locally.** You can test hook scripts by piping JSON to them:
+  ```bash
+  echo '{"event_type":"Stop"}' | bash .openhands/hooks/lint_on_stop.sh
+  echo "Exit code: $?"
+  ```
+- **Async hooks can't block.** Hooks with `"async": true` run in the background and cannot block operations.
+  Use async for logging or telemetry, not for enforcement.
+
+## See Also
+
+- [Repository Customization](/openhands/usage/customization/repository) - Setup scripts and pre-commit hooks
+- [Skills](/overview/skills) - Extend agent behavior with prompt-based skills
+- [Hooks (SDK Guide)](/sdk/guides/hooks) - Programmatic hooks for SDK developers
+
 ### Repository Customization
 Source: https://docs.openhands.dev/openhands/usage/customization/repository.md
 
@@ -27183,6 +28209,13 @@ sudo apt-get update
 sudo apt-get install -y lsof
 cd frontend && npm install ; cd ..
 ```
+
+## Hooks
+
+You can add a `.openhands/hooks.json` file to run custom shell scripts at key moments during agent execution — such as
+blocking dangerous commands, enforcing linting before the agent finishes, or logging tool usage.
+
+See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide.
 
 ## Pre-commit Script
 You can add a `.openhands/pre-commit.sh` file to create a custom git pre-commit hook that runs before each commit.
@@ -27324,7 +28357,7 @@ Source: https://docs.openhands.dev/openhands/usage/developers/development-overvi
   Documentation for the evaluation framework, benchmarks, and performance testing.
 
 ### Advanced Features
-- **Skills (formerly Microagents) Architecture** (`/microagents/README.md`)
+- **Skills (formerly Microagents) Architecture** (`/skills/README.md`)
   Detailed information about the skills architecture, implementation, and usage.
 
 ### Documentation Standards
@@ -30413,7 +31446,9 @@ When you use OpenHands as an LLM provider in the CLI, we may collect minimal usa
 
 ## Using OpenHands LLM Provider with the SDK
 
-You can use your OpenHands API key with the [OpenHands SDK](https://docs.openhands.dev/sdk) to build custom agents and automation pipelines.
+You can use your OpenHands LLM API key with the [OpenHands SDK](https://docs.openhands.dev/sdk) to build custom agents and automation pipelines.
+
+
 
 ### Configuration
 
@@ -30423,6 +31458,16 @@ The SDK automatically configures the correct API endpoint when you use the `open
 export LLM_API_KEY="your-openhands-api-key"
 export LLM_MODEL="openhands/claude-sonnet-4-20250514"
 ```
+
+<Warning>
+  **The SDK uses the OpenHands LLM Key not the OpenHands Cloud API Keys** : If you see the following error ensure you are using the [OpenHands LLM Key](https://app.all-hands.dev/settings/api-keys).
+
+  ```bash
+ Unable to find token in cache or `LiteLLM_VerificationTokenTable`
+  ```
+
+OpenHands Cloud API Keys work with the [Cloud API](https://docs.openhands.dev/openhands/usage/cloud/cloud-api), while OpenHands LLM API Keys work with your chosen LLM via the OpenHands provider.
+</Warning>
 
 ### Example
 
@@ -35643,6 +36688,11 @@ OpenHands Enterprise allows you to run AI coding agents directly on your own
 servers or in your private cloud. Unlike the SaaS version, the enterprise
 deployment gives you complete control over your AI development environment.
 
+<Card title="Start a Free 30-Day Trial" icon="rocket" href="/enterprise/quick-start">
+  Deploy OpenHands Enterprise on your own infrastructure in under an hour.
+  No credit card required.
+</Card>
+
 ## What is OpenHands Enterprise?
 
 OpenHands Enterprise brings the power of autonomous coding agents to your
@@ -35687,7 +36737,7 @@ OpenHands Enterprise integrates with your existing enterprise ecosystem:
 
 - **Identity & Access**: Enterprise SAML/SSO for centralized authentication
 - **Source Control**: GitHub Enterprise, GitLab, Bitbucket
-- **Project Management**: Jira, and other ticketing systems
+- **Project Management**: Jira and other ticketing systems
 - **Communication**: Slack integration for notifications and workflows
 
 ### Containerized Sandbox Runtime
@@ -35719,17 +36769,374 @@ Enterprise customers receive:
 
 ## Getting Started
 
-<Card
-  title="Contact Us"
-  icon="envelope"
-  href="https://openhands.dev/contact"
->
-  Ready to bring OpenHands to your organization? Contact our team to discuss
-  your requirements and get started with a deployment plan.
-</Card>
+<CardGroup cols={2}>
+  <Card
+    title="Quick Start"
+    icon="rocket"
+    href="/enterprise/quick-start"
+  >
+    Trial OpenHands Enterprise for free!
+  </Card>
+  <Card
+    title="Contact Us"
+    icon="envelope"
+    href="https://openhands.dev/contact"
+  >
+    Ready to bring OpenHands to your organization? Contact our team to discuss
+    your requirements and get started with a deployment plan.
+  </Card>
+</CardGroup>
 
 ## Additional Resources
 
 - [OpenHands Documentation](/overview/introduction) — Learn how to use OpenHands
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
+
+### Quick Start
+Source: https://docs.openhands.dev/enterprise/quick-start.md
+
+This guide walks you through trialing OpenHands Enterprise on AWS. You'll provision
+infrastructure with Terraform, configure GitHub for user authentication, and set up
+Anthropic as your LLM provider.
+
+## Prerequisites
+
+Before you begin, make sure you have the following ready:
+
+- **Anthropic API key** from the [Anthropic Console](https://console.anthropic.com/)
+- **A GitHub account** with permission to create GitHub Apps
+- **An AWS account** with permissions to create EC2, VPC, and Route53 resources
+
+## Provision Infrastructure
+
+You will need a VM to host OpenHands Enterprise. Choose one of the options below to provision your infrastructure.
+
+<Tabs>
+  <Tab title="AWS with Terraform (Recommended)">
+    We provide a [Terraform module](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws) that provisions a properly configured environment
+    for OpenHands Enterprise, including the EC2 instance, DNS records, and TLS certificates.
+
+    <Card title="OpenHands AWS Terraform Module" icon="github" href="https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws">
+      Follow the README instructions to configure and apply the Terraform configuration.
+    </Card>
+  </Tab>
+
+  <Tab title="Manual VM Setup">
+    If you are provisioning a VM manually (on-premises or on another cloud provider),
+    it must meet the requirements below.
+
+    <Accordion title="System requirements">
+      | Resource | Requirement |
+      |----------|-------------|
+      | **vCPUs** | 16 |
+      | **Memory** | 64 GB |
+      | **Disk** | 200 GB |
+      | **Disk P99 write latency** | 10 ms maximum |
+      | **OS** | Linux (x86-64 architecture) |
+      | **Init system** | systemd |
+      | **Access** | Root access (sudo) required |
+    </Accordion>
+
+    <Accordion title="Network requirements">
+      **Firewall inbound rules** -- the following ports must be open:
+
+      | Port | Protocol | Purpose |
+      |------|----------|---------|
+      | 80 | TCP | HTTP |
+      | 443 | TCP | HTTPS |
+      | 30000 | TCP | Admin Console |
+
+      **Local ports** -- the following ports must be available for local processes (no firewall rules needed):
+
+      `2379/TCP`, `7443/TCP`, `9099/TCP`, `10248/TCP`, `10257/TCP`, `10259/TCP`
+
+      **Outbound access** -- the VM must be able to reach:
+
+      - `replicated.app`
+      - `proxy.replicated.com`
+      - `images.r9.all-hands.dev`
+      - `install.r9.all-hands.dev`
+      - `charts.r9.all-hands.dev`
+      - `updates.r9.all-hands.dev`
+      - `github.com`
+      - `docker.io`
+      - `docker.dev`
+      - `ghcr.io`
+    </Accordion>
+
+    <Accordion title="System directories created by the installer">
+      The installation creates directories and files in the following locations:
+
+      ```
+      /etc/cni
+      /etc/k0s
+      /opt/cni
+      /opt/containerd
+      /run/calico
+      /run/containerd
+      /run/k0s
+      /sys/fs/cgroup/kubepods
+      /sys/fs/cgroup/system.slice/containerd.service
+      /sys/fs/cgroup/system.slice/k0scontroller.service
+      /usr/libexec/k0s
+      /usr/local/bin/k0s
+      /var/lib/calico
+      /var/lib/cni
+      /var/lib/containers
+      /var/lib/embedded-cluster
+      /var/lib/kubelet
+      /var/log/calico
+      /var/log/containers
+      /var/log/embedded-cluster
+      /var/log/pods
+      ```
+    </Accordion>
+
+    ### DNS and TLS Setup
+
+    Once your VM is running, configure DNS and TLS before starting the installer.
+
+    **Create DNS A records** pointing to your VM's public IP address:
+
+    | Record | Example |
+    |--------|---------|
+    | `<your-domain>` | `openhands.example.com` |
+    | `app.<your-domain>` | `app.openhands.example.com` |
+    | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
+    | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
+    | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
+    | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
+
+    **Obtain a TLS certificate** with SANs (Subject Alternative Names) for all of the above domains,
+    then copy the certificate (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM.
+
+    <Warning>
+      If you don't provide TLS certificates during installation, the Admin Console will use a
+      self-signed certificate and your browser will display a security warning. You can still
+      upload your certificate afterward through the Admin Console.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Run the Installer
+
+### 1. Access the Installer Dashboard
+
+[Register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup), then
+log in to the installer dashboard. You will see the dashboard below.
+Click **"View install guide"** in the Install tile.
+
+![Installer Dashboard](./images/admin-dashboard.png)
+
+### 2. Name your instance
+
+Enter a name for your instance (e.g., your company name or environment identifier).
+Select **"Outbound requests allowed"** for Network Availability, then click **Continue**.
+
+![Instance name and network availability](./images/install-instance-name.png)
+
+### 3. Run the installation commands
+
+The install guide provides commands to run on your VM. SSH into your VM and execute them in order:
+
+1. **Select a version** -- the latest version is pre-selected
+2. **Download the installation assets** -- copy and run the `curl` command shown
+3. **Extract the installation assets** -- run the `tar` command shown (this includes your license file)
+4. **Install** -- run the install command shown
+
+<Warning>
+  **We recommend providing your TLS certificates during installation.** If you used the
+  Terraform module, the certificates are in your home directory:
+
+  ```bash
+  sudo ./openhands install --license license.yaml \
+    --tls-cert ~/certificate.pem \
+    --tls-key ~/private-key.pem
+  ```
+
+  If you provisioned manually and have your own certificates on the VM, pass them the same way.
+  You can also omit the `--tls-cert` and `--tls-key` flags and upload certificates later through
+  the Admin Console.
+</Warning>
+
+![Installation commands](./images/install-commands.png)
+
+### 4. Access the Admin Console
+
+Once the install command completes, the Admin Console is available at:
+- `https://<your-base-domain>:30000` (if you provided TLS certificates)
+- `http://<your-vm-ip>:30000` (if you did not use the `--tls-cert` and `--tls-key` flags on the `install` command)
+
+If you did not provide TLS certificates with the `install` command, your browser will display a security warning.
+Click **Advanced**, then **Proceed** to continue to the Admin Console.
+
+![Self-signed certificate warning](./images/self-signed-cert-warning.png)
+
+### 5. Upload TLS certificate (if not provided with the install command)
+
+If you did not provide certificates with the `install` command, select **"Upload your own"**,
+enter your base domain under **Hostname**, upload your private key and SSL certificate, then click **Continue**.
+
+![Upload TLS certificate](./images/upload-tls-certificate.png)
+
+### 6. Log in to the Admin Console
+
+Enter the password you set during installation and click **Log in**.
+
+![Admin Console login](./images/admin-console-login.png)
+
+### 7. Configure the cluster
+
+You will be prompted to add additional nodes to the cluster.
+For a single-node deployment, click **Continue** to skip this step.
+
+![Configure cluster nodes](./images/configure-cluster-nodes.png)
+
+## Configure OpenHands
+
+You should now see the application configuration page.
+
+![Configure OpenHands](./images/configure-openhands.png)
+
+### Domain Configuration
+
+- Select **"Derive hostnames from domain (recommended)"**
+- Enter your base domain (e.g., `openhands.example.com`)
+
+### Certificate Configuration
+
+- Upload your **TLS Certificate** (`.crt` or `.pem`)
+- Upload your **TLS Private Key** (`.key` or `.pem`)
+- Optionally upload the root **CA Certificate** for your TLS certificates
+
+### LLM Configuration
+
+Enter your Anthropic API key from the [Anthropic Console](https://console.anthropic.com/).
+
+### GitHub Authentication
+
+Enable GitHub Authentication in the Admin Console, then follow these steps to create and
+configure a GitHub App.
+
+#### Create a GitHub App
+
+1. Go to [github.com/settings/apps](https://github.com/settings/apps) and click **New GitHub App**.
+
+2. Set a unique **GitHub App name** (e.g., `ACME Corp OpenHands`).
+
+3. Set the **Homepage URL** to `https://app.<YOUR_BASE_DOMAIN>`.
+
+4. Under **Identifying and authorizing users**:
+   - Set the **Callback URL** to:
+     ```
+     https://auth.app.<YOUR_BASE_DOMAIN>/realms/allhands/broker/github/endpoint
+     ```
+   - Check the box for **Request user authorization (OAuth) during installation**
+
+5. Under **Webhook**:
+   - Set the **Webhook URL** to:
+     ```
+     https://app.<YOUR_BASE_DOMAIN>/integration/github/events
+     ```
+   - Generate a webhook secret:
+     ```bash
+     export WEBHOOK_SECRET=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 32)
+     echo $WEBHOOK_SECRET
+     ```
+   - Paste the generated value into the **Secret** field
+
+   <Warning>
+     Save the webhook secret value -- you will need to enter it in the Admin Console configuration.
+   </Warning>
+
+6. Under **Permissions**, configure the following:
+
+   **Repository permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Actions | Read and write |
+   | Commit statuses | Read and write |
+   | Contents | Read and write |
+   | Issues | Read and write |
+   | Pull requests | Read and write |
+   | Webhooks | Read and write |
+   | Workflows | Read and write |
+
+   **Organization permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Events | Read-only |
+
+   **Account permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Email addresses | Read-only |
+
+7. Click **Create GitHub App**.
+
+8. On the GitHub App page, under **Client secrets**, click **Generate a new client secret**.
+   Save this value.
+
+9. Under **Private keys**, click **Generate a private key**. The `.pem` file downloads
+   automatically -- note its location.
+
+#### Map GitHub App values to Admin Console
+
+Go back to the Installer Admin Console in your browser and enter the following values:
+
+| GitHub App Value | Admin Console Field |
+|-----------------|-------------------|
+| Client ID (shown on app page) | GitHub OAuth Client ID |
+| Client secret (from step 8) | GitHub OAuth Client Secret |
+| App ID (shown on app page) | GitHub App ID |
+| Webhook secret (from step 5) | GitHub App Webhook Secret |
+| Private key file (from step 9) | GitHub App Private Key (file upload) |
+
+After filling in all fields, click **Continue** at the bottom of the page.
+
+## Deploy and Verify
+
+OpenHands will begin deploying. You can expect the deployment status to transition from
+**Missing** to **Unavailable** to **Ready**. This typically takes 5-10 minutes.
+
+![Deployment in progress](./images/deployment-in-progress.png)
+
+Click **Details** next to the deployment status to monitor individual resources. Resources
+shown in orange are still deploying -- wait until all resources are ready.
+
+![Deployment status details](./images/deployment-status-details.png)
+
+## First Login
+
+Once the deployment status shows **Ready**, navigate to `https://app.<your-base-domain>`
+and click the **Login with GitHub** tile.
+
+
+Accept the Terms of Service and click **Continue**.
+
+![Accept Terms of Service](./images/accept-terms-of-service.png)
+
+OpenHands Enterprise is now running. You can open a repository or start a new conversation.
+
+![OpenHands is ready](./images/openhands-ready.png)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Enterprise Overview" icon="building" href="/enterprise/index">
+    Learn about OpenHands Enterprise features, integrations, and deployment options.
+  </Card>
+  <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
+    Get the most out of your AI coding agents with effective prompting techniques.
+  </Card>
+  <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
+    Reach out to the OpenHands team for deployment assistance or questions.
+  </Card>
+  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
+    Explore the full OpenHands documentation for usage guides and features.
+  </Card>
+</CardGroup>

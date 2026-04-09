@@ -78,3 +78,13 @@ grep -rn "function_name" /tmp/agent-sdk/
 - Ensure MDX frontmatter is present and well-formed
 - Check that internal links use absolute doc paths (e.g., `/overview/quickstart`)
 - Verify code blocks with file references use the correct sync format (see `sdk-guidelines.md`)
+
+### SDK guide file naming convention
+
+SDK guide files under `sdk/guides/` **must** use a category prefix:
+
+- `llm-` for LLM-related guides (e.g., `llm-reasoning.mdx`, `llm-gpt5-preset.mdx`)
+- `agent-` for Agent-related guides (e.g., `agent-custom.mdx`, `agent-delegation.mdx`)
+- `convo-` for Conversation-related guides (e.g., `convo-async.mdx`, `convo-persistence.mdx`)
+
+Flag any new SDK guide that does not follow this naming convention.
