@@ -37,6 +37,66 @@ Rate limiting is applied at the authentication layer. When a request comes in:
   resets at the start of each minute.
 </Info>
 
+## Admin Authentication
+
+The Runtime API uses a challenge-response authentication protocol with PBKDF2 hashing
+for admin operations. Before making admin API calls, you must obtain a JWT token.
+
+### Step 1: Get a Challenge
+
+Request a challenge from the server:
+
+```bash
+curl -X GET https://your-runtime-api/api/admin/challenge
+```
+
+Response:
+```json
+{
+  "challenge": "550e8400-e29b-41d4-a716-446655440000",
+  "salt": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "iterations": 10000
+}
+```
+
+### Step 2: Compute the Hash and Login
+
+Compute a PBKDF2-SHA256 hash of your admin password using the provided salt and challenge,
+then submit it to obtain a JWT token:
+
+```bash
+# The hash is computed as: PBKDF2-SHA256(password, salt + challenge, iterations, 32 bytes)
+# This example assumes you have computed the hash value
+
+curl -X POST https://your-runtime-api/api/admin/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "challenge": "550e8400-e29b-41d4-a716-446655440000",
+    "hash": "your_computed_pbkdf2_hash_hex"
+  }'
+```
+
+Response:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+### Step 3: Use the Token
+
+Include the JWT token in subsequent API requests:
+
+```bash
+curl -X GET https://your-runtime-api/api/admin/api-keys \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+<Info>
+  JWT tokens expire after 24 hours. If you receive a 401 error, obtain a new token
+  by repeating the challenge-response flow.
+</Info>
+
 ## Configuring Rate Limits
 
 ### When Creating an API Key
@@ -44,9 +104,9 @@ Rate limiting is applied at the authentication layer. When a request comes in:
 You can set a rate limit when creating a new API key via the management API:
 
 ```bash
-curl -X POST https://your-runtime-api/api/keys \
+curl -X POST https://your-runtime-api/api/admin/api-keys \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -d '{
     "name": "my-production-key",
     "max_runtimes": 10,
@@ -61,9 +121,9 @@ curl -X POST https://your-runtime-api/api/keys \
 To add or modify the rate limit on an existing key:
 
 ```bash
-curl -X PUT https://your-runtime-api/api/keys/{key_id} \
+curl -X PUT https://your-runtime-api/api/admin/api-keys/{key_id} \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -d '{
     "max_requests_per_minute": 1000
   }'
@@ -74,9 +134,9 @@ curl -X PUT https://your-runtime-api/api/keys/{key_id} \
 To remove a rate limit from an API key (allowing unlimited requests):
 
 ```bash
-curl -X PUT https://your-runtime-api/api/keys/{key_id} \
+curl -X PUT https://your-runtime-api/api/admin/api-keys/{key_id} \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -d '{
     "max_requests_per_minute": null
   }'
@@ -92,7 +152,7 @@ curl -X PUT https://your-runtime-api/api/keys/{key_id} \
 | `max_runtimes` | integer | null | Maximum concurrent runtimes allowed |
 | `max_requests_per_minute` | integer | null | Rate limit (requests per minute) |
 | `initial_credits` | float | 0.0 | Starting credit balance |
-| `key_type` | string | "evaluation" | Key type: "evaluation" or "production" |
+| `key_type` | string | "evaluation" | Key type: `"evaluation"` or `"openhands_app"` |
 | `is_test_key` | boolean | false | Mark as a test key |
 
 ### UpdateApiKeyRequest
@@ -110,9 +170,9 @@ The API returns the full key configuration including the rate limit:
 
 ```json
 {
-  "id": 1,
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "name": "my-production-key",
-  "key_value": "sk-...",
+  "key_value": "ah-12345678-1234-1234-1234-123456789abc",
   "max_runtimes": 10,
   "max_requests_per_minute": 500,
   "remaining_credits": 100.0,
@@ -130,7 +190,7 @@ HTTP/1.1 429 Too Many Requests
 Content-Type: application/json
 
 {
-  "detail": "Rate limit exceeded: 500/minute"
+  "detail": "Rate limit exceeded: 500 per 1 minute"
 }
 ```
 
