@@ -72,18 +72,20 @@ Save this script as `set-rate-limit.sh` and make it executable with `chmod +x se
 #
 # set-rate-limit.sh
 #
-# Configure the rate limit for the internal API key used between
+# Configure or check the rate limit for the internal API key used between
 # the OpenHands Server and the Runtime API.
 #
 # This script runs commands inside the runtime-api pod using kubectl exec,
 # so it works regardless of whether the Runtime API is exposed externally.
 #
 # Usage:
-#   ./set-rate-limit.sh <rate-limit>
+#   ./set-rate-limit.sh --check         # Check current rate limit
+#   ./set-rate-limit.sh <rate-limit>    # Set rate limit
 #
 # Examples:
-#   ./set-rate-limit.sh 500       # Set limit to 500 requests per minute
-#   ./set-rate-limit.sh null      # Remove limit (allow unlimited)
+#   ./set-rate-limit.sh --check    # Display current rate limit
+#   ./set-rate-limit.sh 500        # Set limit to 500 requests per minute
+#   ./set-rate-limit.sh null       # Remove limit (allow unlimited)
 #
 # Prerequisites:
 #   - kubectl configured with access to the openhands namespace
@@ -103,26 +105,36 @@ RUNTIME_API_URL="http://localhost:5000"  # Internal URL within the pod
 # ==============================================================================
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <rate-limit>"
+    echo "Usage: $0 [--check | <rate-limit>]"
+    echo ""
+    echo "Options:"
+    echo "  --check     Display the current rate limit without changing it"
     echo ""
     echo "Arguments:"
     echo "  rate-limit  Requests per minute (integer), or 'null' to remove the limit"
     echo ""
     echo "Examples:"
-    echo "  $0 500      # Set limit to 500 requests per minute"
-    echo "  $0 null     # Remove limit (allow unlimited requests)"
+    echo "  $0 --check     # Check current rate limit"
+    echo "  $0 500         # Set limit to 500 requests per minute"
+    echo "  $0 null        # Remove limit (allow unlimited requests)"
     exit 1
 fi
 
-RATE_LIMIT="$1"
+CHECK_ONLY=false
+RATE_LIMIT=""
 
-# Validate rate limit is either a number or "null"
-if [ "$RATE_LIMIT" != "null" ] && ! [[ "$RATE_LIMIT" =~ ^[0-9]+$ ]]; then
-    echo "Error: rate-limit must be a positive integer or 'null'"
-    exit 1
+if [ "$1" == "--check" ]; then
+    CHECK_ONLY=true
+    echo "Checking current rate limit..."
+else
+    RATE_LIMIT="$1"
+    # Validate rate limit is either a number or "null"
+    if [ "$RATE_LIMIT" != "null" ] && ! [[ "$RATE_LIMIT" =~ ^[0-9]+$ ]]; then
+        echo "Error: rate-limit must be a positive integer or 'null'"
+        exit 1
+    fi
+    echo "Rate limit to set: $RATE_LIMIT"
 fi
-
-echo "Rate limit to set: $RATE_LIMIT"
 echo ""
 
 # ==============================================================================
@@ -166,14 +178,27 @@ echo "  ✓ Admin password retrieved"
 # Step 3: Run the rate limit update inside the pod
 # ==============================================================================
 
-echo "Step 3: Connecting to runtime-api pod and updating rate limit..."
+# Determine the action description for output
+if [ "$CHECK_ONLY" = true ]; then
+    echo "Step 3: Connecting to runtime-api pod and checking rate limit..."
+else
+    echo "Step 3: Connecting to runtime-api pod and updating rate limit..."
+fi
 
 # We'll execute a Python script inside the pod that:
 # 1. Gets a challenge from the local API
 # 2. Computes the PBKDF2 hash
 # 3. Authenticates and gets a JWT token
 # 4. Finds the default API key
-# 5. Updates its rate limit
+# 5. Optionally updates its rate limit (if not --check mode)
+
+# Pass CHECK_ONLY and RATE_LIMIT to the Python script
+# For check-only mode, we pass "CHECK" as the rate limit
+if [ "$CHECK_ONLY" = true ]; then
+    RATE_LIMIT_ARG="'CHECK'"
+else
+    RATE_LIMIT_ARG="$RATE_LIMIT"
+fi
 
 kubectl exec -n "$NAMESPACE" "$POD" -- python3 -c "
 import json
@@ -184,7 +209,10 @@ import urllib.error
 
 RUNTIME_API_URL = '$RUNTIME_API_URL'
 ADMIN_PASSWORD = '''$ADMIN_PASSWORD'''
-RATE_LIMIT = $RATE_LIMIT  # This will be an int or None (from 'null')
+RATE_LIMIT_ARG = $RATE_LIMIT_ARG  # This will be an int, None (from 'null'), or 'CHECK'
+
+CHECK_ONLY = RATE_LIMIT_ARG == 'CHECK'
+RATE_LIMIT = None if CHECK_ONLY else RATE_LIMIT_ARG
 
 def api_request(path, method='GET', data=None, token=None):
     \"\"\"Make an HTTP request to the Runtime API.\"\"\"
@@ -245,27 +273,38 @@ key_id = default_key['id']
 current_limit = default_key.get('max_requests_per_minute')
 current_display = 'unlimited' if current_limit is None else current_limit
 print(f'  ✓ Found default key (ID: {key_id})')
-print(f'  Current rate limit: {current_display}')
-
-# Step 3e: Update the rate limit
-new_display = 'unlimited' if RATE_LIMIT is None else RATE_LIMIT
-print(f'  Updating rate limit to {new_display}...')
-
-updated_key = api_request(f'/api/admin/api-keys/{key_id}', method='PUT', token=token, data={
-    'max_requests_per_minute': RATE_LIMIT
-})
-
-final_limit = updated_key.get('max_requests_per_minute')
-final_display = 'unlimited' if final_limit is None else final_limit
-print(f'  ✓ Rate limit updated successfully')
 print()
 print('================================================')
-print(f'Done! The default API key rate limit is now: {final_display}')
+print(f'Current rate limit: {current_display}')
 print('================================================')
+
+# Step 3e: Update the rate limit (only if not in check-only mode)
+if not CHECK_ONLY:
+    new_display = 'unlimited' if RATE_LIMIT is None else RATE_LIMIT
+    print()
+    print(f'  Updating rate limit to {new_display}...')
+    
+    updated_key = api_request(f'/api/admin/api-keys/{key_id}', method='PUT', token=token, data={
+        'max_requests_per_minute': RATE_LIMIT
+    })
+    
+    final_limit = updated_key.get('max_requests_per_minute')
+    final_display = 'unlimited' if final_limit is None else final_limit
+    print(f'  ✓ Rate limit updated successfully')
+    print()
+    print('================================================')
+    print(f'New rate limit: {final_display}')
+    print('================================================')
 "
 ```
 
 ### Usage Examples
+
+**Check the current rate limit:**
+
+```bash
+./set-rate-limit.sh --check
+```
 
 **Set a rate limit of 500 requests per minute:**
 
@@ -281,7 +320,28 @@ print('================================================')
 
 ### Expected Output
 
-When successful, you'll see output like:
+**Checking the current rate limit:**
+
+```
+Checking current rate limit...
+
+Step 1: Finding runtime-api pod...
+  ✓ Found pod: openhands-runtime-api-5d4f6b7c8d-x2k9m
+Step 2: Retrieving admin password from Kubernetes secret...
+  ✓ Admin password retrieved
+Step 3: Connecting to runtime-api pod and checking rate limit...
+  Getting authentication challenge...
+  Authenticating...
+  ✓ Authentication successful
+  Finding default API key...
+  ✓ Found default key (ID: 1)
+
+================================================
+Current rate limit: unlimited
+================================================
+```
+
+**Setting a rate limit:**
 
 ```
 Rate limit to set: 500
@@ -296,12 +356,16 @@ Step 3: Connecting to runtime-api pod and updating rate limit...
   ✓ Authentication successful
   Finding default API key...
   ✓ Found default key (ID: 1)
-  Current rate limit: unlimited
+
+================================================
+Current rate limit: unlimited
+================================================
+
   Updating rate limit to 500...
   ✓ Rate limit updated successfully
 
 ================================================
-Done! The default API key rate limit is now: 500
+New rate limit: 500
 ================================================
 ```
 
