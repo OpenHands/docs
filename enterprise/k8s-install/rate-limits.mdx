@@ -59,39 +59,9 @@ authenticating to the Runtime API, and updating the rate limit.
 Before running the script, ensure you have:
 
 - **kubectl** configured with access to your OpenHands namespace
-- **curl** installed
-- **python3** installed (used for JSON parsing and PBKDF2 hash computation)
-- The **Runtime API URL** — either:
-  - Your external Runtime API hostname (e.g., `https://runtimes.openhands.example.com`), or
-  - A port-forward to the internal service (see below)
 
-### Accessing the Runtime API
-
-**Option A: External URL (if ingress is enabled)**
-
-If you configured `runtime-api.ingress.enabled: true` in your Helm values, use your
-external hostname:
-
-```bash
-RUNTIME_API_URL="https://runtimes.openhands.example.com"
-```
-
-**Option B: Port-forward (if ingress is not enabled or for internal access)**
-
-If the Runtime API is not exposed externally, use kubectl port-forward:
-
-```bash
-# In a separate terminal, start the port-forward
-kubectl port-forward -n openhands svc/oh-main-runtime-api 5000:5000
-
-# Then use localhost as the URL
-RUNTIME_API_URL="http://localhost:5000"
-```
-
-<Info>
-  The port-forward must remain running while you execute the script. You can run it
-  in the background with `kubectl port-forward ... &` if preferred.
-</Info>
+That's it! The script runs entirely via `kubectl exec` inside the cluster, so you don't
+need curl or python3 installed locally.
 
 ### The Script
 
@@ -105,39 +75,46 @@ Save this script as `set-rate-limit.sh` and make it executable with `chmod +x se
 # Configure the rate limit for the internal API key used between
 # the OpenHands Server and the Runtime API.
 #
+# This script runs commands inside the runtime-api pod using kubectl exec,
+# so it works regardless of whether the Runtime API is exposed externally.
+#
 # Usage:
-#   ./set-rate-limit.sh <runtime-api-url> <rate-limit>
+#   ./set-rate-limit.sh <rate-limit>
 #
 # Examples:
-#   ./set-rate-limit.sh https://runtimes.example.com 500
-#   ./set-rate-limit.sh https://runtimes.example.com null    # Remove limit
+#   ./set-rate-limit.sh 500       # Set limit to 500 requests per minute
+#   ./set-rate-limit.sh null      # Remove limit (allow unlimited)
 #
 # Prerequisites:
 #   - kubectl configured with access to the openhands namespace
-#   - curl and python3 installed
 #
 
 set -e
 
 # ==============================================================================
+# Configuration
+# ==============================================================================
+
+NAMESPACE="openhands"
+RUNTIME_API_URL="http://localhost:5000"  # Internal URL within the pod
+
+# ==============================================================================
 # Parse command line arguments
 # ==============================================================================
 
-if [ $# -lt 2 ]; then
-    echo "Usage: $0 <runtime-api-url> <rate-limit>"
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <rate-limit>"
     echo ""
     echo "Arguments:"
-    echo "  runtime-api-url  The URL of your Runtime API (e.g., https://runtimes.example.com)"
-    echo "  rate-limit       Requests per minute (integer), or 'null' to remove the limit"
+    echo "  rate-limit  Requests per minute (integer), or 'null' to remove the limit"
     echo ""
     echo "Examples:"
-    echo "  $0 https://runtimes.example.com 500"
-    echo "  $0 https://runtimes.example.com null"
+    echo "  $0 500      # Set limit to 500 requests per minute"
+    echo "  $0 null     # Remove limit (allow unlimited requests)"
     exit 1
 fi
 
-RUNTIME_API_URL="$1"
-RATE_LIMIT="$2"
+RATE_LIMIT="$1"
 
 # Validate rate limit is either a number or "null"
 if [ "$RATE_LIMIT" != "null" ] && ! [[ "$RATE_LIMIT" =~ ^[0-9]+$ ]]; then
@@ -145,160 +122,147 @@ if [ "$RATE_LIMIT" != "null" ] && ! [[ "$RATE_LIMIT" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-echo "Runtime API URL: $RUNTIME_API_URL"
 echo "Rate limit to set: $RATE_LIMIT"
 echo ""
 
 # ==============================================================================
-# Step 1: Retrieve the admin password from Kubernetes secrets
+# Step 1: Find the runtime-api pod
 # ==============================================================================
 
-echo "Step 1: Retrieving admin password from Kubernetes secret..."
+echo "Step 1: Finding runtime-api pod..."
+
+# Get the name of a running runtime-api pod
+POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=runtime-api \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+if [ -z "$POD" ]; then
+    echo "Error: Could not find a runtime-api pod in namespace '$NAMESPACE'"
+    echo "Make sure the runtime-api deployment is running."
+    exit 1
+fi
+
+echo "  ✓ Found pod: $POD"
+
+# ==============================================================================
+# Step 2: Retrieve the admin password from Kubernetes secrets
+# ==============================================================================
+
+echo "Step 2: Retrieving admin password from Kubernetes secret..."
 
 # The admin password was created during installation and stored in the
 # 'admin-password' secret in the openhands namespace
-ADMIN_PASSWORD=$(kubectl get secret admin-password -n openhands \
+ADMIN_PASSWORD=$(kubectl get secret admin-password -n "$NAMESPACE" \
     -o jsonpath='{.data.admin-password}' | base64 -d)
 
 if [ -z "$ADMIN_PASSWORD" ]; then
     echo "Error: Could not retrieve admin password from Kubernetes secret."
-    echo "Make sure the 'admin-password' secret exists in the 'openhands' namespace."
+    echo "Make sure the 'admin-password' secret exists in the '$NAMESPACE' namespace."
     exit 1
 fi
 
 echo "  ✓ Admin password retrieved"
 
 # ==============================================================================
-# Step 2: Get a challenge from the Runtime API
+# Step 3: Run the rate limit update inside the pod
 # ==============================================================================
 
-echo "Step 2: Requesting authentication challenge..."
+echo "Step 3: Connecting to runtime-api pod and updating rate limit..."
 
-# The Runtime API uses a challenge-response protocol for admin authentication.
-# First, we request a challenge which includes a random UUID and a salt for
-# PBKDF2 hashing.
-CHALLENGE_RESPONSE=$(curl -s "$RUNTIME_API_URL/api/admin/challenge")
+# We'll execute a Python script inside the pod that:
+# 1. Gets a challenge from the local API
+# 2. Computes the PBKDF2 hash
+# 3. Authenticates and gets a JWT token
+# 4. Finds the default API key
+# 5. Updates its rate limit
 
-if [ -z "$CHALLENGE_RESPONSE" ] || echo "$CHALLENGE_RESPONSE" | grep -q "error"; then
-    echo "Error: Failed to get challenge from Runtime API"
-    echo "Response: $CHALLENGE_RESPONSE"
-    exit 1
-fi
+kubectl exec -n "$NAMESPACE" "$POD" -- python3 -c "
+import json
+import hashlib
+import binascii
+import urllib.request
+import urllib.error
 
-# Parse the challenge and salt from the JSON response
-CHALLENGE=$(echo "$CHALLENGE_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['challenge'])")
-SALT=$(echo "$CHALLENGE_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['salt'])")
+RUNTIME_API_URL = '$RUNTIME_API_URL'
+ADMIN_PASSWORD = '''$ADMIN_PASSWORD'''
+RATE_LIMIT = $RATE_LIMIT  # This will be an int or None (from 'null')
 
-echo "  ✓ Challenge received"
+def api_request(path, method='GET', data=None, token=None):
+    \"\"\"Make an HTTP request to the Runtime API.\"\"\"
+    url = f'{RUNTIME_API_URL}{path}'
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    
+    req = urllib.request.Request(url, method=method, headers=headers)
+    if data:
+        req.data = json.dumps(data).encode('utf-8')
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        raise Exception(f'HTTP {e.code}: {error_body}')
 
-# ==============================================================================
-# Step 3: Compute the PBKDF2 hash and authenticate
-# ==============================================================================
+# Step 3a: Get authentication challenge
+print('  Getting authentication challenge...')
+challenge_resp = api_request('/api/admin/challenge')
+challenge = challenge_resp['challenge']
+salt = challenge_resp['salt']
 
-echo "Step 3: Authenticating with Runtime API..."
-
-# Compute the PBKDF2-SHA256 hash of the admin password.
+# Step 3b: Compute PBKDF2 hash
 # The salt is: salt + challenge (concatenated as strings, then UTF-8 encoded)
 # Parameters: 10000 iterations, 32-byte output
-HASH=$(python3 -c "
-import hashlib, binascii
-password = '''$ADMIN_PASSWORD'''
-salt = '''$SALT'''
-challenge = '''$CHALLENGE'''
 combined_salt = (salt + challenge).encode('utf-8')
-dk = hashlib.pbkdf2_hmac('sha256', password.encode(), combined_salt, 10000, dklen=32)
-print(binascii.hexlify(dk).decode())
-")
+dk = hashlib.pbkdf2_hmac('sha256', ADMIN_PASSWORD.encode(), combined_salt, 10000, dklen=32)
+hash_hex = binascii.hexlify(dk).decode()
 
-# Submit the challenge and hash to get a JWT token
-LOGIN_RESPONSE=$(curl -s -X POST "$RUNTIME_API_URL/api/admin/login" \
-    -H "Content-Type: application/json" \
-    -d "{\"challenge\": \"$CHALLENGE\", \"hash\": \"$HASH\"}")
+# Step 3c: Authenticate and get JWT token
+print('  Authenticating...')
+login_resp = api_request('/api/admin/login', method='POST', data={
+    'challenge': challenge,
+    'hash': hash_hex
+})
+token = login_resp['token']
+print('  ✓ Authentication successful')
 
-if echo "$LOGIN_RESPONSE" | grep -q "error\|detail"; then
-    echo "Error: Authentication failed"
-    echo "Response: $LOGIN_RESPONSE"
-    exit 1
-fi
+# Step 3d: Get all API keys and find the 'default' key
+print('  Finding default API key...')
+keys = api_request('/api/admin/api-keys', token=token)
 
-# Extract the JWT token from the response
-TOKEN=$(echo "$LOGIN_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-
-echo "  ✓ Authentication successful"
-
-# ==============================================================================
-# Step 4: Find the default API key
-# ==============================================================================
-
-echo "Step 4: Finding the default API key..."
-
-# List all API keys and find the one named "default"
-# This is the key used for communication between OpenHands Server and Runtime API
-KEYS_RESPONSE=$(curl -s "$RUNTIME_API_URL/api/admin/api-keys" \
-    -H "Authorization: Bearer $TOKEN")
-
-# Find the ID of the key named "default"
-KEY_ID=$(echo "$KEYS_RESPONSE" | python3 -c "
-import sys, json
-keys = json.load(sys.stdin)
+default_key = None
 for key in keys:
     if key.get('name') == 'default':
-        print(key['id'])
+        default_key = key
         break
-")
 
-if [ -z "$KEY_ID" ]; then
-    echo "Error: Could not find API key named 'default'"
-    echo "Available keys:"
-    echo "$KEYS_RESPONSE" | python3 -m json.tool
-    exit 1
-fi
+if not default_key:
+    print('  Error: Could not find API key named \"default\"')
+    print(f'  Available keys: {[k.get(\"name\") for k in keys]}')
+    exit(1)
 
-# Show current rate limit
-CURRENT_LIMIT=$(echo "$KEYS_RESPONSE" | python3 -c "
-import sys, json
-keys = json.load(sys.stdin)
-for key in keys:
-    if key.get('name') == 'default':
-        limit = key.get('max_requests_per_minute')
-        print('unlimited' if limit is None else limit)
-        break
-")
+key_id = default_key['id']
+current_limit = default_key.get('max_requests_per_minute')
+current_display = 'unlimited' if current_limit is None else current_limit
+print(f'  ✓ Found default key (ID: {key_id})')
+print(f'  Current rate limit: {current_display}')
 
-echo "  ✓ Found default key (ID: $KEY_ID)"
-echo "  Current rate limit: $CURRENT_LIMIT"
+# Step 3e: Update the rate limit
+new_display = 'unlimited' if RATE_LIMIT is None else RATE_LIMIT
+print(f'  Updating rate limit to {new_display}...')
 
-# ==============================================================================
-# Step 5: Update the rate limit
-# ==============================================================================
+updated_key = api_request(f'/api/admin/api-keys/{key_id}', method='PUT', token=token, data={
+    'max_requests_per_minute': RATE_LIMIT
+})
 
-echo "Step 5: Updating rate limit to $RATE_LIMIT..."
-
-# Update the API key with the new rate limit
-UPDATE_RESPONSE=$(curl -s -X PUT "$RUNTIME_API_URL/api/admin/api-keys/$KEY_ID" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $TOKEN" \
-    -d "{\"max_requests_per_minute\": $RATE_LIMIT}")
-
-if echo "$UPDATE_RESPONSE" | grep -q "error\|detail"; then
-    echo "Error: Failed to update rate limit"
-    echo "Response: $UPDATE_RESPONSE"
-    exit 1
-fi
-
-# Show the updated configuration
-NEW_LIMIT=$(echo "$UPDATE_RESPONSE" | python3 -c "
-import sys, json
-key = json.load(sys.stdin)
-limit = key.get('max_requests_per_minute')
-print('unlimited' if limit is None else limit)
-")
-
-echo "  ✓ Rate limit updated successfully"
-echo ""
-echo "================================================"
-echo "Done! The default API key rate limit is now: $NEW_LIMIT"
-echo "================================================"
+final_limit = updated_key.get('max_requests_per_minute')
+final_display = 'unlimited' if final_limit is None else final_limit
+print(f'  ✓ Rate limit updated successfully')
+print()
+print('================================================')
+print(f'Done! The default API key rate limit is now: {final_display}')
+print('================================================')
+"
 ```
 
 ### Usage Examples
@@ -306,13 +270,13 @@ echo "================================================"
 **Set a rate limit of 500 requests per minute:**
 
 ```bash
-./set-rate-limit.sh https://runtimes.openhands.example.com 500
+./set-rate-limit.sh 500
 ```
 
 **Remove the rate limit (allow unlimited requests):**
 
 ```bash
-./set-rate-limit.sh https://runtimes.openhands.example.com null
+./set-rate-limit.sh null
 ```
 
 ### Expected Output
@@ -320,19 +284,20 @@ echo "================================================"
 When successful, you'll see output like:
 
 ```
-Runtime API URL: https://runtimes.openhands.example.com
 Rate limit to set: 500
 
-Step 1: Retrieving admin password from Kubernetes secret...
+Step 1: Finding runtime-api pod...
+  ✓ Found pod: openhands-runtime-api-5d4f6b7c8d-x2k9m
+Step 2: Retrieving admin password from Kubernetes secret...
   ✓ Admin password retrieved
-Step 2: Requesting authentication challenge...
-  ✓ Challenge received
-Step 3: Authenticating with Runtime API...
+Step 3: Connecting to runtime-api pod and updating rate limit...
+  Getting authentication challenge...
+  Authenticating...
   ✓ Authentication successful
-Step 4: Finding the default API key...
-  ✓ Found default key (ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890)
+  Finding default API key...
+  ✓ Found default key (ID: 1)
   Current rate limit: unlimited
-Step 5: Updating rate limit to 500...
+  Updating rate limit to 500...
   ✓ Rate limit updated successfully
 
 ================================================
