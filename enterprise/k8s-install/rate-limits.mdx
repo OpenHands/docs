@@ -4,216 +4,223 @@ description: Configure per-API-key rate limits for the Runtime API
 icon: gauge
 ---
 
-This guide explains how to configure rate limits for API keys in OpenHands Enterprise.
-Rate limiting helps prevent abuse and ensures fair resource allocation across users
-and automated systems.
+This guide explains how to configure rate limits for the internal API key that
+connects the OpenHands server to the Runtime API. This is an **administrator task**
+typically performed after initial deployment if you need to enforce request limits.
 
-## Overview
+## Background
 
-The Runtime API supports **per-API-key rate limiting**, allowing you to set different
-rate limits for different API keys based on their use case. This is useful for:
+OpenHands Enterprise uses an internal API key to authenticate requests between two
+backend services:
 
-- Protecting against runaway automation scripts
-- Allocating higher limits to production integrations
-- Setting conservative limits for evaluation/test keys
-- Preventing a single user from overwhelming the system
+- **OpenHands Server** — the main application that users interact with
+- **Runtime API** — the service that manages sandbox containers
+
+```
+Users → OpenHands Server → (internal API key) → Runtime API → Sandboxes
+```
+
+During installation, you created two Kubernetes secrets that hold the same key value:
+- `sandbox-api-key` — used by the OpenHands Server
+- `default-api-key` — used by the Runtime API
+
+<Info>
+  This internal API key is **not** the same as user API keys (which start with `sk-oh-`).
+  Users never see or interact with this internal key.
+</Info>
+
+## Default Behavior
+
+By default, the internal API key has **no rate limit**. This means the OpenHands Server
+can make unlimited requests to the Runtime API.
+
+You may want to add a rate limit if:
+- You're experiencing resource contention in the Runtime API
+- You want to prevent runaway automation from overwhelming the system
+- You need to enforce fair usage across multiple OpenHands Server instances
 
 ## How Rate Limiting Works
 
-Rate limiting is applied at the authentication layer. When a request comes in:
+When configured, rate limiting is enforced per API key using a **fixed window** strategy:
 
-1. The API key is validated
-2. If the key has `max_requests_per_minute` configured, that limit is enforced
+1. Each API key can have a `max_requests_per_minute` value
+2. Requests are counted within each 60-second window
 3. Requests exceeding the limit receive HTTP 429 (Too Many Requests)
 
-<Warning>
-  If `max_requests_per_minute` is not set on an API key, **no rate limiting is applied**
-  to requests using that key. Ensure all production API keys have appropriate rate limits
-  configured to prevent abuse.
-</Warning>
+If `max_requests_per_minute` is not set (the default), no rate limiting is applied.
 
-<Info>
-  Rate limits are tracked per API key using a fixed window strategy. The counter
-  resets at the start of each minute.
-</Info>
+## Configuring a Rate Limit
 
-## Admin Authentication
+To add a rate limit to your existing deployment, you'll need to:
 
-The Runtime API uses a challenge-response authentication protocol with PBKDF2 hashing
-for admin operations. Before making admin API calls, you must obtain a JWT token.
+1. Get the admin password from your Kubernetes secrets
+2. Authenticate to the Runtime API admin interface
+3. Find your API key's ID
+4. Update the key with a rate limit
 
-### Step 1: Get a Challenge
+### Prerequisites
 
-Request a challenge from the server:
+You'll need:
+- `kubectl` access to your OpenHands namespace
+- The Runtime API hostname (e.g., `runtimes.openhands.example.com`)
+- `curl` and `python3` installed locally
+
+### Step 1: Get the Admin Password
+
+The admin password is stored in a Kubernetes secret created during installation:
 
 ```bash
-curl -X GET https://your-runtime-api/api/admin/challenge
+# Get the admin password
+ADMIN_PASSWORD=$(kubectl get secret admin-password -n openhands \
+  -o jsonpath='{.data.admin-password}' | base64 -d)
+
+# Verify you got it (should print a 32-character string)
+echo $ADMIN_PASSWORD
 ```
 
-Response:
+### Step 2: Set Your Runtime API URL
+
+```bash
+# Replace with your actual Runtime API hostname
+RUNTIME_API_URL="https://runtimes.openhands.example.com"
+```
+
+### Step 3: Authenticate and Get a JWT Token
+
+The Runtime API uses a challenge-response authentication flow. This script handles
+the PBKDF2 hash computation and login:
+
+```bash
+# Get a challenge from the server
+CHALLENGE_RESPONSE=$(curl -s "$RUNTIME_API_URL/api/admin/challenge")
+CHALLENGE=$(echo $CHALLENGE_RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['challenge'])")
+SALT=$(echo $CHALLENGE_RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['salt'])")
+
+# Compute the PBKDF2 hash
+HASH=$(python3 -c "
+import hashlib, binascii
+password = '$ADMIN_PASSWORD'
+salt = '$SALT'
+challenge = '$CHALLENGE'
+combined_salt = (salt + challenge).encode('utf-8')
+dk = hashlib.pbkdf2_hmac('sha256', password.encode(), combined_salt, 10000, dklen=32)
+print(binascii.hexlify(dk).decode())
+")
+
+# Login and get the JWT token
+TOKEN=$(curl -s -X POST "$RUNTIME_API_URL/api/admin/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"challenge\": \"$CHALLENGE\", \"hash\": \"$HASH\"}" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# Verify you got a token (should print a long JWT string)
+echo $TOKEN
+```
+
+### Step 4: Find Your API Key ID
+
+List all API keys to find the ID of your "default" key:
+
+```bash
+curl -s "$RUNTIME_API_URL/api/admin/api-keys" \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+You should see output like:
+
 ```json
-{
-  "challenge": "550e8400-e29b-41d4-a716-446655440000",
-  "salt": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "iterations": 10000
-}
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "default",
+    "key_value": "your-secret-key-value",
+    "max_runtimes": null,
+    "max_requests_per_minute": null,
+    "remaining_credits": null
+  }
+]
 ```
 
-### Step 2: Compute the Hash and Login
+Copy the `id` value for the "default" key.
 
-Compute a PBKDF2-SHA256 hash of your admin password using the provided salt and challenge,
-then submit it to obtain a JWT token:
+### Step 5: Update the Rate Limit
+
+Set a rate limit on the key (replace `YOUR_KEY_ID` with the actual ID):
 
 ```bash
-# The hash is computed as: PBKDF2-SHA256(password, salt + challenge, iterations, 32 bytes)
-# This example assumes you have computed the hash value
+KEY_ID="a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # Replace with your key ID
 
-curl -X POST https://your-runtime-api/api/admin/login \
+curl -X PUT "$RUNTIME_API_URL/api/admin/api-keys/$KEY_ID" \
   -H "Content-Type: application/json" \
-  -d '{
-    "challenge": "550e8400-e29b-41d4-a716-446655440000",
-    "hash": "your_computed_pbkdf2_hash_hex"
-  }'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"max_requests_per_minute": 500}'
 ```
 
-Response:
-```json
-{
-  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-### Step 3: Use the Token
-
-Include the JWT token in subsequent API requests:
-
-```bash
-curl -X GET https://your-runtime-api/api/admin/api-keys \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-```
-
-<Info>
-  JWT tokens expire after 24 hours. If you receive a 401 error, obtain a new token
-  by repeating the challenge-response flow.
-</Info>
-
-## Configuring Rate Limits
-
-### When Creating an API Key
-
-You can set a rate limit when creating a new API key via the management API:
-
-```bash
-curl -X POST https://your-runtime-api/api/admin/api-keys \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -d '{
-    "name": "my-production-key",
-    "max_runtimes": 10,
-    "max_requests_per_minute": 500,
-    "initial_credits": 100.0,
-    "key_type": "evaluation"
-  }'
-```
-
-### Updating an Existing API Key
-
-To add or modify the rate limit on an existing key:
-
-```bash
-curl -X PUT https://your-runtime-api/api/admin/api-keys/{key_id} \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -d '{
-    "max_requests_per_minute": 1000
-  }'
-```
-
-### Removing a Rate Limit
-
-To remove a rate limit from an API key (allowing unlimited requests):
-
-```bash
-curl -X PUT https://your-runtime-api/api/admin/api-keys/{key_id} \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -d '{
-    "max_requests_per_minute": null
-  }'
-```
-
-## API Reference
-
-### CreateApiKeyRequest
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `name` | string | (required) | Unique identifier for the API key |
-| `max_runtimes` | integer | null | Maximum concurrent runtimes allowed |
-| `max_requests_per_minute` | integer | null | Rate limit (requests per minute) |
-| `initial_credits` | float | 0.0 | Starting credit balance |
-| `key_type` | string | "evaluation" | Key type: `"evaluation"` or `"openhands_app"` |
-| `is_test_key` | boolean | false | Mark as a test key |
-
-### UpdateApiKeyRequest
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Update the key name |
-| `max_runtimes` | integer | Update max concurrent runtimes |
-| `max_requests_per_minute` | integer | Update rate limit |
-| `remaining_credits` | float | Update credit balance |
-
-### ApiKeyResponse
-
-The API returns the full key configuration including the rate limit:
+A successful response returns the updated key configuration:
 
 ```json
 {
   "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "name": "my-production-key",
-  "key_value": "ah-12345678-1234-1234-1234-123456789abc",
-  "max_runtimes": 10,
+  "name": "default",
+  "key_value": "your-secret-key-value",
+  "max_runtimes": null,
   "max_requests_per_minute": 500,
-  "remaining_credits": 100.0,
-  "key_type": "evaluation",
-  "is_test_key": false
+  "remaining_credits": null
 }
 ```
 
-## Rate Limit Responses
+### Removing a Rate Limit
 
-When a rate limit is exceeded, the API returns:
+To remove the rate limit and allow unlimited requests:
 
+```bash
+curl -X PUT "$RUNTIME_API_URL/api/admin/api-keys/$KEY_ID" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"max_requests_per_minute": null}'
 ```
-HTTP/1.1 429 Too Many Requests
-Content-Type: application/json
 
-{
-  "detail": "Rate limit exceeded: 500 per 1 minute"
-}
-```
+## Choosing a Rate Limit Value
+
+The appropriate rate limit depends on your usage patterns:
+
+| Scenario | Suggested Limit |
+|----------|-----------------|
+| Small team (< 10 concurrent users) | 200-300 req/min |
+| Medium deployment (10-50 users) | 500-1000 req/min |
+| Large deployment or heavy automation | 1000+ req/min |
 
 <Warning>
-  Clients should implement exponential backoff when receiving 429 responses.
-  Continued requests during rate limiting may result in extended blocking.
+  Setting the limit too low can cause sandbox operations to fail with 429 errors.
+  Monitor your Runtime API logs after making changes.
 </Warning>
 
-## Logging
+## Troubleshooting
 
-When a rate limit is exceeded, the Runtime API logs a warning message:
+### Checking Current Rate Limit Status
 
-```
-Rate limit exceeded for {api_key_name} at {endpoint_path}
-```
+View the Runtime API logs to see rate limit events:
 
-For example:
-```
-Rate limit exceeded for my-production-key at /start
+```bash
+kubectl logs -l app.kubernetes.io/name=runtime-api -n openhands --tail=100 | grep -i "rate limit"
 ```
 
-This message is logged at the `WARNING` level. To capture these events, ensure your
-logging configuration includes `WARNING` level or higher for the Runtime API.
+When a rate limit is exceeded, you'll see messages like:
+
+```
+Rate limit exceeded for default at /start
+```
+
+### Common Issues
+
+**429 errors after setting a limit**: Your limit may be too low. Check the logs to see
+how many requests are being made, then adjust the limit accordingly.
+
+**Authentication failures**: JWT tokens expire after 24 hours. If you get 401 errors,
+repeat the authentication steps to get a new token.
+
+**"Admin functionality is disabled" error**: The `ADMIN_PASSWORD` environment variable
+may not be set in the Runtime API deployment. Check the deployment configuration.
 
 ## Related Configuration
 
