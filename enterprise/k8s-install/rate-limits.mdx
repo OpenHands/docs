@@ -1,0 +1,217 @@
+---
+title: API Key Rate Limits
+description: Configure per-API-key rate limits for the Runtime API
+icon: gauge
+---
+
+This guide explains how to configure rate limits for API keys in OpenHands Enterprise.
+Rate limiting helps prevent abuse and ensures fair resource allocation across users
+and automated systems.
+
+## Overview
+
+The Runtime API supports **per-API-key rate limiting**, allowing you to set different
+rate limits for different API keys based on their use case. This is useful for:
+
+- Protecting against runaway automation scripts
+- Allocating higher limits to production integrations
+- Setting conservative limits for evaluation/test keys
+- Preventing a single user from overwhelming the system
+
+## How Rate Limiting Works
+
+Rate limiting is applied at the authentication layer. When a request comes in:
+
+1. The API key is validated
+2. If the key has `max_requests_per_minute` configured, that limit is enforced
+3. If no limit is configured, no rate limiting is applied
+4. Requests exceeding the limit receive HTTP 429 (Too Many Requests)
+
+<Info>
+  Rate limits are tracked per API key using a fixed window strategy. The counter
+  resets at the start of each minute.
+</Info>
+
+## Configuring Rate Limits
+
+### When Creating an API Key
+
+You can set a rate limit when creating a new API key via the management API:
+
+```bash
+curl -X POST https://your-runtime-api/api/keys \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -d '{
+    "name": "my-production-key",
+    "max_runtimes": 10,
+    "max_requests_per_minute": 500,
+    "initial_credits": 100.0,
+    "key_type": "evaluation"
+  }'
+```
+
+### Updating an Existing API Key
+
+To add or modify the rate limit on an existing key:
+
+```bash
+curl -X PUT https://your-runtime-api/api/keys/{key_id} \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -d '{
+    "max_requests_per_minute": 1000
+  }'
+```
+
+### Removing a Rate Limit
+
+To remove a rate limit from an API key (allowing unlimited requests):
+
+```bash
+curl -X PUT https://your-runtime-api/api/keys/{key_id} \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: YOUR_ADMIN_KEY" \
+  -d '{
+    "max_requests_per_minute": null
+  }'
+```
+
+## API Reference
+
+### CreateApiKeyRequest
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | (required) | Unique identifier for the API key |
+| `max_runtimes` | integer | null | Maximum concurrent runtimes allowed |
+| `max_requests_per_minute` | integer | null | Rate limit (requests per minute) |
+| `initial_credits` | float | 0.0 | Starting credit balance |
+| `key_type` | string | "evaluation" | Key type: "evaluation" or "production" |
+| `is_test_key` | boolean | false | Mark as a test key |
+
+### UpdateApiKeyRequest
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Update the key name |
+| `max_runtimes` | integer | Update max concurrent runtimes |
+| `max_requests_per_minute` | integer | Update rate limit |
+| `remaining_credits` | float | Update credit balance |
+
+### ApiKeyResponse
+
+The API returns the full key configuration including the rate limit:
+
+```json
+{
+  "id": 1,
+  "name": "my-production-key",
+  "key_value": "sk-...",
+  "max_runtimes": 10,
+  "max_requests_per_minute": 500,
+  "remaining_credits": 100.0,
+  "key_type": "evaluation",
+  "is_test_key": false
+}
+```
+
+## Rate Limit Responses
+
+When a rate limit is exceeded, the API returns:
+
+```
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+
+{
+  "detail": "Rate limit exceeded: 500/minute"
+}
+```
+
+<Warning>
+  Clients should implement exponential backoff when receiving 429 responses.
+  Continued requests during rate limiting may result in extended blocking.
+</Warning>
+
+## Recommended Configurations
+
+### Evaluation/Testing Keys
+
+For keys used in development, testing, or evaluation:
+
+```json
+{
+  "name": "eval-key",
+  "max_requests_per_minute": 100,
+  "key_type": "evaluation",
+  "is_test_key": true
+}
+```
+
+### Production Integration Keys
+
+For automated CI/CD pipelines or production applications:
+
+```json
+{
+  "name": "ci-cd-production",
+  "max_requests_per_minute": 500,
+  "key_type": "production"
+}
+```
+
+### High-Volume Automation Keys
+
+For trusted systems requiring higher throughput:
+
+```json
+{
+  "name": "batch-processor",
+  "max_requests_per_minute": 1000,
+  "max_runtimes": 20
+}
+```
+
+## Monitoring Rate Limits
+
+The Runtime API logs rate limit events. Monitor your logs for entries like:
+
+```
+Rate limit exceeded for my-production-key at /start
+```
+
+For production deployments, we recommend:
+
+- Setting up alerts for frequent 429 responses
+- Monitoring request patterns per API key
+- Reviewing rate limit configurations periodically
+
+## Troubleshooting
+
+### "Rate limit exceeded" errors for legitimate traffic
+
+If legitimate requests are being rate limited:
+
+1. **Check current configuration**: Retrieve the API key to see current limits
+2. **Analyze request patterns**: Review logs to understand request frequency
+3. **Adjust limits**: Increase `max_requests_per_minute` as needed
+
+### Requests not being rate limited
+
+If rate limiting doesn't appear to be working:
+
+1. **Verify the key has a limit set**: Check that `max_requests_per_minute` is not null
+2. **Check the correct key is being used**: Verify the `X-API-Key` header matches
+3. **Review runtime-api logs**: Look for rate limiting log entries
+
+## Related Configuration
+
+<CardGroup cols={2}>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Configure memory, CPU, and storage limits for sandboxes.
+  </Card>
+  <Card title="K8s Install Overview" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Return to the Kubernetes installation overview.
+  </Card>
+</CardGroup>
