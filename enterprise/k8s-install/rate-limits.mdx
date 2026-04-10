@@ -211,6 +211,77 @@ When a rate limit is exceeded, you'll see messages like:
 Rate limit exceeded for default at /start
 ```
 
+### Still Seeing Rate Limits After Upgrading?
+
+If you upgraded your deployment but are still experiencing 429 errors, the most likely
+cause is that you're running an older version of the Runtime API that has **hardcoded
+rate limits**.
+
+#### Background: Rate Limiting History
+
+Prior to Helm chart version **0.2.8**, the Runtime API had a hardcoded limit of
+**100 requests per minute** on all endpoints. This was not configurable — every
+deployment was subject to this limit regardless of settings.
+
+Starting with chart version **0.2.8** (image `sha-1a920e8`), rate limiting was changed to:
+- **No rate limit by default** — the internal API key is created without a limit
+- **Configurable per-key** — administrators can optionally set limits via the admin API
+
+| Chart Version | Image Tag | Rate Limiting Behavior |
+|---------------|-----------|------------------------|
+| 0.2.8 (latest) | `sha-1a920e8` | No limit by default, configurable |
+| 0.2.6 - 0.2.7 | `sha-7857be8` | No limit by default, configurable |
+| 0.2.1 - 0.2.5 | `sha-20ec8b3` | **Hardcoded 100 req/min** |
+| Earlier | Various | **Hardcoded 100 req/min** |
+
+#### Step 1: Check Your Chart Version
+
+```bash
+helm list -n openhands | grep runtime-api
+```
+
+If you're on a version older than 0.2.6, you need to upgrade to remove the hardcoded limits.
+
+#### Step 2: Check the Running Image
+
+Verify what image is actually running in your cluster:
+
+```bash
+kubectl get deployment -n openhands -l app.kubernetes.io/name=runtime-api \
+  -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'
+```
+
+You should see `ghcr.io/openhands/runtime-api:sha-1a920e8` (or `sha-7857be8` or newer).
+
+If you see an older image tag (like `sha-20ec8b3` or earlier), you're running the old
+code with hardcoded limits.
+
+#### Step 3: Check the Error Message Format
+
+The error message format tells you which version of rate limiting is active:
+
+- **Old (hardcoded)**: `Rate limit exceeded` (generic message from slowapi library)
+- **New (configurable)**: `Rate limit exceeded: 500 per 1 minute` (includes the specific limit)
+
+If you see the old format, the new code isn't running yet.
+
+#### Step 4: Upgrade the Chart
+
+To get configurable rate limiting, upgrade to chart version 0.2.8 or later:
+
+```bash
+helm repo update
+helm upgrade runtime-api -n openhands \
+  oci://ghcr.io/all-hands-ai/helm-charts/runtime-api \
+  -f your-values.yaml
+```
+
+After upgrading, verify the new pods are running:
+
+```bash
+kubectl rollout status deployment -n openhands -l app.kubernetes.io/name=runtime-api
+```
+
 ### Common Issues
 
 **429 errors after setting a limit**: Your limit may be too low. Check the logs to see
