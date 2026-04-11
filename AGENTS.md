@@ -151,7 +151,7 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Follow the style rules in `openhands/DOC_STYLE_GUIDE.md`.
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
-- Cloud integration docs live under `openhands/usage/cloud/`, and pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
+- Cloud-tab-owned docs now live under `enterprise/usage/` (including `enterprise/usage/cloud/`), with redirects preserved from the legacy `openhands/usage/...` routes; pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
 
 ### Mintlify tab ownership
 
