@@ -169,6 +169,14 @@ SDK guide files under `sdk/guides/` use a **category prefix** to group related p
 
 When adding a new SDK guide, always use the appropriate prefix so that related files sort together and the sidebar grouping in `docs.json` stays consistent.
 
+
+## AI-only invariants in SDK architecture docs
+
+- AI-only invariants live in sidecar files alongside the architecture pages:
+  - `sdk/arch/<page>.ai-invariants.md`
+- These files are excluded from the human docs and injected into `llms-full.txt`
+  by `scripts/generate-llms-files.py`.
+
 ## LLM API Key Options
 
 The SDK documentation maintains three ways for users to obtain LLM access:
