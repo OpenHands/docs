@@ -4,24 +4,19 @@ Sync use-case automation cards to the automation examples page.
 
 Each use-case page under ``openhands/usage/use-cases/`` is the **source of
 truth**.  If a page's YAML frontmatter contains an ``automation:`` block, the
-script treats it as an automation-enabled use case and:
+script copies that content into the "Use Case Automations" section of
+``openhands/usage/automations/examples.mdx``.
 
-1. Generates the "Use Case Automations" card grid + Tabs section in
-   ``openhands/usage/automations/examples.mdx`` (between markers).
-2. Generates the "Automate This" section in the use-case page itself
-   (between markers).
-
-Marker format (JSX comments, ignored by Mintlify):
+The generated section lives between marker comments in examples.mdx:
   {/* BEGIN:use-case-automations */}  …  {/* END:use-case-automations */}
-  {/* BEGIN:automate-this */}          …  {/* END:automate-this */}
 
 Usage:
   python .github/scripts/sync_use_case_automations.py          # write mode
   python .github/scripts/sync_use_case_automations.py --check  # CI check
 
 Exit codes:
-  0 — all files are in sync (or were updated in write mode)
-  1 — files are out of sync (check mode)
+  0 — examples page is in sync (or was updated in write mode)
+  1 — examples page is out of sync (check mode)
 """
 
 from __future__ import annotations
@@ -38,14 +33,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES_PAGE = REPO_ROOT / "openhands" / "usage" / "automations" / "examples.mdx"
 USE_CASES_DIR = REPO_ROOT / "openhands" / "usage" / "use-cases"
 
-# Frontmatter delimiters
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 
 
 # ── Frontmatter parsing ──────────────────────────────────────────────
 
 def parse_frontmatter(text: str) -> dict:
-    """Extract YAML frontmatter from an MDX file."""
     m = FRONTMATTER_RE.match(text)
     if not m:
         return {}
@@ -64,7 +57,7 @@ def collect_use_cases() -> list[tuple[str, dict]]:
     return results
 
 
-# ── Generators ────────────────────────────────────────────────────────
+# ── Generator ─────────────────────────────────────────────────────────
 
 def _indent(text: str, n: int = 4) -> str:
     return textwrap.indent(text, " " * n)
@@ -119,26 +112,6 @@ def generate_examples_section(use_cases: list[tuple[str, dict]]) -> str:
     return "\n".join(parts)
 
 
-def generate_automate_this(auto: dict) -> str:
-    """Generate the ``automate-this`` block for a single use-case page."""
-    prompt = auto["prompt"].rstrip("\n")
-    return (
-        f"## Automate This\n"
-        f"\n"
-        f'{auto["intro"]}\n'
-        f"\n"
-        f"```\n"
-        f"{prompt}\n"
-        f"```\n"
-        f"\n"
-        f'<Card title="More Automation Templates" icon="clock" '
-        f'href="/openhands/usage/automations/examples">\n'
-        f"  Browse all automation examples, including vulnerability scanning, "
-        f"code review, monitoring, and more.\n"
-        f"</Card>"
-    )
-
-
 # ── Marker replacement ───────────────────────────────────────────────
 
 def replace_marker_section(content: str, marker: str, new_body: str) -> str:
@@ -185,50 +158,26 @@ def main() -> int:
         print("No use-case pages with automation frontmatter found.")
         return 0
 
-    diffs: list[str] = []
-
-    # 1. Regenerate the examples page card section
     original = EXAMPLES_PAGE.read_text()
     generated = generate_examples_section(use_cases)
     updated = replace_marker_section(original, "use-case-automations", generated)
 
-    if updated != original:
-        diffs.append(str(EXAMPLES_PAGE.relative_to(REPO_ROOT)))
-        if not args.check:
-            EXAMPLES_PAGE.write_text(updated)
-            print(f"  ✏️  Updated {EXAMPLES_PAGE.relative_to(REPO_ROOT)}")
+    if updated == original:
+        print("✅  Automation examples page is in sync.")
+        return 0
 
-    # 2. Regenerate the "Automate This" section in each use-case page
-    for slug, auto in use_cases:
-        page = USE_CASES_DIR / f"{slug}.mdx"
-        original = page.read_text()
-        generated = generate_automate_this(auto)
-        updated = replace_marker_section(original, "automate-this", generated)
+    if args.check:
+        print(
+            "❌  openhands/usage/automations/examples.mdx is out of sync "
+            "with use-case frontmatter.\n"
+            "\n"
+            "Run:  python .github/scripts/sync_use_case_automations.py\n"
+            "Then commit the updated file."
+        )
+        return 1
 
-        if updated != original:
-            rel = str(page.relative_to(REPO_ROOT))
-            diffs.append(rel)
-            if not args.check:
-                page.write_text(updated)
-                print(f"  ✏️  Updated {rel}")
-
-    if diffs:
-        if args.check:
-            print(
-                "\n❌  The automation examples page is out of sync with "
-                "use-case frontmatter:"
-            )
-            for d in diffs:
-                print(f"     - {d}")
-            print(
-                "\nRun:  python .github/scripts/sync_use_case_automations.py\n"
-                "Then commit the updated files."
-            )
-            return 1
-        print(f"\n✅  Updated {len(diffs)} file(s).")
-    else:
-        print("✅  All files are in sync.")
-
+    EXAMPLES_PAGE.write_text(updated)
+    print(f"✅  Updated {EXAMPLES_PAGE.relative_to(REPO_ROOT)}")
     return 0
 
 
