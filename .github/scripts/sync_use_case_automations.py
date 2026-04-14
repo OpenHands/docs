@@ -68,15 +68,18 @@ def collect_use_cases() -> list[tuple[str, str, dict]]:
 
         auto = fm["automation"]
         rel = page.relative_to(REPO_ROOT)
+        file_has_errors = False
 
         for field in REQUIRED_FIELDS:
             if field not in auto:
                 errors.append(f"  {rel}: missing automation.{field}")
+                file_has_errors = True
 
         if "title" not in fm:
             errors.append(f"  {rel}: missing top-level title")
+            file_has_errors = True
 
-        if not errors or all(f"  {rel}" not in e for e in errors):
+        if not file_has_errors:
             results.append((page.stem, fm["title"], auto))
 
     if errors:
