@@ -1,0 +1,277 @@
+---
+title: Resource Limits
+description: Configure memory, CPU, and storage for OpenHands Enterprise components
+icon: gauge-high
+---
+
+This guide explains how to configure resource limits for OpenHands Enterprise
+components. Proper resource configuration ensures stable operation and prevents
+issues like OOMKills and pod evictions.
+
+## Values File Structure
+
+All configuration examples in this guide show keys that belong in your `site-values.yaml`
+file. The examples show the complete path from the root of the file.
+
+<Tip>
+  Create a `site-values.yaml` file to store your custom configuration. Pass it to Helm
+  with `-f site-values.yaml` when installing or upgrading.
+</Tip>
+
+## Understanding Kubernetes Resources
+
+Kubernetes uses two key resource settings:
+
+- **Requests**: The minimum resources guaranteed to a pod. The scheduler uses this
+  to place pods on nodes with sufficient capacity.
+- **Limits**: The maximum resources a pod can use. Exceeding memory limits causes
+  an OOMKill; exceeding CPU limits causes throttling.
+
+<Warning>
+  If a pod uses significantly more memory than its request (but below its limit),
+  it becomes a candidate for eviction during node pressure. Set requests close to
+  actual usage for production workloads.
+</Warning>
+
+## Application Server Resources
+
+The OpenHands application server (deployment name: `openhands`) handles the UI, API,
+and agent orchestration. Configure its resources under the `deployment` section in
+your values file.
+
+### Default Configuration
+
+```yaml
+# site-values.yaml
+
+# ============================================================================
+# Application Server (OpenHands deployment)
+# ============================================================================
+# Root-level key: deployment
+# Controls the main OpenHands server pod resources
+# ============================================================================
+deployment:
+  replicas: 1
+  resources:
+    requests:
+      memory: 1200Mi
+      cpu: 100m
+    limits:
+      memory: 3Gi
+```
+
+### Recommended Production Configuration
+
+For production workloads, increase memory and add replicas for redundancy:
+
+```yaml
+# site-values.yaml
+
+deployment:                        # Root-level key
+  replicas: 2
+  resources:
+    requests:
+      memory: 2560Mi               # 2.5Gi - aligns with typical usage
+      cpu: 100m
+    limits:
+      memory: 4Gi                  # Buffer against OOMKill
+```
+
+### When to Adjust
+
+Increase resources if you observe:
+
+| Symptom | Metric to Check | Action |
+|---------|----------------|--------|
+| Pod restarts | `RESTARTS` column in `kubectl get pods` | Increase `limits.memory` |
+| High memory usage | `kubectl top pods` shows >80% of limit | Increase `limits.memory` |
+| Evictions during node pressure | Pod events show eviction | Increase `requests.memory` to match actual usage |
+| Slow response times | Application latency metrics | Add replicas or increase CPU |
+
+### Horizontal Pod Autoscaling
+
+For automatic scaling based on load, enable the HorizontalPodAutoscaler:
+
+```yaml
+# site-values.yaml
+
+deployment:                        # Root-level key
+  replicas: 2                      # Minimum baseline
+  resources:
+    requests:
+      memory: 2560Mi
+      cpu: 200m                    # Increase for HPA to use as scaling signal
+    limits:
+      memory: 4Gi
+
+autoscaling:                       # Root-level key (separate from deployment)
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+```
+
+## Sandbox Resources
+
+Sandboxes (also called runtimes) are the isolated containers where agents execute code.
+Each conversation runs in its own sandbox pod. Configure these via environment variables
+in the `runtime-api.env` section.
+
+### Available Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMORY_REQUEST` | `3072Mi` | Minimum memory guaranteed per sandbox |
+| `MEMORY_LIMIT` | `3072Mi` | Maximum memory per sandbox |
+| `CPU_REQUEST` | `500m` | Minimum CPU guaranteed (500m = 0.5 cores) |
+| `CPU_LIMIT` | (none) | Maximum CPU per sandbox |
+| `EPHEMERAL_STORAGE_SIZE` | `10Gi` | Temporary storage per sandbox |
+
+### Default Configuration
+
+```yaml
+# site-values.yaml
+
+# ============================================================================
+# Runtime API (Sandbox Manager)
+# ============================================================================
+# Root-level key: runtime-api
+# This is a subchart that manages sandbox pod lifecycle.
+# The env section passes environment variables to the runtime-api container,
+# which uses them when creating sandbox pods.
+# ============================================================================
+runtime-api:
+  env:
+    MEMORY_REQUEST: "3072Mi"
+    MEMORY_LIMIT: "3072Mi"
+    CPU_REQUEST: "500m"
+    EPHEMERAL_STORAGE_SIZE: "10Gi"
+```
+
+### High-Resource Configuration
+
+For workloads that require more resources (large codebases, memory-intensive builds):
+
+```yaml
+# site-values.yaml
+
+runtime-api:                       # Root-level key (subchart configuration)
+  env:
+    MEMORY_REQUEST: "8192Mi"
+    MEMORY_LIMIT: "8192Mi"
+    CPU_REQUEST: "2000m"
+    CPU_LIMIT: "4000m"
+    EPHEMERAL_STORAGE_SIZE: "50Gi"
+```
+
+### Resource Format
+
+- **Memory**: Use `Mi` suffix (mebibytes). Examples: `1024Mi`, `4096Mi`, `8192Mi`
+- **CPU**: Use millicores. `1000m` = 1 CPU core. Examples: `500m`, `2000m`, `4000m`
+- **Storage**: Use `Gi` suffix (gibibytes). Examples: `10Gi`, `50Gi`, `100Gi`
+
+<Warning>
+  Changes to sandbox resources only affect **new sandboxes**. Existing running
+  sandboxes keep their original limits until stopped and restarted.
+</Warning>
+
+## Applying Changes
+
+### 1. Update your values file
+
+Edit `site-values.yaml` with your desired configuration:
+
+```yaml
+# site-values.yaml
+#
+# This file contains your custom overrides for the OpenHands Helm chart.
+# All keys shown here are root-level keys in the values hierarchy.
+
+# ============================================================================
+# Application Server Resources
+# ============================================================================
+deployment:
+  replicas: 2
+  resources:
+    requests:
+      memory: 2560Mi
+      cpu: 100m
+    limits:
+      memory: 4Gi
+
+# ============================================================================
+# Sandbox Resources (via Runtime API subchart)
+# ============================================================================
+runtime-api:
+  env:
+    MEMORY_REQUEST: "8192Mi"
+    MEMORY_LIMIT: "8192Mi"
+    CPU_REQUEST: "2000m"
+    CPU_LIMIT: "4000m"
+    EPHEMERAL_STORAGE_SIZE: "50Gi"
+```
+
+### 2. Apply with Helm upgrade
+
+```bash
+helm upgrade openhands \
+  oci://ghcr.io/all-hands-ai/helm-charts/openhands \
+  -f site-values.yaml \
+  -n openhands
+```
+
+## Verifying Changes
+
+### Check application server resources
+
+```bash
+kubectl get deployment openhands -n openhands \
+  -o jsonpath='{.spec.template.spec.containers[0].resources}' | jq
+```
+
+### Check replica count
+
+```bash
+kubectl get deployment openhands -n openhands \
+  -o jsonpath='{.spec.replicas}'
+```
+
+### Check runtime-api environment variables
+
+Verify the sandbox resource settings are configured in the runtime-api deployment:
+
+```bash
+kubectl get deployment runtime-api -n openhands \
+  -o jsonpath='{.spec.template.spec.containers[0].env}' | \
+  jq '.[] | select(.name | test("MEMORY|CPU|STORAGE"))'
+```
+
+## Monitoring Resource Usage
+
+### Current resource consumption
+
+```bash
+kubectl top pods -n openhands
+```
+
+### Resource usage over time
+
+For production deployments, we recommend integrating with a monitoring solution
+(Prometheus/Grafana, Datadog, etc.) to track:
+
+- Memory usage vs. limits (to predict OOMKills)
+- Memory usage vs. requests (to predict evictions)
+- CPU throttling events
+- Pod restart counts
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="K8s Install Overview" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Return to the Kubernetes installation overview.
+  </Card>
+  <Card title="Enterprise Overview" icon="building" href="/enterprise/index">
+    Learn more about OpenHands Enterprise features.
+  </Card>
+</CardGroup>

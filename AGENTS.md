@@ -153,6 +153,10 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 - Cloud integration docs live under `openhands/usage/cloud/`, and pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
 
+### Mintlify tab ownership
+
+When the same page path appears under multiple top-level tabs in `docs.json`, Mintlify resolves the page to one tab/sidebar (effectively the first matching tab). If you want a page to show a distinct left navigation for a new tab, that page should live **exclusively** under that tab rather than being duplicated across tabs.
+
 ### SDK guide file naming
 
 SDK guide files under `sdk/guides/` use a **category prefix** to group related pages:
