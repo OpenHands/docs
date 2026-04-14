@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 """
-Sync use-case automation cards to the automation examples page.
+Sync use-case automation cards to the automations overview page.
 
 Each use-case page under ``openhands/usage/use-cases/`` is the **source of
-truth**.  If a page's YAML frontmatter contains an ``automation:`` block, the
-script copies that content into the "Use Case Automations" section of
-``openhands/usage/automations/examples.mdx``.
+truth** for its automation content.  If a page's YAML frontmatter contains
+an ``automation:`` block, this script generates a card for it in the
+automations overview page.
 
-The generated section lives between marker comments in examples.mdx:
+The generated card grid lives between marker comments:
   {/* BEGIN:use-case-automations */}  …  {/* END:use-case-automations */}
+
+Each card links to the use-case page's ``#automate-this`` section where the
+full prompt and instructions live.
+
+Required frontmatter fields inside ``automation:``:
+  - ``icon``    — Font Awesome icon name for the card
+  - ``summary`` — Short description shown on the card
+
+The page's ``title`` field is used as the card title (no duplication).
 
 Usage:
   python .github/scripts/sync_use_case_automations.py          # write mode
   python .github/scripts/sync_use_case_automations.py --check  # CI check
 
 Exit codes:
-  0 — examples page is in sync (or was updated in write mode)
-  1 — examples page is out of sync (check mode)
+  0 — target page is in sync (or was updated in write mode)
+  1 — target page is out of sync (check mode) or validation error
 """
 
 from __future__ import annotations
@@ -29,10 +38,11 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES_PAGE = REPO_ROOT / "openhands" / "usage" / "automations" / "examples.mdx"
+AUTOMATIONS_PAGE = REPO_ROOT / "openhands" / "usage" / "automations" / "overview.mdx"
 USE_CASES_DIR = REPO_ROOT / "openhands" / "usage" / "use-cases"
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
+REQUIRED_FIELDS = ("icon", "summary")
 
 
 # ── Frontmatter parsing ──────────────────────────────────────────────
@@ -44,46 +54,65 @@ def parse_frontmatter(text: str) -> dict:
     return yaml.safe_load(m.group(1)) or {}
 
 
-def collect_use_cases() -> list[tuple[str, dict]]:
-    """Return (slug, automation_dict) for every use-case with automation metadata."""
-    results: list[tuple[str, dict]] = []
+def collect_use_cases() -> list[tuple[str, str, dict]]:
+    """Return (slug, page_title, automation_dict) for use-cases with automation metadata."""
+    results: list[tuple[str, str, dict]] = []
+    errors: list[str] = []
+
     for page in sorted(USE_CASES_DIR.glob("*.mdx")):
         if page.name == "overview.mdx":
             continue
         fm = parse_frontmatter(page.read_text())
-        if "automation" in fm:
-            results.append((page.stem, fm["automation"]))
+        if "automation" not in fm:
+            continue
+
+        auto = fm["automation"]
+        rel = page.relative_to(REPO_ROOT)
+
+        for field in REQUIRED_FIELDS:
+            if field not in auto:
+                errors.append(f"  {rel}: missing automation.{field}")
+
+        if "title" not in fm:
+            errors.append(f"  {rel}: missing top-level title")
+
+        if not errors or all(f"  {rel}" not in e for e in errors):
+            results.append((page.stem, fm["title"], auto))
+
+    if errors:
+        print("❌  Frontmatter validation errors:", file=sys.stderr)
+        for e in errors:
+            print(e, file=sys.stderr)
+        sys.exit(1)
+
     return results
 
 
 # ── Generator ─────────────────────────────────────────────────────────
 
 
-def generate_examples_section(use_cases: list[tuple[str, dict]]) -> str:
-    """Generate the ``use-case-automations`` block for *examples.mdx*.
+def generate_card_section(use_cases: list[tuple[str, str, dict]]) -> str:
+    """Generate the ``use-case-automations`` card grid.
 
-    Each card links to the "Automate This" section of the corresponding
-    use-case page, where the full prompt and instructions live.
+    Each card links to the use-case page's #automate-this section.
     """
     parts: list[str] = []
 
     parts.append(
-        "## Use Case Automations\n"
-        "\n"
         "Each use case has a ready-to-use automation prompt. "
         "Click a card to see the full instructions.\n"
         "\n"
         "<CardGroup cols={2}>"
     )
 
-    for slug, auto in use_cases:
+    for slug, title, auto in use_cases:
         parts.append(
             f'  <Card\n'
-            f'    title="{auto["card_title"]}"\n'
+            f'    title="{title}"\n'
             f'    icon="{auto["icon"]}"\n'
             f'    href="/openhands/usage/use-cases/{slug}#automate-this"\n'
             f'  >\n'
-            f'    {auto["card_description"]}\n'
+            f'    {auto["summary"]}\n'
             f'  </Card>'
         )
 
@@ -94,7 +123,10 @@ def generate_examples_section(use_cases: list[tuple[str, dict]]) -> str:
 
 # ── Marker replacement ───────────────────────────────────────────────
 
-def replace_marker_section(content: str, marker: str, new_body: str) -> str:
+
+def replace_marker_section(
+    content: str, marker: str, new_body: str, filepath: Path
+) -> str:
     """Replace everything between BEGIN:<marker> and END:<marker>."""
     begin_pat = re.compile(
         rf"\{{/\*\s*BEGIN:{re.escape(marker)}\s*(?:—[^*]*)?\*/\}}"
@@ -106,8 +138,34 @@ def replace_marker_section(content: str, marker: str, new_body: str) -> str:
     begin_m = begin_pat.search(content)
     end_m = end_pat.search(content)
 
-    if not begin_m or not end_m:
-        return content
+    if not begin_m and not end_m:
+        print(
+            f"❌  {filepath.relative_to(REPO_ROOT)}: "
+            f"missing both BEGIN:{marker} and END:{marker} markers",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not begin_m:
+        print(
+            f"❌  {filepath.relative_to(REPO_ROOT)}: "
+            f"missing BEGIN:{marker} marker",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not end_m:
+        print(
+            f"❌  {filepath.relative_to(REPO_ROOT)}: "
+            f"missing END:{marker} marker",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if begin_m.start() >= end_m.start():
+        print(
+            f"❌  {filepath.relative_to(REPO_ROOT)}: "
+            f"BEGIN:{marker} must come before END:{marker}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     return (
         content[: begin_m.start()]
@@ -122,14 +180,15 @@ def replace_marker_section(content: str, marker: str, new_body: str) -> str:
 
 # ── Main ──────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Sync use-case automation cards to the examples page."
+        description="Sync use-case automation cards to the automations page."
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Check mode: exit 1 if files are out of sync (for CI).",
+        help="Check mode: exit 1 if the page is out of sync (for CI).",
     )
     args = parser.parse_args()
 
@@ -138,17 +197,19 @@ def main() -> int:
         print("No use-case pages with automation frontmatter found.")
         return 0
 
-    original = EXAMPLES_PAGE.read_text()
-    generated = generate_examples_section(use_cases)
-    updated = replace_marker_section(original, "use-case-automations", generated)
+    original = AUTOMATIONS_PAGE.read_text()
+    generated = generate_card_section(use_cases)
+    updated = replace_marker_section(
+        original, "use-case-automations", generated, AUTOMATIONS_PAGE
+    )
 
     if updated == original:
-        print("✅  Automation examples page is in sync.")
+        print("✅  Automations page is in sync.")
         return 0
 
     if args.check:
         print(
-            "❌  openhands/usage/automations/examples.mdx is out of sync "
+            f"❌  {AUTOMATIONS_PAGE.relative_to(REPO_ROOT)} is out of sync "
             "with use-case frontmatter.\n"
             "\n"
             "Run:  python .github/scripts/sync_use_case_automations.py\n"
@@ -156,8 +217,8 @@ def main() -> int:
         )
         return 1
 
-    EXAMPLES_PAGE.write_text(updated)
-    print(f"✅  Updated {EXAMPLES_PAGE.relative_to(REPO_ROOT)}")
+    AUTOMATIONS_PAGE.write_text(updated)
+    print(f"✅  Updated {AUTOMATIONS_PAGE.relative_to(REPO_ROOT)}")
     return 0
 
 
