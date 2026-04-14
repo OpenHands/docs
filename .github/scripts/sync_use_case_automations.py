@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import textwrap
 from pathlib import Path
 
 import yaml
@@ -59,27 +58,20 @@ def collect_use_cases() -> list[tuple[str, dict]]:
 
 # ── Generator ─────────────────────────────────────────────────────────
 
-def _indent(text: str, n: int = 4) -> str:
-    return textwrap.indent(text, " " * n)
-
-
-def _prompt_block(prompt: str, indent: int = 4) -> str:
-    lines = prompt.rstrip("\n").split("\n")
-    block = "```\n" + "\n".join(lines) + "\n```"
-    return _indent(block, indent)
-
 
 def generate_examples_section(use_cases: list[tuple[str, dict]]) -> str:
-    """Generate the ``use-case-automations`` block for *examples.mdx*."""
+    """Generate the ``use-case-automations`` block for *examples.mdx*.
+
+    Each card links to the "Automate This" section of the corresponding
+    use-case page, where the full prompt and instructions live.
+    """
     parts: list[str] = []
 
     parts.append(
         "## Use Case Automations\n"
         "\n"
-        "These automations correspond to documented "
-        "[use cases](/openhands/usage/use-cases/overview). "
-        "Each card links to the full use case guide, the relevant plugin "
-        "or SDK example, and a prompt you can copy directly.\n"
+        "Each use case has a ready-to-use automation prompt. "
+        "Click a card to see the full instructions.\n"
         "\n"
         "<CardGroup cols={2}>"
     )
@@ -89,25 +81,13 @@ def generate_examples_section(use_cases: list[tuple[str, dict]]) -> str:
             f'  <Card\n'
             f'    title="{auto["card_title"]}"\n'
             f'    icon="{auto["icon"]}"\n'
-            f'    href="/openhands/usage/use-cases/{slug}"\n'
+            f'    href="/openhands/usage/use-cases/{slug}#automate-this"\n'
             f'  >\n'
             f'    {auto["card_description"]}\n'
             f'  </Card>'
         )
 
     parts.append("</CardGroup>")
-
-    for slug, auto in use_cases:
-        parts.append(f'\n### {auto["card_title"]}')
-        parts.append("")
-        parts.append("<Tabs>")
-        parts.append('  <Tab title="Prompt">')
-        parts.append(_prompt_block(auto["prompt"]))
-        parts.append("  </Tab>")
-        parts.append(f'  <Tab title="{auto["alt_tab_title"]}">')
-        parts.append(f'    {auto["alt_tab_body"]}')
-        parts.append("  </Tab>")
-        parts.append("</Tabs>")
 
     return "\n".join(parts)
 
