@@ -1,0 +1,188 @@
+---
+title: Overview
+description: Choose the right workspace for your use case — from local development to production integrations.
+---
+
+The SDK supports multiple workspace types. All share the same API — switching between them requires only changing the workspace argument to `Conversation`.
+
+## Local Scenarios
+
+Use these when you're developing on your own machine and want the agent to run locally.
+
+### Development and Testing
+
+For the fastest iteration cycle, use a simple path string. The agent runs in your Python process with direct filesystem access:
+
+```python
+conversation = Conversation(agent=agent, workspace="./my-project")
+```
+
+**Best for:** Rapid prototyping, debugging agent behavior, learning the SDK.
+
+**Trade-off:** No isolation — the agent can access your entire filesystem and network.
+
+### Local Development with Isolation
+
+When you need isolation but still want to run locally, use [DockerWorkspace](/sdk/guides/agent-server/docker-sandbox):
+
+```python
+from openhands.workspace import DockerWorkspace
+
+with DockerWorkspace(
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+) as workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+**Best for:** Testing agent behavior safely, verifying agents work in a sandboxed environment before deployment.
+
+**Requirements:** Docker installed locally.
+
+<Note>
+For HPC environments using Singularity/Apptainer instead of Docker, see [ApptainerWorkspace](/sdk/guides/agent-server/apptainer-sandbox).
+</Note>
+
+---
+
+## Remote & Integration Scenarios
+
+Use these when building applications, integrating with CI/CD, or deploying agents to production.
+
+### Building Applications with OpenHands Cloud
+
+When you're building an application that uses OpenHands agents, [OpenHandsCloudWorkspace](/sdk/guides/agent-server/cloud-workspace) provides fully managed infrastructure:
+
+```python
+from openhands.workspace import OpenHandsCloudWorkspace
+
+with OpenHandsCloudWorkspace(
+    cloud_api_url="https://app.all-hands.dev",
+    cloud_api_key=os.environ["OPENHANDS_CLOUD_API_KEY"],
+) as workspace:
+    llm = workspace.get_llm()  # Inherit LLM config from your Cloud account
+    secrets = workspace.get_secrets()  # Inject secrets without exposing them
+    
+    agent = get_default_agent(llm=llm)
+    conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+**Best for:** Production applications, SaaS integrations, teams that don't want to manage infrastructure.
+
+**What you get:**
+- Managed sandbox provisioning and lifecycle
+- LLM configuration inherited from your Cloud account (no API keys in your code)
+- Secrets injected securely without transiting through your application
+- No infrastructure to manage
+
+### CI/CD Pipeline Integration
+
+For running agents in CI/CD pipelines (GitHub Actions, GitLab CI, etc.), you have two options:
+
+**Option A: DockerWorkspace** — Run the sandbox on the CI runner itself:
+
+```python
+# In your CI script
+with DockerWorkspace(...) as workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+**Option B: OpenHandsCloudWorkspace** — Offload execution to OpenHands Cloud:
+
+```python
+# In your CI script
+with OpenHandsCloudWorkspace(
+    cloud_api_url="https://app.all-hands.dev",
+    cloud_api_key=os.environ["OPENHANDS_CLOUD_API_KEY"],
+) as workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+| Consideration | DockerWorkspace | OpenHandsCloudWorkspace |
+|---------------|-----------------|-------------------------|
+| Runner requirements | Docker-in-Docker or privileged | None (API calls only) |
+| Resource usage | Consumes runner resources | Offloaded to Cloud |
+| Secrets management | You manage | Inherited from Cloud account |
+| Setup complexity | Higher | Lower |
+
+### Running SDK Scripts Inside Cloud Sandboxes
+
+For advanced orchestration, you may want to run SDK scripts *inside* a Cloud sandbox rather than from outside. This pattern is useful when:
+
+- You want **fire-and-forget execution** — your orchestrator doesn't maintain a connection for the entire agent session
+- You need **nested agent execution** — an outer agent spawns inner agents
+- You're building an **automation service** that deploys user-provided scripts
+
+This uses `local_agent_server_mode=True`. See [Local Agent Server Mode](/sdk/guides/agent-server/cloud-workspace#local-agent-server-mode) for the full pattern.
+
+<Frame>
+  <img src="/sdk/guides/agent-server/images/local-agent-server-mode.svg" alt="Local Agent Server Mode orchestration pattern" />
+</Frame>
+
+### Enterprise: Self-Managed Infrastructure
+
+If you're running OpenHands Enterprise and need low-level control over runtime allocation, use [APIRemoteWorkspace](/sdk/guides/agent-server/api-sandbox):
+
+```python
+from openhands.workspace import APIRemoteWorkspace
+
+with APIRemoteWorkspace(
+    runtime_api_url="https://runtime.example.com",
+    runtime_api_key=os.environ["RUNTIME_API_KEY"],
+    server_image="ghcr.io/openhands/agent-server:latest-python",
+) as workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+**Best for:** Organizations that need fine-grained resource management, custom container images, or must run on their own infrastructure.
+
+<Warning>
+With `APIRemoteWorkspace`, you are responsible for:
+- Managing Runtime API credentials and access
+- Container image selection and updates
+- Resource allocation and scaling decisions
+- LLM and secret configuration (no SaaS credential inheritance)
+
+For most use cases, `OpenHandsCloudWorkspace` provides a simpler experience.
+</Warning>
+
+---
+
+## Quick Reference
+
+| Workspace | Best For | Infrastructure | Isolated | SaaS |
+|-----------|----------|----------------|----------|------|
+| [LocalWorkspace](/sdk/guides/agent-server/local-server) | Development, testing | None | ❌ | ❌ |
+| [DockerWorkspace](/sdk/guides/agent-server/docker-sandbox) | Local isolation, CI/CD | Local Docker | ✅ | ❌ |
+| [ApptainerWorkspace](/sdk/guides/agent-server/apptainer-sandbox) | HPC, shared compute | Singularity | ✅ | ❌ |
+| [OpenHandsCloudWorkspace](/sdk/guides/agent-server/cloud-workspace) | Production, managed | OpenHands Cloud | ✅ | ✅ |
+| [APIRemoteWorkspace](/sdk/guides/agent-server/api-sandbox) | Enterprise, low-level control | Runtime API | ✅ | ❌ |
+
+## How Workspaces Relate to Conversations
+
+The `Conversation` factory automatically selects the appropriate implementation:
+
+| Workspace Type | Conversation Type | Where Agent Runs |
+|----------------|-------------------|------------------|
+| Path / `LocalWorkspace` | `LocalConversation` | Your Python process |
+| Any `RemoteWorkspace` | `RemoteConversation` | On the agent server |
+
+```python
+# LocalConversation (agent runs in your process)
+conversation = Conversation(agent=agent, workspace="./project")
+
+# RemoteConversation (agent runs on agent server)
+with DockerWorkspace(...) as workspace:
+    conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+## Feature Comparison
+
+| Feature | Local | Docker | Cloud | API | Apptainer |
+|---------|-------|--------|-------|-----|-----------|
+| No setup required | ✅ | Docker needed | ✅ | Runtime API access | Apptainer needed |
+| File isolation | ❌ | ✅ | ✅ | ✅ | ✅ |
+| Network isolation | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `get_llm()` | ❌ | ❌ | ✅ | ❌ | ❌ |
+| `get_secrets()` | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Pause/Resume | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Custom images | N/A | ✅ | Via specs | ✅ | ✅ |
