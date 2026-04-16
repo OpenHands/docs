@@ -228,7 +228,7 @@ def build_llms_txt(pages: list[DocPage]) -> str:
         "",
         "> LLM-friendly index of OpenHands documentation (V1). Legacy V0 docs pages are intentionally excluded.",
         "",
-        "The sections below intentionally separate OpenHands product documentation (Web App Server / Cloud / CLI)",
+        "The sections below intentionally separate OpenHands applications documentation (Web App Server / Cloud / CLI)",
         "from the OpenHands Software Agent SDK.",
         "",
     ]
