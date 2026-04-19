@@ -1,37 +1,189 @@
 ---
-title: REST API (V1)
-description: Overview of the current V1 REST endpoints used by the Web app.
+title: REST API (V1) Overview
+description: Overview of the V1 REST API for OpenHands Cloud programmatic access.
 ---
 
-<Note>
-  OpenHands is in a transition period: legacy (V0) endpoints still exist alongside
-  the new <code>/api/v1</code> endpoints.
+The OpenHands Cloud V1 REST API provides programmatic access to create and manage conversations, 
+control sandboxes, and integrate OpenHands into your workflows.
 
-  If you need the legacy OpenAPI reference, see the <b>Legacy (V0)</b> section in the Web tab.
-</Note>
+<Info>
+  For the complete API reference with request/response schemas, see the 
+  **V1 REST API Reference** section in the navigation.
+</Info>
 
-## Overview
+## Base URL
 
-OpenHands V1 REST endpoints are mounted under:
+All V1 API endpoints are mounted under:
 
-- <code>/api/v1</code>
+```
+https://app.all-hands.dev/api/v1
+```
 
-These endpoints back the current Web UI and are intended for newer integrations.
+## Authentication
 
-## Key resources
+All API requests require authentication via an API key. You can include your key using either:
 
-The V1 API is organized around a few core concepts:
+**Authorization header (recommended):**
+```bash
+Authorization: Bearer YOUR_API_KEY
+```
 
-- **App conversations**: create/list conversations and access conversation metadata.
-  - <code>POST /api/v1/app-conversations</code>
-  - <code>GET /api/v1/app-conversations</code>
+**Or X-Access-Token header:**
+```bash
+X-Access-Token: YOUR_API_KEY
+```
 
-- **Sandboxes**: list/start/pause/resume the execution environments that power conversations.
-  - <code>GET /api/v1/sandboxes/search</code>
-  - <code>POST /api/v1/sandboxes</code>
-  - <code>POST /api/v1/sandboxes/{id}/pause</code>
-  - <code>POST /api/v1/sandboxes/{id}/resume</code>
+To obtain an API key:
+1. Log in to [OpenHands Cloud](https://app.all-hands.dev)
+2. Navigate to **Settings > API Keys**
+3. Click **Create API Key** and save the generated key securely
 
-- **Sandbox specs**: list the available sandbox “templates” (e.g., Docker image presets).
-  - <code>GET /api/v1/sandbox-specs/search</code>
+## Key Resources
 
+The V1 API is organized around these core concepts:
+
+### Conversations
+
+Create, manage, and monitor OpenHands conversations:
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/v1/app-conversations` | Start a new conversation |
+| `GET /api/v1/app-conversations/search` | List/search conversations |
+| `GET /api/v1/app-conversations/{id}` | Get conversation details |
+| `DELETE /api/v1/app-conversations/{id}` | Delete a conversation |
+| `POST /api/v1/app-conversations/stream-start` | Start with streaming status updates |
+
+### Start Tasks
+
+Track conversation startup progress:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/app-conversations/start-tasks` | Get start task status by IDs |
+| `GET /api/v1/app-conversations/start-tasks/search` | Search start tasks |
+
+### Sandboxes
+
+Manage execution environments:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/sandboxes/search` | List/search sandboxes |
+| `POST /api/v1/sandboxes/{id}/pause` | Pause a sandbox |
+| `POST /api/v1/sandboxes/{id}/resume` | Resume a paused sandbox |
+
+### Sandbox Specs
+
+List available sandbox templates:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/sandbox-specs/search` | Search available specs |
+
+### Events
+
+Access conversation events and send messages:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/conversation/{id}/events/search` | Search conversation events |
+| `POST /api/v1/conversation/{id}/events` | Send a message to a conversation |
+
+### Configuration
+
+Access models and settings:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/config/models/search` | List available LLM models |
+| `GET /api/v1/settings` | Get user settings |
+| `POST /api/v1/settings` | Update user settings |
+
+### Git Integration
+
+Access connected repositories:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/git/installations/search` | List Git provider connections |
+| `GET /api/v1/git/repositories/search` | Search repositories |
+| `GET /api/v1/git/branches/search` | List branches |
+
+### Secrets
+
+Manage custom secrets:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/secrets` | List secrets (names only) |
+| `POST /api/v1/secrets` | Create a secret |
+| `DELETE /api/v1/secrets/{id}` | Delete a secret |
+
+## Quick Start Example
+
+Here's a complete example of starting a conversation and polling for completion:
+
+```python
+import requests
+import time
+
+API_KEY = "your-api-key"
+BASE_URL = "https://app.all-hands.dev"
+
+headers = {
+    "Authorization": f"Bearer {API_KEY}",
+    "Content-Type": "application/json"
+}
+
+# 1. Start a conversation
+response = requests.post(
+    f"{BASE_URL}/api/v1/app-conversations",
+    headers=headers,
+    json={
+        "initial_message": {
+            "content": [{"type": "text", "text": "Fix the typo in README.md"}]
+        },
+        "selected_repository": "owner/repo"
+    }
+)
+start_task = response.json()
+task_id = start_task["id"]
+print(f"Start task ID: {task_id}")
+
+# 2. Poll until conversation is ready
+conversation_id = None
+while not conversation_id:
+    response = requests.get(
+        f"{BASE_URL}/api/v1/app-conversations/start-tasks",
+        headers=headers,
+        params={"ids": task_id}
+    )
+    tasks = response.json()
+    if tasks and tasks[0].get("status") == "READY":
+        conversation_id = tasks[0]["app_conversation_id"]
+    else:
+        time.sleep(5)
+
+print(f"Conversation ready: {BASE_URL}/conversations/{conversation_id}")
+
+# 3. Poll conversation until agent finishes
+while True:
+    response = requests.get(
+        f"{BASE_URL}/api/v1/app-conversations",
+        headers=headers,
+        params={"ids": conversation_id}
+    )
+    conv = response.json()[0]
+    status = conv.get("execution_status")
+    print(f"Status: {status}")
+    
+    if status in ["finished", "error", "stuck"]:
+        break
+    time.sleep(30)
+```
+
+## Next Steps
+
+- **[Cloud API Guide](/openhands/usage/cloud/cloud-api)**: Detailed usage examples and patterns
+- **V1 REST API Reference**: Complete endpoint documentation in the navigation
