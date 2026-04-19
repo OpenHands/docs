@@ -1,0 +1,485 @@
+---
+title: Fork a Conversation
+description: Branch off an existing conversation for follow-up exploration without contaminating the original.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+`Conversation.fork()` deep-copies a conversation — events, agent config, workspace metadata — into a new conversation with its own ID. The fork starts in `idle` status and retains the full event memory of the source, so calling `run()` picks up right where the original left off.
+
+**Use cases:**
+- **CI debugging** — an agent produced a wrong patch; fork to debug without losing the original run's audit trail
+- **A/B testing** — fork at a given turn, change one variable, compare downstream outcomes
+- **Tool-change** — fork and swap in a different agent with new tools mid-conversation
+
+## Basic Usage
+
+### Create a fork
+
+```python icon="python" focus={6} wrap
+source = Conversation(agent=agent, workspace=workspace)
+source.send_message("Analyse the sales report.")
+source.run()
+
+# Fork the conversation with a title
+fork = source.fork(title="Follow-up exploration")
+
+# The fork has the same events — agent remembers the full history
+fork.send_message("Now focus on the EMEA region.")
+fork.run()  # Continues from the source's state
+```
+
+### Source stays immutable
+
+Forking deep-copies events and state. Anything you do on the fork never touches the source:
+
+```python icon="python" wrap
+source_events_before = len(source.state.events)
+
+fork = source.fork()
+fork.send_message("Extra question")
+
+assert len(source.state.events) == source_events_before  # unchanged
+```
+
+### Fork with a different agent
+
+Swap the agent on fork — useful for A/B testing models or adding/removing tools:
+
+```python icon="python" focus={8-11} wrap
+alt_llm = LLM(model="openai/gpt-4o", api_key=api_key, usage_id="alt")
+alt_agent = Agent(llm=alt_llm, tools=[Tool(name=TerminalTool.name)])
+
+fork = source.fork(
+    agent=alt_agent,
+    title="GPT-4o experiment",
+    tags={"variant": "B"},
+)
+fork.run()  # Same history, different model
+```
+
+### Tags and metadata
+
+Forks support `title` and arbitrary `tags` for organization:
+
+```python icon="python" wrap
+fork = source.fork(
+    title="Debug investigation",
+    tags={"purpose": "debugging", "triggered_by": "ci-pipeline"},
+)
+
+print(fork.state.tags)
+# {'title': 'Debug investigation', 'purpose': 'debugging', 'triggered_by': 'ci-pipeline'}
+```
+
+### Metrics reset
+
+By default, cost/token stats start fresh on the fork. Pass `reset_metrics=False` to preserve them:
+
+```python icon="python" wrap
+# Cost starts at 0 on the fork (default)
+fork_fresh = source.fork()
+
+# Cost carries over from source
+fork_with_history = source.fork(reset_metrics=False)
+```
+
+## API Reference
+
+```python icon="python" wrap
+def fork(
+    self,
+    *,
+    conversation_id: ConversationID | None = None,  # auto-generated if None
+    agent: AgentBase | None = None,                  # deep-copy of source agent if None
+    title: str | None = None,                        # sets tags["title"]
+    tags: dict[str, str] | None = None,              # arbitrary metadata
+    reset_metrics: bool = True,                      # cost/tokens start fresh
+) -> Conversation:
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `conversation_id` | auto-generated UUID | ID for the forked conversation |
+| `agent` | deep-copy of source | Agent for the fork (swap model, tools, etc.) |
+| `title` | `None` | Sets `tags["title"]` on the fork |
+| `tags` | `None` | Arbitrary key-value metadata |
+| `reset_metrics` | `True` | Whether cost/token stats start at zero |
+
+**Returns:** A new `Conversation` with the same event history but independent state.
+
+## What Gets Copied
+
+| Component | Behavior |
+|-----------|----------|
+| **Events** | Deep-copied; source is never modified |
+| **Agent** | Deep-copied by default, or replaced via the `agent` kwarg |
+| **Workspace** | Shared (same working directory) |
+| **Agent state** | Deep-copied (custom runtime data accumulated during the conversation) |
+| **Activated knowledge skills** | Copied (list of skill names activated in the source) |
+| **Stats / Metrics** | Reset by default (`reset_metrics=True`); pass `False` to carry over |
+| **Tags** | Fresh from kwargs; source tags are **not** inherited |
+| **Execution status** | Always `idle` on the fork |
+| **Conversation ID** | New UUID (or explicit via `conversation_id`) |
+
+## Agent-Server REST Endpoint
+
+When using the [agent-server](/sdk/guides/agent-server/overview), forks are available via REST:
+
+```bash icon="terminal"
+POST /api/conversations/{id}/fork
+```
+
+**Request body** (all fields optional):
+
+```json
+{
+  "id": "custom-uuid-or-null",
+  "title": "Debug investigation",
+  "tags": {"purpose": "debugging"},
+  "reset_metrics": true
+}
+```
+
+**Response:** Standard `ConversationInfo` for the newly created fork.
+
+When you call `fork()` on a `RemoteConversation`, the SDK sends this request for
+you and returns a new `RemoteConversation` pointing at the server-side copy.
+Remote forks always reuse the server-managed agent configuration, so
+`RemoteConversation.fork(agent=...)` is intentionally unsupported.
+
+## Agent-Server Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/11_conversation_fork.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/11_conversation_fork.py)
+</Note>
+
+```python icon="python" expandable examples/02_remote_agent_server/11_conversation_fork.py
+"""Fork a conversation through the agent server REST API.
+
+Demonstrates ``RemoteConversation.fork()`` which delegates to the server's
+``POST /api/conversations/{id}/fork`` endpoint.  The fork deep-copies
+events and state on the server side, then returns a new
+``RemoteConversation`` pointing at the copy.
+
+Scenarios covered:
+  1. Run a source conversation on the server
+  2. Fork it — verify independent event histories
+  3. Fork with a title and custom tags
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation, RemoteConversation, Tool, Workspace
+from openhands.tools.terminal import TerminalTool
+
+
+# -----------------------------------------------------------------
+# Managed server helper (reused from example 01)
+# -----------------------------------------------------------------
+def _stream_output(stream, prefix, target_stream):
+    try:
+        for line in iter(stream.readline, ""):
+            if line:
+                target_stream.write(f"[{prefix}] {line}")
+                target_stream.flush()
+    except Exception as e:
+        print(f"Error streaming {prefix}: {e}", file=sys.stderr)
+    finally:
+        stream.close()
+
+
+class ManagedAPIServer:
+    """Context manager that starts and stops a local agent-server."""
+
+    def __init__(self, port: int = 8000, host: str = "127.0.0.1"):
+        self.port = port
+        self.host = host
+        self.process: subprocess.Popen[str] | None = None
+        self.base_url = f"http://{host}:{port}"
+
+    def __enter__(self):
+        print(f"Starting agent-server on {self.base_url} ...")
+        self.process = subprocess.Popen(
+            [
+                "python",
+                "-m",
+                "openhands.agent_server",
+                "--port",
+                str(self.port),
+                "--host",
+                self.host,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={"LOG_JSON": "true", **os.environ},
+        )
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        threading.Thread(
+            target=_stream_output,
+            args=(self.process.stdout, "SERVER", sys.stdout),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=_stream_output,
+            args=(self.process.stderr, "SERVER", sys.stderr),
+            daemon=True,
+        ).start()
+
+        import httpx
+
+        for _ in range(30):
+            try:
+                if httpx.get(f"{self.base_url}/health", timeout=1.0).status_code == 200:
+                    print(f"Agent-server ready at {self.base_url}")
+                    return self
+            except Exception:
+                pass
+            assert self.process.poll() is None, "Server exited unexpectedly"
+            time.sleep(1)
+        raise RuntimeError("Server failed to start in 30 s")
+
+    def __exit__(self, *args):
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            time.sleep(0.5)
+            print("Agent-server stopped.")
+
+
+# -----------------------------------------------------------------
+# Config
+# -----------------------------------------------------------------
+api_key = os.getenv("LLM_API_KEY")
+assert api_key, "LLM_API_KEY must be set"
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=SecretStr(api_key),
+    base_url=os.getenv("LLM_BASE_URL"),
+)
+agent = Agent(llm=llm, tools=[Tool(name=TerminalTool.name)])
+
+# -----------------------------------------------------------------
+# Run
+# -----------------------------------------------------------------
+with ManagedAPIServer(port=8002) as server:
+    workspace_dir = tempfile.mkdtemp(prefix="fork_demo_")
+    workspace = Workspace(host=server.base_url, working_dir=workspace_dir)
+
+    # =============================================================
+    # 1. Source conversation
+    # =============================================================
+    source = Conversation(agent=agent, workspace=workspace)
+    assert isinstance(source, RemoteConversation)
+
+    source.send_message("Run `echo hello-from-source` in the terminal.")
+    source.run()
+
+    print("=" * 64)
+    print("  RemoteConversation.fork() — Agent-Server Example")
+    print("=" * 64)
+    print(f"\nSource conversation ID : {source.id}")
+    source_event_count = len(source.state.events)
+    print(f"Source events count    : {source_event_count}")
+
+    # =============================================================
+    # 2. Fork and continue independently
+    # =============================================================
+    fork = source.fork(title="Follow-up fork")
+    assert isinstance(fork, RemoteConversation)
+
+    print("\n--- Fork created ---")
+    print(f"Fork ID                : {fork.id}")
+    fork_event_count = len(fork.state.events)
+    print(f"Fork events (copied)   : {fork_event_count}")
+
+    assert fork.id != source.id
+    # The fork copies all persisted events from the server-side EventLog.
+    # The source's client-side list may additionally contain transient
+    # WebSocket-only events (e.g. full-state snapshots) that are never
+    # persisted, so we only assert the fork has a non-trivial number of
+    # events rather than exact parity.
+    assert fork_event_count > 0
+
+    fork.send_message("Now run `echo hello-from-fork` in the terminal.")
+    fork.run()
+
+    print("\n--- After running fork ---")
+    print(f"Source events          : {len(source.state.events)}")
+    print(f"Fork events (grew)     : {len(fork.state.events)}")
+    assert len(fork.state.events) > fork_event_count
+
+    # =============================================================
+    # 3. Fork with tags
+    # =============================================================
+    fork_tagged = source.fork(
+        title="Tagged experiment",
+        tags={"purpose": "a/b-test"},
+    )
+    assert isinstance(fork_tagged, RemoteConversation)
+
+    print("\n--- Fork with tags ---")
+    print(f"Fork ID     : {fork_tagged.id}")
+
+    fork_tagged.send_message(
+        "What command did you run earlier? Just tell me, no tools."
+    )
+    fork_tagged.run()
+
+    print(f"Fork events : {len(fork_tagged.state.events)}")
+
+    # =============================================================
+    # Summary
+    # =============================================================
+    print(f"\n{'=' * 64}")
+    print("All done — RemoteConversation.fork() works end-to-end.")
+    print("=" * 64)
+
+    # Cleanup
+    fork.close()
+    fork_tagged.close()
+    source.close()
+
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/48_conversation_fork.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/48_conversation_fork.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/48_conversation_fork.py
+"""Fork a conversation to branch off for follow-up exploration.
+
+``Conversation.fork()`` deep-copies a conversation — events, agent config,
+workspace metadata — into a new conversation with its own ID.  The fork
+starts in ``idle`` status and retains full event memory of the source, so
+calling ``run()`` picks up right where the original left off.
+
+Use cases:
+  - CI agents that produced a wrong patch — engineer forks to debug
+    without losing the original run's audit trail
+  - A/B-testing prompts — fork at a given turn, change one variable,
+    compare downstream
+  - Swapping tools mid-conversation (fork-on-tool-change)
+"""
+
+import os
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.terminal import TerminalTool
+
+
+# -----------------------------------------------------------------
+# Setup
+# -----------------------------------------------------------------
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+)
+
+agent = Agent(llm=llm, tools=[Tool(name=TerminalTool.name)])
+cwd = os.getcwd()
+
+# =================================================================
+# 1. Run the source conversation
+# =================================================================
+source = Conversation(agent=agent, workspace=cwd)
+source.send_message("Run `echo hello-from-source` in the terminal.")
+source.run()
+
+print("=" * 64)
+print("  Conversation.fork() — SDK Example")
+print("=" * 64)
+print(f"\nSource conversation ID : {source.id}")
+print(f"Source events count    : {len(source.state.events)}")
+
+# =================================================================
+# 2. Fork and continue independently
+# =================================================================
+fork = source.fork(title="Follow-up fork")
+source_event_count = len(source.state.events)
+
+print("\n--- Fork created ---")
+print(f"Fork ID                : {fork.id}")
+print(f"Fork events (copied)   : {len(fork.state.events)}")
+print(f"Fork title             : {fork.state.tags.get('title')}")
+
+assert fork.id != source.id
+assert len(fork.state.events) == source_event_count
+
+fork.send_message("Now run `echo hello-from-fork` in the terminal.")
+fork.run()
+
+# Source is untouched
+assert len(source.state.events) == source_event_count
+print("\n--- After running fork ---")
+print(f"Source events (unchanged): {source_event_count}")
+print(f"Fork events (grew)       : {len(fork.state.events)}")
+
+# =================================================================
+# 3. Fork with a different agent (tool-change / A/B testing)
+# =================================================================
+alt_llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+    usage_id="alt",
+)
+alt_agent = Agent(llm=alt_llm, tools=[Tool(name=TerminalTool.name)])
+
+fork_alt = source.fork(
+    agent=alt_agent,
+    title="Tool-change experiment",
+    tags={"purpose": "a/b-test"},
+)
+
+print("\n--- Fork with alternate agent ---")
+print(f"Fork ID     : {fork_alt.id}")
+print(f"Fork tags   : {dict(fork_alt.state.tags)}")
+
+fork_alt.send_message("What command did you run earlier? Just tell me, no tools.")
+fork_alt.run()
+
+print(f"Fork events : {len(fork_alt.state.events)}")
+
+# =================================================================
+# Summary
+# =================================================================
+print(f"\n{'=' * 64}")
+print("All done — fork() works end-to-end.")
+print("=" * 64)
+
+# Report cost
+cost = llm.metrics.accumulated_cost + alt_llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/48_conversation_fork.py"/>
+
+## Next Steps
+
+- **[Persistence](/sdk/guides/convo-persistence)** — Save and restore conversation state
+- **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** — Control execution flow
+- **[Agent Server](/sdk/guides/agent-server/overview)** — Deploy agents with the REST API
