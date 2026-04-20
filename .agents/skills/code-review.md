@@ -60,17 +60,29 @@ grep -rn "function_name" /tmp/agent-sdk/
 
 ## Review Decisions
 
-### When to APPROVE
+You **must** use the correct GitHub review `event` value when submitting your review.
+Match the event to the severity of your findings:
+
+- **`APPROVE`** — Use when the PR is good and has no blocking issues. You can still include non-blocking inline comments with an APPROVE event.
+- **`REQUEST_CHANGES`** — Use when there are critical issues that must be fixed before merging (e.g., hallucinated APIs, incorrect signatures, broken examples).
+- **`COMMENT`** — Use when you have feedback but are not explicitly approving or requesting changes (e.g., unverifiable claims, minor suggestions).
+
+### When to APPROVE (`event: "APPROVE"`)
 - Documentation-only style/formatting changes
 - Accurate content verified against source code
 - Changes that correctly sync with upstream code changes
 - **Release PRs from @mamoodi**: If the PR author is @mamoodi and the changes are standard release updates (version bumps, changelog entries, etc.) with nothing suspicious, approve without requiring full source verification
 
-### When to COMMENT
-- Documentation claims that cannot be verified against source code
-- Potentially hallucinated API surfaces (functions, parameters, classes that don't exist)
-- Inaccurate signatures, return types, or field names
-- Missing context that could mislead users
+### When to REQUEST_CHANGES (`event: "REQUEST_CHANGES"`)
+- Hallucinated API surfaces (functions, parameters, classes that don't exist in source)
+- Inaccurate signatures, return types, or field names verified against source code
+- Example code that would not run or produces incorrect results
+- Broken internal links or navigation entries
+
+### When to COMMENT (`event: "COMMENT"`)
+- Documentation claims that cannot be verified against source code (upstream not available)
+- Minor suggestions or style nits that don't block merging
+- Missing context that could mislead users but isn't critical
 
 ## General Guidelines
 
