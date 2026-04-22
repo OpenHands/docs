@@ -87,11 +87,26 @@ glob(repository.full_name, 'myorg/*') && contains(pull_request.labels[].name, 'b
 
 For services beyond GitHub—like Linear, Stripe, or Slack—register a custom webhook first, then create automations that use it.
 
+<Note>
+**How secrets are handled**: The agent will provide the curl command you need to register a webhook, but you execute it yourself. This keeps your signing secrets secure—the agent never asks for or handles sensitive credentials directly.
+
+Once the webhook is registered, the agent can create automations end-to-end on your behalf.
+</Note>
+
 ### Walkthrough: Linear Integration
 
 This example walks through setting up a Linear webhook to auto-triage new issues.
 
-#### Step 1: Register the Webhook with OpenHands
+#### Step 1: Get Your Webhook Secret from Linear
+
+Linear provides the webhook signing secret—you cannot configure your own.
+
+1. Go to **Linear Settings → API → Webhooks**
+2. Click **New webhook**
+3. Copy the **signing secret** that Linear displays (you'll need this in the next step)
+4. Leave the webhook URL blank for now—you'll get it from OpenHands
+
+#### Step 2: Register the Webhook with OpenHands
 
 Ask the agent to help you register a webhook:
 
@@ -100,39 +115,37 @@ I want to set up a webhook integration for Linear so I can automate
 issue triage. Can you help me register it?
 ```
 
-The agent will ask:
-- **Webhook name**: A descriptive name (e.g., "Linear Issues")
-- **Signing secret**: Whether you have one from Linear, or should generate one
+The agent will walk you through the setup and provide a curl command like this:
 
-The registration requires these parameters:
+```bash
+curl -X POST "https://app.all-hands.dev/api/automation/v1/webhooks" \
+  -H "Authorization: Bearer ${OPENHANDS_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Linear Issues",
+    "source": "linear",
+    "event_key_expr": "type",
+    "signature_header": "Linear-Signature",
+    "webhook_secret": "YOUR_LINEAR_SIGNING_SECRET"
+  }'
+```
 
-| Parameter | Description | Linear Value |
-|-----------|-------------|--------------|
-| `source` | Unique identifier for this integration | `linear` |
-| `signature_header` | HTTP header containing the HMAC signature | `Linear-Signature` |
-| `event_key_expr` | JMESPath expression to extract event type from payload | `type` |
-| `webhook_secret` | Secret for verifying webhook signatures | From Linear or auto-generated |
+**You run this command yourself**—replace `YOUR_LINEAR_SIGNING_SECRET` with the secret from Step 1. The response includes a `webhook_url` that you'll configure in Linear.
 
-<Note>
-If you don't have a signing secret yet, let the system generate one. You'll configure it in Linear during the next step.
-</Note>
+<Tip>
+If you're integrating a service that lets you configure the signing secret (unlike Linear), you can omit `webhook_secret` from the request. The automation service will generate one and return it in the response—store it securely, as it's shown only once.
+</Tip>
 
-The agent will create the webhook and return:
-- **Webhook URL**: The endpoint to configure in Linear
-- **Signing secret** (if generated): Store this securely—it's shown only once
+#### Step 3: Complete the Linear Webhook Configuration
 
-#### Step 2: Configure the Webhook in Linear
+1. Return to the Linear webhook you started in Step 1
+2. Paste the `webhook_url` from the previous step
+3. Select which events to send (e.g., Issues, Comments)
+4. Save the webhook
 
-1. Go to **Linear Settings → API → Webhooks**
-2. Click **New webhook**
-3. Paste the webhook URL from Step 1
-4. If OpenHands generated a secret, enter it in Linear's signing secret field
-5. Select which events to send (e.g., Issues, Comments)
-6. Save the webhook
+#### Step 4: Create the Automation
 
-#### Step 3: Create the Automation
-
-Now create an automation that triggers on Linear events:
+Now the webhook is registered, the agent can create automations for you end-to-end. Just describe what you want:
 
 ```
 Create an event-based automation called "Triage Linear Issues" that triggers
@@ -142,7 +155,7 @@ It should analyze the issue title and description, suggest appropriate labels,
 and add a comment with initial triage notes.
 ```
 
-The agent creates an automation with:
+The agent creates the automation with:
 - **Source**: `linear` (your registered webhook)
 - **Event**: `Issue` (Linear's event type)
 - **Filter**: `action == 'create'`
