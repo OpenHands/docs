@@ -510,6 +510,133 @@ enable_plugin(info.name)
 uninstall_plugin(info.name)
 ```
 
+## Multiple Marketplace Registrations
+
+For enterprise and team scenarios, you can register multiple plugin marketplaces
+with different loading strategies. This allows you to:
+
+- Register internal team marketplaces alongside the public marketplace
+- Control which plugins auto-load at conversation start vs load on-demand
+- Reference plugins from specific marketplaces using the `plugin@marketplace` syntax
+
+### Loading Strategies
+
+| Strategy | Behavior |
+|----------|----------|
+| `auto_load="all"` | All plugins from the marketplace load automatically when a conversation starts |
+| `auto_load=None` (default) | Marketplace is registered but plugins are loaded on-demand via `load_plugin()` |
+
+### Plugin Reference Syntax
+
+Use the `plugin-name@marketplace-name` format to explicitly specify which
+marketplace a plugin comes from. This syntax follows the same convention as
+[Claude Code's plugin install command](https://code.claude.com/docs/en/plugins-reference).
+
+```python icon="python"
+# Load a specific plugin from a registered marketplace
+conversation.load_plugin("greeter@demo")
+
+# If only one marketplace has the plugin, the marketplace name is optional
+conversation.load_plugin("greeter")
+```
+
+### Example: Auto-load and On-demand Loading
+
+The example below demonstrates registering two marketplaces with different
+loading strategies, then loading an additional plugin on-demand.
+
+<Note>
+Source: [examples/05_skills_and_plugins/04_multiple_marketplace_registrations/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/04_multiple_marketplace_registrations/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/04_multiple_marketplace_registrations/main.py
+"""Example: Multiple Marketplace Registrations
+
+Demonstrates two loading strategies for marketplace plugins:
+
+- auto_load="all": Plugins loaded automatically at conversation start
+- auto_load=None: Plugins loaded on-demand via conversation.load_plugin()
+
+This example uses pre-created marketplaces in:
+- ./auto_marketplace/ - auto-loaded at conversation start
+- ./demo_marketplace/ - loaded on-demand
+"""
+
+import os
+from pathlib import Path
+
+from openhands.sdk import LLM, Agent, AgentContext, Conversation
+from openhands.sdk.plugin import MarketplaceRegistration
+
+SCRIPT_DIR = Path(__file__).parent
+
+
+def main():
+    llm = LLM(
+        model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+        api_key=os.getenv("LLM_API_KEY"),
+        base_url=os.getenv("LLM_BASE_URL"),
+    )
+
+    # Register two marketplaces with different loading strategies
+    agent_context = AgentContext(
+        registered_marketplaces=[
+            # Auto-loaded: plugins available immediately when conversation starts
+            MarketplaceRegistration(
+                name="auto",
+                source=str(SCRIPT_DIR / "auto_marketplace"),
+                auto_load="all",
+            ),
+            # On-demand: registered but not loaded until explicitly requested
+            MarketplaceRegistration(
+                name="demo",
+                source=str(SCRIPT_DIR / "demo_marketplace"),
+                # auto_load=None (default) - use load_plugin() to load
+            ),
+        ],
+    )
+
+    agent = Agent(llm=llm, tools=[], agent_context=agent_context)
+    conversation = Conversation(agent=agent, workspace=os.getcwd())
+
+    # The "auto" marketplace plugins are already loaded
+    # Now load an additional plugin on-demand from "demo" marketplace
+    # Format: "plugin-name@marketplace-name" (same as Claude Code plugin syntax)
+    conversation.load_plugin("greeter@demo")
+
+    resolved = conversation.resolved_plugins
+    if resolved:
+        print(f"Loaded {len(resolved)} plugin(s):")
+        for plugin in resolved:
+            print(f"  - {plugin.source}")
+
+    # Use skills from both plugins
+    conversation.send_message("Give me a tip, then greet me!")
+    conversation.run()
+
+    print(f"\nEXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
+
+
+if __name__ == "__main__":
+    if not os.getenv("LLM_API_KEY"):
+        print("Set LLM_API_KEY to run this example")
+        print("EXAMPLE_COST: 0")
+    else:
+        main()
+```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/04_multiple_marketplace_registrations/main.py"/>
+
+### MarketplaceRegistration Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `str` | Identifier for this marketplace registration |
+| `source` | `str` | Plugin source: `github:owner/repo`, git URL, or local path |
+| `ref` | `str \| None` | Optional branch, tag, or commit for the marketplace repo |
+| `repo_path` | `str \| None` | Subdirectory within repo (for monorepos) |
+| `auto_load` | `"all" \| None` | Loading strategy (default: `None`) |
+
 ## Next Steps
 
 - **[Skills](/sdk/guides/skill)** - Learn more about skills and triggers
