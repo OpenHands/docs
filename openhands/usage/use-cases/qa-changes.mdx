@@ -1,0 +1,239 @@
+---
+title: Automated QA Validation
+description: Set up automated QA testing of PR changes using OpenHands and the Software Agent SDK
+---
+
+<Card
+  title="View Example Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes"
+>
+  Check out the complete QA Changes plugin with ready-to-use code and configuration.
+</Card>
+
+Automated code review catches style, security, and logic issues by reading diffs — but it cannot verify that a change *actually works*. The QA Changes workflow fills this gap by running the code: setting up the environment, executing the test suite, exercising changed behavior, and posting a structured report with evidence.
+
+## Overview
+
+The OpenHands QA Changes workflow is a GitHub Actions workflow that:
+
+- **Triggers automatically** when PRs are opened or when you request QA validation
+- **Sets up the full environment** — installs dependencies, builds the project
+- **Runs the test suite** — detects regressions introduced by the PR
+- **Exercises changed behavior** — manually tests new features, bug fixes, and edge cases
+- **Posts a structured QA report** as a PR comment with commands, outputs, and a verdict
+
+## How It Works
+
+The QA workflow uses the OpenHands Software Agent SDK to validate your code changes:
+
+1. **Trigger**: The workflow runs when:
+   - A new non-draft PR is opened
+   - A draft PR is marked as ready for review
+   - The `qa-this` label is added to a PR
+   - `openhands-agent` is requested as a reviewer
+
+2. **Validation**: The agent follows a four-phase methodology:
+   - **Understand**: Reads the diff, classifies changes, and identifies entry points (CLI commands, API endpoints, UI pages)
+   - **Setup**: Bootstraps the repository — installs dependencies, builds. Checks CI status and only runs tests CI does not cover
+   - **Exercise**: The core phase — actually uses the software as a real user would. Spins up servers, opens browsers, runs CLI commands, makes HTTP requests. The bar is high: "tests pass" is not enough
+   - **Report**: Posts structured findings with evidence, including what could not be verified
+
+3. **Output**: A QA report is posted as a PR comment with:
+   - Environment setup status
+   - CI & test status (what CI covers, any additional tests run)
+   - Functional verification evidence (commands run, outputs observed, screenshots)
+   - Unable to verify (what could not be tested, with suggested `AGENTS.md` guidance)
+   - Issues found (🔴 Blocker, 🟠 Issue, 🟡 Minor)
+   - Verdict (✅ PASS, ⚠️ PASS WITH ISSUES, ❌ FAIL, 🟡 PARTIAL)
+
+### Code Review vs QA Validation
+
+| Aspect | [Code Review](/openhands/usage/use-cases/code-review) | QA Validation |
+|--------|-------------|---------------|
+| **Method** | Reads the diff | Runs the code |
+| **Speed** | 2-3 minutes | 5-15 minutes |
+| **Catches** | Style, security, logic issues | Regressions, broken features, build failures |
+| **Output** | Inline code comments | Structured QA report with evidence |
+| **Best for** | Every PR | Feature PRs, bug fixes, risky changes |
+
+Both workflows complement each other. Use code review for fast feedback on every PR, and QA validation for thorough verification of changes that affect behavior.
+
+## Quick Start
+
+<Steps>
+  <Step title="Copy the workflow file">
+    Create `.github/workflows/qa-changes-by-openhands.yml` in your repository:
+
+    ```yaml
+    name: QA Changes by OpenHands
+
+    on:
+      pull_request_target:
+        types: [opened, ready_for_review, labeled, review_requested]
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    jobs:
+      qa-changes:
+        if: |
+          (github.event.action == 'opened' && github.event.pull_request.draft == false) ||
+          github.event.action == 'ready_for_review' ||
+          github.event.label.name == 'qa-this' ||
+          github.event.requested_reviewer.login == 'openhands-agent'
+        runs-on: ubuntu-latest
+        steps:
+          - name: Run QA Changes
+            uses: OpenHands/extensions/plugins/qa-changes@main
+            with:
+              llm-model: anthropic/claude-sonnet-4-5-20250929
+              llm-api-key: ${{ secrets.LLM_API_KEY }}
+              github-token: ${{ secrets.GITHUB_TOKEN }}
+    ```
+  </Step>
+
+  <Step title="Add your LLM API key">
+    Go to your repository's **Settings → Secrets and variables → Actions** and add:
+    - **`LLM_API_KEY`**: Your LLM API key (get one from [OpenHands LLM Provider](/openhands/usage/llms/openhands-llms))
+  </Step>
+
+  <Step title="Create the QA label">
+    Create a `qa-this` label in your repository:
+    1. Go to **Issues → Labels**
+    2. Click **New label**
+    3. Name: `qa-this`
+    4. Description: `Trigger OpenHands QA validation`
+  </Step>
+
+  <Step title="Trigger QA validation">
+    Open a PR and either:
+    - Add the `qa-this` label, OR
+    - Request `openhands-agent` as a reviewer
+  </Step>
+</Steps>
+
+## Composite Action
+
+The workflow uses a reusable composite action from the extensions repository that handles all the setup automatically:
+
+- Checking out the extensions and PR repositories
+- Setting up Python and dependencies
+- Running the QA agent in the PR's workspace
+- Uploading logs as artifacts
+
+### Action Inputs
+
+| Input | Description | Required | Default |
+|-------|-------------|----------|---------|
+| `llm-model` | LLM model to use | No | `anthropic/claude-sonnet-4-5-20250929` |
+| `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
+| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
+| `llm-api-key` | LLM API key | Yes | - |
+| `github-token` | GitHub token for API access | Yes | - |
+
+<Note>
+Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features.
+</Note>
+
+## Customization
+
+### Repository-Specific QA Guidelines
+
+Help the QA agent understand your project by adding a skill file at `.agents/skills/qa-guide.md`:
+
+```markdown
+---
+name: qa-guide
+description: Project-specific QA guidelines
+triggers:
+- /qa-changes
+---
+
+# Project QA Guidelines
+
+## Setup Commands
+- `make install` to install dependencies
+- `make build` to build the project
+
+## Test Commands
+- `make test` for unit tests
+- `make test-integration` for integration tests
+- `make test-e2e` for end-to-end tests
+
+## Key Behaviors to Verify
+- User authentication flows
+- API endpoint responses
+- Database migration correctness
+
+## Known Fragile Areas
+- WebSocket connections under load
+- File upload handling for large files
+```
+
+<Tip>
+The QA agent also reads your repository's `AGENTS.md` file automatically. Adding setup commands, test commands, and project conventions there helps both QA and other OpenHands workflows.
+</Tip>
+
+### Trigger Customization
+
+Modify when QA runs by editing the workflow conditions:
+
+```yaml
+# Only trigger on label (disable auto-QA on PR open)
+if: github.event.label.name == 'qa-this'
+
+# Trigger on all PRs (including drafts)
+if: |
+  github.event.action == 'opened' ||
+  github.event.action == 'synchronize'
+```
+
+## Security Considerations
+
+<Warning>
+**Important**: The QA agent executes code from the PR. Unlike code review (which only reads diffs), QA validation runs commands in the repository.
+
+The workflow excludes `FIRST_TIME_CONTRIBUTOR` and `NONE` author associations from automatic triggers. For untrusted PRs, manually review the changes before adding the `qa-this` label.
+
+API keys are passed as [SDK secrets](/sdk/guides/secrets) to prevent direct credential access during code execution.
+</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="QA not triggering">
+    - Ensure the `LLM_API_KEY` secret is set correctly
+    - Check that the label name matches exactly (`qa-this`)
+    - Verify the workflow file is in `.github/workflows/`
+    - Check the Actions tab for workflow run errors
+  </Accordion>
+
+  <Accordion title="Environment setup failing">
+    - Add setup instructions to `AGENTS.md` or a custom QA skill
+    - Ensure the project's dependencies are available in the CI environment
+    - Check if the project requires specific system packages
+  </Accordion>
+
+  <Accordion title="QA taking too long">
+    - Large test suites may take longer to run
+    - Consider adding a custom skill that specifies which test subset to run
+    - Check if the LLM API is experiencing delays
+  </Accordion>
+
+  <Accordion title="QA report not appearing">
+    - Ensure `GITHUB_TOKEN` has `pull-requests: write` permission
+    - Check the workflow logs for API errors
+    - Verify the PR is not from a fork with restricted permissions
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+- [QA Changes Plugin](https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes) - Complete plugin with scripts and skills
+- [Automated Code Review](/openhands/usage/use-cases/code-review) - Complementary code review workflow
+- [Software Agent SDK](/sdk/index) - Build your own AI-powered workflows
+- [Skills Documentation](/overview/skills) - Learn more about OpenHands skills
