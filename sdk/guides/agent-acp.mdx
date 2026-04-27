@@ -29,15 +29,67 @@ The `acp_command` is the shell command used to spawn the server process. The SDK
 **Key difference from standard agents:** With `ACPAgent`, you don't need an `LLM_API_KEY` in your code. The ACP server handles its own LLM authentication and API calls. This is *delegation* — your code sends messages to the ACP server, which manages all LLM interactions internally.
 </Note>
 
+### Prompt Context (AgentContext)
+
+`ACPAgent` supports `agent_context` for **prompt-only extensions** — skills, repository context, current datetime, and system/user message suffixes are appended to the user message before it reaches the ACP server. This lets you inject the same skill catalog and repo-specific guidance that the built-in Agent receives, without interfering with the server's own tools or execution model.
+
+```python icon="python" highlight={4-12,16}
+from openhands.sdk.agent import ACPAgent
+from openhands.sdk import AgentContext
+from openhands.sdk.context import Skill
+
+context = AgentContext(
+    skills=[
+        Skill(
+            name="code-style",
+            content="Always use type hints in Python.",
+            trigger=None,  # always active
+        ),
+    ],
+    system_message_suffix="You are reviewing a Python project.",
+)
+
+agent = ACPAgent(
+    acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+    agent_context=context,
+)
+```
+
+The prompt assembly works as follows:
+
+1. The conversation layer builds the user `MessageEvent`, including any per-turn `extended_content` (e.g. triggered-skill injections).
+2. `ACPAgent._build_acp_prompt()` collects all text blocks from the message and appends the rendered `AgentContext` prompt (datetime, repo context, available skills, system suffix) via `to_acp_prompt_context()`.
+3. The combined text is sent as a single user message to the ACP server.
+
+<Note>
+`user_message_suffix` is an ACP-compatible field, but it is **not** duplicated in `to_acp_prompt_context()` because the conversation layer already applies it through `MessageEvent.to_llm_message()`.
+</Note>
+
+#### Compatible AgentContext Fields
+
+Each `AgentContext` field is tagged as ACP-compatible or not. At initialization, `validate_acp_compatibility()` rejects any context that uses unsupported fields.
+
+| Field | ACP Compatible | Notes |
+|-------|:-:|-------|
+| `skills` | ✅ | Skill catalog and trigger-based injections |
+| `system_message_suffix` | ✅ | Appended to the prompt context |
+| `user_message_suffix` | ✅ | Applied by the conversation layer |
+| `current_datetime` | ✅ | Included in the rendered prompt |
+| `load_user_skills` | ✅ | Load skills from `~/.openhands/skills/` |
+| `load_public_skills` | ✅ | Load skills from the public extensions repo |
+| `marketplace_path` | ✅ | Filter public skills via marketplace JSON |
+| `secrets` | ❌ | ACP subprocesses do not use OpenHands secret injection |
+
+Passing `secrets` (or any future field marked `acp_compatible: False`) raises `NotImplementedError`.
+
 ### What ACPAgent Does Not Support
 
-Because the ACP server manages its own tools and context, these `AgentBase` features are not available on `ACPAgent`:
+Because the ACP server manages its own tools, context window, and execution, these `AgentBase` features are not available on `ACPAgent`:
 
 - `tools` / `include_default_tools` — the server has its own tools
 - `mcp_config` — configure MCP on the server side
 - `condenser` — the server manages its own context window
 - `critic` — the server manages its own evaluation
-- `agent_context` — configure the server directly
 
 Passing any of these raises `NotImplementedError` at initialization.
 
@@ -81,6 +133,15 @@ agent = ACPAgent(
 | `acp_command` | Command to start the ACP server (required) |
 | `acp_args` | Additional arguments appended to the command |
 | `acp_env` | Additional environment variables for the server process |
+
+### Authentication
+
+When the ACP server advertises authentication methods, `ACPAgent` automatically selects a credential source:
+
+1. **ChatGPT subscription login** — If the server supports a `chatgpt` auth method and `~/.codex/auth.json` exists (created by `LLM.subscription_login()`), this is selected first. This enables ACP-backed workflows to use device-code login credentials without an explicit API key.
+2. **API key environment variables** — Falls back to checking for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` depending on which auth methods the server supports.
+
+If no supported credential source is found, the server may proceed without authentication (some servers don't require it).
 
 ## Metrics
 
