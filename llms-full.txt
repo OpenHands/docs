@@ -9140,7 +9140,7 @@ from openhands.sdk.agent import ACPAgent
 from openhands.sdk.conversation import Conversation
 
 # Point at any ACP-compatible server
-agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
+agent = ACPAgent(acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"])
 
 conversation = Conversation(agent=agent, workspace="./my-project")
 conversation.send_message("Explain the architecture of this project.")
@@ -9196,9 +9196,9 @@ If you attach to an existing conversation by `conversation_id`, use `ACPAgent` f
 
 ```python icon="python"
 agent = ACPAgent(
-    acp_command=["npx", "-y", "claude-code-acp"],
+    acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
     acp_args=["--profile", "my-profile"],      # extra CLI args
-    acp_env={"CLAUDE_API_KEY": "sk-..."},       # extra env vars
+    acp_env={"ANTHROPIC_API_KEY": "sk-..."},   # extra env vars
 )
 ```
 
@@ -9229,7 +9229,7 @@ Usage data comes from two ACP protocol sources:
 Always call `agent.close()` when you are done to terminate the ACP server subprocess. A `try/finally` block is recommended:
 
 ```python icon="python"
-agent = ACPAgent(acp_command=["npx", "-y", "claude-code-acp"])
+agent = ACPAgent(acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"])
 try:
     conversation = Conversation(agent=agent, workspace=".")
     conversation.send_message("Hello!")
@@ -9247,14 +9247,14 @@ This example is available on GitHub: [examples/01_standalone_sdk/40_acp_agent_ex
 ```python icon="python" expandable examples/01_standalone_sdk/40_acp_agent_example.py
 """Example: Using ACPAgent with Claude Code ACP server.
 
-This example shows how to use an ACP-compatible server (claude-code-acp)
+This example shows how to use an ACP-compatible server (claude-agent-acp)
 as the agent backend instead of direct LLM calls.  It also demonstrates
 ``ask_agent()`` — a stateless side-question that forks the ACP session
 and leaves the main conversation untouched.
 
 Prerequisites:
     - Node.js / npx available
-    - Claude Code CLI authenticated (or CLAUDE_API_KEY set)
+    - ANTHROPIC_BASE_URL and ANTHROPIC_API_KEY set (can point to LiteLLM proxy)
 
 Usage:
     uv run python examples/01_standalone_sdk/40_acp_agent_example.py
@@ -9266,7 +9266,7 @@ from openhands.sdk.agent import ACPAgent
 from openhands.sdk.conversation import Conversation
 
 
-agent = ACPAgent(acp_command=["npx", "-y", "@zed-industries/claude-code-acp"])
+agent = ACPAgent(acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"])
 
 try:
     cwd = os.getcwd()
@@ -9285,18 +9285,24 @@ try:
         "Based on what you just saw, which agent class is the newest addition?"
     )
     print(f"ask_agent response: {response}")
+    # Report cost (ACP server reports usage via session_update notifications)
+    cost = agent.llm.metrics.accumulated_cost
+    print(f"EXAMPLE_COST: {cost:.4f}")
 finally:
     # Clean up the ACP server subprocess
     agent.close()
 
+cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+print(f"\nEXAMPLE_COST: {cost}")
 print("Done!")
 ```
 
-This example does not use an LLM API key directly — the ACP server (Claude Code) handles authentication on its own.
+This example uses ANTHROPIC_BASE_URL and ANTHROPIC_API_KEY environment variables to configure the Claude Code ACP server.
 
 ```bash Running the Example
-# Ensure Claude Code CLI is authenticated first
-# (or set CLAUDE_API_KEY in your environment)
+# Set up environment variables (can point to LiteLLM proxy)
+export ANTHROPIC_BASE_URL="https://your-proxy.example.com"
+export ANTHROPIC_API_KEY="your-api-key"
 cd software-agent-sdk
 uv run python examples/01_standalone_sdk/40_acp_agent_example.py
 ```
@@ -10272,12 +10278,20 @@ By default, all agents include `finish` tool and the `think` tool.
 
 | Agent | Tools | Description |
 |--------|-------|-------|
-| **default** | `terminal`, `file_editor`, `task_tracker`, `browser_tool_set` | General-purpose agent. Used as the fallback when no agent name is specified. |
-| **default cli mode** | `terminal`, `file_editor`, `task_tracker` | Same as `default` but without browser tools (used in CLI mode). |
-| **explore** | `terminal` | Read-only codebase exploration agent. Finds files, searches code, reads source — never creates or modifies anything. |
-| **bash** | `terminal` | Command execution specialist. Runs shell commands, builds, tests, and git operations. |
+| **general-purpose** | `terminal`, `file_editor`, `task_tracker` | General-purpose agent for tasks requiring a combination of capabilities. Used as the fallback when no agent name is specified. |
+| **code-explorer** | `terminal` | Read-only codebase exploration agent. Finds files, searches code, reads source — never creates or modifies anything. |
+| **bash-runner** | `terminal` | Command execution specialist. Runs shell commands, builds, tests, linters, and git operations. Returns concise reports instead of raw output. |
+| **web-researcher** | `browser_tool_set` + MCP (`fetch`, `tavily`) | Web research specialist. Searches the web, navigates documentation, and extracts information from URLs. |
 
-In CLI mode, the `default` agent (with browser tools) is replaced by the `default cli mode` agent. In non-CLI mode, `default cli mode` is filtered out.
+When `enable_browser=False`, browser-dependent agents like `web-researcher` are not registered.
+
+<Note>
+**Deprecated names:** The following legacy names are deprecated (since v1.12.0) and will be removed in version 2.0.0:
+- `default` → use `general-purpose`
+- `default cli mode` → use `general-purpose`
+- `explore` → use `code-explorer`
+- `bash` → use `bash-runner`
+</Note>
 
 ### Registering Built-in Sub-Agents
 
@@ -10286,11 +10300,11 @@ Call `register_builtins_agents()` to register all built-in sub-agents. This is t
 ```python icon="python" focus={3-4, 6-7}
 from openhands.tools.preset.default import register_builtins_agents
 
-# Register built-in sub-agents (default, explore, bash)
+# Register all built-in sub-agents (including web-researcher)
 register_builtins_agents()
 
-# Or in CLI mode (swaps default for default cli mode — no browser)
-register_builtins_agents(cli_mode=True)
+# Or without browser-dependent agents (excludes web-researcher)
+register_builtins_agents(enable_browser=False)
 ```
 
 <Warning>
@@ -10829,6 +10843,9 @@ Source: https://docs.openhands.dev/sdk/guides/agent-server/api-sandbox.md
 
 > A ready-to-run example is available [here](#ready-to-run-example)!
 
+<Warning>
+The [Runtime API](https://runtime.all-hands.dev/) (`runtime.all-hands.dev`) is designed primarily for **[benchmark evaluation at scale](https://github.com/OpenHands/benchmarks)**, not for building production applications. If you are building a production application with the SDK, use the **[OpenHands Cloud Workspace](/sdk/guides/agent-server/cloud-workspace)** instead, which provides fully managed sandbox environments with SaaS credential support.
+</Warning>
 
 The API-sandboxed agent server demonstrates how to use `APIRemoteWorkspace` to connect to a [OpenHands runtime API service](https://runtime.all-hands.dev/). This eliminates the need to manage your own infrastructure, providing automatic scaling, monitoring, and secure sandboxed execution.
 
@@ -15039,6 +15056,490 @@ Now that you understand custom visualizers, explore these related topics:
 - **[Send Messages While Running](/sdk/guides/convo-send-message-while-running)** - Interactive conversations with real-time updates
 - **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** - Control agent execution flow with custom logic
 
+### Fork a Conversation
+Source: https://docs.openhands.dev/sdk/guides/convo-fork.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+`Conversation.fork()` deep-copies a conversation — events, agent config, workspace metadata — into a new conversation with its own ID. The fork starts in `idle` status and retains the full event memory of the source, so calling `run()` picks up right where the original left off.
+
+**Use cases:**
+- **CI debugging** — an agent produced a wrong patch; fork to debug without losing the original run's audit trail
+- **A/B testing** — fork at a given turn, change one variable, compare downstream outcomes
+- **Tool-change** — fork and swap in a different agent with new tools mid-conversation
+
+## Basic Usage
+
+### Create a fork
+
+```python icon="python" focus={6} wrap
+source = Conversation(agent=agent, workspace=workspace)
+source.send_message("Analyse the sales report.")
+source.run()
+
+# Fork the conversation with a title
+fork = source.fork(title="Follow-up exploration")
+
+# The fork has the same events — agent remembers the full history
+fork.send_message("Now focus on the EMEA region.")
+fork.run()  # Continues from the source's state
+```
+
+### Source stays immutable
+
+Forking deep-copies events and state. Anything you do on the fork never touches the source:
+
+```python icon="python" wrap
+source_events_before = len(source.state.events)
+
+fork = source.fork()
+fork.send_message("Extra question")
+
+assert len(source.state.events) == source_events_before  # unchanged
+```
+
+### Fork with a different agent
+
+Swap the agent on fork — useful for A/B testing models or adding/removing tools:
+
+```python icon="python" focus={4-8} wrap
+alt_llm = LLM(model="openai/gpt-4o", api_key=api_key, usage_id="alt")
+alt_agent = Agent(llm=alt_llm, tools=[Tool(name=TerminalTool.name)])
+
+fork = source.fork(
+    agent=alt_agent,
+    title="GPT-4o experiment",
+    tags={"variant": "B"},
+)
+fork.run()  # Same history, different model
+```
+
+### Tags and metadata
+
+Forks support `title` and arbitrary `tags` for organization:
+
+```python icon="python" wrap
+fork = source.fork(
+    title="Debug investigation",
+    tags={"purpose": "debugging", "triggered_by": "ci-pipeline"},
+)
+
+print(fork.state.tags)
+# {'title': 'Debug investigation', 'purpose': 'debugging', 'triggered_by': 'ci-pipeline'}
+```
+
+### Metrics reset
+
+By default, cost/token stats start fresh on the fork. Pass `reset_metrics=False` to preserve them:
+
+```python icon="python" wrap
+# Cost starts at 0 on the fork (default)
+fork_fresh = source.fork()
+
+# Cost carries over from source
+fork_with_history = source.fork(reset_metrics=False)
+```
+
+## API Reference
+
+```python icon="python" wrap
+def fork(
+    self,
+    *,
+    conversation_id: ConversationID | None = None,  # auto-generated if None
+    agent: AgentBase | None = None,                  # deep-copy of source agent if None
+    title: str | None = None,                        # sets tags["title"]
+    tags: dict[str, str] | None = None,              # arbitrary metadata
+    reset_metrics: bool = True,                      # cost/tokens start fresh
+) -> Conversation:
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `conversation_id` | auto-generated UUID | ID for the forked conversation |
+| `agent` | deep-copy of source | Agent for the fork (swap model, tools, etc.) |
+| `title` | `None` | Sets `tags["title"]` on the fork |
+| `tags` | `None` | Arbitrary key-value metadata |
+| `reset_metrics` | `True` | Whether cost/token stats start at zero |
+
+**Returns:** A new `Conversation` with the same event history but independent state.
+
+## What Gets Copied
+
+| Component | Behavior |
+|-----------|----------|
+| **Events** | Deep-copied; source is never modified |
+| **Agent** | Deep-copied by default, or replaced via the `agent` kwarg |
+| **Workspace** | Shared (same working directory) |
+| **Agent state** | Deep-copied (custom runtime data accumulated during the conversation) |
+| **Activated knowledge skills** | Copied (list of skill names activated in the source) |
+| **Stats / Metrics** | Reset by default (`reset_metrics=True`); pass `False` to carry over |
+| **Tags** | Fresh from kwargs; source tags are **not** inherited |
+| **Execution status** | Always `idle` on the fork |
+| **Conversation ID** | New UUID (or explicit via `conversation_id`) |
+
+## Agent-Server REST Endpoint
+
+When using the [agent-server](/sdk/guides/agent-server/overview), forks are available via REST:
+
+```bash icon="terminal"
+POST /api/conversations/{id}/fork
+```
+
+**Request body** (all fields optional):
+
+```json
+{
+  "id": "custom-uuid-or-null",
+  "title": "Debug investigation",
+  "tags": {"purpose": "debugging"},
+  "reset_metrics": true
+}
+```
+
+**Response:** Standard `ConversationInfo` for the newly created fork.
+
+When you call `fork()` on a `RemoteConversation`, the SDK sends this request for
+you and returns a new `RemoteConversation` pointing at the server-side copy.
+Remote forks always reuse the server-managed agent configuration, so
+`RemoteConversation.fork(agent=...)` is intentionally unsupported.
+
+## Agent-Server Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/11_conversation_fork.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/11_conversation_fork.py)
+</Note>
+
+```python icon="python" expandable examples/02_remote_agent_server/11_conversation_fork.py
+"""Fork a conversation through the agent server REST API.
+
+Demonstrates ``RemoteConversation.fork()`` which delegates to the server's
+``POST /api/conversations/{id}/fork`` endpoint.  The fork deep-copies
+events and state on the server side, then returns a new
+``RemoteConversation`` pointing at the copy.
+
+Scenarios covered:
+  1. Run a source conversation on the server
+  2. Fork it — verify independent event histories
+  3. Fork with a title and custom tags
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation, RemoteConversation, Tool, Workspace
+from openhands.tools.terminal import TerminalTool
+
+
+# -----------------------------------------------------------------
+# Managed server helper (reused from example 01)
+# -----------------------------------------------------------------
+def _stream_output(stream, prefix, target_stream):
+    try:
+        for line in iter(stream.readline, ""):
+            if line:
+                target_stream.write(f"[{prefix}] {line}")
+                target_stream.flush()
+    except Exception as e:
+        print(f"Error streaming {prefix}: {e}", file=sys.stderr)
+    finally:
+        stream.close()
+
+
+class ManagedAPIServer:
+    """Context manager that starts and stops a local agent-server."""
+
+    def __init__(self, port: int = 8000, host: str = "127.0.0.1"):
+        self.port = port
+        self.host = host
+        self.process: subprocess.Popen[str] | None = None
+        self.base_url = f"http://{host}:{port}"
+
+    def __enter__(self):
+        print(f"Starting agent-server on {self.base_url} ...")
+        self.process = subprocess.Popen(
+            [
+                "python",
+                "-m",
+                "openhands.agent_server",
+                "--port",
+                str(self.port),
+                "--host",
+                self.host,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={"LOG_JSON": "true", **os.environ},
+        )
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        threading.Thread(
+            target=_stream_output,
+            args=(self.process.stdout, "SERVER", sys.stdout),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=_stream_output,
+            args=(self.process.stderr, "SERVER", sys.stderr),
+            daemon=True,
+        ).start()
+
+        import httpx
+
+        for _ in range(30):
+            try:
+                if httpx.get(f"{self.base_url}/health", timeout=1.0).status_code == 200:
+                    print(f"Agent-server ready at {self.base_url}")
+                    return self
+            except Exception:
+                pass
+            assert self.process.poll() is None, "Server exited unexpectedly"
+            time.sleep(1)
+        raise RuntimeError("Server failed to start in 30 s")
+
+    def __exit__(self, *args):
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            time.sleep(0.5)
+            print("Agent-server stopped.")
+
+
+# -----------------------------------------------------------------
+# Config
+# -----------------------------------------------------------------
+api_key = os.getenv("LLM_API_KEY")
+assert api_key, "LLM_API_KEY must be set"
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=SecretStr(api_key),
+    base_url=os.getenv("LLM_BASE_URL"),
+)
+agent = Agent(llm=llm, tools=[Tool(name=TerminalTool.name)])
+
+# -----------------------------------------------------------------
+# Run
+# -----------------------------------------------------------------
+with ManagedAPIServer(port=8002) as server:
+    workspace_dir = tempfile.mkdtemp(prefix="fork_demo_")
+    workspace = Workspace(host=server.base_url, working_dir=workspace_dir)
+
+    # =============================================================
+    # 1. Source conversation
+    # =============================================================
+    source = Conversation(agent=agent, workspace=workspace)
+    assert isinstance(source, RemoteConversation)
+
+    source.send_message("Run `echo hello-from-source` in the terminal.")
+    source.run()
+
+    print("=" * 64)
+    print("  RemoteConversation.fork() — Agent-Server Example")
+    print("=" * 64)
+    print(f"\nSource conversation ID : {source.id}")
+    source_event_count = len(source.state.events)
+    print(f"Source events count    : {source_event_count}")
+
+    # =============================================================
+    # 2. Fork and continue independently
+    # =============================================================
+    fork = source.fork(title="Follow-up fork")
+    assert isinstance(fork, RemoteConversation)
+
+    print("\n--- Fork created ---")
+    print(f"Fork ID                : {fork.id}")
+    fork_event_count = len(fork.state.events)
+    print(f"Fork events (copied)   : {fork_event_count}")
+
+    assert fork.id != source.id
+    # The fork copies all persisted events from the server-side EventLog.
+    # The source's client-side list may additionally contain transient
+    # WebSocket-only events (e.g. full-state snapshots) that are never
+    # persisted, so we only assert the fork has a non-trivial number of
+    # events rather than exact parity.
+    assert fork_event_count > 0
+
+    fork.send_message("Now run `echo hello-from-fork` in the terminal.")
+    fork.run()
+
+    print("\n--- After running fork ---")
+    print(f"Source events          : {len(source.state.events)}")
+    print(f"Fork events (grew)     : {len(fork.state.events)}")
+    assert len(fork.state.events) > fork_event_count
+
+    # =============================================================
+    # 3. Fork with tags
+    # =============================================================
+    fork_tagged = source.fork(
+        title="Tagged experiment",
+        tags={"purpose": "a/b-test"},
+    )
+    assert isinstance(fork_tagged, RemoteConversation)
+
+    print("\n--- Fork with tags ---")
+    print(f"Fork ID     : {fork_tagged.id}")
+
+    fork_tagged.send_message(
+        "What command did you run earlier? Just tell me, no tools."
+    )
+    fork_tagged.run()
+
+    print(f"Fork events : {len(fork_tagged.state.events)}")
+
+    # =============================================================
+    # Summary
+    # =============================================================
+    print(f"\n{'=' * 64}")
+    print("All done — RemoteConversation.fork() works end-to-end.")
+    print("=" * 64)
+
+    # Cleanup
+    fork.close()
+    fork_tagged.close()
+    source.close()
+
+cost = llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/48_conversation_fork.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/48_conversation_fork.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/48_conversation_fork.py
+"""Fork a conversation to branch off for follow-up exploration.
+
+``Conversation.fork()`` deep-copies a conversation — events, agent config,
+workspace metadata — into a new conversation with its own ID.  The fork
+starts in ``idle`` status and retains full event memory of the source, so
+calling ``run()`` picks up right where the original left off.
+
+Use cases:
+  - CI agents that produced a wrong patch — engineer forks to debug
+    without losing the original run's audit trail
+  - A/B-testing prompts — fork at a given turn, change one variable,
+    compare downstream
+  - Swapping tools mid-conversation (fork-on-tool-change)
+"""
+
+import os
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.terminal import TerminalTool
+
+
+# -----------------------------------------------------------------
+# Setup
+# -----------------------------------------------------------------
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+)
+
+agent = Agent(llm=llm, tools=[Tool(name=TerminalTool.name)])
+cwd = os.getcwd()
+
+# =================================================================
+# 1. Run the source conversation
+# =================================================================
+source = Conversation(agent=agent, workspace=cwd)
+source.send_message("Run `echo hello-from-source` in the terminal.")
+source.run()
+
+print("=" * 64)
+print("  Conversation.fork() — SDK Example")
+print("=" * 64)
+print(f"\nSource conversation ID : {source.id}")
+print(f"Source events count    : {len(source.state.events)}")
+
+# =================================================================
+# 2. Fork and continue independently
+# =================================================================
+fork = source.fork(title="Follow-up fork")
+source_event_count = len(source.state.events)
+
+print("\n--- Fork created ---")
+print(f"Fork ID                : {fork.id}")
+print(f"Fork events (copied)   : {len(fork.state.events)}")
+print(f"Fork title             : {fork.state.tags.get('title')}")
+
+assert fork.id != source.id
+assert len(fork.state.events) == source_event_count
+
+fork.send_message("Now run `echo hello-from-fork` in the terminal.")
+fork.run()
+
+# Source is untouched
+assert len(source.state.events) == source_event_count
+print("\n--- After running fork ---")
+print(f"Source events (unchanged): {source_event_count}")
+print(f"Fork events (grew)       : {len(fork.state.events)}")
+
+# =================================================================
+# 3. Fork with a different agent (tool-change / A/B testing)
+# =================================================================
+alt_llm = LLM(
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL", None),
+    usage_id="alt",
+)
+alt_agent = Agent(llm=alt_llm, tools=[Tool(name=TerminalTool.name)])
+
+fork_alt = source.fork(
+    agent=alt_agent,
+    title="Tool-change experiment",
+    tags={"purpose": "a/b-test"},
+)
+
+print("\n--- Fork with alternate agent ---")
+print(f"Fork ID     : {fork_alt.id}")
+print(f"Fork tags   : {dict(fork_alt.state.tags)}")
+
+fork_alt.send_message("What command did you run earlier? Just tell me, no tools.")
+fork_alt.run()
+
+print(f"Fork events : {len(fork_alt.state.events)}")
+
+# =================================================================
+# Summary
+# =================================================================
+print(f"\n{'=' * 64}")
+print("All done — fork() works end-to-end.")
+print("=" * 64)
+
+# Report cost
+cost = llm.metrics.accumulated_cost + alt_llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/48_conversation_fork.py"/>
+
+## Next Steps
+
+- **[Persistence](/sdk/guides/convo-persistence)** — Save and restore conversation state
+- **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** — Control execution flow
+- **[Agent Server](/sdk/guides/agent-server/overview)** — Deploy agents with the REST API
+
 ### Pause and Resume
 Source: https://docs.openhands.dev/sdk/guides/convo-pause-and-resume.md
 
@@ -17121,8 +17622,8 @@ jobs:
                   # - one model will be randomly selected per review
                   llm-model: anthropic/claude-sonnet-4-5-20250929
                   llm-base-url: ''
-                  # Review style: roasted (other option: standard)
-                  review-style: roasted
+                  # [DEPRECATED] review-style is no longer used; standard and roasted are merged
+                  # review-style: roasted
                   # Extensions version to use (version tag or branch name)
                   extensions-version: main
                   # Secrets
@@ -17136,7 +17637,7 @@ jobs:
 |-------|-------------|----------|---------|
 | `llm-model` | LLM model to use | Yes | - |
 | `llm-base-url` | LLM base URL (optional) | No | `''` |
-| `review-style` | Review style: 'standard' or 'roasted' | No | `roasted` |
+| `review-style` | **[DEPRECATED]** Previously chose between `standard` and `roasted`. Now ignored — the styles have been merged. | No | `roasted` |
 | `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
 | `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
 | `llm-api-key` | LLM API key | Yes | - |
@@ -17147,8 +17648,8 @@ jobs:
 - [PR Review Plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review) - Complete plugin with scripts and skills (in extensions repo)
 - [Agent Script](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/scripts/agent_script.py) - Main review agent script
 - [Prompt Template](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/scripts/prompt.py) - Review prompt template
-- [Workflow File](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/03_github_workflows/02_pr_review/workflow.yml) - Example workflow
-- [Composite Action](https://github.com/OpenHands/software-agent-sdk/blob/main/.github/actions/pr-review/action.yml) - Reusable GitHub Action
+- [Example Workflow](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/workflows/pr-review-by-openhands.yml) - Example workflow
+- [Composite Action](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/action.yml) - Reusable GitHub Action
 
 ### TODO Management
 Source: https://docs.openhands.dev/sdk/guides/github-workflows/todo-management.md
@@ -27800,6 +28301,521 @@ Key aspects of the plugin system:
 4. Initialization: Plugins are initialized asynchronously when the runtime starts and are accessible to actions
 5. Usage: Plugins extend capabilities (e.g., Jupyter for IPython cells); the server exposes any web endpoints (ports) via host port mapping
 
+### Creating Automations
+Source: https://docs.openhands.dev/openhands/usage/automations/creating-automations.md
+
+<Info>
+**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
+</Info>
+
+The easiest way to create an automation is to ask OpenHands directly. The Automation Skill handles all the details—you just describe what you want.
+
+## Prompt vs Plugin Automations
+
+There are two types of automations:
+
+<Tabs>
+  <Tab title="Prompt-based">
+    Most automations are prompt-based. Just describe the task in natural language:
+
+    ```
+    Create an automation called "Daily Standup Summary" that runs every weekday 
+    at 9 AM Eastern. It should check our GitHub repo for PRs merged yesterday 
+    and post a summary to #engineering on Slack.
+    ```
+
+    This is all you need for reports, monitoring, data syncs, and most common tasks.
+  </Tab>
+  <Tab title="Plugin-based">
+    For specialized capabilities, include one or more plugins from the [OpenHands extensions repository](https://github.com/OpenHands/extensions):
+
+    ```
+    Create an automation using the code-review plugin that runs every weekday 
+    at 9 AM. It should review any Python files changed in the last 24 hours.
+    ```
+
+    Plugins provide additional skills, MCP configurations, or custom commands that extend what the automation can do.
+  </Tab>
+</Tabs>
+
+The agent will:
+1. Confirm the automation name and what it does
+2. Set up the schedule you requested
+3. Create the automation (with plugins if specified)
+
+Once created, it runs automatically on schedule.
+
+## What to Include in Your Request
+
+When asking OpenHands to create an automation, include:
+
+- **What it should do**: Describe the task clearly
+- **When it should run**: Daily, weekly, every hour, etc.
+- **Timezone** (optional): Defaults to UTC if not specified
+- **Name** (optional): The agent can suggest one based on your description
+- **Plugins** (optional): Mention specific plugins if you need extended capabilities
+
+## Writing Good Automation Prompts
+
+The prompt is what the AI agent executes each time the automation runs. Write it like you're giving instructions to a capable assistant.
+
+### Be Specific
+
+<Tabs>
+  <Tab title="❌ Too Vague">
+    ```
+    Generate a report
+    ```
+  </Tab>
+  <Tab title="✅ Clear & Actionable">
+    ```
+    Generate a weekly status report that:
+    1. Lists all GitHub PRs merged in the last 7 days
+    2. Summarizes open issues by priority
+    3. Formats everything as markdown
+    4. Posts to the #team-updates Slack channel
+    ```
+  </Tab>
+</Tabs>
+
+### Include Where to Send Results
+
+Tell the automation what to do with its output:
+
+- "Post to the #alerts Slack channel" (requires [Slack MCP](/openhands/usage/cloud/slack-installation))
+- "Save to `reports/weekly-summary.md`"
+- "Create a GitHub issue with the findings" (automatic if you logged in with GitHub)
+- "Send a message via the configured notification service"
+
+<Note>
+Git providers you logged in with (GitHub, GitLab, Bitbucket) are automatically available. Other services like Slack require [MCP configuration](/openhands/usage/settings/mcp-settings).
+</Note>
+
+### Specify Error Handling
+
+For monitoring tasks, explain what should happen when things go wrong:
+
+```
+Check the health endpoint at https://api.example.com/health.
+If it returns anything other than 200 OK, send an alert to #ops 
+with the status code and response body.
+If it's healthy, just log success without alerting.
+```
+
+## What Your Automation Can Access
+
+Each automation runs in a full OpenHands sandbox with:
+
+- **Terminal access**: Run any bash commands
+- **File operations**: Create, read, and modify files
+- **Your LLM**: Uses your configured model from settings
+- **Your secrets**: Access API keys stored in Settings > Secrets
+- **MCP integrations**: Use your configured MCP servers
+- **Network access**: Make HTTP requests, connect to APIs
+- **Git provider access**: Tokens from your Cloud login (GitHub, GitLab, or Bitbucket) are automatically included
+
+## Schedules
+
+Tell OpenHands when you want the automation to run in plain language:
+
+- "every weekday at 9 AM"
+- "every Monday morning"
+- "hourly"
+- "every 15 minutes"
+- "first day of each month"
+- "twice a day at 9 AM and 5 PM"
+
+The agent converts this to the appropriate cron schedule.
+
+<Tip>
+If you're familiar with cron expressions, you can specify them directly: "Run on cron schedule `0 9 * * 1-5`"
+</Tip>
+
+## After Creation
+
+Once your automation is created:
+
+- **It starts enabled** by default and will run on the next scheduled time
+- **You can view past runs** in the OpenHands UI
+- **Each run creates a conversation** you can review or continue
+- **You can disable, update, or delete it** anytime (see [Managing Automations](/openhands/usage/automations/managing-automations))
+
+## Next Steps
+
+- [Automations overview & examples](/openhands/usage/automations/overview)
+- [Manage your automations](/openhands/usage/automations/managing-automations)
+
+### Managing Automations
+Source: https://docs.openhands.dev/openhands/usage/automations/managing-automations.md
+
+<Info>
+**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
+</Info>
+
+You can manage your automations by asking OpenHands directly—just like you created them.
+
+## Viewing Your Automations
+
+```
+List my automations
+```
+
+```
+Show me the details of the "Daily Report" automation
+```
+
+## Enabling and Disabling
+
+Pause an automation without deleting it:
+
+```
+Disable the "Daily Report" automation
+```
+
+Turn it back on:
+
+```
+Enable the "Daily Report" automation
+```
+
+<Tip>
+Disabling an automation keeps all its settings intact. Use this when you want to temporarily stop runs without losing your configuration.
+</Tip>
+
+## Changing the Schedule
+
+```
+Change the "Daily Report" automation to run at 10 AM instead of 9 AM
+```
+
+```
+Update the "Weekly Cleanup" automation to run on Sundays at 2 AM UTC
+```
+
+## Running Manually
+
+Test an automation or run it outside its normal schedule:
+
+```
+Trigger the "Daily Report" automation now
+```
+
+```
+Run the "Health Check" automation immediately
+```
+
+This is useful for:
+- Testing a newly created automation
+- Running a report on-demand
+- Debugging issues
+
+## Viewing Past Runs
+
+```
+Show me recent runs of the "Daily Report" automation
+```
+
+Each run creates a conversation that automatically appears in your conversations list. You can:
+- **View in the OpenHands UI** to see what happened
+- **Continue** if you want to interact with the sandbox
+- **Debug** if something went wrong
+
+<Tip>
+Automations are user-scoped, so all your automation runs appear alongside your regular conversations. Look for them in your conversations list after each scheduled run.
+</Tip>
+
+### Run Statuses
+
+- **Pending**: Scheduled, waiting to start
+- **Running**: Currently executing
+- **Completed**: Finished successfully
+- **Failed**: Something went wrong—check the run details
+
+## Deleting Automations
+
+```
+Delete the "Old Report" automation
+```
+
+<Warning>
+Deleting an automation is permanent. Consider disabling it instead if you might need it later.
+</Warning>
+
+## Next Steps
+
+- [Automations overview & examples](/openhands/usage/automations/overview)
+- [Create new automations](/openhands/usage/automations/creating-automations)
+
+### Automations Overview
+Source: https://docs.openhands.dev/openhands/usage/automations/overview.md
+
+<Info>
+**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
+</Info>
+
+Automations let you schedule AI-powered tasks that run automatically—daily reports, health checks, data syncs, and more. Each automation runs a full OpenHands conversation on your chosen schedule, with access to your LLM settings, stored secrets, and integrations.
+
+Your git provider credentials are automatically available—if you logged into OpenHands Cloud with GitHub, GitLab, or Bitbucket, that access is included by default.
+
+## What Can Automations Do?
+
+- **Generate reports**: Daily standups, weekly summaries, or monthly metrics
+- **Monitor systems**: Check API health, SSL certificates, or uptime
+- **Sync data**: Pull from external APIs, update spreadsheets, or refresh dashboards
+- **Maintain code**: Run dependency checks, security scans, or cleanup tasks
+- **Send notifications**: Post updates to Slack, create GitHub issues, or send alerts
+
+<Note>
+Automations can only interact with services you've configured access to. For example, posting to Slack requires the [Slack MCP integration](/openhands/usage/cloud/slack-installation). Git providers you logged in with (GitHub, GitLab, Bitbucket) are automatically available.
+</Note>
+
+## Two Types of Automations
+
+When you ask OpenHands to create an automation, you can choose between:
+
+- **Prompt-based** (most common): Describe what the automation should do in natural language. Great for reports, monitoring, data syncs, and most tasks.
+
+- **Plugin-based**: Include one or more plugins that provide additional skills or capabilities. Use this when you need specialized tools from the [OpenHands extensions repository](https://github.com/OpenHands/extensions).
+
+Both types are created the same way—just describe what you want and OpenHands will guide you through the setup.
+
+## Creating Your First Automation
+
+Just ask OpenHands to create one:
+
+```
+Create an automation that runs every Monday at 9 AM and summarizes 
+our open GitHub issues, then posts the summary to #engineering on Slack.
+```
+
+For plugin-based automations, mention the plugin:
+
+```
+Create an automation using the code-review plugin that runs daily 
+and reviews any Python files changed in the last 24 hours.
+```
+
+The Automation Skill guides you through:
+1. Naming your automation
+2. Setting the schedule
+3. Choosing a timezone
+4. Confirming the task description (and plugins, if any)
+
+That's it—the system handles the rest.
+
+## How It Works
+
+When your automation runs:
+1. A fresh sandbox is created
+2. The OpenHands agent executes your prompt
+3. The conversation is saved so you can review it later
+4. You can even continue the conversation if needed
+
+Automations are user-scoped—each automation and its runs belong to you. Conversations created by your automations automatically appear in your conversations list, just like any other conversation you start.
+
+Your automation has access to everything a normal OpenHands conversation does: terminal, file editing, your configured LLM, stored secrets, and MCP integrations. Git provider tokens from your Cloud login (GitHub, GitLab, or Bitbucket) are automatically included.
+
+## Getting Started
+
+Before creating automations, complete this one-time setup:
+
+### 1. Create an OpenHands API Key
+
+Go to [Settings > API Keys](https://app.all-hands.dev/settings/api-keys) and create a new API key.
+
+### 2. Save the API Key as a Secret
+
+Copy the API key value and go to [Settings > Secrets](https://app.all-hands.dev/settings/secrets). Create a new secret with:
+- **Name**: `OPENHANDS_API_KEY`
+- **Value**: Your API key from step 1
+
+This allows the Automation Skill to create and manage automations on your behalf.
+
+### 3. Start a Conversation
+
+Open a new conversation in OpenHands and ask it to create an automation:
+
+```
+Create an automation that runs every Monday at 9 AM and summarizes 
+our open GitHub issues, then posts to #engineering on Slack.
+```
+
+You can also list existing automations, enable/disable them, or trigger manual runs—all through conversation.
+
+## Prerequisites
+
+- **OpenHands Cloud or Enterprise account** (not available in open-source)
+- **Configured LLM** in your [settings](https://app.all-hands.dev/settings)
+- **Stored secrets** (optional) for any additional API keys your automations need (e.g., Slack tokens)
+
+---
+
+## Use Case Automations
+
+{/* BEGIN:use-case-automations — auto-generated from use-case frontmatter */}
+
+Each use case has a ready-to-use automation prompt. Click a card to see the full instructions.
+
+<CardGroup cols={2}>
+  <Card
+    title="Automated Code Review"
+    icon="code-pull-request"
+    href="/openhands/usage/use-cases/code-review#automate-this"
+  >
+    Review open PRs daily for bugs, style issues, and security concerns.
+  </Card>
+  <Card
+    title="Dependency Upgrades"
+    icon="arrow-up-right-dots"
+    href="/openhands/usage/use-cases/dependency-upgrades#automate-this"
+  >
+    Check for outdated packages weekly and report available updates.
+  </Card>
+  <Card
+    title="Incident Triage"
+    icon="triangle-exclamation"
+    href="/openhands/usage/use-cases/incident-triage#automate-this"
+  >
+    Monitor API health, analyze errors, and alert your team automatically.
+  </Card>
+  <Card
+    title="Vulnerability Remediation"
+    icon="shield-halved"
+    href="/openhands/usage/use-cases/vulnerability-remediation#automate-this"
+  >
+    Scan dependencies for known CVEs, find hardcoded secrets, and alert your team on a schedule.
+  </Card>
+</CardGroup>
+
+{/* END:use-case-automations */}
+
+## General Automations
+
+Ready-to-use templates for common operational tasks.
+
+<CardGroup cols={3}>
+  <Card title="Daily GitHub Summary" icon="chart-bar">
+    Summarize PRs opened, merged, and reviewed daily.
+  </Card>
+  <Card title="Weekly Metrics Report" icon="chart-line">
+    Generate weekly GitHub activity and issue reports.
+  </Card>
+  <Card title="SSL Certificate Monitor" icon="lock">
+    Check SSL expiry dates and alert before they lapse.
+  </Card>
+  <Card title="Weekly Cleanup" icon="broom">
+    Remove stale temporary files and report what was cleaned.
+  </Card>
+  <Card title="Backup Verification" icon="database">
+    Verify database backups exist and are recent.
+  </Card>
+  <Card title="Analytics Data Sync" icon="arrows-rotate">
+    Pull analytics data periodically and flag big changes.
+  </Card>
+</CardGroup>
+
+### Daily GitHub Summary
+
+```
+Create an automation called "Daily GitHub Summary" that runs every weekday at 9 AM Eastern.
+
+It should:
+1. Summarize PRs opened, merged, and reviewed in the last 24 hours
+2. List any PRs that have been open for more than 3 days
+3. Format as a clean markdown summary
+4. Post to the #engineering Slack channel
+```
+
+### Weekly Metrics Report
+
+```
+Create an automation called "Weekly Metrics" that runs every Monday at 9 AM.
+
+It should generate a weekly report covering:
+- GitHub activity (commits, PRs merged, issues closed)
+- Open issues grouped by priority
+- PRs awaiting review for more than 3 days
+
+Save the report to weekly-reports/ with the current date in the filename.
+```
+
+### SSL Certificate Monitor
+
+```
+Create an automation called "SSL Monitor" that runs daily at 8 AM.
+
+It should check SSL certificate expiry for these domains:
+- api.example.com
+- app.example.com
+- www.example.com
+
+If any certificate expires within 30 days, alert #devops with the domain and days remaining.
+```
+
+### Weekly Cleanup
+
+```
+Create an automation called "Weekly Cleanup" that runs every Sunday at 2 AM UTC.
+
+It should:
+1. Find and delete temporary files older than 7 days
+2. Create a summary of what was removed (file paths and sizes)
+3. Post the cleanup summary to #ops
+```
+
+### Backup Verification
+
+```
+Create an automation called "Backup Check" that runs daily at 6 AM.
+
+It should verify that database backups exist and were created within the last 24 hours.
+List the most recent backup for each database with its timestamp and size.
+If any backup is missing or stale, send an urgent alert to #alerts.
+```
+
+### Analytics Data Sync
+
+```
+Create an automation called "Analytics Sync" that runs every 6 hours.
+
+It should:
+1. Pull the latest data from our analytics API
+2. Update metrics.json with the new data
+3. Calculate week-over-week changes for key metrics
+4. If any metric changed by more than 20%, flag it in a summary message
+```
+
+---
+
+## Tips for Writing Good Prompts
+
+<AccordionGroup>
+  <Accordion title="Be specific about actions">
+    Tell the automation exactly what to do:
+    - "Check X and if Y, then Z"
+    - "Generate a report and save it to..."
+    - "Fetch data, compare with expected values, and report differences"
+  </Accordion>
+  <Accordion title="Include error handling">
+    Specify what should happen when things go wrong:
+    - "If the response is not 200..."
+    - "If any backup is missing..."
+    - "If the check fails, alert the team"
+  </Accordion>
+  <Accordion title="Define where results go">
+    Be explicit about outputs:
+    - "Post to the #channel Slack channel"
+    - "Save to reports/ with the current date"
+    - "Create a GitHub issue with the findings"
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+- [Creating Automations](/openhands/usage/automations/creating-automations) — More details on writing prompts
+- [Managing Automations](/openhands/usage/automations/managing-automations) — Update, disable, or delete automations
+- [Use Cases Overview](/openhands/usage/use-cases/overview) — Explore the full use case guides behind these automations
+
 ### Hooks
 Source: https://docs.openhands.dev/openhands/usage/customization/hooks.md
 
@@ -29652,7 +30668,7 @@ The Software Agent SDK provides composite GitHub Actions for common workflows:
 - **[Automated PR Review](/openhands/usage/use-cases/code-review)** - Automatically review pull requests with inline comments
 - **[SDK GitHub Workflows Guide](/sdk/guides/github-workflows/pr-review)** - Build custom GitHub workflows with the SDK
 
-For example, to set up automated PR reviews, see the [Automated Code Review](/openhands/usage/use-cases/code-review) guide which uses the real `OpenHands/software-agent-sdk/.github/actions/pr-review` composite action.
+For example, to set up automated PR reviews, see the [Automated Code Review](/openhands/usage/use-cases/code-review) guide which uses the `OpenHands/extensions/plugins/pr-review` composite action.
 
 ### What You Can Automate
 
@@ -31260,6 +32276,16 @@ That's it! You can now start using OpenHands with the local LLM server.
 
 If you encounter any issues, let us know on [Slack](https://openhands.dev/joinslack).
 
+## Community-Reported Notes and Troubleshooting
+
+If OpenHands behaves like a plain chatbot, refuses to use tools or files, or has constant failed tool calls with a local model, the issue may be with the model itself rather than your setup. Even with a large context window, some local models may struggle with reliable tool use.
+
+**Community-reported working models:**
+- `qwen2.5-coder-14b-instruct` — reported to resolve chatbot-like behavior
+- `qwopus3.5-27b-v3 Q8_0` (and similar retrained qwopus variants) — reported to work well with tool calls
+
+If you're experiencing issues, try switching to one of these models before assuming the setup is broken.
+
 ## Advanced: Alternative LLM Backends
 
 This section describes how to run local LLMs with OpenHands using alternative backends like Ollama, SGLang, or vLLM — without relying on LM Studio.
@@ -32795,6 +33821,29 @@ To fix this:
    vscode_port = 41234
    ```
 
+### User Skills Not Loading in Docker
+
+**Description**
+
+When running OpenHands via Docker, custom skills placed in `~/.openhands/skills/` or `~/.agents/skills/` on the host
+machine are not loaded. The skill loader logs show `'user': 0`.
+
+**Resolution**
+
+The agent-server container cannot see your host filesystem by default. Mount your local skills directory into the
+sandbox using the `SANDBOX_VOLUMES` environment variable:
+
+```bash
+-e SANDBOX_VOLUMES="$HOME/.agents/skills:/home/openhands/.agents/skills:ro"
+```
+
+<Note>
+  Mount into `~/.agents/skills` inside the container, not `~/.openhands/skills`. The latter would overwrite
+  the public skills cache and prevent built-in skills from loading.
+</Note>
+
+See [User Skills When Running OpenHands on Your Own](/overview/skills/org#user-skills-when-running-openhands-on-your-own) for the full Docker command.
+
 ### GitHub Organization Rename Issues
 
 **Description**
@@ -33029,22 +34078,13 @@ The PR review workflow uses the OpenHands Software Agent SDK to analyze your cod
    - `openhands-agent` is requested as a reviewer
 
 2. **Analysis**: The agent receives the complete PR diff and uses two skills:
-   - [**`/codereview`**](https://github.com/OpenHands/extensions/tree/main/skills/codereview) or [**`/codereview-roasted`**](https://github.com/OpenHands/extensions/tree/main/skills/codereview-roasted): Analyzes code for quality, security, and best practices
+   - [**`/codereview`**](https://github.com/OpenHands/extensions/tree/main/skills/code-review): Analyzes code for quality, security, data structures, and best practices with a focus on simplicity and pragmatism
    - [**`/github-pr-review`**](https://github.com/OpenHands/extensions/tree/main/skills/github-pr-review): Posts structured inline comments via the GitHub API
 
 3. **Output**: Review comments are posted directly on the PR with:
    - Priority labels (🔴 Critical, 🟠 Important, 🟡 Suggestion, 🟢 Nit)
    - Specific line references
    - Actionable suggestions with code examples
-
-### Review Styles
-
-Choose between two review styles:
-
-| Style | Description | Best For |
-|-------|-------------|----------|
-| **Standard** ([`/codereview`](https://github.com/OpenHands/extensions/tree/main/skills/codereview)) | Pragmatic, constructive feedback focusing on code quality, security, and best practices | Day-to-day code reviews |
-| **Roasted** ([`/codereview-roasted`](https://github.com/OpenHands/extensions/tree/main/skills/codereview-roasted)) | Linus Torvalds-style brutally honest review emphasizing "good taste", data structures, and simplicity | Critical code paths, learning opportunities |
 
 ## Quick Start
 
@@ -33074,10 +34114,9 @@ Choose between two review styles:
         runs-on: ubuntu-latest
         steps:
           - name: Run PR Review
-            uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
+            uses: OpenHands/extensions/plugins/pr-review@main
             with:
               llm-model: anthropic/claude-sonnet-4-5-20250929
-              review-style: standard
               llm-api-key: ${{ secrets.LLM_API_KEY }}
               github-token: ${{ secrets.GITHUB_TOKEN }}
     ```
@@ -33118,7 +34157,7 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 |-------|-------------|----------|---------|
 | `llm-model` | LLM model to use | Yes | - |
 | `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
-| `review-style` | Review style: `standard` or `roasted` | No | `roasted` |
+| `review-style` | **[DEPRECATED]** Previously chose between `standard` and `roasted`. Now ignored — the styles have been merged. | No | `roasted` |
 | `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
 | `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
 | `llm-api-key` | LLM API key | Yes | - |
@@ -33132,11 +34171,11 @@ Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for p
 
 ### Repository-Specific Review Guidelines
 
-Create custom review guidelines for your repository by adding a skill file at `.agents/skills/code-review.md`:
+Add repo-specific review rules by creating a skill file at `.agents/skills/custom-codereview-guide.md`:
 
 ```markdown
 ---
-name: code-review
+name: custom-codereview-guide
 description: Custom code review guidelines for this repository
 triggers:
 - /codereview
@@ -33176,8 +34215,12 @@ You are reviewing code for [Your Project Name]. Follow these guidelines:
 - Tests should be in [your test directory]
 ```
 
+<Warning>
+**Do not** name your skill `code-review`. The pr-review plugin ships its own `code-review` skill, and plugin skills override project skills with the same name. Use a different name (e.g. `custom-codereview-guide`) with the `/codereview` trigger so both skills are active — the plugin provides the review framework while your skill adds repo-specific rules.
+</Warning>
+
 <Note>
-The skill file must use `/codereview` as the trigger to override the default review behavior. See the [software-agent-sdk's own code-review skill](https://github.com/OpenHands/software-agent-sdk/blob/main/.agents/skills/code-review.md) for a complete example.
+The skill file must use `/codereview` as the trigger so it activates alongside the default review behavior. See the [software-agent-sdk's own custom-codereview-guide](https://github.com/OpenHands/software-agent-sdk/blob/main/.agents/skills/custom-codereview-guide.md) for a complete example.
 </Note>
 
 ### Workflow Configuration
@@ -33186,14 +34229,12 @@ Customize the workflow by modifying the action inputs:
 
 ```yaml
 - name: Run PR Review
-  uses: OpenHands/software-agent-sdk/.github/actions/pr-review@main
+  uses: OpenHands/extensions/plugins/pr-review@main
   with:
     # Change the LLM model
     llm-model: anthropic/claude-sonnet-4-5-20250929
     # Use a custom LLM endpoint
     llm-base-url: https://your-llm-proxy.example.com
-    # Switch to "roasted" style for brutally honest reviews
-    review-style: roasted
     # Pin to a specific extensions version for stability
     extensions-version: main
     # Secrets
@@ -33262,10 +34303,30 @@ See real automated reviews in action on the OpenHands Software Agent SDK reposit
   </Accordion>
 </AccordionGroup>
 
+## Automate This
+
+You can schedule daily code reviews using [OpenHands Automations](/openhands/usage/automations/overview).
+Copy this prompt into a new conversation to set one up:
+
+```
+Create an automation called "Daily Code Review" that runs every weekday at 9 AM.
+
+It should:
+1. Find all open PRs that have no reviews yet
+2. For each PR, review the diff for bugs, style issues, and security concerns
+3. Post a summary of findings as a comment on each PR
+
+Learn more at https://docs.openhands.dev/openhands/usage/use-cases/code-review
+```
+
+For inline review comments on every push, use the
+[pr-review plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review)
+as a GitHub Action instead.
+
 ## Related Resources
 
-- [PR Review Workflow Reference](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/02_pr_review) - Full workflow example and agent script
-- [Composite Action](https://github.com/OpenHands/software-agent-sdk/blob/main/.github/actions/pr-review/action.yml) - Reusable GitHub Action for PR reviews
+- [PR Review Plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review) - Full workflow example and agent script
+- [Composite Action](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/action.yml) - Reusable GitHub Action for PR reviews
 - [Software Agent SDK](/sdk/index) - Build your own AI-powered workflows
 - [GitHub Integration](/openhands/usage/cloud/github-installation) - Set up GitHub integration for OpenHands Cloud
 - [Skills Documentation](/overview/skills) - Learn more about OpenHands skills
@@ -33547,6 +34608,23 @@ Create an upgrade plan that handles all these together,
 addressing breaking changes in the correct order.
 ```
 
+## Automate This
+
+You can schedule weekly dependency checks using [OpenHands Automations](/openhands/usage/automations/overview).
+Copy this prompt into a new conversation to set one up:
+
+```
+Create an automation called "Dependency Checker" that runs every Monday at 8 AM.
+
+It should:
+1. Scan all package.json and requirements.txt files
+2. Check for outdated dependencies
+3. Create a report listing packages with available updates (grouped by major/minor/patch)
+4. Post the report to #engineering
+
+Learn more at https://docs.openhands.dev/openhands/usage/use-cases/dependency-upgrades
+```
+
 ## Related Resources
 
 - [Vulnerability Remediation](/openhands/usage/use-cases/vulnerability-remediation) - Fix security vulnerabilities
@@ -33810,6 +34888,24 @@ Avoid these common incident response mistakes:
 For production incidents, always follow your organization's incident response procedures. OpenHands is a tool to assist your investigation, not a replacement for proper incident management.
 </Note>
 
+## Automate This
+
+You can set up continuous health monitoring using [OpenHands Automations](/openhands/usage/automations/overview).
+Copy this prompt into a new conversation to set one up:
+
+```
+Create an automation called "API Health Monitor" that runs every 30 minutes.
+
+It should check https://api.example.com/health and:
+- If the response is not 200 OK, send an alert to #alerts with the status code and response body
+- If healthy, just log success without alerting anyone
+
+Learn more at https://docs.openhands.dev/openhands/usage/use-cases/incident-triage
+```
+
+For deeper error analysis with Datadog integration, see the
+[Datadog debugging workflow](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/03_github_workflows/04_datadog_debugging).
+
 ## Related Resources
 
 - [OpenHands SDK Repository](https://github.com/OpenHands/software-agent-sdk) - Build custom AI agents
@@ -33820,6 +34916,8 @@ For production incidents, always follow your organization's incident response pr
 Source: https://docs.openhands.dev/openhands/usage/use-cases/overview.md
 
 OpenHands supports a wide variety of software development tasks. Here are some of the key use cases where OpenHands can help accelerate your work.
+
+Each use case can be implemented in different ways—as a one-off conversation, a scheduled [automation](/openhands/usage/automations/overview), a [plugin](https://github.com/OpenHands/extensions), or through the [SDK](/sdk/index). Pick the approach that fits your workflow.
 
 <CardGroup cols={2}>
   <Card
@@ -33863,6 +34961,22 @@ OpenHands supports a wide variety of software development tasks. Here are some o
     href="/openhands/usage/use-cases/spark-migrations"
   >
     Analyze, migrate, and validate Apache Spark applications across versions.
+  </Card>
+</CardGroup>
+
+## Automate Any Use Case
+
+Many use cases work best as scheduled automations. Browse ready-to-use automation templates on the [Automations Overview](/openhands/usage/automations/overview) page—just copy a prompt and paste it into OpenHands.
+
+<CardGroup cols={3}>
+  <Card title="View Automation Templates" icon="clock" href="/openhands/usage/automations/overview">
+    Ready-to-use prompts for vulnerability scans, code reviews, monitoring, and more.
+  </Card>
+  <Card title="Browse Plugins" icon="puzzle-piece" href="https://github.com/OpenHands/extensions">
+    Explore plugins in the OpenHands extensions repository for extended capabilities.
+  </Card>
+  <Card title="Build with the SDK" icon="code" href="/sdk/index">
+    Build custom workflows and integrations using the Software Agent SDK.
   </Card>
 </CardGroup>
 
@@ -34296,6 +35410,27 @@ To build your own vulnerability remediation agent:
 4. Set up human review workflows for critical fixes
 
 As agent capabilities continue to evolve, an increasing number of repetitive and time-consuming security tasks can be automated, enabling developers to focus on higher-level design, innovation, and problem-solving rather than routine maintenance.
+
+## Automate This
+
+You can run vulnerability scans on a schedule using [OpenHands Automations](/openhands/usage/automations/overview).
+Copy this prompt into a new conversation to set one up:
+
+```
+Create an automation called "Security Scan" that runs daily at 3 AM.
+
+It should run a security audit:
+1. Check for known vulnerabilities in dependencies
+2. Scan for hardcoded secrets or API keys
+3. Look for common security misconfigurations
+
+Create a detailed report and alert #security if any high or critical issues are found.
+
+Learn more at https://docs.openhands.dev/openhands/usage/use-cases/vulnerability-remediation
+```
+
+You can also use the [vulnerability-remediation plugin](https://github.com/OpenHands/extensions/tree/main/plugins/vulnerability-remediation)
+for automated fix PRs alongside the scan.
 
 ## Related Resources
 
@@ -35190,10 +36325,155 @@ Once you've connected your account, you can:
 - [Learn about the Cloud UI](/openhands/usage/cloud/cloud-ui).
 - [Install the OpenHands Slack app](/openhands/usage/cloud/slack-installation).
 
+### Plugin Launcher
+Source: https://docs.openhands.dev/openhands/usage/cloud/plugin-launcher.md
+
+The OpenHands Cloud `https://app.all-hands.dev/launch` route lets you create shareable links that open OpenHands with one or more plugins already selected.
+
+This is useful for:
+
+- adding a "Try it" link or badge to a plugin README
+- sharing a pre-configured plugin in docs, issues, or Slack
+- building internal test pages for plugin development
+
+<Note>
+  `/launch` is a Cloud route, not a standalone REST endpoint. After the user opens the link and confirms the plugin configuration, OpenHands starts a conversation using the normal V1 conversation flow described in the [Cloud API guide](/openhands/usage/cloud/cloud-api).
+</Note>
+
+## Before You Start
+
+You will need:
+
+- an OpenHands Cloud account
+- a plugin or skill stored in a Git repository
+- the repository source, and optionally a branch/tag/commit and subdirectory path
+
+<Warning>
+  Only share plugins and skills from sources you trust. The launch flow asks the user to trust the extension before it runs with the agent secrets configured in their account.
+</Warning>
+
+## Step 1: Define the Plugin
+
+Create a JSON array of plugin definitions. Each item uses this shape:
+
+```json
+[
+  {
+    "source": "github:OpenHands/extensions",
+    "ref": "main",
+    "repo_path": "plugins/pr-review"
+  }
+]
+```
+
+The fields are:
+
+- `source` - where the plugin lives, such as `github:owner/repo` or a Git URL
+- `ref` - optional branch, tag, or commit
+- `repo_path` - optional subdirectory inside the repository
+- `parameters` - optional configuration values that OpenHands shows as editable inputs before launch
+
+<Note>
+  The same format works for skills. For example, a skill in the OpenHands extensions repo would use `"repo_path": "skills/github"`.
+</Note>
+
+## Step 2: Encode the Plugin Definition
+
+The `plugins` query parameter must be a base64-encoded version of your JSON array.
+
+```json
+[
+  {
+    "source": "github:OpenHands/extensions",
+    "ref": "main",
+    "repo_path": "plugins/pr-review"
+  }
+]
+```
+
+Convert that JSON into base64-encoded text, then use the encoded value as the `plugins` query parameter in your `/launch` URL.
+
+## Step 3: Add an Optional Starting Message
+
+If you want the launched conversation to start with a prompt, add a `message` query parameter.
+
+```text
+https://app.all-hands.dev/launch?plugins=W3sic291cmNlIjoiZ2l0aHViOk9wZW5IYW5kcy9leHRlbnNpb25zIiwicmVmIjoibWFpbiIsInJlcG9fcGF0aCI6InBsdWdpbnMvcHItcmV2aWV3In1d&message=/pr-review%20https%3A//github.com/OpenHands/OpenHands/pull/12699
+```
+
+In this example:
+
+- `plugins` loads the `pr-review` plugin from `OpenHands/extensions`
+- `message` pre-fills the initial task for the conversation
+
+## Step 4: Open the Launch URL
+
+When someone opens the link in OpenHands Cloud:
+
+1. They sign in if needed.
+2. OpenHands shows the plugins or skills from the URL.
+3. Any `parameters` values are shown as inputs that the user can review or edit.
+4. The user confirms they trust the extension.
+5. OpenHands starts the conversation with the selected plugin configuration.
+
+## Simple Format for Development
+
+For quick local or staging tests, you can use simpler query parameters instead of base64 encoding:
+
+```text
+https://app.all-hands.dev/launch?plugin_source=github:OpenHands/extensions&plugin_ref=main&plugin_repo_path=plugins/pr-review
+```
+
+This format is convenient for manual testing, but the encoded `plugins` format is better for production links because it also supports multiple plugins in one URL.
+
+## Next Steps
+
+- Use the [Cloud API guide](/openhands/usage/cloud/cloud-api) for authentication and conversation lifecycle details.
+- See the [REST API (V1) overview](/openhands/usage/api/v1) for the V1 endpoints behind Cloud conversations.
+
 ### Jira Data Center Integration (Coming soon...)
 Source: https://docs.openhands.dev/openhands/usage/cloud/project-management/jira-dc-integration.md
 
 # Jira Data Center Integration
+
+## Overview
+
+The Jira Data Center integration enables you to use OpenHands to automatically implement requirements from Jira tickets. When you create a ticket with clear requirements and acceptance criteria, OpenHands can read the ticket, generate an implementation plan, and create a pull request in your linked repository.
+
+### How It Works
+
+Once configured, you can request OpenHands to work on a Jira ticket by:
+
+1. **Specify the Repository**: Include the repository location in either:
+   - The ticket body itself, or
+   - A comment on the ticket
+   
+2. **Trigger OpenHands**: Activate the agent using one of these methods:
+   - Add an `openhands` label to the ticket
+   - Comment with: `@openhands please review these requirements, generate a plan, and then proceed with implementation`
+
+OpenHands will then read the ticket, understand the requirements, and generate a conversation that results in a pull request implementing the requested changes.
+
+### Example Ticket
+
+Here's an example of how to structure a Jira ticket for OpenHands:
+
+**Title:** Add SAML Support
+
+**Body:**
+```
+As an administrator for my web app, I want to configure SAML so I can provide secure access to my system.
+
+GitHub repository: AcmeCo/WebApp
+
+AC:
+- Verify an administrator can configure SAML settings
+- Verify an end user can authenticate via SAML
+```
+
+After creating this ticket, you can either add the `openhands` label or comment with `@openhands please review these requirements, generate a plan, and then proceed with implementation` to start the automation process.
+
+---
 
 ## Platform Configuration
 
@@ -35319,6 +36599,45 @@ Here the workspace name is **jira.all-hands.dev**.
 Source: https://docs.openhands.dev/openhands/usage/cloud/project-management/jira-integration.md
 
 # Jira Cloud Integration
+
+## Overview
+
+The Jira Cloud integration enables you to use OpenHands to automatically implement requirements from Jira tickets. When you create a ticket with clear requirements and acceptance criteria, OpenHands can read the ticket, generate an implementation plan, and create a pull request in your linked repository.
+
+### How It Works
+
+Once configured, you can request OpenHands to work on a Jira ticket by:
+
+1. **Specify the Repository**: Include the repository location in either:
+   - The ticket body itself, or
+   - A comment on the ticket
+   
+2. **Trigger OpenHands**: Activate the agent using one of these methods:
+   - Add an `openhands` label to the ticket
+   - Comment with: `@openhands please review these requirements, generate a plan, and then proceed with implementation`
+
+OpenHands will then read the ticket, understand the requirements, and generate a conversation that results in a pull request implementing the requested changes.
+
+### Example Ticket
+
+Here's an example of how to structure a Jira ticket for OpenHands:
+
+**Title:** Add SAML Support
+
+**Body:**
+```
+As an administrator for my web app, I want to configure SAML so I can provide secure access to my system.
+
+Repository: AcmeCo/WebApp
+
+AC:
+- Verify an administrator can configure SAML settings
+- Verify an end user can authenticate via SAML
+```
+
+After creating this ticket, you can either add the `openhands` label or comment with `@openhands please review these requirements, generate a plan, and then proceed with implementation` to start the automation process.
+
+---
 
 ## Platform Configuration
 
@@ -35846,7 +37165,11 @@ Get familiar with our architecture:
 - **[Evaluation](https://github.com/OpenHands/benchmarks)** - Testing and benchmarks
 
 ### Pull Request Process
-We welcome all pull requests! Here's how we evaluate them:
+We welcome pull requests across our public repositories! Here's how we evaluate them:
+
+<Warning>
+**Enterprise Directory Restriction:** We cannot accept pull requests for changes in the `enterprise/` directory of the OpenHands repository at this time, as this part of the codebase is commercially licensed. If you have feedback or suggestions for [OpenHands Enterprise](/enterprise/index), please [create an issue](https://github.com/OpenHands/OpenHands/issues) in the OpenHands repository instead.
+</Warning>
 
 #### Small Improvements
 - Quick review and approval for obvious improvements
@@ -35959,7 +37282,7 @@ OpenHands is released under the **MIT License**, which means:
 
 *Full license text: [LICENSE](https://github.com/OpenHands/OpenHands/blob/main/LICENSE)*
 
-**Special Note:** Content in the `enterprise/` directory has a separate license. See `enterprise/LICENSE` for details.
+**Special Note:** Content in the `enterprise/` directory has a separate license, and we cannot accept external pull requests for changes to this directory at this time. See `enterprise/LICENSE` for details.
 
 ## Ready to make your first contribution?
 
@@ -36557,14 +37880,55 @@ General skill file example for organization `Great-Co` located inside the `.agen
 
 For GitLab organizations, the same skill would be located inside the `openhands-config` repository.
 
-## User Skills When Running Openhands on Your Own
+## User Skills When Running OpenHands on Your Own
 
-<Note>
-  This works with CLI, headless and development modes. It does not work out of the box when running OpenHands using the docker command.
-</Note>
+When running OpenHands on your own, you can place skills in the `~/.agents/skills/` folder on your local
+system and OpenHands will always load them for all your conversations. Repo-level overrides live in `.agents/skills/`.
 
-When running OpenHands on your own, you can place skills in the `~/.agents/skills` folder on your local
-system and OpenHands will always load it for all your conversations. Repo-level overrides live in `.agents/skills`.
+<Tabs>
+  <Tab title="CLI / Headless / Development Mode">
+    User skills from `~/.agents/skills/` are loaded automatically — no extra configuration needed.
+  </Tab>
+  <Tab title="Docker">
+    When running OpenHands via Docker, the agent-server container cannot see your host filesystem by default.
+    You need to mount your local skills directory into the sandbox using the `SANDBOX_VOLUMES` environment variable:
+
+    ```bash
+    docker run -it --rm --pull=always \
+      -e SANDBOX_VOLUMES="$HOME/.agents/skills:/home/openhands/.agents/skills:ro" \
+      -e AGENT_SERVER_IMAGE_REPOSITORY=ghcr.io/openhands/agent-server \
+      -e AGENT_SERVER_IMAGE_TAG=1.15.0-python \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v ~/.openhands:/.openhands \
+      -p 3000:3000 \
+      --add-host host.docker.internal:host-gateway \
+      --name openhands-app \
+      docker.openhands.dev/openhands/openhands:1.6
+    ```
+
+    <Warning>
+      Mount into `~/.agents/skills` inside the container (not `~/.openhands/skills`). Mounting
+      into `~/.openhands/skills` would overwrite the public skills cache and prevent built-in
+      skills from loading.
+    </Warning>
+
+    You can store your skills in any host directory (e.g., `~/my-skills/`) and mount them
+    to `~/.agents/skills` in the sandbox:
+
+    ```bash
+    -e SANDBOX_VOLUMES="$HOME/my-skills:/home/openhands/.agents/skills:ro"
+    ```
+
+    If you also need to mount a workspace, use a comma-separated list:
+
+    ```bash
+    -e SANDBOX_VOLUMES="$HOME/project:/workspace:rw,$HOME/.agents/skills:/home/openhands/.agents/skills:ro"
+    ```
+
+    See the [SANDBOX_VOLUMES documentation](/openhands/usage/sandboxes/docker#using-sandbox_volumes) for more details
+    on the mount format.
+  </Tab>
+</Tabs>
 
 ### Global Skills
 Source: https://docs.openhands.dev/overview/skills/public.md
@@ -36793,20 +38157,432 @@ Enterprise customers receive:
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
 
+### Enterprise vs. Open Source
+Source: https://docs.openhands.dev/enterprise/enterprise-vs-oss.md
+
+This page describes the key differences between **OpenHands Local GUI** (open source) for individual developers and small teams running the Local GUI on their own machines, and **OpenHands Enterprise** for organizations that need advanced collaboration, integrations, and management capabilities.
+
+## Feature Comparison
+
+The table below highlights the key differences between the OpenHands Local GUI and OpenHands Enterprise offerings:
+
+| Feature | Local GUI | OpenHands Enterprise |
+|---------|-------------------|----------------------|
+| **Full breadth of agent functionality (sub-agents, MCP, skills, model agnosticism)** | ✅ | ✅ |
+| **Where does the agent run?** | Local dev machines | Scalable, runtime sandboxes |
+| **Scalability** *Run multiple concurrent agent conversations* | Limited by machine | Unlimited, on-demand |
+| **'@OpenHands' in Slack and Jira** *Important for real-time resolution of bugs and feedback* | ❌ | ✅ |
+| **'@OpenHands' in GitHub, GitLab, Bitbucket** *Important for real-time resolution of PR comments and failing tests* | ❌ | ✅ |
+| **Multiple agent conversations in one place** *Give users visibility into all agent conversations* | ✅ | ✅ |
+| **Share conversations** *Unlock collaboration use cases* | ❌ | ✅ |
+| **Remote monitoring of agent conversations** *Enable Human-in-the-Loop operations for running agents* | ❌ Requires access to machine where agent is running | ✅ Monitor remotely from OpenHands Enterprise UI |
+| **Multi-user management and RBAC** *Roll out to several users and teams* | ❌ | ✅ |
+| **Automations** *Create scheduled and event-based workflows* | ❌ | ✅ |
+| **SAML** | ❌ | ✅ |
+| **REST APIs** | ❌ | ✅ |
+
+## When to Choose Each Option
+
+### OpenHands Local GUI
+
+The OpenHands Local GUI is ideal for:
+
+- Individual developers exploring AI-assisted coding
+- Small teams with basic requirements
+- Self-hosted environments where you manage your own infrastructure
+- Running OpenHands locally on your own machine
+
+### OpenHands Enterprise
+
+OpenHands Enterprise is the right choice when you need:
+
+- **Team collaboration** — Share conversations and manage multiple users from a single platform
+- **Platform integrations** — Invoke OpenHands directly from Slack, Jira, GitHub, GitLab, or Bitbucket
+- **Scalability** — Run unlimited parallel agent conversations without local resource constraints
+- **Enterprise security** — SAML authentication, RBAC, and centralized audit logs
+- **Remote monitoring** — Track agent progress in real-time from anywhere
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card
+    title="Try Local GUI"
+    icon="desktop"
+    href="/openhands/usage/run-openhands/local-setup#start-the-app"
+  >
+    Get started with OpenHands on your local machine using Docker or the CLI launcher.
+  </Card>
+  <Card
+    title="Contact Enterprise Sales"
+    icon="envelope"
+    href="https://openhands.dev/contact"
+  >
+    Discuss your organization's requirements and get a customized deployment plan for OpenHands Enterprise.
+  </Card>
+</CardGroup>
+
+### Kubernetes Installation
+Source: https://docs.openhands.dev/enterprise/k8s-install.md
+
+OpenHands Enterprise can be deployed into an existing Kubernetes cluster using Helm.
+This approach gives you full control over the deployment and is ideal for teams with
+Kubernetes expertise who want to integrate OpenHands into their existing infrastructure.
+
+<Note>
+  If you prefer a simpler installation, see the [Quick Start](/enterprise/quick-start)
+  guide for VM-based deployment.
+</Note>
+
+## When to Use This Approach
+
+Choose the Kubernetes installation path when you:
+
+- Have an existing Kubernetes cluster you want to deploy into
+- Need fine-grained control over resource allocation and scaling
+- Want to integrate with existing infrastructure (external PostgreSQL, Redis, S3)
+- Have a platform team familiar with Helm and Kubernetes operations
+- Need to comply with specific infrastructure policies or constraints
+
+## Architecture Overview
+
+OpenHands Enterprise consists of several components deployed as Kubernetes workloads:
+
+![OpenHands Enterprise Architecture](./images/architecture.svg)
+
+### Core Components
+
+| Component | Description |
+|-----------|-------------|
+| **OpenHands Server** | Main application server handling UI, API, and agent orchestration |
+| **Runtime API** | Manages sandbox lifecycle—provisioning, scaling, and cleanup |
+| **Runtimes (Sandboxes)** | Isolated containers where agents execute code |
+| **Keycloak** | Identity and access management |
+| **LiteLLM Proxy** | Routes requests to your LLM provider(s) |
+| **PostgreSQL** | Persistent storage for application data |
+| **Redis** | Caching and session management |
+
+### Supporting Services
+
+| Component | Description |
+|-----------|-------------|
+| **Conversation Bucket** | S3-compatible storage for conversation history |
+| **Image Loader** | Pre-loads runtime container images on nodes |
+
+## Guides
+
+<Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+  Configure memory, CPU, and storage for optimal performance.
+</Card>
+
+## Request Access
+
+Kubernetes-based installation is currently available to select customers on request.
+If you're interested in deploying OpenHands Enterprise into your own Kubernetes cluster,
+please contact our team to discuss your requirements.
+
+<Card title="Contact Sales" icon="envelope" href="https://openhands.dev/contact">
+  Get in touch with our team to request access to Kubernetes installation.
+</Card>
+
+### Resource Limits
+Source: https://docs.openhands.dev/enterprise/k8s-install/resource-limits.md
+
+This guide explains how to configure resource limits for OpenHands Enterprise
+components. Proper resource configuration ensures stable operation and prevents
+issues like OOMKills and pod evictions.
+
+## Values File Structure
+
+All configuration examples in this guide show keys that belong in your `site-values.yaml`
+file. The examples show the complete path from the root of the file.
+
+<Tip>
+  Create a `site-values.yaml` file to store your custom configuration. Pass it to Helm
+  with `-f site-values.yaml` when installing or upgrading.
+</Tip>
+
+## Understanding Kubernetes Resources
+
+Kubernetes uses two key resource settings:
+
+- **Requests**: The minimum resources guaranteed to a pod. The scheduler uses this
+  to place pods on nodes with sufficient capacity.
+- **Limits**: The maximum resources a pod can use. Exceeding memory limits causes
+  an OOMKill; exceeding CPU limits causes throttling.
+
+<Warning>
+  If a pod uses significantly more memory than its request (but below its limit),
+  it becomes a candidate for eviction during node pressure. Set requests close to
+  actual usage for production workloads.
+</Warning>
+
+## Application Server Resources
+
+The OpenHands application server (deployment name: `openhands`) handles the UI, API,
+and agent orchestration. Configure its resources under the `deployment` section in
+your values file.
+
+### Default Configuration
+
+```yaml
+# site-values.yaml
+
+# ============================================================================
+# Application Server (OpenHands deployment)
+# ============================================================================
+# Root-level key: deployment
+# Controls the main OpenHands server pod resources
+# ============================================================================
+deployment:
+  replicas: 1
+  resources:
+    requests:
+      memory: 1200Mi
+      cpu: 100m
+    limits:
+      memory: 3Gi
+```
+
+### Recommended Production Configuration
+
+For production workloads, increase memory and add replicas for redundancy:
+
+```yaml
+# site-values.yaml
+
+deployment:                        # Root-level key
+  replicas: 2
+  resources:
+    requests:
+      memory: 2560Mi               # 2.5Gi - aligns with typical usage
+      cpu: 100m
+    limits:
+      memory: 4Gi                  # Buffer against OOMKill
+```
+
+### When to Adjust
+
+Increase resources if you observe:
+
+| Symptom | Metric to Check | Action |
+|---------|----------------|--------|
+| Pod restarts | `RESTARTS` column in `kubectl get pods` | Increase `limits.memory` |
+| High memory usage | `kubectl top pods` shows >80% of limit | Increase `limits.memory` |
+| Evictions during node pressure | Pod events show eviction | Increase `requests.memory` to match actual usage |
+| Slow response times | Application latency metrics | Add replicas or increase CPU |
+
+### Horizontal Pod Autoscaling
+
+For automatic scaling based on load, enable the HorizontalPodAutoscaler:
+
+```yaml
+# site-values.yaml
+
+deployment:                        # Root-level key
+  replicas: 2                      # Minimum baseline
+  resources:
+    requests:
+      memory: 2560Mi
+      cpu: 200m                    # Increase for HPA to use as scaling signal
+    limits:
+      memory: 4Gi
+
+autoscaling:                       # Root-level key (separate from deployment)
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+```
+
+## Sandbox Resources
+
+Sandboxes (also called runtimes) are the isolated containers where agents execute code.
+Each conversation runs in its own sandbox pod. Configure these via environment variables
+in the `runtime-api.env` section.
+
+### Available Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMORY_REQUEST` | `3072Mi` | Minimum memory guaranteed per sandbox |
+| `MEMORY_LIMIT` | `3072Mi` | Maximum memory per sandbox |
+| `CPU_REQUEST` | `500m` | Minimum CPU guaranteed (500m = 0.5 cores) |
+| `CPU_LIMIT` | (none) | Maximum CPU per sandbox |
+| `EPHEMERAL_STORAGE_SIZE` | `10Gi` | Temporary storage per sandbox |
+
+### Default Configuration
+
+```yaml
+# site-values.yaml
+
+# ============================================================================
+# Runtime API (Sandbox Manager)
+# ============================================================================
+# Root-level key: runtime-api
+# This is a subchart that manages sandbox pod lifecycle.
+# The env section passes environment variables to the runtime-api container,
+# which uses them when creating sandbox pods.
+# ============================================================================
+runtime-api:
+  env:
+    MEMORY_REQUEST: "3072Mi"
+    MEMORY_LIMIT: "3072Mi"
+    CPU_REQUEST: "500m"
+    EPHEMERAL_STORAGE_SIZE: "10Gi"
+```
+
+### High-Resource Configuration
+
+For workloads that require more resources (large codebases, memory-intensive builds):
+
+```yaml
+# site-values.yaml
+
+runtime-api:                       # Root-level key (subchart configuration)
+  env:
+    MEMORY_REQUEST: "8192Mi"
+    MEMORY_LIMIT: "8192Mi"
+    CPU_REQUEST: "2000m"
+    CPU_LIMIT: "4000m"
+    EPHEMERAL_STORAGE_SIZE: "50Gi"
+```
+
+### Resource Format
+
+- **Memory**: Use `Mi` suffix (mebibytes). Examples: `1024Mi`, `4096Mi`, `8192Mi`
+- **CPU**: Use millicores. `1000m` = 1 CPU core. Examples: `500m`, `2000m`, `4000m`
+- **Storage**: Use `Gi` suffix (gibibytes). Examples: `10Gi`, `50Gi`, `100Gi`
+
+<Warning>
+  Changes to sandbox resources only affect **new sandboxes**. Existing running
+  sandboxes keep their original limits until stopped and restarted.
+</Warning>
+
+## Applying Changes
+
+### 1. Update your values file
+
+Edit `site-values.yaml` with your desired configuration:
+
+```yaml
+# site-values.yaml
+#
+# This file contains your custom overrides for the OpenHands Helm chart.
+# All keys shown here are root-level keys in the values hierarchy.
+
+# ============================================================================
+# Application Server Resources
+# ============================================================================
+deployment:
+  replicas: 2
+  resources:
+    requests:
+      memory: 2560Mi
+      cpu: 100m
+    limits:
+      memory: 4Gi
+
+# ============================================================================
+# Sandbox Resources (via Runtime API subchart)
+# ============================================================================
+runtime-api:
+  env:
+    MEMORY_REQUEST: "8192Mi"
+    MEMORY_LIMIT: "8192Mi"
+    CPU_REQUEST: "2000m"
+    CPU_LIMIT: "4000m"
+    EPHEMERAL_STORAGE_SIZE: "50Gi"
+```
+
+### 2. Apply with Helm upgrade
+
+```bash
+helm upgrade openhands \
+  oci://ghcr.io/all-hands-ai/helm-charts/openhands \
+  -f site-values.yaml \
+  -n openhands
+```
+
+## Verifying Changes
+
+### Check application server resources
+
+```bash
+kubectl get deployment openhands -n openhands \
+  -o jsonpath='{.spec.template.spec.containers[0].resources}' | jq
+```
+
+### Check replica count
+
+```bash
+kubectl get deployment openhands -n openhands \
+  -o jsonpath='{.spec.replicas}'
+```
+
+### Check runtime-api environment variables
+
+Verify the sandbox resource settings are configured in the runtime-api deployment:
+
+```bash
+kubectl get deployment runtime-api -n openhands \
+  -o jsonpath='{.spec.template.spec.containers[0].env}' | \
+  jq '.[] | select(.name | test("MEMORY|CPU|STORAGE"))'
+```
+
+## Monitoring Resource Usage
+
+### Current resource consumption
+
+```bash
+kubectl top pods -n openhands
+```
+
+### Resource usage over time
+
+For production deployments, we recommend integrating with a monitoring solution
+(Prometheus/Grafana, Datadog, etc.) to track:
+
+- Memory usage vs. limits (to predict OOMKills)
+- Memory usage vs. requests (to predict evictions)
+- CPU throttling events
+- Pod restart counts
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="K8s Install Overview" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Return to the Kubernetes installation overview.
+  </Card>
+  <Card title="Enterprise Overview" icon="building" href="/enterprise/index">
+    Learn more about OpenHands Enterprise features.
+  </Card>
+</CardGroup>
+
 ### Quick Start
 Source: https://docs.openhands.dev/enterprise/quick-start.md
 
-This guide walks you through trialing OpenHands Enterprise on AWS. You'll provision
-infrastructure with Terraform, configure GitHub for user authentication, and set up
-Anthropic as your LLM provider.
+This guide walks you through trialing OpenHands Enterprise on your own infrastructure.
+You'll provision infrastructure (AWS Terraform or a manual VM setup), configure
+GitHub for user authentication, and set up Anthropic as your LLM provider.
 
-## Prerequisites
+## Who This Is For
+
+This guide is **not** for single-user local laptop installs. It is for a **30-day trial of OpenHands Enterprise** on a
+**dedicated VM/server** on your own infrastructure. The deployment requires DNS records, network, and compute setup before installation.
+
+If you want to use OpenHands immediately without infrastructure setup:
+
+- Use OpenHands Cloud (SaaS)
+- Run OpenHands open-source locally using Docker, CLI or SDK
+
+### Accounts and Credentials
 
 Before you begin, make sure you have the following ready:
 
 - **Anthropic API key** from the [Anthropic Console](https://console.anthropic.com/)
 - **A GitHub account** with permission to create GitHub Apps
-- **An AWS account** with permissions to create EC2, VPC, and Route53 resources
+- **An AWS account** with permissions to create EC2, VPC, and Route53 resources (**if using the AWS with Terraform path**)
 
 ## Provision Infrastructure
 
@@ -36843,7 +38619,7 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
 
       | Port | Protocol | Purpose |
       |------|----------|---------|
-      | 80 | TCP | HTTP |
+      | 80 | TCP | HTTP ingress/redirect |
       | 443 | TCP | HTTPS |
       | 30000 | TCP | Admin Console |
 
@@ -36860,8 +38636,8 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
       - `charts.r9.all-hands.dev`
       - `updates.r9.all-hands.dev`
       - `github.com`
-      - `docker.io`
-      - `docker.dev`
+      - `traefik.github.io`
+      - `registry-1.docker.io`
       - `ghcr.io`
     </Accordion>
 
@@ -36908,8 +38684,10 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
     | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
     | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
 
-    **Obtain a TLS certificate** with SANs (Subject Alternative Names) for all of the above domains,
-    then copy the certificate (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM.
+    **Obtain a TLS certificate signed by a well-known certificate authority (CA) such as Let's Encrypt**, with SANs
+    (Subject Alternative Names) for all of the above domains, then copy the certificate
+    (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM. Self-signed certificates
+    are not supported for the OpenHands application.
 
     <Warning>
       If you don't provide TLS certificates during installation, the Admin Console will use a
@@ -36919,11 +38697,105 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
   </Tab>
 </Tabs>
 
+## Preflight Validation
+
+All items below must be completed before running the installer:
+
+- VM meets CPU, memory, disk, and OS requirements
+- DNS records are created and resolve from the VM
+- Inbound ports are open: `80`, `443`, and `30000`
+- Outbound domains are reachable from the VM
+- GitHub App prerequisites are prepared
+
+<Warning>
+  Do not run the installer until preflight checks pass.
+</Warning>
+
+### DNS checks
+
+Run the checks below on the target VM before opening the installer dashboard.
+
+Export your base domain:
+
+```bash
+export BASE_DOMAIN="openhands.example.com"
+```
+Test DNS:
+```bash
+for h in \
+  "${BASE_DOMAIN}" \
+  "app.${BASE_DOMAIN}" \
+  "auth.app.${BASE_DOMAIN}" \
+  "llm-proxy.${BASE_DOMAIN}" \
+  "runtime-api.${BASE_DOMAIN}"; do
+  echo "[DNS] $h"
+  getent hosts "$h" || nslookup "$h"
+done
+```
+
+Expected: each hostname above resolves to your VM's public IP address.
+
+Test that a runtime wildcard hostname resolves:
+
+```bash
+getent hosts "test.runtime.${BASE_DOMAIN}" || nslookup "test.runtime.${BASE_DOMAIN}"
+```
+
+Expected: `test.runtime.${BASE_DOMAIN}` resolves to the same target as `${BASE_DOMAIN}`.
+
+### Outbound connectivity checks
+
+```bash
+urls=(
+  "https://replicated.app"
+  "https://proxy.replicated.com/v2/"
+  "https://images.r9.all-hands.dev/v2/"
+  "https://install.r9.all-hands.dev"
+  "https://charts.r9.all-hands.dev"
+  "https://updates.r9.all-hands.dev"
+  "https://github.com"
+  "https://traefik.github.io/charts/index.yaml"
+  "https://registry-1.docker.io/v2/"
+  "https://ghcr.io/v2/"
+)
+
+for u in "${urls[@]}"; do
+  # HTTP 000 means connection failure (DNS failure, timeout, or blocked network path).
+  code=$(curl -sSIL --max-time 15 -o /dev/null -w "%{http_code}" "$u" || true)
+  if [ "$code" = "000" ]; then
+    echo "FAIL $u"
+  else
+    echo "OK   $u (HTTP $code)"
+  fi
+done
+```
+
+Any HTTP response code other than `000` is acceptable for reachability checks
+(for example `200`, `301`, `302`, `401`, `403`, `405`).
+
+If any check fails, stop and resolve before continuing:
+- DNS failures: Verify records are created, point to the right target, and have finished propagating
+- Outbound connectivity failures: Check firewall egress rules, proxy settings, and TLS inspection policies
+
+## Reasons for Requirements
+
+| Requirement | Why It Exists |
+|------------|----------------|
+| `443/TCP` inbound | Primary HTTPS entrypoint for users and service hostnames |
+| `30000/TCP` inbound | Replicated/KOTS Admin Console for install and configuration |
+| `80/TCP` inbound | HTTP entrypoint used for ingress/redirect behavior |
+| `*.runtime.<domain>` DNS + cert SAN | Runtime sandboxes are addressed by dynamic runtime-specific hostnames |
+| `replicated.app`, `proxy.replicated.com` | Replicated control-plane/license/install paths |
+| `images.r9...`, `charts.r9...`, `updates.r9...`, `install.r9...` | Vendor distribution image/chart/update/install endpoints |
+| `traefik.github.io` | Embedded cluster ingress chart repository |
+| `ghcr.io`, `registry-1.docker.io` | Container image pulls for platform components |
+| `github.com` | GitHub App setup/auth/webhooks and downloading public agent skills |
+
 ## Run the Installer
 
 ### 1. Access the Installer Dashboard
 
-[Register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup), then
+After preflight validation checks have passed, [register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup), then
 log in to the installer dashboard. You will see the dashboard below.
 Click **"View install guide"** in the Install tile.
 
@@ -36944,6 +38816,8 @@ The install guide provides commands to run on your VM. SSH into your VM and exec
 2. **Download the installation assets** -- copy and run the `curl` command shown
 3. **Extract the installation assets** -- run the `tar` command shown (this includes your license file)
 4. **Install** -- run the install command shown
+
+If the install command fails after preflight checks pass, run `sudo ./openhands support-bundle` and share the resulting bundle with support.
 
 <Warning>
   **We recommend providing your TLS certificates during installation.** If you used the
