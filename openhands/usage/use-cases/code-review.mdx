@@ -114,17 +114,107 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
+| `review-agent-mode` | Review backend: `openhands` for the standard SDK agent or `acp` for an ACP-compatible agent server | No | `openhands` |
 | `llm-model` | LLM model to use | Yes | - |
+| `acp-command` | Command used to start the ACP server. Required when `review-agent-mode` is `acp`. Examples: `npx -y @zed-industries/codex-acp@0.12.0`, `codex-acp`, `claude-agent-acp`, `npx -y @agentclientprotocol/claude-agent-acp` | Yes for ACP mode | `''` |
+| `acp-prompt-timeout` | Timeout in seconds for one ACP prompt turn | No | `1800` |
 | `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
 | `review-style` | **[DEPRECATED]** Previously chose between `standard` and `roasted`. Now ignored — the styles have been merged. | No | `roasted` |
 | `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
 | `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
-| `llm-api-key` | LLM API key | Yes | - |
+| `openhands-sdk-package` | Package spec passed to `uv --with`; override only when pinning a specific SDK build for testing or rollout control | No | `openhands-sdk` |
+| `llm-api-key` | LLM API key. Required when `review-agent-mode` is `openhands`; ignored in ACP mode. | Yes for OpenHands mode | - |
 | `github-token` | GitHub token for API access | Yes | - |
 
 <Note>
 Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features. The extensions repository contains the PR review plugin scripts.
 </Note>
+
+## Experimental: ACP Review Backend
+
+The PR review action can run through an ACP-compatible agent server by setting
+`review-agent-mode: acp`. In this mode, OpenHands still loads the review skills
+and plugin prompt context, but the ACP server owns model access,
+authentication, and tool execution.
+
+Use ACP mode when your runner already has an authenticated ACP CLI available.
+The action does not install ACP CLIs for you; install and authenticate the ACP
+server in workflow steps before invoking the PR review action.
+
+<Warning>
+ACP mode is experimental. Use it on trusted self-hosted runners where you
+control the installed ACP command and the authentication material. Do not expose
+subscription credentials to workflows that run untrusted pull request code.
+</Warning>
+
+### Codex ACP Example
+
+To use Codex ACP, first install the Codex CLI and complete device-code login on
+a trusted machine:
+
+```bash
+codex login --device-auth
+codex login status
+```
+
+Then create a base64-encoded secret from the generated auth file:
+
+```bash
+# Linux
+base64 -w 0 "$HOME/.codex/auth.json"
+
+# macOS
+base64 < "$HOME/.codex/auth.json" | tr -d '\n'
+```
+
+Store the printed value as a repository or organization secret named
+`CODEX_AUTH_JSON_B64`. The workflow can then restore that file on a
+self-hosted runner, start Codex ACP with `npx`, and run the review:
+
+```yaml
+name: PR Review by OpenHands
+
+on:
+  pull_request:
+    types: [labeled, review_requested]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-review:
+    if: |
+      github.event.label.name == 'review-this' ||
+      github.event.requested_reviewer.login == 'openhands-agent'
+    runs-on: [self-hosted]
+    timeout-minutes: 30
+    steps:
+      - name: Restore Codex auth
+        env:
+          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 }}
+        run: |
+          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
+            echo "Error: CODEX_AUTH_JSON_B64 is required for Codex ACP review."
+            exit 1
+          fi
+          mkdir -p "$HOME/.codex"
+          printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$HOME/.codex/auth.json"
+          chmod 600 "$HOME/.codex/auth.json"
+
+      - name: Run PR Review
+        uses: OpenHands/extensions/plugins/pr-review@main
+        with:
+          review-agent-mode: acp
+          acp-command: npx -y @zed-industries/codex-acp@0.12.0
+          llm-model: gpt-5.5
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup Codex auth
+        if: always()
+        run: rm -f "$HOME/.codex/auth.json"
+```
 
 ## Customization
 
