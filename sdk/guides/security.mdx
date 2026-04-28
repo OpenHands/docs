@@ -604,6 +604,29 @@ replacement for either.
 | Content past 30k chars is invisible | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
 | `thinking_blocks` not scanned | Scanning model reasoning risks false positives on deliberation | Separate injection-only CoT scan |
 
+#### Extraction budget and per-field cap
+
+The 30k-character extraction cap protects against regex denial-of-service,
+but it creates a secondary risk: fields are extracted in order (`tool_name`
+→ `tool_call.name` → `tool_call.arguments`), so an oversized early field
+can consume the entire budget and make later fields invisible to scanning.
+
+Since `tool_name` has no length validation in the SDK, and the
+non-function-calling code path allows arbitrary-length names, this is a
+real starvation vector — not just a theoretical concern.
+
+A **per-field cap** (`_FIELD_CAP = _EXTRACT_HARD_CAP // 2`) ensures no
+single field can consume more than 50% of the budget. With this cap, an
+oversized `tool_name` is truncated at 15k characters, leaving at least
+15k for `tool_call.arguments`.
+
+**Remaining boundaries** (documented as strict xfails in the test suite):
+- Two adversarially large fields can still collectively exhaust the budget
+- Multiple thought entries under the cap can collectively starve `summary`
+
+Both require reserved per-field budgets to fix, which needs usage data on
+real field size distributions.
+
 <Note>
 Ready-to-run example: [examples/01_standalone_sdk/47_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/47_defense_in_depth_security.py)
 </Note>
