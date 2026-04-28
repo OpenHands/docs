@@ -7,9 +7,9 @@ Why this exists
 Mintlify automatically generates and hosts `/llms.txt` and `/llms-full.txt` for
 Mintlify-backed documentation sites.
 
-For OpenHands, we want those files to provide **V1-only** context to LLMs while we
-still keep some legacy V0 pages available for humans. In particular, we want to
-exclude:
+For OpenHands, we want those files to provide **V1-only** context to LLMs and to
+exclude any removed legacy V0 pages if they are still present in the repository
+history or in future maintenance branches. In particular, we exclude:
 
 - The legacy docs subtree under `openhands/usage/v0/`
 - Any page whose filename starts with `V0*`
