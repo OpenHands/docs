@@ -1,0 +1,280 @@
+---
+title: LLM API Key Protection
+description: How OpenHands protects LLM API keys from agent access and exfiltration
+icon: key
+---
+
+This technical note explains how OpenHands protects LLM API keys—including
+LiteLLM virtual keys and Bring Your Own Key (BYOK) configurations—from being
+accessed or exfiltrated by the AI agent running in the sandbox.
+
+## Overview
+
+When you use OpenHands, an AI agent executes code in a sandboxed environment.
+A natural security concern is: **can the agent access and steal the LLM API key
+used to power it?**
+
+The short answer is **no**. OpenHands implements multiple layers of protection
+to ensure that LLM API keys are never exposed to the agent's execution
+environment.
+
+## Architecture
+
+OpenHands uses a split architecture where:
+
+1. **The Agent Server** (Python process) holds sensitive credentials and makes
+   LLM API calls
+2. **The Sandbox** (isolated container or process) executes agent-requested
+   commands without access to credentials
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Agent Server                              │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
+│  │   Agent     │───►│    LLM      │───►│  LiteLLM / Provider │  │
+│  │   Loop      │    │  (api_key)  │    │       API           │  │
+│  └─────────────┘    └─────────────┘    └─────────────────────┘  │
+│         │                                                        │
+│         │ Tool calls (no secrets)                                │
+│         ▼                                                        │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │                    Sandbox Environment                    │    │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐               │    │
+│  │  │  Bash    │  │  Files   │  │  Other   │               │    │
+│  │  │ Commands │  │  Editor  │  │  Tools   │               │    │
+│  │  └──────────┘  └──────────┘  └──────────┘               │    │
+│  │                                                          │    │
+│  │  ❌ No LLM_API_KEY    ❌ No SESSION_API_KEY              │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## Protection Mechanisms
+
+### 1. LLM API Key Isolation
+
+The LLM's `api_key` is stored in the `Agent.llm.api_key` field as a Pydantic
+`SecretStr`. This key is:
+
+- Used **only within the SDK's Python process** when making API calls via
+  LiteLLM
+- **Never exported** as an environment variable to the shell
+- **Never accessible** via bash commands like `echo $LLM_API_KEY`
+
+The agent cannot request to "print environment variables" or write code that
+reads the LLM API key because **it simply doesn't exist** in the sandbox's
+environment.
+
+### 2. SESSION_API_KEY Stripping
+
+The `SESSION_API_KEY` is a credential that grants access to user secrets via
+the OpenHands API. If an agent could read this, it could potentially access
+other sensitive data.
+
+OpenHands explicitly strips this variable before any subprocess execution:
+
+```python
+# From openhands-sdk/openhands/sdk/utils/command.py
+
+_SENSITIVE_ENV_VARS = frozenset({"SESSION_API_KEY"})
+
+def sanitized_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a copy of *env* with sanitized values.
+
+    Sensitive environment variables (e.g., ``SESSION_API_KEY``) are stripped
+    to prevent LLM-driven agents from accessing credentials via terminal
+    commands.
+    """
+    base_env: dict[str, str]
+    if env is None:
+        base_env = dict(os.environ)
+    else:
+        base_env = dict(env)
+
+    # Strip sensitive env vars to prevent agent access via bash commands
+    for key in _SENSITIVE_ENV_VARS:
+        base_env.pop(key, None)
+
+    return base_env
+```
+
+This `sanitized_env()` function is called in:
+- `bash_service.py` — before executing any bash command
+- `desktop_service.py` — before starting desktop processes  
+- `vscode_service.py` — before launching VS Code
+- `skills_service.py` — before running skill-related processes
+
+### 3. Registered Secrets: On-Demand Injection with Masking
+
+For secrets that **are** meant to be used by the agent (like `GITHUB_TOKEN` for
+git operations), OpenHands uses a controlled injection mechanism:
+
+1. **On-demand injection**: Secrets are only added to the environment when the
+   command text explicitly references them
+2. **Output masking**: Any secret values that appear in command output are
+   automatically replaced with `<secret-hidden>`
+
+```python
+# From openhands-sdk/openhands/sdk/conversation/secret_registry.py
+
+def get_secrets_as_env_vars(self, command: str) -> dict[str, str]:
+    """Get secrets that should be exported as environment variables."""
+    found_secrets = self.find_secrets_in_text(command)
+
+    if not found_secrets:
+        return {}
+
+    env_vars = {}
+    for key in found_secrets:
+        source = self.secret_sources[key]
+        value = source.get_value()
+        if value:
+            env_vars[key] = value
+            # Track for masking
+            self._exported_values[key] = value
+
+    return env_vars
+
+def mask_secrets_in_output(self, text: str) -> str:
+    """Mask secret values in the given text."""
+    masked_text = text
+    for value in self._exported_values.values():
+        masked_text = masked_text.replace(value, "<secret-hidden>")
+    return masked_text
+```
+
+### 4. LookupSecret for Dynamic Tokens
+
+For OAuth tokens and other credentials that may be refreshed, OpenHands uses
+`LookupSecret` which fetches tokens via authenticated HTTP requests at runtime:
+
+```python
+# From openhands-sdk/openhands/sdk/secret/secrets.py
+
+class LookupSecret(SecretSource):
+    """A secret looked up from some external url"""
+
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    def get_value(self) -> str:
+        response = httpx.get(self.url, headers=self.headers, timeout=30.0)
+        response.raise_for_status()
+        return response.text
+```
+
+This means tokens are never stored statically in the sandbox—they're fetched
+fresh when needed, and the fetch URL/headers are also protected.
+
+## Security Testing
+
+The SDK includes explicit security tests to verify these protections work:
+
+```python
+# From tests/agent_server/test_terminal_service.py
+
+@pytest.mark.asyncio
+async def test_terminal_does_not_expose_session_api_key(bash_service, monkeypatch):
+    """Verify SESSION_API_KEY is not accessible to bash commands.
+
+    This is a security test: SESSION_API_KEY grants access to user secrets via
+    the SaaS API. If an LLM-driven agent could read this env var via terminal
+    commands, it could exfiltrate all user secrets.
+    """
+    secret_value = "super-secret-session-key-12345"
+    monkeypatch.setenv("SESSION_API_KEY", secret_value)
+
+    # Agent tries to read the env var
+    request = ExecuteBashRequest(
+        command='echo "SESSION_API_KEY=$SESSION_API_KEY"',
+        cwd="/tmp",
+    )
+    command, task = await bash_service.start_bash_command(request)
+    await task
+
+    # The secret value should NOT appear in the output
+    assert secret_value not in combined_stdout
+```
+
+## What About BYOK (Bring Your Own Key)?
+
+When users provide their own API keys through the OpenHands settings UI:
+
+| Secret Type | Exposed to Agent? | Notes |
+|-------------|-------------------|-------|
+| LLM API Key | ❌ No | Stored in `Agent.llm.api_key`, used only by SDK |
+| LiteLLM Virtual Key | ❌ No | Same protection as direct API keys |
+| GitHub/GitLab Tokens | ⚠️ Controlled | Injected on-demand, output masked |
+| Custom Secrets | ⚠️ Controlled | Injected on-demand, output masked |
+
+The LLM API key specifically is **never** injected into the agent environment,
+regardless of whether it's a direct provider key, a LiteLLM virtual key, or
+an OpenHands-provided key.
+
+## Potential Attack Vectors (and Mitigations)
+
+### Could an agent write a program to read env vars?
+
+The agent could write Python code like:
+```python
+import os
+print(os.environ.get('LLM_API_KEY', 'not found'))
+```
+
+**Mitigation**: The variable doesn't exist in the subprocess environment—it
+returns `'not found'`.
+
+### Could an agent read the agent-server's memory?
+
+In theory, a malicious program could try to read `/proc/<pid>/environ` of the
+parent process.
+
+**Mitigation**: The sandbox runs in an isolated container (Docker) with no
+access to the host's process space. The agent-server process is outside the
+container.
+
+### Could an agent intercept LLM API calls?
+
+The agent doesn't make LLM calls—the agent server does. The agent only
+receives the LLM's text responses, not the API request/response details.
+
+### Could secrets leak through error messages?
+
+FastAPI validation errors could potentially echo back request bodies containing
+secrets.
+
+**Mitigation**: OpenHands sanitizes all validation error responses:
+
+```python
+# From openhands-agent-server/openhands/agent_server/api.py
+
+def _sanitize_validation_errors(errors: Sequence[Any]) -> list[dict]:
+    """Sanitize validation error details to remove sensitive input values."""
+    sanitized: list[dict] = []
+    for error in errors:
+        error = dict(error)
+        if "input" in error:
+            error["input"] = sanitize_dict(error["input"])
+        sanitized.append(error)
+    return sanitized
+```
+
+## Summary
+
+OpenHands protects LLM API keys through defense-in-depth:
+
+1. **Architectural separation**: Keys live in the agent server, not the sandbox
+2. **Environment stripping**: Sensitive vars are removed before subprocess exec
+3. **On-demand injection**: Only explicitly-needed secrets are injected
+4. **Output masking**: Secret values are redacted from all output
+5. **Container isolation**: Sandbox cannot access host process memory
+
+This design ensures that even a malicious or manipulated agent cannot access
+or exfiltrate LLM API keys or LiteLLM virtual keys.
+
+## References
+
+- [OpenHands SDK Source Code](https://github.com/OpenHands/software-agent-sdk)
+- [Secret Registry Implementation](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/secret_registry.py)
+- [Sanitized Environment Implementation](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/utils/command.py)
+- [Security Tests](https://github.com/OpenHands/software-agent-sdk/blob/main/tests/agent_server/test_terminal_service.py)
