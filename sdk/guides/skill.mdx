@@ -9,6 +9,56 @@ This guide shows how to implement skills in the SDK. For conceptual overview, se
 
 OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
 
+## Skill Injection Behavior
+
+Understanding where skill content appears in the prompt is critical. The behavior differs based on skill format and trigger configuration:
+
+| Skill Format | Trigger | Where Content Appears | Model Mediated? |
+|--------------|---------|----------------------|-----------------|
+| **AgentSkills** (`SKILL.md`) | Any | `<available_skills>` (description only) | ✅ Yes — agent calls `invoke_skill()` |
+| **AgentSkills** (`SKILL.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+| **Legacy** (inline/`*.md`) | `None` | **`<REPO_CONTEXT>` (full content, every turn)** | ❌ No |
+| **Legacy** (inline/`*.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+
+<Warning>
+**Token Usage Warning**: Legacy skills with `trigger=None` inject their **full content** into `<REPO_CONTEXT>` on **every turn**. This can consume significant tokens. Consider using AgentSkills format (`SKILL.md`) for progressive disclosure instead.
+</Warning>
+
+### Prompt Structure
+
+Skills appear in different parts of the system prompt:
+
+```xml icon="file"
+<!-- System Prompt Structure -->
+
+<REPO_CONTEXT>
+  <!-- Legacy trigger=None skills: FULL content here, every turn -->
+  [BEGIN context from [agents]]
+  ... AGENTS.md content ...
+  [END Context]
+</REPO_CONTEXT>
+
+<SKILLS>
+  <available_skills>
+    <!-- AgentSkills + legacy with triggers: description only -->
+    <skill>
+      <name>github</name>
+      <description>Interact with GitHub...</description>
+    </skill>
+  </available_skills>
+</SKILLS>
+```
+
+When a trigger matches, content is injected into the **user message**:
+
+```xml icon="file"
+<EXTRA_INFO>
+The following information has been included based on a keyword match for "github".
+Skill location: /path/to/skill
+... skill content ...
+</EXTRA_INFO>
+```
+
 ## Context Loading Methods
 
 | Method | When Content Loads | Use Case |
@@ -49,6 +99,10 @@ agent_context = AgentContext(
     ]
 )
 ```
+
+<Warning>
+**Important**: Inline skills with `trigger=None` use **legacy format** behavior — full content is injected into `<REPO_CONTEXT>` on every turn. For large skills, consider using the AgentSkills `SKILL.md` format for progressive disclosure.
+</Warning>
 
 ## Trigger-Loaded Context
 
@@ -836,9 +890,15 @@ from openhands.sdk.context.skills import load_skills_from_dir
 repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
 ```
 
-- **repo_skills**: Skills from `repo.md` files (always active)
-- **knowledge_skills**: Skills from `knowledge/` subdirectories
-- **agent_skills**: Skills from `SKILL.md` files (AgentSkills standard)
+| Return Value | Source Files | Injection Behavior |
+|--------------|--------------|-------------------|
+| **repo_skills** | `repo.md`, `AGENTS.md`, `.cursorrules` | Full content in `<REPO_CONTEXT>` every turn |
+| **knowledge_skills** | `knowledge/` subdirectories, `*.md` with triggers | Listed in `<available_skills>`, auto-inject on trigger |
+| **agent_skills** | `SKILL.md` files (AgentSkills standard) | Listed in `<available_skills>`, agent calls `invoke_skill()` |
+
+<Tip>
+When passing to `AgentContext(skills=...)`, all three types are accepted. The injection behavior depends on the skill's `is_agentskills_format` flag and `trigger` field — see [Skill Injection Behavior](#skill-injection-behavior).
+</Tip>
 
 #### `discover_skill_resources()`
 
@@ -1164,6 +1224,57 @@ print(rendered)  # Commands replaced with output
 ```
 
 The `working_dir` parameter sets the current directory for command execution, enabling workspace-relative commands like `git status`.
+
+## Migrating from Legacy to AgentSkills Format
+
+If you have legacy inline skills consuming many tokens, convert them to AgentSkills format for progressive disclosure:
+
+### Before (Legacy Format)
+
+```python icon="python"
+# Legacy: Full content in <REPO_CONTEXT> every turn
+Skill(
+    name="api-guidelines",
+    content="""
+    # API Guidelines
+    ... 2000 lines of detailed documentation ...
+    """,
+    trigger=None,  # Always injected - uses many tokens!
+)
+```
+
+### After (AgentSkills Format)
+
+Create a directory `api-guidelines/SKILL.md`:
+
+```markdown icon="markdown"
+---
+name: api-guidelines
+description: Comprehensive API design guidelines for the project. Invoke when designing or reviewing API endpoints.
+---
+
+# API Guidelines
+
+... 2000 lines of detailed documentation ...
+```
+
+Then load it:
+
+```python icon="python"
+from openhands.sdk.skills import load_skills_from_dir
+
+# AgentSkills: Only description in prompt, agent reads full content on demand
+_, _, skills = load_skills_from_dir("/path/to/skills")
+agent_context = AgentContext(skills=list(skills.values()))
+```
+
+### Benefits
+
+| Aspect | Legacy `trigger=None` | AgentSkills `SKILL.md` |
+|--------|----------------------|------------------------|
+| Token usage | Full content every turn | Description only (~100 chars) |
+| Model control | None — always present | Agent decides when to read |
+| Scalability | Limited by context window | Many skills without token bloat |
 
 ## Next Steps
 
