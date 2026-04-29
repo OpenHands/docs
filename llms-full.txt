@@ -9155,15 +9155,67 @@ The `acp_command` is the shell command used to spawn the server process. The SDK
 **Key difference from standard agents:** With `ACPAgent`, you don't need an `LLM_API_KEY` in your code. The ACP server handles its own LLM authentication and API calls. This is *delegation* — your code sends messages to the ACP server, which manages all LLM interactions internally.
 </Note>
 
+### Prompt Context (AgentContext)
+
+`ACPAgent` supports `agent_context` for **prompt-only extensions** — skills, repository context, current datetime, and system/user message suffixes are appended to the user message before it reaches the ACP server. This lets you inject the same skill catalog and repo-specific guidance that the built-in Agent receives, without interfering with the server's own tools or execution model.
+
+```python icon="python" highlight={4-12,16}
+from openhands.sdk.agent import ACPAgent
+from openhands.sdk import AgentContext
+from openhands.sdk.context import Skill
+
+context = AgentContext(
+    skills=[
+        Skill(
+            name="code-style",
+            content="Always use type hints in Python.",
+            trigger=None,  # always active
+        ),
+    ],
+    system_message_suffix="You are reviewing a Python project.",
+)
+
+agent = ACPAgent(
+    acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+    agent_context=context,
+)
+```
+
+The prompt assembly works as follows:
+
+1. The conversation layer builds the user `MessageEvent`, including any per-turn `extended_content` (e.g. triggered-skill injections).
+2. `ACPAgent._build_acp_prompt()` collects all text blocks from the message and appends the rendered `AgentContext` prompt (datetime, repo context, available skills, system suffix) via `to_acp_prompt_context()`.
+3. The combined text is sent as a single user message to the ACP server.
+
+<Note>
+`user_message_suffix` is an ACP-compatible field, but it is **not** duplicated in `to_acp_prompt_context()` because the conversation layer already applies it through `MessageEvent.to_llm_message()`.
+</Note>
+
+#### Compatible AgentContext Fields
+
+Each `AgentContext` field is tagged as ACP-compatible or not. At initialization, `validate_acp_compatibility()` rejects any context that uses unsupported fields.
+
+| Field | ACP Compatible | Notes |
+|-------|:-:|-------|
+| `skills` | ✅ | Skill catalog and trigger-based injections |
+| `system_message_suffix` | ✅ | Appended to the prompt context |
+| `user_message_suffix` | ✅ | Applied by the conversation layer |
+| `current_datetime` | ✅ | Included in the rendered prompt |
+| `load_user_skills` | ✅ | Load skills from `~/.openhands/skills/` |
+| `load_public_skills` | ✅ | Load skills from the public extensions repo |
+| `marketplace_path` | ✅ | Filter public skills via marketplace JSON |
+| `secrets` | ❌ | ACP subprocesses do not use OpenHands secret injection |
+
+Passing `secrets` (or any future field marked `acp_compatible: False`) raises `NotImplementedError`.
+
 ### What ACPAgent Does Not Support
 
-Because the ACP server manages its own tools and context, these `AgentBase` features are not available on `ACPAgent`:
+Because the ACP server manages its own tools, context window, and execution, these `AgentBase` features are not available on `ACPAgent`:
 
 - `tools` / `include_default_tools` — the server has its own tools
 - `mcp_config` — configure MCP on the server side
 - `condenser` — the server manages its own context window
 - `critic` — the server manages its own evaluation
-- `agent_context` — configure the server directly
 
 Passing any of these raises `NotImplementedError` at initialization.
 
@@ -9207,6 +9259,15 @@ agent = ACPAgent(
 | `acp_command` | Command to start the ACP server (required) |
 | `acp_args` | Additional arguments appended to the command |
 | `acp_env` | Additional environment variables for the server process |
+
+### Authentication
+
+When the ACP server advertises authentication methods, `ACPAgent` automatically selects a credential source:
+
+1. **ChatGPT subscription login** — If the server supports a `chatgpt` auth method and `~/.codex/auth.json` exists (created by `LLM.subscription_login()`), this is selected first. This enables ACP-backed workflows to use device-code login credentials without an explicit API key.
+2. **API key environment variables** — Falls back to checking for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` depending on which auth methods the server supports.
+
+If no supported credential source is found, the server may proceed without authentication (some servers don't require it).
 
 ## Metrics
 
@@ -27737,8 +27798,9 @@ Source: https://docs.openhands.dev/openhands/usage/advanced/configuration-option
 <Note>
   This page documents the current <b>V1</b> configuration model.
 
-  Legacy <code>config.toml</code> / “runtime” configuration docs have been moved
-  to the <b>Legacy (V0)</b> section of the Web tab.
+  OpenHands V0 configuration docs have been removed from this site. If you
+  arrived from an old bookmark, see the
+  [V0 documentation deprecation notice](/openhands/usage/v0-deprecated).
 </Note>
 
 ## Where configuration lives in V1
@@ -27785,13 +27847,15 @@ choose which sandbox provider to use:
 
 See [Sandboxes overview](/openhands/usage/sandboxes/overview) for details.
 
-## Need legacy options?
+## Looking for removed V0 options?
 
-If you are looking for the old <code>config.toml</code> reference or V0 “runtime”
-providers, see:
+If you are looking for the old <code>config.toml</code> reference or V0
+“runtime” providers, start with these V1 pages instead:
 
-- <b>Web → Legacy (V0) → V0 Configuration Options</b>
-- <b>Web → Legacy (V0) → V0 Runtime Configuration</b>
+- [Sandboxes overview](/openhands/usage/sandboxes/overview)
+- [Docker sandbox](/openhands/usage/sandboxes/docker)
+- [Remote sandbox](/openhands/usage/sandboxes/remote)
+- [V0 documentation deprecation notice](/openhands/usage/v0-deprecated)
 
 ### Custom Sandbox
 Source: https://docs.openhands.dev/openhands/usage/advanced/custom-sandbox-guide.md
@@ -27998,10 +28062,11 @@ _Example of CodeActAgent with `gpt-4-turbo-2024-04-09` performing a data science
 Source: https://docs.openhands.dev/openhands/usage/api/v1.md
 
 <Note>
-  OpenHands is in a transition period: legacy (V0) endpoints still exist alongside
-  the new <code>/api/v1</code> endpoints.
+  OpenHands V0 API documentation has been removed from this site.
 
-  If you need the legacy OpenAPI reference, see the <b>Legacy (V0)</b> section in the Web tab.
+  If you arrived from an old bookmark or integration guide, see the
+  [V0 documentation deprecation notice](/openhands/usage/v0-deprecated) and use
+  the current <code>/api/v1</code> endpoints below.
 </Note>
 
 ## Overview
@@ -33046,7 +33111,8 @@ In some deployments, the provider selection is still controlled via the legacy
 ## Terminology note (V0 vs V1)
 
 Older documentation refers to these environments as **runtimes**.
-Those legacy docs are now in the <b>Legacy (V0)</b> section of the Web tab.
+That V0 documentation has been removed from this site; if you followed an old
+link, see the [V0 documentation deprecation notice](/openhands/usage/v0-deprecated).
 
 ### Process Sandbox
 Source: https://docs.openhands.dev/openhands/usage/sandboxes/process.md
@@ -35438,6 +35504,32 @@ for automated fix PRs alongside the scan.
 - [OpenHands SDK Documentation](https://docs.openhands.dev/sdk) - Build custom AI agents
 - [Dependency Upgrades](/openhands/usage/use-cases/dependency-upgrades) - Updating vulnerable dependencies
 - [Prompting Best Practices](/openhands/usage/tips/prompting-best-practices) - Write effective prompts
+
+### V0 Documentation Deprecated
+Source: https://docs.openhands.dev/openhands/usage/v0-deprecated.md
+
+<Warning>
+  OpenHands V0 documentation has been removed from this site.
+
+  If you arrived here from an old bookmark or link, use the current V1 docs below.
+</Warning>
+
+## Where to Go Instead
+
+- **Runtime / sandbox docs**
+  - [Sandboxes overview](/openhands/usage/sandboxes/overview)
+  - [Docker sandbox](/openhands/usage/sandboxes/docker)
+  - [Remote sandbox](/openhands/usage/sandboxes/remote)
+  - [Process sandbox](/openhands/usage/sandboxes/process)
+- **Configuration docs**
+  - [Configuration Options](/openhands/usage/advanced/configuration-options)
+- **REST API docs**
+  - [REST API (V1)](/openhands/usage/api/v1)
+
+## Maintaining an Older Deployment
+
+If you are still operating a pre-V1 deployment, use documentation that is pinned
+to the version you have deployed rather than the current docs site.
 
 ## OpenHands Cloud
 
@@ -38895,80 +38987,11 @@ configure a GitHub App.
 
 #### Create a GitHub App
 
-1. Go to [github.com/settings/apps](https://github.com/settings/apps) and click **New GitHub App**.
-
-2. Set a unique **GitHub App name** (e.g., `ACME Corp OpenHands`).
-
-3. Set the **Homepage URL** to `https://app.<YOUR_BASE_DOMAIN>`.
-
-4. Under **Identifying and authorizing users**:
-   - Set the **Callback URL** to:
-     ```
-     https://auth.app.<YOUR_BASE_DOMAIN>/realms/allhands/broker/github/endpoint
-     ```
-   - Check the box for **Request user authorization (OAuth) during installation**
-
-5. Under **Webhook**:
-   - Set the **Webhook URL** to:
-     ```
-     https://app.<YOUR_BASE_DOMAIN>/integration/github/events
-     ```
-   - Generate a webhook secret:
-     ```bash
-     export WEBHOOK_SECRET=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 32)
-     echo $WEBHOOK_SECRET
-     ```
-   - Paste the generated value into the **Secret** field
-
-   <Warning>
-     Save the webhook secret value -- you will need to enter it in the Admin Console configuration.
-   </Warning>
-
-6. Under **Permissions**, configure the following:
-
-   **Repository permissions:**
-
-   | Permission | Access |
-   |-----------|--------|
-   | Actions | Read and write |
-   | Commit statuses | Read and write |
-   | Contents | Read and write |
-   | Issues | Read and write |
-   | Pull requests | Read and write |
-   | Webhooks | Read and write |
-   | Workflows | Read and write |
-
-   **Organization permissions:**
-
-   | Permission | Access |
-   |-----------|--------|
-   | Events | Read-only |
-
-   **Account permissions:**
-
-   | Permission | Access |
-   |-----------|--------|
-   | Email addresses | Read-only |
-
-7. Click **Create GitHub App**.
-
-8. On the GitHub App page, under **Client secrets**, click **Generate a new client secret**.
-   Save this value.
-
-9. Under **Private keys**, click **Generate a private key**. The `.pem` file downloads
-   automatically -- note its location.
+Run our [script](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/scripts/create_github_app) to create a GitHub App configured for your install.
 
 #### Map GitHub App values to Admin Console
 
-Go back to the Installer Admin Console in your browser and enter the following values:
-
-| GitHub App Value | Admin Console Field |
-|-----------------|-------------------|
-| Client ID (shown on app page) | GitHub OAuth Client ID |
-| Client secret (from step 8) | GitHub OAuth Client Secret |
-| App ID (shown on app page) | GitHub App ID |
-| Webhook secret (from step 5) | GitHub App Webhook Secret |
-| Private key file (from step 9) | GitHub App Private Key (file upload) |
+Go back to the Installer Admin Console in your browser and enter the values from the Create GitHub App script output. For the private key, upload the file from the `keys` directory of the script location.
 
 After filling in all fields, click **Continue** at the bottom of the page.
 

@@ -31,7 +31,7 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 Mintlify auto-generates `/llms.txt` and `/llms-full.txt`, but this repo **overrides** them by committing
 `llms.txt` and `llms-full.txt` at the repo root.
 
-We do this so LLMs get **V1-only** context while legacy V0 pages remain available for humans.
+We do this so LLMs get **V1-only** context and do not pick up removed legacy V0 pages.
 
 - Generator script: `scripts/generate-llms-files.py`
 - Sync workflow: `.github/workflows/check-llms-files.yml` runs weekly (and on demand) to open a PR when the files drift.
@@ -48,6 +48,8 @@ We do this so LLMs get **V1-only** context while legacy V0 pages remain availabl
   make llms-check
   ```
 - Exclusions: `openhands/usage/v0/` and any `V0*`-prefixed page files.
+- Current deprecation route: old `openhands/usage/v0/*` links should redirect to `openhands/usage/v0-deprecated`.
+
 
 ## Local development
 
