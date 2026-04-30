@@ -96,6 +96,27 @@ git operations), OpenHands uses a controlled injection mechanism:
 2. **Output masking**: Any secret values that appear in command output are
    automatically replaced with `<secret-hidden>`
 
+#### Understanding "Controlled": LLM vs Agent Access
+
+Registered secrets are **accessible to the agent** but **hidden from the LLM**:
+
+| Layer | Access to Secret Values |
+|-------|------------------------|
+| **LLM** (language model) | ❌ Never sees actual values—masked as `<secret-hidden>` in conversation history |
+| **Agent** (sandbox execution) | ✅ Full access—can read, write to files, transmit over network |
+
+**How it works**: When a command outputs a secret value, it's replaced with
+`<secret-hidden>` before being added to the conversation history. This prevents
+the secret from appearing in prompts sent to the LLM. However, the agent executing
+in the sandbox has full access to use the secret as needed.
+
+**Expected behavior**: The agent will use registered secrets for legitimate tasks—writing
+to `.git-credentials`, including tokens in API headers, configuring services, etc.
+This is by design. Output masking keeps secrets out of conversation logs and the UI,
+but does not restrict how the agent uses them during execution.
+
+#### Implementation Details
+
 ```python
 # From openhands-sdk/openhands/sdk/conversation/secret_registry.py
 
@@ -182,16 +203,21 @@ async def test_terminal_does_not_expose_session_api_key(bash_service, monkeypatc
 
 When users provide their own API keys through the OpenHands settings UI:
 
-| Secret Type | Exposed to Agent? | Notes |
-|-------------|-------------------|-------|
-| LLM API Key | ❌ No | Stored in `Agent.llm.api_key`, used only by SDK |
-| LiteLLM Virtual Key | ❌ No | Same protection as direct API keys |
-| GitHub/GitLab Tokens | ⚠️ Controlled | Injected on-demand, output masked |
-| Custom Secrets | ⚠️ Controlled | Injected on-demand, output masked |
+| Secret Type | Exposed to LLM? | Exposed to Agent? | Notes |
+|-------------|-----------------|-------------------|-------|
+| LLM API Key | ❌ No | ❌ No | Stored in `Agent.llm.api_key`, used only by SDK |
+| LiteLLM Virtual Key | ❌ No | ❌ No | Same protection as direct API keys |
+| GitHub/GitLab Tokens | ❌ No | ✅ Yes | Agent can use for git operations, write to files, etc. |
+| Custom Secrets | ❌ No | ✅ Yes | Agent can use as needed for tasks |
 
 The LLM API key specifically is **never** injected into the agent environment,
 regardless of whether it's a direct provider key, a LiteLLM virtual key, or
 an OpenHands-provided key.
+
+Registered secrets (GitHub/GitLab tokens, custom secrets) are fully accessible
+to the agent by design—this is required for the agent to perform tasks like
+pushing code or calling APIs. Output masking ensures these values don't appear
+in conversation history sent to the LLM.
 
 ## Potential Attack Vectors (and Mitigations)
 
