@@ -1,0 +1,209 @@
+---
+title: Event-Based Automations
+description: Trigger automations from GitHub events or custom webhooks instead of cron schedules.
+---
+
+<Info>
+**Beta Feature**: Event-based automations are in beta for **OpenHands Cloud** and **OpenHands Enterprise** users.
+</Info>
+
+Event-based automations run when something happens—a PR is opened, an issue is commented on, or a webhook fires—instead of on a schedule. This is ideal for responsive workflows like auto-reviewing PRs, triaging issues, or reacting to external service events.
+
+## Built-In vs. Custom Integrations
+
+| Type | Setup | Best For |
+|------|-------|----------|
+| **Built-in (GitHub)** | None—just create the automation | PR reviews, issue triage, push-triggered tasks |
+| **Custom Webhooks** | Register webhook first, then create automation | Linear, Stripe, Slack, and other services |
+
+## GitHub Events (Built-In)
+
+GitHub is a built-in integration. Create automations that respond to GitHub events without any webhook setup.
+
+### Example: Auto-Review PRs with a Specific Label
+
+When a PR is labeled with `openhands`, automatically review it:
+
+```
+Create an event-based automation called "Auto Review PRs" that triggers
+when a pull request is labeled with "openhands" in any of my repos.
+
+It should review the PR for code quality and best practices, then post
+the review as a comment.
+```
+
+The agent will create an automation with:
+- **Trigger type**: `event`
+- **Source**: `github`
+- **Event**: `pull_request.labeled`
+- **Filter**: Matches PRs labeled `openhands`
+
+### Example: Respond to @openhands Mentions
+
+```
+Create an automation that responds when someone mentions @openhands
+in an issue comment. It should analyze the issue context and provide
+a helpful response.
+```
+
+### Available GitHub Events
+
+| Event | Common Actions | Use Case |
+|-------|---------------|----------|
+| `pull_request` | `opened`, `labeled`, `synchronize`, `ready_for_review` | PR automation |
+| `issues` | `opened`, `labeled`, `assigned` | Issue triage |
+| `issue_comment` | `created` | Mention responses |
+| `push` | — | Branch-based triggers |
+| `release` | `published` | Release workflows |
+
+Use wildcards like `pull_request.*` to match all actions for an event type.
+
+### Filtering Events
+
+Filters let you narrow which events trigger your automation. They use [JMESPath expressions](https://jmespath.org/) to match fields in the event payload—so you can trigger only on specific labels, users, branches, or other conditions.
+
+**Common filter patterns:**
+
+```javascript
+// Match a specific label
+contains(pull_request.labels[].name, 'openhands')
+
+// Case-insensitive mention in comment
+icontains(comment.body, '@openhands')
+
+// Match repos in your org
+glob(repository.full_name, 'myorg/*')
+
+// Push to main branch only
+ref == 'refs/heads/main'
+
+// Combine conditions
+glob(repository.full_name, 'myorg/*') && contains(pull_request.labels[].name, 'bug')
+```
+
+---
+
+## Custom Webhooks
+
+For services beyond GitHub—like Linear, Stripe, or Slack—register a custom webhook first, then create automations that use it.
+
+<Note>
+**Two-phase workflow for custom webhooks:**
+
+1. **Webhook registration (one-time setup)**: You execute the curl command yourself to register the webhook. This keeps your signing secrets secure—the agent provides the command but never handles your credentials directly.
+
+2. **Automation creation (repeatable)**: Once the webhook is registered, the agent can create, update, and manage automations for that webhook source conversationally—no manual curl commands needed.
+</Note>
+
+### Walkthrough: Linear Integration
+
+This example walks through setting up a Linear webhook to auto-triage new issues.
+
+#### Step 1: Get Your Webhook Secret from Linear
+
+Linear provides the webhook signing secret—you cannot configure your own.
+
+1. Go to **Linear Settings → API → Webhooks**
+2. Click **New webhook**
+3. Copy the **signing secret** that Linear displays (you'll need this in the next step)
+4. Leave the webhook URL blank for now—you'll get it from OpenHands
+
+#### Step 2: Register the Webhook with OpenHands
+
+First, set up your environment variables:
+
+1. Create an OpenHands API key at [app.all-hands.dev/settings/api-keys](https://app.all-hands.dev/settings/api-keys)
+2. Export the API key and the webhook secret from Step 1:
+
+```bash
+export OPENHANDS_API_KEY="your-openhands-api-key"
+export LINEAR_WEBHOOK_SECRET="your-linear-signing-secret-from-step-1"
+```
+
+Then run the following command to register the webhook:
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/automation/v1/webhooks" \
+  -H "Authorization: Bearer ${OPENHANDS_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Linear Issues",
+    "source": "linear",
+    "event_key_expr": "type",
+    "signature_header": "Linear-Signature",
+    "webhook_secret": "'"${LINEAR_WEBHOOK_SECRET}"'"
+  }'
+```
+
+The response includes a `webhook_url` that you'll configure in Linear.
+
+<Accordion title="Understanding event_key_expr">
+The `event_key_expr` is a JMESPath expression that extracts the event type from incoming webhook payloads. This extracted value is what you match against in the automation's `on` field.
+
+For example, Linear sends payloads like:
+```json
+{"type": "Issue", "action": "create", "data": {...}}
+```
+
+With `event_key_expr: "type"`, the system extracts `"Issue"` as the event type. Then in your automation, you set `on: "Issue"` to match it.
+</Accordion>
+
+<Tip>
+If you're integrating a service that lets you configure the signing secret (unlike Linear), you can omit `webhook_secret` from the request. The automation service will generate one and return it in the response—store it securely, as it's shown only once.
+</Tip>
+
+#### Step 3: Complete the Linear Webhook Configuration
+
+1. Return to the Linear webhook you started in Step 1
+2. Paste the `webhook_url` from the previous step
+3. Select which events to send (e.g., Issues, Comments)
+4. Save the webhook
+
+#### Step 4: Create the Automation
+
+Now the webhook is registered, the agent can create automations for you end-to-end. Just describe what you want:
+
+```
+Create an event-based automation called "Triage Linear Issues" that triggers
+when a new issue is created in Linear.
+
+It should analyze the issue title and description, suggest appropriate labels,
+and add a comment with initial triage notes.
+```
+
+The agent creates the automation with:
+- **Source**: `linear` (your registered webhook)
+- **Event**: `Issue` (Linear's event type)
+- **Filter**: `action == 'create'`
+
+### Custom Webhook Parameters
+
+When registering any custom webhook, these parameters define how OpenHands processes incoming events:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Human-readable name |
+| `source` | Yes | Unique identifier (lowercase, alphanumeric with hyphens) |
+| `event_key_expr` | No | JMESPath to extract event type (default: `type`) |
+| `signature_header` | No | Header containing HMAC signature (default: `X-Signature-256`) |
+| `webhook_secret` | No | Signing secret—provide yours or let the system generate one |
+
+### Common Services
+
+These are example configurations for popular services. **Always verify with each service's webhook documentation**, as signature headers and payload formats may change.
+
+| Service | Signature Header | Event Key |
+|---------|-----------------|-----------|
+| Linear | `Linear-Signature` | `type` |
+| Stripe | `Stripe-Signature` | `type` |
+| Slack | `X-Slack-Signature` | `type` |
+| Twilio | `X-Twilio-Signature` | `type` |
+
+---
+
+## Next Steps
+
+New to automations? Start with the [Automations Overview](/openhands/usage/automations/overview) for the bigger picture, including cron-based scheduling and general concepts.
+
+- [Automations Overview](/openhands/usage/automations/overview) — Cron-based automations and general concepts
+- [Managing Automations](/openhands/usage/automations/managing-automations) — Update, disable, or delete automations
