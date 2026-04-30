@@ -18,6 +18,79 @@ The short answer is **no**. OpenHands implements multiple layers of protection
 to ensure that LLM API keys are never exposed to the agent's execution
 environment.
 
+## The LiteLLM Proxy Layer
+
+Before diving into SDK-level protections, it's important to understand the
+first layer of defense: the LiteLLM proxy.
+
+### How It Works
+
+OpenHands routes all LLM API calls through a LiteLLM proxy server. This proxy
+holds the actual provider API keys (OpenAI, Anthropic, etc.) and issues
+**virtual keys** to users:
+
+| Component | Who Configures It | What It Holds |
+|-----------|-------------------|---------------|
+| **LiteLLM Proxy** | OpenHands (SaaS) or Customer (Enterprise) | Master API keys for all LLM providers |
+| **Virtual Key** | Generated per Organization/Personal Workspace | Reference to master key, with budget/usage tracking |
+| **Agent** | N/A | Receives only the virtual key (if at all) |
+
+### Master Key Configuration
+
+- **OpenHands SaaS**: OpenHands configures master API keys in the LiteLLM proxy.
+  Users never see or handle provider API keys directly.
+- **OpenHands Enterprise**: Customers configure master API keys in their Helm
+  values file or VM Installer. These keys are stored in the LiteLLM proxy, not
+  in the application layer.
+
+### Virtual Keys Per Organization
+
+When a user or organization is created, OpenHands generates a **virtual key**
+in LiteLLM:
+
+```python
+# Simplified from enterprise/storage/lite_llm_manager.py
+
+key = await LiteLlmManager._generate_key(
+    client,
+    keycloak_user_id,
+    org_id,
+    key_alias,
+    max_budget,
+)
+
+# The virtual key is stored in user settings, NOT the master key
+oss_settings.update({
+    'agent_settings_diff': {
+        'llm': {
+            'model': get_default_litellm_model(),
+            'api_key': key,  # Virtual key, not provider key
+            'base_url': LITE_LLM_API_URL,  # Points to proxy
+        }
+    }
+})
+```
+
+This virtual key:
+- **Cannot be used directly** with provider APIs (OpenAI, Anthropic, etc.)
+- **Only works** with the LiteLLM proxy that issued it
+- **Has budget limits** enforced by the proxy
+- **Can be revoked** without affecting other users
+
+### What About BYOK (Bring Your Own Key)?
+
+When users provide their own API keys through the OpenHands settings UI, the
+behavior depends on the configuration:
+
+| BYOK Scenario | Goes Through LiteLLM? | Key Exposure |
+|---------------|----------------------|--------------|
+| Custom `base_url` pointing to own LiteLLM | Yes (user's proxy) | User's proxy holds master key |
+| Custom `base_url` pointing directly to provider | No | Key goes directly to provider |
+| Only custom `api_key` (no custom `base_url`) | Yes (OpenHands proxy) | Key is passed to OpenHands LiteLLM proxy |
+
+In all cases, the API key (whether virtual or BYOK) is stored in
+`Agent.llm.api_key` and protected by the SDK-level mechanisms described below.
+
 ## Architecture
 
 OpenHands uses a split architecture where:
