@@ -377,6 +377,72 @@ Events are appended incrementally (one file per event), while base state is over
 
 
 
+## PostgreSQL-backed Persistence
+
+In environments where the local filesystem is not persistent across requests (Cloud Run,
+containers without mounted volumes, serverless), `LocalFileStore` is unavailable.
+`PostgreSQLFileStore` stores the full EventLog — including `tool_call` and `tool_result`
+events — in a PostgreSQL table, enabling proper multi-turn resume without a shared filesystem.
+
+### Installation
+
+```bash
+pip install "openhands-sdk[postgresql]"
+```
+
+### Usage
+
+```python focus={1,7-10,14} icon="python"
+from openhands.sdk.io.postgresql import PostgreSQLFileStore
+
+dsn = "postgresql://user:pass@host:5432/db"
+
+# Each conversation gets its own namespace to isolate event logs.
+for request in incoming_requests:
+    store = PostgreSQLFileStore(
+        dsn=dsn,
+        namespace=str(request.conversation_id),
+    )
+    conv = LocalConversation(
+        agent=agent,
+        workspace=workspace,
+        file_store=store,
+        conversation_id=request.conversation_id,
+    )
+    conv.send_message(request.message)
+    conv.run()
+```
+
+On the first call, `PostgreSQLFileStore` creates the `sdk_filestore` table if it doesn't exist
+and persists all events. On subsequent calls with the same `namespace`, the SDK reads the
+existing EventLog from PostgreSQL and resumes from the exact point where the conversation left off.
+
+### Schema
+
+`PostgreSQLFileStore` manages a single table:
+
+```sql
+CREATE TABLE sdk_filestore (
+    namespace  TEXT        NOT NULL,  -- conversation_id
+    path       TEXT        NOT NULL,  -- event file path (e.g. .events/event-0000000000-<id>.json)
+    content    TEXT        NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (namespace, path)
+);
+```
+
+### Locking
+
+`PostgreSQLFileStore` uses a per-path `threading.Lock` to serialize EventLog index assignment.
+This is sufficient for single-process deployments. For multi-process deployments, subclass
+`PostgreSQLFileStore` and override `lock()` with PostgreSQL advisory locks
+(`pg_try_advisory_lock`).
+
+<Tip>
+    `file_store` and `persistence_dir` are mutually exclusive. When `file_store` is provided,
+    `persistence_dir` is ignored.
+</Tip>
+
 ## Next Steps
 
 - **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** - Control execution flow
