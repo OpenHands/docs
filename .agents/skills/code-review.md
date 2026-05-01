@@ -46,6 +46,7 @@ It's OK to approve a docs/ PR on the basis of a linked upstream PR, they will be
 - **Field/attribute names** on data classes and models are correct
 - **Supported values** (e.g., format strings like `"github:owner/repo"`) are actually handled in code
 - **Behavioral descriptions** match the implementation logic
+- **Prompt/context descriptions** distinguish between initial injection/construction, conversation-history inclusion, LLM context, and actual request transport. Flag ambiguous wording such as “sent with each request” unless the docs are intentionally describing transport-level behavior.
 - **Example code** would actually run without errors
 
 ### How to verify
@@ -90,7 +91,7 @@ Include a "Source Verification" section that lists the key claims verified and t
 
 | Documentation Claim | Verified? | Source Evidence |
 |---------------------|-----------|-----------------|
-| Legacy skills with `trigger=None` inject full content every turn | ✅ | [agent.py#L150](permalink) |
+| Legacy skills with `trigger=None` are included in the initial system prompt and remain in LLM context for subsequent turns | ✅ | [agent.py#L150](permalink) |
 | `load_skills_from_dir()` returns tuple of (skills, repo_skills) | ✅ | [context.py#L85](permalink) |
 | AgentSkills format uses progressive disclosure | ❌ Incorrect | [agent.py#L200](permalink) shows... |
 ```
