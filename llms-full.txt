@@ -9155,67 +9155,15 @@ The `acp_command` is the shell command used to spawn the server process. The SDK
 **Key difference from standard agents:** With `ACPAgent`, you don't need an `LLM_API_KEY` in your code. The ACP server handles its own LLM authentication and API calls. This is *delegation* — your code sends messages to the ACP server, which manages all LLM interactions internally.
 </Note>
 
-### Prompt Context (AgentContext)
-
-`ACPAgent` supports `agent_context` for **prompt-only extensions** — skills, repository context, current datetime, and system/user message suffixes are appended to the user message before it reaches the ACP server. This lets you inject the same skill catalog and repo-specific guidance that the built-in Agent receives, without interfering with the server's own tools or execution model.
-
-```python icon="python" highlight={4-12,16}
-from openhands.sdk.agent import ACPAgent
-from openhands.sdk import AgentContext
-from openhands.sdk.context import Skill
-
-context = AgentContext(
-    skills=[
-        Skill(
-            name="code-style",
-            content="Always use type hints in Python.",
-            trigger=None,  # always active
-        ),
-    ],
-    system_message_suffix="You are reviewing a Python project.",
-)
-
-agent = ACPAgent(
-    acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
-    agent_context=context,
-)
-```
-
-The prompt assembly works as follows:
-
-1. The conversation layer builds the user `MessageEvent`, including any per-turn `extended_content` (e.g. triggered-skill injections).
-2. `ACPAgent._build_acp_prompt()` collects all text blocks from the message and appends the rendered `AgentContext` prompt (datetime, repo context, available skills, system suffix) via `to_acp_prompt_context()`.
-3. The combined text is sent as a single user message to the ACP server.
-
-<Note>
-`user_message_suffix` is an ACP-compatible field, but it is **not** duplicated in `to_acp_prompt_context()` because the conversation layer already applies it through `MessageEvent.to_llm_message()`.
-</Note>
-
-#### Compatible AgentContext Fields
-
-Each `AgentContext` field is tagged as ACP-compatible or not. At initialization, `validate_acp_compatibility()` rejects any context that uses unsupported fields.
-
-| Field | ACP Compatible | Notes |
-|-------|:-:|-------|
-| `skills` | ✅ | Skill catalog and trigger-based injections |
-| `system_message_suffix` | ✅ | Appended to the prompt context |
-| `user_message_suffix` | ✅ | Applied by the conversation layer |
-| `current_datetime` | ✅ | Included in the rendered prompt |
-| `load_user_skills` | ✅ | Load skills from `~/.openhands/skills/` |
-| `load_public_skills` | ✅ | Load skills from the public extensions repo |
-| `marketplace_path` | ✅ | Filter public skills via marketplace JSON |
-| `secrets` | ❌ | ACP subprocesses do not use OpenHands secret injection |
-
-Passing `secrets` (or any future field marked `acp_compatible: False`) raises `NotImplementedError`.
-
 ### What ACPAgent Does Not Support
 
-Because the ACP server manages its own tools, context window, and execution, these `AgentBase` features are not available on `ACPAgent`:
+Because the ACP server manages its own tools and context, these `AgentBase` features are not available on `ACPAgent`:
 
 - `tools` / `include_default_tools` — the server has its own tools
 - `mcp_config` — configure MCP on the server side
 - `condenser` — the server manages its own context window
 - `critic` — the server manages its own evaluation
+- `agent_context` — configure the server directly
 
 Passing any of these raises `NotImplementedError` at initialization.
 
@@ -9259,15 +9207,6 @@ agent = ACPAgent(
 | `acp_command` | Command to start the ACP server (required) |
 | `acp_args` | Additional arguments appended to the command |
 | `acp_env` | Additional environment variables for the server process |
-
-### Authentication
-
-When the ACP server advertises authentication methods, `ACPAgent` automatically selects a credential source:
-
-1. **ChatGPT subscription login** — If the server supports a `chatgpt` auth method and `~/.codex/auth.json` exists (created by `LLM.subscription_login()`), this is selected first. This enables ACP-backed workflows to use device-code login credentials without an explicit API key.
-2. **API key environment variables** — Falls back to checking for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` depending on which auth methods the server supports.
-
-If no supported credential source is found, the server may proceed without authentication (some servers don't require it).
 
 ## Metrics
 
@@ -27020,7 +26959,7 @@ Source: https://docs.openhands.dev/openhands/usage/cli/installation.md
     docker run -it \
         --pull=always \
         -e AGENT_SERVER_IMAGE_REPOSITORY=ghcr.io/openhands/agent-server \
-        -e AGENT_SERVER_IMAGE_TAG=1.15.0-python \
+        -e AGENT_SERVER_IMAGE_TAG=1.19.1-python \
         -e SANDBOX_USER_ID=$(id -u) \
         -e SANDBOX_VOLUMES=$SANDBOX_VOLUMES \
         -v /var/run/docker.sock:/var/run/docker.sock \
@@ -30028,7 +29967,7 @@ These variables correspond to the `[sandbox]` section in `config.toml`:
 | `SANDBOX_BROWSERGYM_EVAL_ENV` | string | `""` | BrowserGym evaluation environment |
 | `SANDBOX_VOLUMES` | string | `""` | Volume mounts (replaces deprecated workspace settings) |
 | `AGENT_SERVER_IMAGE_REPOSITORY` | string | `""` | Runtime container image repository (e.g., `ghcr.io/openhands/agent-server`) |
-| `AGENT_SERVER_IMAGE_TAG` | string | `""` | Runtime container image tag (e.g., `1.15.0-python`) |
+| `AGENT_SERVER_IMAGE_TAG` | string | `""` | Runtime container image tag (e.g., `1.19.1-python`) |
 | `SANDBOX_KEEP_RUNTIME_ALIVE` | boolean | `false` | Keep runtime alive after session ends |
 | `SANDBOX_PAUSE_CLOSED_RUNTIMES` | boolean | `false` | Pause instead of stopping closed runtimes |
 | `SANDBOX_CLOSE_DELAY` | integer | `300` | Delay before closing idle runtimes (seconds) |
@@ -32287,20 +32226,20 @@ Download and install the LM Studio desktop app from [lmstudio.ai](https://lmstud
 ```bash
 docker run -it --rm --pull=always \
     -e AGENT_SERVER_IMAGE_REPOSITORY=ghcr.io/openhands/agent-server \
-    -e AGENT_SERVER_IMAGE_TAG=1.15.0-python \
+    -e AGENT_SERVER_IMAGE_TAG=1.19.1-python \
     -e LOG_ALL_EVENTS=true \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v ~/.openhands:/.openhands \
     -p 3000:3000 \
     --add-host host.docker.internal:host-gateway \
     --name openhands-app \
-    docker.openhands.dev/openhands/openhands:1.6
+    docker.openhands.dev/openhands/openhands:1.7
 ```
 
 2. Wait until the server is running (see log below):
 ```
 Digest: sha256:e72f9baecb458aedb9afc2cd5bc935118d1868719e55d50da73190d3a85c674f
-Status: Image is up to date for docker.openhands.dev/openhands/openhands:1.6
+Status: Image is up to date for docker.openhands.dev/openhands/openhands:1.7
 Starting OpenHands...
 Running OpenHands as root
 14:22:13 - openhands:INFO: server_config.py:50 - Using config class None
@@ -32905,14 +32844,14 @@ Note that you'll still need `uv` installed for the default MCP servers to work p
 ```bash
 docker run -it --rm --pull=always \
   -e AGENT_SERVER_IMAGE_REPOSITORY=ghcr.io/openhands/agent-server \
-  -e AGENT_SERVER_IMAGE_TAG=1.15.0-python \
+  -e AGENT_SERVER_IMAGE_TAG=1.19.1-python \
   -e LOG_ALL_EVENTS=true \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v ~/.openhands:/.openhands \
   -p 3000:3000 \
   --add-host host.docker.internal:host-gateway \
   --name openhands-app \
-    docker.openhands.dev/openhands/openhands:1.6
+    docker.openhands.dev/openhands/openhands:1.7
 ```
 
 </Accordion>
@@ -33863,7 +33802,7 @@ To fix this:
    docker run -it --rm \
        -e SANDBOX_VSCODE_PORT=41234 \
        -e AGENT_SERVER_IMAGE_REPOSITORY=ghcr.io/openhands/agent-server \
-       -e AGENT_SERVER_IMAGE_TAG=1.15.0-python \
+       -e AGENT_SERVER_IMAGE_TAG=1.19.1-python \
        -v /var/run/docker.sock:/var/run/docker.sock \
        -v ~/.openhands:/.openhands \
        -p 3000:3000 \
@@ -34216,107 +34155,17 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `review-agent-mode` | Review backend: `openhands` for the standard SDK agent or `acp` for an ACP-compatible agent server | No | `openhands` |
 | `llm-model` | LLM model to use | Yes | - |
-| `acp-command` | Command used to start the ACP server. Required when `review-agent-mode` is `acp`. Examples: `npx -y @zed-industries/codex-acp@0.12.0`, `codex-acp`, `claude-agent-acp`, `npx -y @agentclientprotocol/claude-agent-acp` | Yes for ACP mode | `''` |
-| `acp-prompt-timeout` | Timeout in seconds for one ACP prompt turn | No | `1800` |
 | `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
 | `review-style` | **[DEPRECATED]** Previously chose between `standard` and `roasted`. Now ignored — the styles have been merged. | No | `roasted` |
 | `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
 | `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
-| `openhands-sdk-package` | Package spec passed to `uv --with`; override only when pinning a specific SDK build for testing or rollout control | No | `openhands-sdk` |
-| `llm-api-key` | LLM API key. Required when `review-agent-mode` is `openhands`; ignored in ACP mode. | Yes for OpenHands mode | - |
+| `llm-api-key` | LLM API key | Yes | - |
 | `github-token` | GitHub token for API access | Yes | - |
 
 <Note>
 Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features. The extensions repository contains the PR review plugin scripts.
 </Note>
-
-## Experimental: ACP Review Backend
-
-The PR review action can run through an ACP-compatible agent server by setting
-`review-agent-mode: acp`. In this mode, OpenHands still loads the review skills
-and plugin prompt context, but the ACP server owns model access,
-authentication, and tool execution.
-
-Use ACP mode when your runner already has an authenticated ACP CLI available.
-The action does not install ACP CLIs for you; install and authenticate the ACP
-server in workflow steps before invoking the PR review action.
-
-<Warning>
-ACP mode is experimental. Use it on trusted self-hosted runners where you
-control the installed ACP command and the authentication material. Do not expose
-subscription credentials to workflows that run untrusted pull request code.
-</Warning>
-
-### Codex ACP Example
-
-To use Codex ACP, first install the Codex CLI and complete device-code login on
-a trusted machine:
-
-```bash
-codex login --device-auth
-codex login status
-```
-
-Then create a base64-encoded secret from the generated auth file:
-
-```bash
-# Linux
-base64 -w 0 "$HOME/.codex/auth.json"
-
-# macOS
-base64 < "$HOME/.codex/auth.json" | tr -d '\n'
-```
-
-Store the printed value as a repository or organization secret named
-`CODEX_AUTH_JSON_B64`. The workflow can then restore that file on a
-self-hosted runner, start Codex ACP with `npx`, and run the review:
-
-```yaml
-name: PR Review by OpenHands
-
-on:
-  pull_request:
-    types: [labeled, review_requested]
-
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
-jobs:
-  pr-review:
-    if: |
-      github.event.label.name == 'review-this' ||
-      github.event.requested_reviewer.login == 'openhands-agent'
-    runs-on: [self-hosted]
-    timeout-minutes: 30
-    steps:
-      - name: Restore Codex auth
-        env:
-          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 }}
-        run: |
-          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
-            echo "Error: CODEX_AUTH_JSON_B64 is required for Codex ACP review."
-            exit 1
-          fi
-          mkdir -p "$HOME/.codex"
-          printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$HOME/.codex/auth.json"
-          chmod 600 "$HOME/.codex/auth.json"
-
-      - name: Run PR Review
-        uses: OpenHands/extensions/plugins/pr-review@main
-        with:
-          review-agent-mode: acp
-          acp-command: npx -y @zed-industries/codex-acp@0.12.0
-          llm-model: gpt-5.5
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Cleanup Codex auth
-        if: always()
-        run: rm -f "$HOME/.codex/auth.json"
-```
 
 ## Customization
 
@@ -38048,13 +37897,13 @@ system and OpenHands will always load them for all your conversations. Repo-leve
     docker run -it --rm --pull=always \
       -e SANDBOX_VOLUMES="$HOME/.agents/skills:/home/openhands/.agents/skills:ro" \
       -e AGENT_SERVER_IMAGE_REPOSITORY=ghcr.io/openhands/agent-server \
-      -e AGENT_SERVER_IMAGE_TAG=1.15.0-python \
+      -e AGENT_SERVER_IMAGE_TAG=1.19.1-python \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -v ~/.openhands:/.openhands \
       -p 3000:3000 \
       --add-host host.docker.internal:host-gateway \
       --name openhands-app \
-      docker.openhands.dev/openhands/openhands:1.6
+      docker.openhands.dev/openhands/openhands:1.7
     ```
 
     <Warning>
@@ -39046,11 +38895,80 @@ configure a GitHub App.
 
 #### Create a GitHub App
 
-Run our [script](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/scripts/create_github_app) to create a GitHub App configured for your install.
+1. Go to [github.com/settings/apps](https://github.com/settings/apps) and click **New GitHub App**.
+
+2. Set a unique **GitHub App name** (e.g., `ACME Corp OpenHands`).
+
+3. Set the **Homepage URL** to `https://app.<YOUR_BASE_DOMAIN>`.
+
+4. Under **Identifying and authorizing users**:
+   - Set the **Callback URL** to:
+     ```
+     https://auth.app.<YOUR_BASE_DOMAIN>/realms/allhands/broker/github/endpoint
+     ```
+   - Check the box for **Request user authorization (OAuth) during installation**
+
+5. Under **Webhook**:
+   - Set the **Webhook URL** to:
+     ```
+     https://app.<YOUR_BASE_DOMAIN>/integration/github/events
+     ```
+   - Generate a webhook secret:
+     ```bash
+     export WEBHOOK_SECRET=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 32)
+     echo $WEBHOOK_SECRET
+     ```
+   - Paste the generated value into the **Secret** field
+
+   <Warning>
+     Save the webhook secret value -- you will need to enter it in the Admin Console configuration.
+   </Warning>
+
+6. Under **Permissions**, configure the following:
+
+   **Repository permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Actions | Read and write |
+   | Commit statuses | Read and write |
+   | Contents | Read and write |
+   | Issues | Read and write |
+   | Pull requests | Read and write |
+   | Webhooks | Read and write |
+   | Workflows | Read and write |
+
+   **Organization permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Events | Read-only |
+
+   **Account permissions:**
+
+   | Permission | Access |
+   |-----------|--------|
+   | Email addresses | Read-only |
+
+7. Click **Create GitHub App**.
+
+8. On the GitHub App page, under **Client secrets**, click **Generate a new client secret**.
+   Save this value.
+
+9. Under **Private keys**, click **Generate a private key**. The `.pem` file downloads
+   automatically -- note its location.
 
 #### Map GitHub App values to Admin Console
 
-Go back to the Installer Admin Console in your browser and enter the values from the Create GitHub App script output. For the private key, upload the file from the `keys` directory of the script location.
+Go back to the Installer Admin Console in your browser and enter the following values:
+
+| GitHub App Value | Admin Console Field |
+|-----------------|-------------------|
+| Client ID (shown on app page) | GitHub OAuth Client ID |
+| Client secret (from step 8) | GitHub OAuth Client Secret |
+| App ID (shown on app page) | GitHub App ID |
+| Webhook secret (from step 5) | GitHub App Webhook Secret |
+| Private key file (from step 9) | GitHub App Private Key (file upload) |
 
 After filling in all fields, click **Continue** at the bottom of the page.
 
