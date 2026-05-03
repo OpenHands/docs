@@ -103,7 +103,13 @@ The PR review workflow uses the OpenHands Software Agent SDK to analyze your cod
 
 ## Composite Action
 
-The workflow uses a reusable composite action from the Software Agent SDK that handles all the setup automatically:
+<Note>
+**Action Path Updated:** The PR review action has moved to the extensions repository. If your workflow still references the old path, update it:
+- **Old:** `OpenHands/software-agent-sdk/.github/actions/pr-review@main`
+- **New:** `OpenHands/extensions/plugins/pr-review@main`
+</Note>
+
+The workflow uses a reusable composite action that handles all the setup automatically:
 
 - Checking out the extensions repository at the specified version
 - Setting up Python and dependencies
@@ -114,17 +120,114 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `llm-model` | LLM model to use | Yes | - |
+| `agent-kind` | Review backend: `openhands` for the standard SDK agent or `acp` for an ACP-compatible agent server | No | `openhands` |
+| `llm-model` | LLM model(s). Comma-separated to run multiple reviews and compare results (A/B testing). In ACP mode this is passed to the ACP server when supported. | No | `anthropic/claude-sonnet-4-5-20250929` |
+| `acp-command` | Command used to start the ACP server. Required when `agent-kind` is `acp`. Examples: `npx -y @zed-industries/codex-acp@0.12.0`, `codex-acp`, `claude-agent-acp`, `npx -y @agentclientprotocol/claude-agent-acp` | Yes for ACP mode | `''` |
+| `acp-prompt-timeout` | Timeout in seconds for one ACP prompt turn | No | `1800` |
 | `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
 | `review-style` | **[DEPRECATED]** Previously chose between `standard` and `roasted`. Now ignored — the styles have been merged. | No | `roasted` |
-| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `require-evidence` | Require the reviewer to enforce an `Evidence` section in the PR description with end-to-end proof | No | `'false'` |
+| `use-sub-agents` | Enable sub-agent delegation for file-level reviews in `openhands` mode. Ignored in ACP mode. | No | `'false'` |
 | `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
-| `llm-api-key` | LLM API key | Yes | - |
+| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `openhands-sdk-package` | Package spec passed to `uv --with`; override only when pinning a specific SDK build for testing or rollout control | No | `openhands-sdk` |
+| `llm-api-key` | LLM API key. Required when `agent-kind` is `openhands`; ignored in ACP mode. | Yes for OpenHands mode | - |
 | `github-token` | GitHub token for API access | Yes | - |
+| `lmnr-api-key` | Laminar API key for observability | No | `''` |
+| `enable-uv-cache` | Enable setup-uv's GitHub Actions cache for Python deps. Default `false` for security. | No | `'false'` |
 
 <Note>
 Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features. The extensions repository contains the PR review plugin scripts.
 </Note>
+
+## Experimental: ACP Review Backend
+
+The PR review action can run through an ACP-compatible agent server by setting
+`agent-kind: acp`. In this mode, OpenHands still loads the review skills
+and plugin prompt context, but the ACP server owns model access,
+authentication, and tool execution.
+
+Use ACP mode when your runner already has an authenticated ACP CLI available.
+The action does not install ACP CLIs for you; install and authenticate the ACP
+server in workflow steps before invoking the PR review action.
+
+<Warning>
+ACP mode is experimental. Use it on trusted self-hosted runners where you
+control the installed ACP command and the authentication material. Do not expose
+subscription credentials to workflows that run untrusted pull request code.
+</Warning>
+
+### Codex ACP Example
+
+To use Codex ACP, first install the Codex CLI and complete device-code login on
+a trusted machine:
+
+```bash
+codex login --device-auth
+codex login status
+```
+
+Then create a base64-encoded secret from the generated auth file:
+
+```bash
+# Linux
+base64 -w 0 "$HOME/.codex/auth.json"
+
+# macOS
+base64 < "$HOME/.codex/auth.json" | tr -d '\n'
+```
+
+Store the printed value as a repository or organization secret named
+`CODEX_AUTH_JSON_B64`. The workflow can then restore that file on a
+self-hosted runner, start Codex ACP with `npx`, and run the review:
+
+```yaml
+name: PR Review by OpenHands
+
+on:
+  pull_request:
+    types: [labeled, review_requested]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-review:
+    if: |
+      github.event.label.name == 'review-this' ||
+      github.event.requested_reviewer.login == 'openhands-agent'
+    runs-on: [self-hosted]
+    timeout-minutes: 30
+    steps:
+      - name: Restore Codex auth
+        env:
+          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 }}
+        run: |
+          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
+            echo "Error: CODEX_AUTH_JSON_B64 is required for Codex ACP review."
+            exit 1
+          fi
+          mkdir -p "$HOME/.codex"
+          if ! printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$HOME/.codex/auth.json"; then
+            echo "Error: Failed to decode CODEX_AUTH_JSON_B64 — check the base64 value."
+            exit 1
+          fi
+          chmod 600 "$HOME/.codex/auth.json"
+
+      - name: Run PR Review
+        uses: OpenHands/extensions/plugins/pr-review@main
+        with:
+          agent-kind: acp
+          acp-command: npx -y @zed-industries/codex-acp@0.12.0
+          llm-model: o3
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup Codex auth
+        if: always()
+        run: rm -f "$HOME/.codex/auth.json"
+```
 
 ## Customization
 
