@@ -9155,15 +9155,67 @@ The `acp_command` is the shell command used to spawn the server process. The SDK
 **Key difference from standard agents:** With `ACPAgent`, you don't need an `LLM_API_KEY` in your code. The ACP server handles its own LLM authentication and API calls. This is *delegation* — your code sends messages to the ACP server, which manages all LLM interactions internally.
 </Note>
 
+### Prompt Context (AgentContext)
+
+`ACPAgent` supports `agent_context` for **prompt-only extensions** — skills, repository context, current datetime, and system/user message suffixes are appended to the user message before it reaches the ACP server. This lets you inject the same skill catalog and repo-specific guidance that the built-in Agent receives, without interfering with the server's own tools or execution model.
+
+```python icon="python" highlight={4-12,16}
+from openhands.sdk.agent import ACPAgent
+from openhands.sdk import AgentContext
+from openhands.sdk.context import Skill
+
+context = AgentContext(
+    skills=[
+        Skill(
+            name="code-style",
+            content="Always use type hints in Python.",
+            trigger=None,  # always active
+        ),
+    ],
+    system_message_suffix="You are reviewing a Python project.",
+)
+
+agent = ACPAgent(
+    acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+    agent_context=context,
+)
+```
+
+The prompt assembly works as follows:
+
+1. The conversation layer builds the user `MessageEvent`, including any per-turn `extended_content` (e.g. triggered-skill injections).
+2. `ACPAgent._build_acp_prompt()` collects all text blocks from the message and appends the rendered `AgentContext` prompt (datetime, repo context, available skills, system suffix) via `to_acp_prompt_context()`.
+3. The combined text is sent as a single user message to the ACP server.
+
+<Note>
+`user_message_suffix` is an ACP-compatible field, but it is **not** duplicated in `to_acp_prompt_context()` because the conversation layer already applies it through `MessageEvent.to_llm_message()`.
+</Note>
+
+#### Compatible AgentContext Fields
+
+Each `AgentContext` field is tagged as ACP-compatible or not. At initialization, `validate_acp_compatibility()` rejects any context that uses unsupported fields.
+
+| Field | ACP Compatible | Notes |
+|-------|:-:|-------|
+| `skills` | ✅ | Skill catalog and trigger-based injections |
+| `system_message_suffix` | ✅ | Appended to the prompt context |
+| `user_message_suffix` | ✅ | Applied by the conversation layer |
+| `current_datetime` | ✅ | Included in the rendered prompt |
+| `load_user_skills` | ✅ | Load skills from `~/.openhands/skills/` |
+| `load_public_skills` | ✅ | Load skills from the public extensions repo |
+| `marketplace_path` | ✅ | Filter public skills via marketplace JSON |
+| `secrets` | ❌ | ACP subprocesses do not use OpenHands secret injection |
+
+Passing `secrets` (or any future field marked `acp_compatible: False`) raises `NotImplementedError`.
+
 ### What ACPAgent Does Not Support
 
-Because the ACP server manages its own tools and context, these `AgentBase` features are not available on `ACPAgent`:
+Because the ACP server manages its own tools, context window, and execution, these `AgentBase` features are not available on `ACPAgent`:
 
 - `tools` / `include_default_tools` — the server has its own tools
 - `mcp_config` — configure MCP on the server side
 - `condenser` — the server manages its own context window
 - `critic` — the server manages its own evaluation
-- `agent_context` — configure the server directly
 
 Passing any of these raises `NotImplementedError` at initialization.
 
@@ -9207,6 +9259,15 @@ agent = ACPAgent(
 | `acp_command` | Command to start the ACP server (required) |
 | `acp_args` | Additional arguments appended to the command |
 | `acp_env` | Additional environment variables for the server process |
+
+### Authentication
+
+When the ACP server advertises authentication methods, `ACPAgent` automatically selects a credential source:
+
+1. **ChatGPT subscription login** — If the server supports a `chatgpt` auth method and `~/.codex/auth.json` exists (created by `LLM.subscription_login()`), this is selected first. This enables ACP-backed workflows to use device-code login credentials without an explicit API key.
+2. **API key environment variables** — Falls back to checking for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GEMINI_API_KEY` depending on which auth methods the server supports.
+
+If no supported credential source is found, the server may proceed without authentication (some servers don't require it).
 
 ## Metrics
 
@@ -23746,6 +23807,57 @@ This guide shows how to implement skills in the SDK. For conceptual overview, se
 
 OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
 
+## Skill Injection Behavior
+
+Understanding where skill content appears in the prompt is critical. The behavior differs based on skill format and trigger configuration:
+
+| Skill Format | Trigger | Where Content Appears | Model Mediated? |
+|--------------|---------|----------------------|-----------------|
+| **AgentSkills** (`SKILL.md`) | Any | `<available_skills>` (description only) | ✅ Yes — agent calls `invoke_skill()` |
+| **AgentSkills** (`SKILL.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+| **Legacy** (inline/`*.md`) | `None` | **`<REPO_CONTEXT>` (full content in the initial system prompt; included in LLM context for each turn)** | ❌ No |
+| **Legacy** (inline/`*.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+
+<Warning>
+**Token Usage Warning**: Legacy skills with `trigger=None` add their **full content** to `<REPO_CONTEXT>` in the initial `SystemPromptEvent`. That system message remains part of the conversation context for subsequent LLM calls, so the content still affects token usage on each turn. Consider using AgentSkills format (`SKILL.md`) for progressive disclosure instead.
+</Warning>
+
+### Prompt Structure
+
+Skills appear in different parts of the system prompt:
+
+```xml icon="file"
+<!-- System Prompt Structure -->
+
+<REPO_CONTEXT>
+  <!-- Legacy trigger=None skills: FULL content in the initial system prompt;
+       included in LLM context for each turn while retained in history -->
+  [BEGIN context from [agents]]
+  ... AGENTS.md content ...
+  [END Context]
+</REPO_CONTEXT>
+
+<SKILLS>
+  <available_skills>
+    <!-- AgentSkills + legacy with triggers: description only -->
+    <skill>
+      <name>github</name>
+      <description>Interact with GitHub...</description>
+    </skill>
+  </available_skills>
+</SKILLS>
+```
+
+When a trigger matches, content is injected into the **user message**:
+
+```xml icon="file"
+<EXTRA_INFO>
+The following information has been included based on a keyword match for "github".
+Skill location: /path/to/skill
+... skill content ...
+</EXTRA_INFO>
+```
+
 ## Context Loading Methods
 
 | Method | When Content Loads | Use Case |
@@ -23786,6 +23898,10 @@ agent_context = AgentContext(
     ]
 )
 ```
+
+<Warning>
+**Important**: Inline skills with `trigger=None` use **legacy format** behavior — full content is added to `<REPO_CONTEXT>` in the initial system prompt and remains part of the conversation context for subsequent LLM calls. For large skills, consider using the AgentSkills `SKILL.md` format for progressive disclosure.
+</Warning>
 
 ## Trigger-Loaded Context
 
@@ -24573,9 +24689,15 @@ from openhands.sdk.context.skills import load_skills_from_dir
 repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
 ```
 
-- **repo_skills**: Skills from `repo.md` files (always active)
-- **knowledge_skills**: Skills from `knowledge/` subdirectories
-- **agent_skills**: Skills from `SKILL.md` files (AgentSkills standard)
+| Return Value | Source Files | Injection Behavior |
+|--------------|--------------|-------------------|
+| **repo_skills** | `repo.md`, `AGENTS.md`, `.cursorrules` | Full content in `<REPO_CONTEXT>` in the initial system prompt; included in LLM context for each turn |
+| **knowledge_skills** | `knowledge/` subdirectories, `*.md` with triggers | Listed in `<available_skills>`, auto-inject on trigger |
+| **agent_skills** | `SKILL.md` files (AgentSkills standard) | Listed in `<available_skills>`, agent calls `invoke_skill()` |
+
+<Tip>
+When passing to `AgentContext(skills=...)`, all three types are accepted. The injection behavior depends on the skill's `is_agentskills_format` flag and `trigger` field — see [Skill Injection Behavior](#skill-injection-behavior).
+</Tip>
 
 #### `discover_skill_resources()`
 
@@ -24902,6 +25024,57 @@ print(rendered)  # Commands replaced with output
 
 The `working_dir` parameter sets the current directory for command execution, enabling workspace-relative commands like `git status`.
 
+## Migrating from Legacy to AgentSkills Format
+
+If you have legacy inline skills consuming many tokens, convert them to AgentSkills format for progressive disclosure:
+
+### Before (Legacy Format)
+
+```python icon="python"
+# Legacy: Full content in <REPO_CONTEXT> in the initial system prompt
+Skill(
+    name="api-guidelines",
+    content="""
+    # API Guidelines
+    ... 2000 lines of detailed documentation ...
+    """,
+    trigger=None,  # Always-on context - affects token usage on each turn!
+)
+```
+
+### After (AgentSkills Format)
+
+Create a directory `api-guidelines/SKILL.md`:
+
+```markdown icon="markdown"
+---
+name: api-guidelines
+description: Comprehensive API design guidelines for the project. Invoke when designing or reviewing API endpoints.
+---
+
+# API Guidelines
+
+... 2000 lines of detailed documentation ...
+```
+
+Then load it:
+
+```python icon="python"
+from openhands.sdk.skills import load_skills_from_dir
+
+# AgentSkills: Only description in prompt, agent reads full content on demand
+_, _, skills = load_skills_from_dir("/path/to/skills")
+agent_context = AgentContext(skills=list(skills.values()))
+```
+
+### Benefits
+
+| Aspect | Legacy `trigger=None` | AgentSkills `SKILL.md` |
+|--------|----------------------|------------------------|
+| Token usage | Full content in system prompt; included in LLM context for each turn | Description only (~100 chars) |
+| Model control | None — always present | Agent decides when to read |
+| Scalability | Limited by context window | Many skills without token bloat |
+
 ## Next Steps
 
 - **[Custom Tools](/sdk/guides/custom-tools)** - Create specialized tools
@@ -24971,7 +25144,7 @@ sequenceDiagram
         ```python icon="python" focus={23-27}
         from openhands.sdk import LLM, Agent, AgentContext
         from openhands.sdk.context import Skill
-        from openhands.tools.delegate import register_agent
+        from openhands.sdk.subagent import register_agent
 
         def create_code_reviewer(llm: LLM) -> Agent:
             return Agent(
@@ -25115,7 +25288,8 @@ from pydantic import SecretStr
 
 from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool
 from openhands.sdk.context import Skill
-from openhands.tools.delegate import DelegationVisualizer, register_agent
+from openhands.sdk.subagent import register_agent
+from openhands.tools.delegate import DelegationVisualizer
 from openhands.tools.task import TaskToolSet
 
 
@@ -28444,6 +28618,214 @@ Once your automation is created:
 
 - [Automations overview & examples](/openhands/usage/automations/overview)
 - [Manage your automations](/openhands/usage/automations/managing-automations)
+
+### Event-Based Automations
+Source: https://docs.openhands.dev/openhands/usage/automations/event-automations.md
+
+<Info>
+**Beta Feature**: Event-based automations are in beta for **OpenHands Cloud** and **OpenHands Enterprise** users.
+</Info>
+
+Event-based automations run when something happens—a PR is opened, an issue is commented on, or a webhook fires—instead of on a schedule. This is ideal for responsive workflows like auto-reviewing PRs, triaging issues, or reacting to external service events.
+
+## Built-In vs. Custom Integrations
+
+| Type | Setup | Best For |
+|------|-------|----------|
+| **Built-in (GitHub)** | None—just create the automation | PR reviews, issue triage, push-triggered tasks |
+| **Custom Webhooks** | Register webhook first, then create automation | Linear, Stripe, Slack, and other services |
+
+## GitHub Events (Built-In)
+
+GitHub is a built-in integration. Create automations that respond to GitHub events without any webhook setup.
+
+### Example: Auto-Review PRs with a Specific Label
+
+When a PR is labeled with `openhands`, automatically review it:
+
+```
+Create an event-based automation called "Auto Review PRs" that triggers
+when a pull request is labeled with "openhands" in any of my repos.
+
+It should review the PR for code quality and best practices, then post
+the review as a comment.
+```
+
+The agent will create an automation with:
+- **Trigger type**: `event`
+- **Source**: `github`
+- **Event**: `pull_request.labeled`
+- **Filter**: Matches PRs labeled `openhands`
+
+### Example: Respond to @openhands Mentions
+
+```
+Create an automation that responds when someone mentions @openhands
+in an issue comment. It should analyze the issue context and provide
+a helpful response.
+```
+
+### Available GitHub Events
+
+| Event | Common Actions | Use Case |
+|-------|---------------|----------|
+| `pull_request` | `opened`, `labeled`, `synchronize`, `ready_for_review` | PR automation |
+| `issues` | `opened`, `labeled`, `assigned` | Issue triage |
+| `issue_comment` | `created` | Mention responses |
+| `push` | — | Branch-based triggers |
+| `release` | `published` | Release workflows |
+
+Use wildcards like `pull_request.*` to match all actions for an event type.
+
+### Filtering Events
+
+Filters let you narrow which events trigger your automation. They use [JMESPath expressions](https://jmespath.org/) to match fields in the event payload—so you can trigger only on specific labels, users, branches, or other conditions.
+
+**Common filter patterns:**
+
+```javascript
+// Match a specific label
+contains(pull_request.labels[].name, 'openhands')
+
+// Case-insensitive mention in comment
+icontains(comment.body, '@openhands')
+
+// Match repos in your org
+glob(repository.full_name, 'myorg/*')
+
+// Push to main branch only
+ref == 'refs/heads/main'
+
+// Combine conditions
+glob(repository.full_name, 'myorg/*') && contains(pull_request.labels[].name, 'bug')
+```
+
+---
+
+## Custom Webhooks
+
+For services beyond GitHub—like Linear, Stripe, or Slack—register a custom webhook first, then create automations that use it.
+
+<Note>
+**Two-phase workflow for custom webhooks:**
+
+1. **Webhook registration (one-time setup)**: You execute the curl command yourself to register the webhook. This keeps your signing secrets secure—the agent provides the command but never handles your credentials directly.
+
+2. **Automation creation (repeatable)**: Once the webhook is registered, the agent can create, update, and manage automations for that webhook source conversationally—no manual curl commands needed.
+</Note>
+
+### Walkthrough: Linear Integration
+
+This example walks through setting up a Linear webhook to auto-triage new issues.
+
+#### Step 1: Get Your Webhook Secret from Linear
+
+Linear provides the webhook signing secret—you cannot configure your own.
+
+1. Go to **Linear Settings → API → Webhooks**
+2. Click **New webhook**
+3. Copy the **signing secret** that Linear displays (you'll need this in the next step)
+4. Leave the webhook URL blank for now—you'll get it from OpenHands
+
+#### Step 2: Register the Webhook with OpenHands
+
+First, set up your environment variables:
+
+1. Create an OpenHands API key at [app.all-hands.dev/settings/api-keys](https://app.all-hands.dev/settings/api-keys)
+2. Export the API key and the webhook secret from Step 1:
+
+```bash
+export OPENHANDS_API_KEY="your-openhands-api-key"
+export LINEAR_WEBHOOK_SECRET="your-linear-signing-secret-from-step-1"
+```
+
+Then run the following command to register the webhook:
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/automation/v1/webhooks" \
+  -H "Authorization: Bearer ${OPENHANDS_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Linear Issues",
+    "source": "linear",
+    "event_key_expr": "type",
+    "signature_header": "Linear-Signature",
+    "webhook_secret": "'"${LINEAR_WEBHOOK_SECRET}"'"
+  }'
+```
+
+The response includes a `webhook_url` that you'll configure in Linear.
+
+<Accordion title="Understanding event_key_expr">
+The `event_key_expr` is a JMESPath expression that extracts the event type from incoming webhook payloads. This extracted value is what you match against in the automation's `on` field.
+
+For example, Linear sends payloads like:
+```json
+{"type": "Issue", "action": "create", "data": {...}}
+```
+
+With `event_key_expr: "type"`, the system extracts `"Issue"` as the event type. Then in your automation, you set `on: "Issue"` to match it.
+</Accordion>
+
+<Tip>
+If you're integrating a service that lets you configure the signing secret (unlike Linear), you can omit `webhook_secret` from the request. The automation service will generate one and return it in the response—store it securely, as it's shown only once.
+</Tip>
+
+#### Step 3: Complete the Linear Webhook Configuration
+
+1. Return to the Linear webhook you started in Step 1
+2. Paste the `webhook_url` from the previous step
+3. Select which events to send (e.g., Issues, Comments)
+4. Save the webhook
+
+#### Step 4: Create the Automation
+
+Now the webhook is registered, the agent can create automations for you end-to-end. Just describe what you want:
+
+```
+Create an event-based automation called "Triage Linear Issues" that triggers
+when a new issue is created in Linear.
+
+It should analyze the issue title and description, suggest appropriate labels,
+and add a comment with initial triage notes.
+```
+
+The agent creates the automation with:
+- **Source**: `linear` (your registered webhook)
+- **Event**: `Issue` (Linear's event type)
+- **Filter**: `action == 'create'`
+
+### Custom Webhook Parameters
+
+When registering any custom webhook, these parameters define how OpenHands processes incoming events:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Human-readable name |
+| `source` | Yes | Unique identifier (lowercase, alphanumeric with hyphens) |
+| `event_key_expr` | No | JMESPath to extract event type (default: `type`) |
+| `signature_header` | No | Header containing HMAC signature (default: `X-Signature-256`) |
+| `webhook_secret` | No | Signing secret—provide yours or let the system generate one |
+
+### Common Services
+
+These are example configurations for popular services. **Always verify with each service's webhook documentation**, as signature headers and payload formats may change.
+
+| Service | Signature Header | Event Key |
+|---------|-----------------|-----------|
+| Linear | `Linear-Signature` | `type` |
+| Stripe | `Stripe-Signature` | `type` |
+| Slack | `X-Slack-Signature` | `type` |
+| Twilio | `X-Twilio-Signature` | `type` |
+
+---
+
+## Next Steps
+
+New to automations? Start with the [Automations Overview](/openhands/usage/automations/overview) for the bigger picture, including cron-based scheduling and general concepts.
+
+- [Automations Overview](/openhands/usage/automations/overview) — Cron-based automations and general concepts
+- [Managing Automations](/openhands/usage/automations/managing-automations) — Update, disable, or delete automations
 
 ### Managing Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/managing-automations.md
@@ -34155,17 +34537,111 @@ The workflow uses a reusable composite action from the Software Agent SDK that h
 
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
-| `llm-model` | LLM model to use | Yes | - |
+| `agent-kind` | Review backend: `openhands` for the standard SDK agent or `acp` for an ACP-compatible agent server | No | `openhands` |
+| `llm-model` | LLM model(s), comma-separated for A/B testing. In ACP mode this is passed to the ACP server when supported. | No | `anthropic/claude-sonnet-4-5-20250929` |
+| `acp-command` | Command used to start the ACP server. Required when `agent-kind` is `acp`. Examples: `npx -y @zed-industries/codex-acp@0.12.0`, `codex-acp`, `claude-agent-acp`, `npx -y @agentclientprotocol/claude-agent-acp` | Yes for ACP mode | `''` |
+| `acp-prompt-timeout` | Timeout in seconds for one ACP prompt turn | No | `1800` |
 | `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
 | `review-style` | **[DEPRECATED]** Previously chose between `standard` and `roasted`. Now ignored — the styles have been merged. | No | `roasted` |
-| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `require-evidence` | Require the reviewer to enforce an `Evidence` section in the PR description with end-to-end proof | No | `'false'` |
+| `use-sub-agents` | Enable sub-agent delegation for file-level reviews in `openhands` mode. Ignored in ACP mode. | No | `'false'` |
 | `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
-| `llm-api-key` | LLM API key | Yes | - |
+| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `openhands-sdk-package` | Package spec passed to `uv --with`; override only when pinning a specific SDK build for testing or rollout control | No | `openhands-sdk` |
+| `llm-api-key` | LLM API key. Required when `agent-kind` is `openhands`; ignored in ACP mode. | Yes for OpenHands mode | - |
 | `github-token` | GitHub token for API access | Yes | - |
+| `lmnr-api-key` | Laminar API key for observability | No | `''` |
+| `enable-uv-cache` | Enable setup-uv's GitHub Actions cache for Python deps. Default `false` for security. | No | `'false'` |
 
 <Note>
 Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features. The extensions repository contains the PR review plugin scripts.
 </Note>
+
+## Experimental: ACP Review Backend
+
+The PR review action can run through an ACP-compatible agent server by setting
+`agent-kind: acp`. In this mode, OpenHands still loads the review skills
+and plugin prompt context, but the ACP server owns model access,
+authentication, and tool execution.
+
+Use ACP mode when your runner already has an authenticated ACP CLI available.
+The action does not install ACP CLIs for you; install and authenticate the ACP
+server in workflow steps before invoking the PR review action.
+
+<Warning>
+ACP mode is experimental. Use it on trusted self-hosted runners where you
+control the installed ACP command and the authentication material. Do not expose
+subscription credentials to workflows that run untrusted pull request code.
+</Warning>
+
+### Codex ACP Example
+
+To use Codex ACP, first install the Codex CLI and complete device-code login on
+a trusted machine:
+
+```bash
+codex login --device-auth
+codex login status
+```
+
+Then create a base64-encoded secret from the generated auth file:
+
+```bash
+# Linux
+base64 -w 0 "$HOME/.codex/auth.json"
+
+# macOS
+base64 < "$HOME/.codex/auth.json" | tr -d '\n'
+```
+
+Store the printed value as a repository or organization secret named
+`CODEX_AUTH_JSON_B64`. The workflow can then restore that file on a
+self-hosted runner, start Codex ACP with `npx`, and run the review:
+
+```yaml
+name: PR Review by OpenHands
+
+on:
+  pull_request:
+    types: [labeled, review_requested]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-review:
+    if: |
+      github.event.label.name == 'review-this' ||
+      github.event.requested_reviewer.login == 'openhands-agent'
+    runs-on: [self-hosted]
+    timeout-minutes: 30
+    steps:
+      - name: Restore Codex auth
+        env:
+          CODEX_AUTH_JSON_B64: ${{ secrets.CODEX_AUTH_JSON_B64 }}
+        run: |
+          if [ -z "$CODEX_AUTH_JSON_B64" ]; then
+            echo "Error: CODEX_AUTH_JSON_B64 is required for Codex ACP review."
+            exit 1
+          fi
+          mkdir -p "$HOME/.codex"
+          printf '%s' "$CODEX_AUTH_JSON_B64" | base64 -d > "$HOME/.codex/auth.json"
+          chmod 600 "$HOME/.codex/auth.json"
+
+      - name: Run PR Review
+        uses: OpenHands/extensions/plugins/pr-review@main
+        with:
+          agent-kind: acp
+          acp-command: npx -y @zed-industries/codex-acp@0.12.0
+          llm-model: gpt-5.5
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup Codex auth
+        if: always()
+        run: rm -f "$HOME/.codex/auth.json"
+```
 
 ## Customization
 
@@ -38895,80 +39371,11 @@ configure a GitHub App.
 
 #### Create a GitHub App
 
-1. Go to [github.com/settings/apps](https://github.com/settings/apps) and click **New GitHub App**.
-
-2. Set a unique **GitHub App name** (e.g., `ACME Corp OpenHands`).
-
-3. Set the **Homepage URL** to `https://app.<YOUR_BASE_DOMAIN>`.
-
-4. Under **Identifying and authorizing users**:
-   - Set the **Callback URL** to:
-     ```
-     https://auth.app.<YOUR_BASE_DOMAIN>/realms/allhands/broker/github/endpoint
-     ```
-   - Check the box for **Request user authorization (OAuth) during installation**
-
-5. Under **Webhook**:
-   - Set the **Webhook URL** to:
-     ```
-     https://app.<YOUR_BASE_DOMAIN>/integration/github/events
-     ```
-   - Generate a webhook secret:
-     ```bash
-     export WEBHOOK_SECRET=$(openssl rand -base64 32 | tr -dc A-Za-z0-9 | head -c 32)
-     echo $WEBHOOK_SECRET
-     ```
-   - Paste the generated value into the **Secret** field
-
-   <Warning>
-     Save the webhook secret value -- you will need to enter it in the Admin Console configuration.
-   </Warning>
-
-6. Under **Permissions**, configure the following:
-
-   **Repository permissions:**
-
-   | Permission | Access |
-   |-----------|--------|
-   | Actions | Read and write |
-   | Commit statuses | Read and write |
-   | Contents | Read and write |
-   | Issues | Read and write |
-   | Pull requests | Read and write |
-   | Webhooks | Read and write |
-   | Workflows | Read and write |
-
-   **Organization permissions:**
-
-   | Permission | Access |
-   |-----------|--------|
-   | Events | Read-only |
-
-   **Account permissions:**
-
-   | Permission | Access |
-   |-----------|--------|
-   | Email addresses | Read-only |
-
-7. Click **Create GitHub App**.
-
-8. On the GitHub App page, under **Client secrets**, click **Generate a new client secret**.
-   Save this value.
-
-9. Under **Private keys**, click **Generate a private key**. The `.pem` file downloads
-   automatically -- note its location.
+Run our [script](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/scripts/create_github_app) to create a GitHub App configured for your install.
 
 #### Map GitHub App values to Admin Console
 
-Go back to the Installer Admin Console in your browser and enter the following values:
-
-| GitHub App Value | Admin Console Field |
-|-----------------|-------------------|
-| Client ID (shown on app page) | GitHub OAuth Client ID |
-| Client secret (from step 8) | GitHub OAuth Client Secret |
-| App ID (shown on app page) | GitHub App ID |
-| Webhook secret (from step 5) | GitHub App Webhook Secret |
-| Private key file (from step 9) | GitHub App Private Key (file upload) |
+Go back to the Installer Admin Console in your browser and enter the values from the Create GitHub App script output. For the private key, upload the file from the `keys` directory of the script location.
 
 After filling in all fields, click **Continue** at the bottom of the page.
 
