@@ -1,0 +1,207 @@
+---
+title: QA Changes
+description: Automated QA validation of PR changes using OpenHands Agent
+---
+
+> The reference workflow is available [here](#reference-workflow)!
+
+Automatically validate pull request changes by running the code — setting up the environment, exercising changed behavior, and posting a structured QA report. Validations can be triggered in two ways:
+- Adding the `qa-this` label to the PR
+- Requesting `openhands-agent` as a reviewer
+
+<Note>
+The reference workflow also triggers automatically on PR open and ready-for-review events for trusted contributors. `FIRST_TIME_CONTRIBUTOR` and `NONE` author associations are excluded for security, since the QA agent executes code from the PR.
+</Note>
+
+## Quick Start
+
+```bash
+# 1. Copy workflow to your repository
+cp examples/03_github_workflows/05_qa_changes/workflow.yml \
+   .github/workflows/qa-changes-by-openhands.yml
+
+# 2. Configure secrets in GitHub Settings → Secrets
+# Add: LLM_API_KEY
+
+# 3. (Optional) Create a "qa-this" label in your repository
+# Go to Issues → Labels → New label
+# You can also trigger QA by requesting "openhands-agent" as a reviewer
+```
+
+## Features
+
+- **Runs the Code** — Goes beyond reading diffs to actually execute the software
+- **Four-Phase Methodology** — Understand → Setup → Exercise → Report
+- **Structured Reports** — Posts QA reports with evidence, commands, outputs, and a clear verdict
+- **Smart Retries** — Tries multiple approaches before giving up, then reports honestly
+- **Customizable** — Add project-specific QA guidelines via skills or AGENTS.md
+
+## How It Differs from PR Review
+
+| Aspect | PR Review | QA Changes |
+|--------|-----------|------------|
+| Method | Reads the diff | Runs the code |
+| Speed | 2-3 minutes | 5-15 minutes |
+| Catches | Style, security, logic issues | Regressions, broken features, build failures |
+| Output | Inline code comments | Structured QA report with evidence |
+
+## Security
+
+- The workflow uses `pull_request` (not `pull_request_target`) since the QA agent executes code
+- Fork PRs are automatically skipped with a clear notice (no access to repository secrets)
+- `FIRST_TIME_CONTRIBUTOR` and `NONE` author associations are excluded from automatic triggers
+- Maintainers can trigger QA for any PR using the `qa-this` label
+
+## Customizing QA Behavior
+
+Instead of forking the agent script, you can customize QA behavior by adding a skill file to your repository. This is the **recommended approach** for customization.
+
+### How It Works
+
+The QA agent uses skills from the [OpenHands/extensions](https://github.com/OpenHands/extensions) repository by default. You can add project-specific guidelines alongside the default skill by creating a custom skill file.
+
+<Note>
+**Skill paths**: Place skills in `.agents/skills/` (recommended). The legacy path `.openhands/skills/` is also supported. See [Skill Loading Precedence](/overview/skills#skill-loading-precedence) for details.
+</Note>
+
+### Example: Custom QA Skill
+
+Create `.agents/skills/qa-guide.md` in your repository:
+
+```markdown
+---
+name: qa-guide
+description: Project-specific QA guidelines for MyProject
+triggers:
+- /qa-changes
+---
+
+# MyProject QA Guidelines
+
+In addition to general QA methodology, use these project-specific instructions:
+
+## Setup Commands
+- `make install` to install dependencies
+- `make build` to build the project
+
+## How to Run the App
+- `make serve` to start the dev server on port 8080
+- The API is available at http://localhost:8080/api/v1
+- `python -m myapp --help` for CLI usage
+
+## Key Behaviors to Verify
+- User login/signup flow works end-to-end
+- API responses include correct pagination headers
+- Dashboard renders within 3 seconds
+
+## Known Limitations
+- OAuth login requires external service — skip if unavailable
+- Email sending is mocked in dev — verify the mock is called
+```
+
+<Note>
+**Note**: These rules supplement the default `qa-changes` skill, not replace it.
+</Note>
+
+<Tip>
+**How skill merging works**: Using a unique name like `qa-guide` allows BOTH your custom skill AND the default `qa-changes` skill to be triggered by `/qa-changes`. When triggered, skill content is concatenated into the agent's context. There is no smart merging — if guidelines conflict, the agent sees both and must reconcile them.
+
+If your skill has `name: qa-changes` (matching the default skill's name), it will completely **override** the default skill instead of supplementing it.
+</Tip>
+
+### Benefits of Custom Skills
+
+1. **No forking required**: Keep using the official plugin while customizing behavior
+2. **Version controlled**: Your QA guidelines live in your repository
+3. **Easy updates**: Plugin updates don't overwrite your customizations
+4. **Team alignment**: Everyone uses the same QA standards
+5. **Composable**: Add project-specific rules alongside default methodology
+
+## Reference Workflow
+
+<Note>
+The QA Changes plugin is available in the extensions repository: [OpenHands/extensions/plugins/qa-changes](https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes)
+</Note>
+
+```yaml
+---
+# OpenHands QA Changes Workflow
+#
+# To set this up:
+#  1. Copy this file to .github/workflows/qa-changes-by-openhands.yml
+#  2. Add LLM_API_KEY to repository secrets
+#  3. Customize the inputs below as needed
+#  4. Commit this file to your repository
+#  5. Trigger QA by either:
+#     - Adding the "qa-this" label to any PR, OR
+#     - Requesting openhands-agent as a reviewer
+#
+# For more information, see:
+# https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes
+name: QA Changes by OpenHands
+
+on:
+    pull_request:
+        types: [opened, ready_for_review, labeled, review_requested]
+
+permissions:
+    contents: read
+    pull-requests: write
+    issues: write
+
+jobs:
+    qa-changes:
+        if: |
+            (github.event.action == 'opened'
+              && github.event.pull_request.draft == false
+              && github.event.pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+              && github.event.pull_request.author_association != 'NONE')
+            || (github.event.action == 'ready_for_review'
+              && github.event.pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+              && github.event.pull_request.author_association != 'NONE')
+            || github.event.label.name == 'qa-this'
+            || github.event.requested_reviewer.login == 'openhands-agent'
+        concurrency:
+            group: qa-changes-${{ github.event.pull_request.number }}
+            cancel-in-progress: true
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        steps:
+            - name: Run QA Changes
+              uses: OpenHands/extensions/plugins/qa-changes@main
+              with:
+                  llm-model: anthropic/claude-sonnet-4-5-20250929
+                  max-budget: '10.0'
+                  timeout-minutes: '30'
+                  max-iterations: '500'
+                  llm-api-key: ${{ secrets.LLM_API_KEY }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Action Inputs
+
+| Input | Description | Required | Default |
+|-------|-------------|----------|---------|
+| `llm-model` | LLM model to use for QA validation | No | `anthropic/claude-sonnet-4-5-20250929` |
+| `llm-base-url` | LLM base URL (for custom endpoints) | No | `''` |
+| `extensions-repo` | Extensions repository (owner/repo) | No | `OpenHands/extensions` |
+| `extensions-version` | Git ref for extensions (tag, branch, or commit SHA) | No | `main` |
+| `max-budget` | Maximum LLM cost in dollars — agent stops when exceeded | No | `10.0` |
+| `timeout-minutes` | Wall-clock timeout for the QA step | No | `30` |
+| `max-iterations` | Maximum agent iterations (each is one LLM call + action) | No | `500` |
+| `llm-api-key` | LLM API key | Yes | - |
+| `github-token` | GitHub token for API access | Yes | - |
+| `lmnr-api-key` | Laminar API key for observability | No | `''` |
+
+<Note>
+Use `extensions-version` to pin to a specific version tag (e.g., `v1.0.0`) for production stability, or use `main` to always get the latest features.
+</Note>
+
+## Related Files
+
+- [QA Changes Plugin](https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes) - Complete plugin with scripts and skills (in extensions repo)
+- [Agent Script](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/scripts/agent_script.py) - Main QA agent script
+- [Prompt Template](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/scripts/prompt.py) - QA prompt template
+- [QA Skill](https://github.com/OpenHands/extensions/blob/main/skills/qa-changes/SKILL.md) - QA methodology skill
+- [Example Workflow](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/workflows/qa-changes-by-openhands.yml) - Example workflow
+- [Composite Action](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/action.yml) - Reusable GitHub Action
