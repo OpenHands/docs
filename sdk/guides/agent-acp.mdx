@@ -185,7 +185,8 @@ This example is available on GitHub: [examples/01_standalone_sdk/40_acp_agent_ex
 This example shows how to use an ACP-compatible server (claude-agent-acp)
 as the agent backend instead of direct LLM calls.  It also demonstrates
 ``ask_agent()`` — a stateless side-question that forks the ACP session
-and leaves the main conversation untouched.
+and leaves the main conversation untouched — and sending an image alongside
+text to verify multimodal (vision) input support.
 
 Prerequisites:
     - Node.js / npx available
@@ -197,9 +198,12 @@ Usage:
 
 import os
 
+from openhands.sdk import ImageContent, Message, TextContent
 from openhands.sdk.agent import ACPAgent
 from openhands.sdk.conversation import Conversation
 
+
+IMAGE_URL = "https://github.com/OpenHands/docs/raw/main/openhands/static/img/logo.png"
 
 agent = ACPAgent(acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"])
 
@@ -207,10 +211,25 @@ try:
     cwd = os.getcwd()
     conversation = Conversation(agent=agent, workspace=cwd)
 
-    # --- Main conversation turn ---
+    # --- Main conversation turn (text only) ---
     conversation.send_message(
         "List the Python source files under openhands-sdk/openhands/sdk/agent/, "
         "then read the __init__.py and summarize what agent classes are exported."
+    )
+    conversation.run()
+
+    # --- Image input turn (text + image) ---
+    print("\n--- image input ---")
+    conversation.send_message(
+        Message(
+            role="user",
+            content=[
+                TextContent(
+                    text="Describe what you see in this image in one sentence."
+                ),
+                ImageContent(image_urls=[IMAGE_URL]),
+            ],
+        )
     )
     conversation.run()
 
@@ -294,9 +313,9 @@ os.environ["ANTHROPIC_API_KEY"] = llm_api_key
 runtime_api_key = os.getenv("RUNTIME_API_KEY")
 assert runtime_api_key, "RUNTIME_API_KEY required"
 
-# If GITHUB_SHA is set (e.g. running in CI of a PR), use that to ensure consistency
-# Otherwise, use the latest image from main
-server_image_sha = os.getenv("GITHUB_SHA") or "main"
+# SDK_SHA is the canonical commit SHA set by CI workflows (avoids the
+# built-in GITHUB_SHA which resolves to the merge-commit on PRs).
+server_image_sha = os.getenv("SDK_SHA") or os.getenv("GITHUB_SHA") or "main"
 server_image = f"ghcr.io/openhands/agent-server:{server_image_sha[:7]}-python-amd64"
 logger.info(f"Using server image: {server_image}")
 
