@@ -1,0 +1,210 @@
+---
+title: Settings and Secrets API
+description: Configure LLM, store secrets, and retrieve settings from the agent-server.
+---
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+The Settings and Secrets API provides server-side configuration management for agent-server deployments. This enables centralized LLM configuration, secure secret storage, and workspace-level retrieval of settings.
+
+## Overview
+
+When running agent-server in production, you often need to:
+- Store LLM configuration (model, API keys) on the server
+- Manage custom secrets securely (encrypted at rest)
+- Retrieve settings from within a workspace
+
+The Settings API provides REST endpoints for these operations:
+- `GET/PATCH /api/settings` - Read/update LLM and MCP configuration
+- `PUT/GET/DELETE /api/settings/secrets` - CRUD operations for custom secrets
+
+## 1) Settings and Secrets API
+
+> A ready-to-run example is available [here](#ready-to-run-example-settings-api)!
+
+### Key Concepts
+
+#### Storing LLM Configuration
+
+Store LLM settings via the Settings API. The API key is encrypted at rest when `OH_SECRET_KEY` is configured:
+
+```python icon="python"
+llm_config = {
+    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "api_key": "your-api-key",
+    "base_url": None,  # Optional
+}
+
+response = client.patch(
+    "/api/settings",
+    json={"agent_settings_diff": {"llm": llm_config}},
+)
+```
+
+#### Storing Custom Secrets
+
+Store secrets via the Secrets API. Secrets are encrypted at rest and can be referenced in conversations via `LookupSecret`:
+
+```python icon="python"
+# Store a secret
+response = client.put(
+    "/api/settings/secrets",
+    json={
+        "name": "MY_PROJECT_TOKEN",
+        "value": "super-secret-token-12345",
+        "description": "Project token for API access",
+    },
+)
+
+# List secrets (values not exposed)
+response = client.get("/api/settings/secrets")
+
+# Delete a secret
+response = client.delete("/api/settings/secrets/MY_PROJECT_TOKEN")
+```
+
+#### Using LookupSecret References
+
+Reference stored secrets in conversations via `LookupSecret` URLs. The agent-server resolves these lazily at runtime:
+
+```python icon="python" focus={4-8}
+start_request = {
+    "agent": {...},
+    "workspace": {...},
+    "secrets": {
+        "MY_PROJECT_TOKEN": {
+            "kind": "LookupSecret",
+            "url": f"{server_url}/api/settings/secrets/MY_PROJECT_TOKEN",
+            "description": "Token resolved from secrets API",
+        }
+    },
+    "initial_message": {...},
+}
+```
+
+The agent can then access the secret as an environment variable `$MY_PROJECT_TOKEN`.
+
+### Ready-to-run Example Settings API
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/12_settings_and_secrets_api.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/12_settings_and_secrets_api.py)
+</Note>
+
+This example demonstrates the full workflow: storing LLM settings, creating secrets, using `LookupSecret` references, and cleaning up:
+
+```python icon="python" expandable examples/02_remote_agent_server/12_settings_and_secrets_api.py
+<code will be auto-synced>
+```
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/12_settings_and_secrets_api.py"/>
+
+---
+
+## 2) Workspace Settings Methods
+
+> A ready-to-run example is available [here](#ready-to-run-example-workspace-settings)!
+
+`RemoteWorkspace` provides methods to retrieve settings from the agent-server, enabling workspaces to use centrally-configured LLM settings and secrets.
+
+### Key Concepts
+
+#### API Key Authentication
+
+When the agent-server is configured with `SESSION_API_KEY`, all requests must include the key. `RemoteWorkspace.api_key` automatically adds the `X-Session-API-Key` header:
+
+```python icon="python"
+# Agent-server requires authentication
+workspace = RemoteWorkspace(
+    host=server_url,
+    working_dir="/workspace",
+    api_key=session_api_key,  # Adds X-Session-API-Key header
+)
+```
+
+#### workspace.get_llm()
+
+Retrieve the configured LLM from agent-server settings:
+
+```python icon="python"
+# Get LLM with server-configured settings
+llm = workspace.get_llm()
+
+# Override specific settings
+llm = workspace.get_llm(model="gpt-4o", temperature=0.5)
+```
+
+The method calls `GET /api/settings` with `X-Expose-Secrets: plaintext` to retrieve the actual API key value.
+
+#### workspace.get_secrets()
+
+Retrieve `LookupSecret` references for stored secrets:
+
+```python icon="python"
+# Get all secrets as LookupSecret references
+secrets = workspace.get_secrets()
+
+# Get specific secrets
+secrets = workspace.get_secrets(names=["GITHUB_TOKEN", "API_KEY"])
+
+# Use in conversation
+conversation.update_secrets(secrets)
+```
+
+The returned `LookupSecret` objects include authentication headers so they can be resolved by the agent-server.
+
+#### workspace.get_mcp_config()
+
+Retrieve MCP (Model Context Protocol) server configuration:
+
+```python icon="python"
+mcp_config = workspace.get_mcp_config()
+# Returns dict compatible with MCPConfig.model_validate()
+```
+
+### Ready-to-run Example Workspace Settings
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/13_workspace_get_llm.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/13_workspace_get_llm.py)
+</Note>
+
+This example demonstrates secure workspace settings retrieval with API key authentication:
+
+```python icon="python" expandable examples/02_remote_agent_server/13_workspace_get_llm.py
+<code will be auto-synced>
+```
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/13_workspace_get_llm.py"/>
+
+---
+
+## Security Considerations
+
+### Encryption at Rest
+
+Enable encrypted storage by setting `OH_SECRET_KEY`:
+
+```bash
+export OH_SECRET_KEY="your-32-byte-secret-key"
+```
+
+When set, all secrets (including LLM API keys) are encrypted before storage.
+
+### Session API Keys
+
+Secure the agent-server with `SESSION_API_KEY`:
+
+```bash
+export SESSION_API_KEY="your-session-api-key"
+```
+
+When set, all API requests must include the `X-Session-API-Key` header.
+
+### LookupSecret Headers
+
+When using `workspace.get_secrets()`, the returned `LookupSecret` objects automatically include authentication headers, ensuring secrets can be resolved even when the agent-server requires authentication.
+
+## Next Steps
+
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)** - Architecture and implementation details
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Run in isolated Docker containers
+- **[Agent Settings](/sdk/guides/agent-settings)** - Configure agents with structured settings
+- **[Custom Secrets](/sdk/guides/secrets)** - Secure credential management in conversations
