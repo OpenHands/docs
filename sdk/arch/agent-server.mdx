@@ -368,55 +368,47 @@ curl https://agent-server.example.com/health
 - Resource exhaustion
 - Container failures
 
-## Connecting to Agent Server
+## Client Integration Architecture
 
-The SDK provides workspace classes that connect to remote agent servers. When you use a remote workspace, the `Conversation` factory automatically returns a `RemoteConversation` that communicates with the server via HTTP/WebSocket.
+The SDK implements a **workspace-based dispatch pattern** for connecting to agent servers. The `Conversation` factory inspects the workspace type and returns the appropriate conversation implementation.
 
-### Using OpenHands Cloud
-
-The simplest way to use a remote agent server is via OpenHands Cloud:
-
-```python
-from openhands.sdk import Conversation, RemoteConversation
-from openhands.workspace import OpenHandsCloudWorkspace
-
-with OpenHandsCloudWorkspace(
-    cloud_api_url="https://app.all-hands.dev",
-    cloud_api_key="your-api-key",
-) as workspace:
-    # Conversation automatically becomes RemoteConversation
-    conversation = Conversation(agent=agent, workspace=workspace)
-    assert isinstance(conversation, RemoteConversation)
+```mermaid
+flowchart LR
+    Conv["Conversation()"] --> Check{"Workspace Type?"}
+    Check -->|LocalWorkspace| Local["LocalConversation"]
+    Check -->|RemoteWorkspace| Remote["RemoteConversation"]
+    Remote -->|HTTP/WebSocket| Server["Agent Server"]
     
-    conversation.send_message("Hello, agent!")
-    conversation.run()
+    style Conv fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Remote fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Server fill:#fff4df,stroke:#b7791f,stroke-width:2px
 ```
 
-### Using API-based Sandbox
+### Workspace Types
 
-For custom runtime environments, use `APIRemoteWorkspace`:
+| Workspace | Conversation Type | Communication |
+|-----------|------------------|---------------|
+| `LocalWorkspace` | `LocalConversation` | Direct execution |
+| `OpenHandsCloudWorkspace` | `RemoteConversation` | HTTPS + WebSocket to OpenHands Cloud |
+| `APIRemoteWorkspace` | `RemoteConversation` | HTTPS + WebSocket to Runtime API |
+| `DockerWorkspace` | `RemoteConversation` | HTTP + WebSocket to local container |
 
-```python
-from openhands.sdk import Conversation, RemoteConversation
-from openhands.workspace import APIRemoteWorkspace
+### RemoteConversation Responsibilities
 
-with APIRemoteWorkspace(
-    runtime_api_url="https://runtime.example.com",
-    runtime_api_key="your-api-key",
-    server_image="ghcr.io/openhands/agent-server:main-python",
-) as workspace:
-    conversation = Conversation(agent=agent, workspace=workspace)
-    assert isinstance(conversation, RemoteConversation)
-    
-    conversation.send_message("Hello, agent!")
-    conversation.run()
-```
+The `RemoteConversation` implementation handles all client-server concerns:
 
-**Remote workspaces handle**:
-- Authentication and session management
-- WebSocket streaming for real-time events
-- Container lifecycle management
-- Automatic reconnection and retries
+- **Session management**: Authenticates and maintains connection to agent server
+- **Event streaming**: WebSocket connection for real-time agent events
+- **Request routing**: HTTP calls for conversation lifecycle operations
+- **Reconnection**: Automatic retry logic for transient failures
+
+### Usage Examples
+
+For complete working examples with all required setup:
+
+- **[OpenHands Cloud Workspace](/sdk/guides/agent-server/cloud-workspace)** - Managed cloud infrastructure
+- **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Custom runtime environments
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Local containerized execution
 
 ## Cost Considerations
 
