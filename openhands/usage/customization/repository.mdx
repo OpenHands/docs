@@ -29,26 +29,45 @@ blocking dangerous commands, enforcing linting before the agent finishes, or log
 
 See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide.
 
-## Pre-commit Script
-You can add a `.openhands/pre-commit.sh` file to create a custom git pre-commit hook that runs before each commit.
-This can be used to enforce code quality standards, run tests, or perform other checks before allowing commits.
+## Repository-specific Stop Hooks
 
-For example:
-```bash
+For repository-specific quality gates, use a [Stop hook](/openhands/usage/customization/hooks) in `.openhands/hooks.json`.
+Stop hooks run when OpenHands tries to finish a task and can block completion until checks pass. They work across current
+OpenHands flows that use the agent server, so they are the recommended way to enforce formatting, linting, tests, or other
+repo-specific checks before an agent reports that work is complete.
+
+For example, create `.openhands/hooks/lint_check.sh`:
+
+```bash .openhands/hooks/lint_check.sh
 #!/bin/bash
-# Run linting checks
-cd frontend && npm run lint
-if [ $? -ne 0 ]; then
-  echo "Frontend linting failed. Please fix the issues before committing."
-  exit 1
-fi
+cd "$OPENHANDS_PROJECT_DIR"
 
-# Run tests
-cd backend && pytest tests/unit
-if [ $? -ne 0 ]; then
-  echo "Backend tests failed. Please fix the issues before committing."
-  exit 1
+if ! npm run lint 2>&1; then
+  echo '{"decision":"deny","reason":"Linting failed. Please fix the issues before finishing."}'
+  exit 2
 fi
 
 exit 0
 ```
+
+Then register it in `.openhands/hooks.json`:
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": ".openhands/hooks/lint_check.sh",
+          "timeout": 120
+        }
+      ]
+    }
+  ]
+}
+```
+
+See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide, including hook event types,
+blocking behavior, and JSON response format.
