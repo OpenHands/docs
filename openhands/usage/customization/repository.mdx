@@ -29,26 +29,42 @@ blocking dangerous commands, enforcing linting before the agent finishes, or log
 
 See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide.
 
-## Pre-commit Script
-You can add a `.openhands/pre-commit.sh` file to create a custom git pre-commit hook that runs before each commit.
-This can be used to enforce code quality standards, run tests, or perform other checks before allowing commits.
+## Repository-Specific Stop Hooks
 
-For example:
-```bash
+For repository-specific quality gates, use a [Stop hook](/openhands/usage/customization/hooks) in `.openhands/hooks.json`.
+Stop hooks run when OpenHands tries to finish a task and can block completion until formatting, linting, tests, or other
+repo-specific checks pass. They work across current agent-server-backed OpenHands flows.
+
+For example, create `.openhands/hooks/quality_gate.sh`:
+
+```bash .openhands/hooks/quality_gate.sh
 #!/bin/bash
-# Run linting checks
-cd frontend && npm run lint
-if [ $? -ne 0 ]; then
-  echo "Frontend linting failed. Please fix the issues before committing."
-  exit 1
-fi
+cd "${OPENHANDS_PROJECT_DIR:-$PWD}"
 
-# Run tests
-cd backend && pytest tests/unit
-if [ $? -ne 0 ]; then
-  echo "Backend tests failed. Please fix the issues before committing."
-  exit 1
+# Replace this with your repo's checks, such as npm run lint, pytest, or make test.
+if ! make test 2>&1; then
+  echo '{"decision":"deny","reason":"Quality checks failed. Fix them before finishing."}'
+  exit 2
 fi
 
 exit 0
 ```
+
+Then register it in `.openhands/hooks.json`:
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/quality_gate.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+If you currently use `.openhands/pre-commit.sh`, migrate those checks to Stop hooks when you want quality gates to apply
+to current agent-server-backed OpenHands flows. Move the check commands into a Stop hook script like the one above. See the
+[Hooks](/openhands/usage/customization/hooks) guide for complete behavior and JSON response details.
