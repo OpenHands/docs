@@ -115,21 +115,80 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
 
     Once your VM is running, configure DNS and TLS before starting the installer.
 
-    **Create DNS A records** pointing to your VM's public IP address:
+    OpenHands supports two routing modes for sandbox (runtime) URLs. Choose the mode that
+    fits your infrastructure requirements:
 
-    | Record | Example |
-    |--------|---------|
-    | `<your-domain>` | `openhands.example.com` |
-    | `app.<your-domain>` | `app.openhands.example.com` |
-    | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
-    | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
-    | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
-    | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
+    <Warning>
+      **Security Recommendation: Use Subdomain Routing When Possible**
 
-    **Obtain a TLS certificate signed by a well-known certificate authority (CA) such as Let's Encrypt**, with SANs
-    (Subject Alternative Names) for all of the above domains, then copy the certificate
-    (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM. Self-signed certificates
-    are not supported for the OpenHands application.
+      While many corporate IT security departments prefer to avoid wildcard certificates as a
+      general policy, **subdomain-based routing provides superior security isolation** for OpenHands.
+
+      With subdomain routing, cookies issued by applications running in sandbox environments are
+      scoped to that specific sandbox's domain (e.g., `abc123.runtime.example.com`). This prevents
+      one sandbox from accessing cookies issued by another sandbox — an important security boundary
+      when running untrusted or user-provided code.
+
+      Path-based routing shares a single domain across all sandboxes, which reduces this isolation.
+
+      **We encourage customers to request an exception from corporate IT security** by explaining
+      this security benefit. Use subdomain routing wherever possible.
+    </Warning>
+
+    <Tabs>
+      <Tab title="Subdomain Mode (Default)">
+        In subdomain mode, each sandbox is accessible at its own subdomain (e.g., `{sandbox_id}.runtime.example.com`).
+        This is the default and recommended mode for most deployments.
+
+        **Create DNS A records** pointing to your VM's public IP address:
+
+        | Record | Example |
+        |--------|---------|
+        | `<your-domain>` | `openhands.example.com` |
+        | `app.<your-domain>` | `app.openhands.example.com` |
+        | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
+        | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
+        | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
+        | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
+
+        **Obtain a TLS certificate** with SANs (Subject Alternative Names) for all of the above domains,
+        including the **wildcard** `*.runtime.<your-domain>`.
+      </Tab>
+
+      <Tab title="Path-Based Mode">
+        In path-based mode, all sandboxes share a single hostname with different path prefixes
+        (e.g., `runtime.example.com/{sandbox_id}`). Use this mode when:
+
+        - Your certificate authority does not issue wildcard certificates
+        - Compliance requirements prohibit wildcard certificates
+        - Wildcard DNS records are not supported in your environment
+
+        **Create DNS A records** pointing to your VM's public IP address:
+
+        | Record | Example |
+        |--------|---------|
+        | `<your-domain>` | `openhands.example.com` |
+        | `app.<your-domain>` | `app.openhands.example.com` |
+        | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
+        | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
+        | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
+        | `runtime.<your-domain>` | `runtime.openhands.example.com` |
+
+        **Note:** No wildcard DNS record is required. The `runtime.<your-domain>` record replaces `*.runtime.<your-domain>`.
+
+        **Obtain a TLS certificate** with SANs for the above domains. **No wildcard SAN is required** —
+        only the base `runtime.<your-domain>` hostname.
+
+        <Info>
+          You will configure **path-based routing mode** in the Admin Console under **Sandbox Configuration**
+          after installation. See [Sandbox Routing Configuration](#sandbox-routing-configuration) below.
+        </Info>
+      </Tab>
+    </Tabs>
+
+    **Certificate requirements:** Copy your TLS certificate (`.pem` or `.crt`) and private key
+    (`.pem` or `.key`) to the VM. Both CA-signed certificates (e.g., from Let's Encrypt) and
+    self-signed certificates are supported.
 
     <Warning>
       If you don't provide TLS certificates during installation, the Admin Console will use a
@@ -177,13 +236,21 @@ done
 
 Expected: each hostname above resolves to your VM's public IP address.
 
-Test that a runtime wildcard hostname resolves:
+**For subdomain routing mode (default):** Test that a runtime wildcard hostname resolves:
 
 ```bash
 getent hosts "test.runtime.${BASE_DOMAIN}" || nslookup "test.runtime.${BASE_DOMAIN}"
 ```
 
 Expected: `test.runtime.${BASE_DOMAIN}` resolves to the same target as `${BASE_DOMAIN}`.
+
+**For path-based routing mode:** Test that the runtime base hostname resolves:
+
+```bash
+getent hosts "runtime.${BASE_DOMAIN}" || nslookup "runtime.${BASE_DOMAIN}"
+```
+
+Expected: `runtime.${BASE_DOMAIN}` resolves to the same target as `${BASE_DOMAIN}`.
 
 ### Outbound connectivity checks
 
@@ -226,7 +293,8 @@ If any check fails, stop and resolve before continuing:
 | `443/TCP` inbound | Primary HTTPS entrypoint for users and service hostnames |
 | `30000/TCP` inbound | Replicated/KOTS Admin Console for install and configuration |
 | `80/TCP` inbound | HTTP entrypoint used for ingress/redirect behavior |
-| `*.runtime.<domain>` DNS + cert SAN | Runtime sandboxes are addressed by dynamic runtime-specific hostnames |
+| `*.runtime.<domain>` DNS + cert SAN | **Subdomain mode only**: Runtime sandboxes are addressed by dynamic runtime-specific hostnames |
+| `runtime.<domain>` DNS + cert SAN | **Path-based mode only**: Runtime base hostname for path-based sandbox routing |
 | `replicated.app`, `proxy.replicated.com` | Replicated control-plane/license/install paths |
 | `images.r9...`, `charts.r9...`, `updates.r9...`, `install.r9...` | Vendor distribution image/chart/update/install endpoints |
 | `traefik.github.io` | Embedded cluster ingress chart repository |
@@ -329,6 +397,18 @@ You should now see the application configuration page.
 ### LLM Configuration
 
 Enter your Anthropic API key from the [Anthropic Console](https://console.anthropic.com/).
+
+### Sandbox Routing Configuration
+
+Under **Sandbox Configuration**, select your **Sandbox Routing Mode**:
+
+- **Subdomain** (default): Routes each sandbox at `{id}.runtime.<your-domain>`. Requires wildcard DNS and certificate.
+- **Path-based**: Routes all sandboxes at `runtime.<your-domain>/{id}`. No wildcard DNS or certificate required.
+
+<Info>
+  Select **Path-based** if your certificate authority does not issue wildcard certificates
+  or if your environment does not support wildcard DNS records.
+</Info>
 
 ### GitHub Authentication
 
