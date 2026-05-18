@@ -1,0 +1,561 @@
+---
+title: AI-Enabled SDLC
+description: Transform your entire software development lifecycle with AI agents at every stage
+automation:
+  icon: arrows-spin
+  summary: >-
+    Automate feedback collection, planning, code reviews, security scans, and release notes across your SDLC.
+---
+
+<Card
+  title="View SDLC Automations"
+  icon="clock"
+  href="/openhands/usage/automations/overview"
+>
+  Set up scheduled automations for vulnerability scans, code reviews, and more.
+</Card>
+
+AI agents can transform every stage of your software development lifecycle—from gathering customer feedback to shipping secure releases. This guide shows you how to implement AI-powered automation across your entire SDLC using OpenHands.
+
+## The SDLC Stages
+
+<CardGroup cols={3}>
+  <Card title="Feedback" icon="comments">
+    Capture and triage customer feedback
+  </Card>
+  <Card title="Planning" icon="clipboard-list">
+    Plan and prioritize work
+  </Card>
+  <Card title="Design" icon="palette">
+    Architect and design solutions
+  </Card>
+  <Card title="Coding" icon="code">
+    Implement and review code
+  </Card>
+  <Card title="Testing" icon="vial">
+    Test and validate
+  </Card>
+  <Card title="Release" icon="rocket">
+    Deploy and monitor
+  </Card>
+</CardGroup>
+
+Each stage presents opportunities for AI automation. Below are detailed implementations for key jobs across the lifecycle.
+
+---
+
+## Feedback Stage: Create Issues from Sales Feedback
+
+### The Challenge
+
+Sales and customer success teams constantly receive valuable product feedback through Slack conversations. This feedback often gets lost or never makes it to the product backlog in a structured way.
+
+**Pain Points:**
+- Customer feedback is scattered across Slack channels
+- Manual issue creation is time-consuming and inconsistent
+- Important feature requests often get lost or delayed
+- Design team needs early visibility into UI/UX requirements
+
+### The Solution
+
+Use OpenHands to automatically transform Slack conversations into actionable GitHub or Jira issues, with intelligent tagging for design requirements.
+
+**Desired Outcome:** Every piece of customer feedback is automatically converted into a well-structured issue with proper categorization, priority signals, and `design-needed` tags when UI changes are involved.
+
+### Implementation
+
+<Steps>
+  <Step title="Create a Slack Trigger">
+    Set up an automation that listens for messages in `#customer-feedback` or messages with specific emoji reactions (e.g., 🎫)
+  </Step>
+  <Step title="Configure the Agent Prompt">
+    Define how the agent should analyze feedback and determine if design involvement is needed
+  </Step>
+  <Step title="Connect to GitHub/Jira">
+    Link your issue tracker and define the target project/repository
+  </Step>
+  <Step title="Set Auto-Tagging Rules">
+    Configure rules for when to apply the `design-needed` label
+  </Step>
+</Steps>
+
+### Example Configuration
+
+```yaml
+# Agent Canvas Configuration
+trigger:
+  type: slack
+  channel: "#customer-feedback"
+  reactions: ["🎫", "feature"]
+
+agent:
+  task: |
+    Analyze customer feedback and create an issue:
+    1. Extract the core feature request or bug
+    2. Determine priority from urgency signals
+    3. Check if UI/UX changes are mentioned:
+       - New screens or pages
+       - Visual changes
+       - User workflow modifications
+    4. Create issue with design-needed label if applicable
+  
+  output:
+    type: github_issue
+    repo: "myorg/product"
+    labels: ["customer-feedback"]
+    notify: slack_thread
+```
+
+### Example Prompt
+
+```
+When I receive customer feedback in Slack:
+
+1. Extract the core feature request or bug report
+2. Determine priority based on urgency words (ASAP, blocking, critical)
+3. Analyze if UI/UX changes are mentioned:
+   - New screens or pages → add design-needed
+   - Visual changes → add design-needed
+   - User workflow modifications → add design-needed
+4. Create a GitHub issue with:
+   - Clear, actionable title
+   - Structured description with customer context
+   - Appropriate labels including design-needed if applicable
+5. Reply in the Slack thread with the issue link
+```
+
+---
+
+## Planning Stage: Plan to Pull Request
+
+### The Challenge
+
+When a new issue is created in your GitHub repository, it typically requires a technical implementation plan before coding begins. This planning phase can be automated to accelerate development while maintaining quality.
+
+**Pain Points:**
+- Technical planning is often a bottleneck in the development process
+- Junior developers may struggle with implementation approach
+- Consistent technical plans improve code review efficiency
+- Automated implementation can handle routine tasks
+
+### The Solution
+
+Automatically generate technical implementation plans from new issues, then transform approved plans into working pull requests.
+
+**Desired Outcome:** New issues automatically receive a technical implementation plan as a comment, and for approved plans, a draft PR with working code is created for review.
+
+### Implementation
+
+<Steps>
+  <Step title="Set Up Issue Trigger">
+    Create an automation that triggers when issues are labeled `ready-for-planning`
+  </Step>
+  <Step title="Configure Planning Agent">
+    Agent analyzes the issue, explores the codebase, and proposes an implementation plan
+  </Step>
+  <Step title="Add Approval Gate">
+    Wait for a maintainer to approve the plan by adding `plan-approved` label
+  </Step>
+  <Step title="Implementation Agent">
+    A second agent implements the approved plan and opens a draft PR
+  </Step>
+</Steps>
+
+### Example GitHub Workflow
+
+```yaml
+# .github/workflows/plan-to-pr.yml
+name: Plan to PR Pipeline
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  generate-plan:
+    if: github.event.label.name == 'ready-for-planning'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: openhands/agent-action@v1
+        with:
+          task: |
+            Analyze issue #${{ github.event.issue.number }}
+            and create a technical implementation plan
+          output: issue-comment
+
+  implement:
+    if: github.event.label.name == 'plan-approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: openhands/agent-action@v1
+        with:
+          task: |
+            Implement the approved plan for
+            issue #${{ github.event.issue.number }}
+          output: pull-request
+          draft: true
+```
+
+---
+
+## Design Stage: Auto-Generate Design Docs
+
+### The Challenge
+
+When an issue requires design work, someone needs to create a technical design document outlining the approach. This often becomes a bottleneck as architects are pulled in multiple directions.
+
+**Pain Points:**
+- Design documents ensure alignment before coding begins
+- Writing design docs is time-consuming
+- Inconsistent documentation formats across teams
+- Important architectural decisions need to be recorded
+
+### The Solution
+
+When issues are tagged with `design-needed`, automatically generate a draft design document with architecture recommendations, trade-offs, and open questions.
+
+**Desired Outcome:** Issues tagged with `design-needed` automatically receive a draft design document PR with architecture recommendations, trade-offs, and open questions for the team to review.
+
+### Implementation
+
+<Steps>
+  <Step title="Trigger on Label">
+    Set up automation when `design-needed` label is added to an issue
+  </Step>
+  <Step title="Codebase Analysis">
+    Agent explores the repository to understand existing architecture
+  </Step>
+  <Step title="Generate RFC Document">
+    Create a design doc following your team's RFC template
+  </Step>
+  <Step title="Create PR with Doc">
+    Open a PR adding the design doc to `/docs/rfcs/` folder
+  </Step>
+</Steps>
+
+### Design Document Template
+
+```markdown
+# RFC: [Feature Name]
+
+## Summary
+Brief description of the proposed change.
+
+## Motivation
+Why are we doing this? What problem does it solve?
+
+## Detailed Design
+
+### Architecture Overview
+[Diagram and explanation]
+
+### API Changes
+[New endpoints or interface changes]
+
+### Data Model
+[Database schema changes]
+
+## Alternatives Considered
+What other approaches were evaluated?
+
+## Trade-offs
+What are we giving up with this approach?
+
+## Open Questions
+- Question 1 that needs team input
+- Question 2 about edge cases
+
+## Implementation Plan
+1. Phase 1: ...
+2. Phase 2: ...
+```
+
+---
+
+## Coding Stage: Automated PR Review
+
+### The Challenge
+
+Code reviews are essential for maintaining code quality, but they can be a bottleneck when senior developers are overloaded. An AI-powered first pass can catch common issues and speed up the review process.
+
+**Pain Points:**
+- Human reviewers spend time on mechanical checks
+- Inconsistent review quality across the team
+- Security and performance issues sometimes slip through
+- Long review queues slow down deployment velocity
+
+### The Solution
+
+Run intelligent code reviews on every PR, checking for bugs, security issues, performance concerns, and code style.
+
+**Desired Outcome:** Every PR receives an immediate automated review with inline comments for bugs, security concerns, and code style issues—allowing human reviewers to focus on architecture and business logic.
+
+### Implementation
+
+<Steps>
+  <Step title="Set Up PR Trigger">
+    Configure automation on `pull_request` opened and synchronize events
+  </Step>
+  <Step title="Define Review Criteria">
+    Specify what the agent should check: bugs, security, performance, style
+  </Step>
+  <Step title="Configure Comment Style">
+    Set severity levels and how comments should be formatted
+  </Step>
+  <Step title="Enable Suggestions">
+    Allow the agent to propose code changes as GitHub suggestions
+  </Step>
+</Steps>
+
+### Review Checklist
+
+```yaml
+review_criteria:
+  security:
+    - SQL injection vulnerabilities
+    - XSS attack vectors
+    - Hardcoded secrets or credentials
+    - Insecure dependencies
+
+  performance:
+    - N+1 query patterns
+    - Missing database indexes
+    - Unnecessary re-renders
+    - Memory leaks
+
+  code_quality:
+    - Dead code or unused imports
+    - Missing error handling
+    - Inconsistent naming conventions
+    - Missing or incorrect types
+
+  best_practices:
+    - Test coverage for new code
+    - Documentation for public APIs
+    - Breaking change detection
+```
+
+<Card
+  title="Automated Code Review"
+  icon="code-pull-request"
+  href="/openhands/usage/use-cases/code-review"
+>
+  See our dedicated guide for setting up comprehensive automated code reviews.
+</Card>
+
+---
+
+## Testing Stage: Vulnerability Remediation
+
+### The Challenge
+
+Software dependencies frequently have security vulnerabilities discovered and published as CVEs. Keeping dependencies updated is critical for security but often falls behind due to other priorities.
+
+**Pain Points:**
+- New CVEs are discovered daily in common dependencies
+- Manual dependency updates are tedious and error-prone
+- Security compliance requires timely remediation
+- Version upgrades can introduce breaking changes
+
+### The Solution
+
+Weekly automated scans detect vulnerabilities and generate PRs with dependency updates, including compatibility testing and migration guides for breaking changes.
+
+**Desired Outcome:** Weekly automated scans detect vulnerabilities and generate PRs with dependency updates, including compatibility testing and migration guides for breaking changes.
+
+### Implementation
+
+<Steps>
+  <Step title="Schedule Weekly Scan">
+    Create a scheduled automation that runs every Monday at 9 AM
+  </Step>
+  <Step title="Configure Scanning Tool">
+    Set up integration with npm audit, Snyk, or GitHub Dependabot alerts
+  </Step>
+  <Step title="Define Fix Strategy">
+    Specify how the agent should approach fixes: patch only, minor versions, or major with migration
+  </Step>
+  <Step title="Test & PR Creation">
+    Agent runs tests, documents changes, and creates a PR for review
+  </Step>
+</Steps>
+
+### Example Scheduled Automation
+
+```yaml
+# Weekly Vulnerability Scan
+schedule:
+  cron: "0 9 * * 1"  # Every Monday 9 AM
+
+agent:
+  name: security-scanner
+  task: |
+    1. Run npm audit / pip-audit / cargo audit
+    2. Parse CVE results and severity levels
+    3. For each HIGH/CRITICAL vulnerability:
+       - Research fix version
+       - Update dependency
+       - Run test suite
+       - Document breaking changes
+    4. Create PR with:
+       - Summary of fixed CVEs
+       - Risk assessment
+       - Test results
+       - Migration notes if needed
+    5. Notify #security-alerts channel
+```
+
+<Card
+  title="Vulnerability Remediation Guide"
+  icon="shield-halved"
+  href="/openhands/usage/use-cases/vulnerability-remediation"
+>
+  See our comprehensive guide for automated vulnerability scanning and remediation.
+</Card>
+
+---
+
+## Release Stage: Generate Release Notes
+
+### The Challenge
+
+When preparing a release, someone needs to compile all the changes since the last release into a coherent changelog. This involves reviewing merged PRs, categorizing changes, and writing user-friendly descriptions.
+
+**Pain Points:**
+- Release notes are essential for users to understand what's changed
+- Manually compiling changes is tedious and error-prone
+- Breaking changes need clear migration guidance
+- Consistent formatting improves readability
+
+### The Solution
+
+When a new version tag is pushed, release notes are automatically generated from merged PRs, categorized by type, with highlighted breaking changes and migration instructions.
+
+**Desired Outcome:** When a version tag is pushed, release notes are automatically generated from merged PRs, categorized by type, with highlighted breaking changes and migration instructions.
+
+### Implementation
+
+<Steps>
+  <Step title="Trigger on Tag Push">
+    Set up automation to trigger when a version tag (v*) is pushed
+  </Step>
+  <Step title="Analyze Git History">
+    Agent reviews all commits and PRs since the previous tag
+  </Step>
+  <Step title="Categorize Changes">
+    Group into: Breaking, Features, Fixes, Performance, Documentation
+  </Step>
+  <Step title="Create GitHub Release">
+    Publish formatted release notes to GitHub Releases
+  </Step>
+</Steps>
+
+### Example Release Notes Output
+
+```markdown
+# v2.5.0 Release Notes
+
+## ⚠️ Breaking Changes
+- **API:** Renamed `/users/list` to `/users` (#234)
+  Migration: Update all API calls to use new endpoint
+
+## ✨ Features
+- Add dark mode support (#256)
+- Implement webhook notifications (#248)
+- New dashboard analytics view (#241)
+
+## 🐛 Bug Fixes
+- Fix memory leak in WebSocket handler (#253)
+- Resolve timezone display issues (#249)
+- Fix pagination on mobile devices (#245)
+
+## ⚡ Performance
+- Optimize database queries, 40% faster (#251)
+- Lazy load images on scroll (#247)
+
+## 📚 Documentation
+- Updated API reference (#255)
+- Added deployment guide (#250)
+
+Full Changelog: v2.4.0...v2.5.0
+```
+
+---
+
+## Automate Your SDLC
+
+You can implement any of these workflows using [OpenHands Automations](/openhands/usage/automations/overview). Copy these prompts into a new conversation to get started:
+
+<Tabs>
+  <Tab title="Feedback → Issues">
+    ```
+    Create an automation that monitors #customer-feedback in Slack.
+    
+    When a message gets the 🎫 reaction:
+    1. Extract the feature request or bug report
+    2. Determine if UI/UX changes are needed
+    3. Create a GitHub issue with appropriate labels
+    4. Reply in the thread with the issue link
+    
+    Add the design-needed label if the feedback mentions:
+    - New screens or UI components
+    - Visual or layout changes
+    - User workflow modifications
+    ```
+  </Tab>
+  <Tab title="Issue → PR">
+    ```
+    Create an automation that triggers when an issue gets the 
+    "ready-for-planning" label.
+    
+    The agent should:
+    1. Analyze the issue requirements
+    2. Explore the codebase to understand the architecture
+    3. Create a technical implementation plan as a comment
+    4. Wait for "plan-approved" label
+    5. Implement the plan and create a draft PR
+    ```
+  </Tab>
+  <Tab title="Weekly Security Scan">
+    ```
+    Create an automation called "Security Scan" that runs weekly.
+    
+    It should:
+    1. Check for known vulnerabilities in dependencies
+    2. Scan for hardcoded secrets or API keys
+    3. Look for common security misconfigurations
+    4. Create PRs to fix HIGH/CRITICAL issues
+    5. Alert #security if issues are found
+    
+    Learn more: https://docs.openhands.dev/openhands/usage/use-cases/vulnerability-remediation
+    ```
+  </Tab>
+  <Tab title="Release Notes">
+    ```
+    Create an automation that triggers when a version tag is pushed.
+    
+    It should:
+    1. Find all PRs merged since the last tag
+    2. Categorize them (Breaking, Features, Fixes, etc.)
+    3. Generate formatted release notes
+    4. Create a GitHub Release with the notes
+    5. Post to #releases channel
+    ```
+  </Tab>
+</Tabs>
+
+## Related Resources
+
+<CardGroup cols={2}>
+  <Card title="Automations Overview" icon="clock" href="/openhands/usage/automations/overview">
+    Learn how to set up scheduled and event-triggered automations
+  </Card>
+  <Card title="Code Review" icon="code-pull-request" href="/openhands/usage/use-cases/code-review">
+    Detailed guide for automated PR reviews
+  </Card>
+  <Card title="Vulnerability Remediation" icon="shield-halved" href="/openhands/usage/use-cases/vulnerability-remediation">
+    Comprehensive security scanning and fixing
+  </Card>
+  <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
+    Write effective prompts for better results
+  </Card>
+</CardGroup>
