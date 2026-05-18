@@ -1,0 +1,494 @@
+---
+title: API Key Rate Limits
+description: Configure per-API-key rate limits for the Runtime API
+icon: gauge
+---
+
+This guide explains how to configure rate limits for the internal API key that
+connects the OpenHands server to the Runtime API. This is an **administrator task**
+typically performed after initial deployment if you need to enforce request limits.
+
+## Background
+
+OpenHands Enterprise uses an internal API key to authenticate requests between two
+backend services:
+
+- **OpenHands Server** — the main application that users interact with
+- **Runtime API** — the service that manages sandbox containers
+
+```
+Users → OpenHands Server → (internal API key) → Runtime API → Sandboxes
+```
+
+During installation, you created two Kubernetes secrets that hold the same key value:
+- `sandbox-api-key` — used by the OpenHands Server
+- `default-api-key` — used by the Runtime API
+
+<Info>
+  This internal API key is **not** the same as user API keys (which start with `sk-oh-`).
+  Users never see or interact with this internal key.
+</Info>
+
+## Default Behavior
+
+By default, the internal API key has **no rate limit**. This means the OpenHands Server
+can make unlimited requests to the Runtime API.
+
+You may want to add a rate limit if:
+- You're experiencing resource contention in the Runtime API
+- You want to prevent runaway automation from overwhelming the system
+- You need to enforce fair usage across multiple OpenHands Server instances
+
+## How Rate Limiting Works
+
+When configured, rate limiting is enforced per API key using a **fixed window** strategy:
+
+1. Each API key can have a `max_requests_per_minute` value
+2. Requests are counted within each 60-second window
+3. Requests exceeding the limit receive HTTP 429 (Too Many Requests)
+
+If `max_requests_per_minute` is not set (the default), no rate limiting is applied.
+
+## Configuring a Rate Limit
+
+We provide a script that handles all the steps: retrieving credentials from Kubernetes,
+authenticating to the Runtime API, and updating the rate limit.
+
+### Prerequisites
+
+Before running the script, ensure you have:
+
+- **kubectl** configured with access to your OpenHands namespace
+
+That's it! The script runs entirely via `kubectl exec` inside the cluster, so you don't
+need curl or python3 installed locally.
+
+### The Script
+
+Save this script as `set-rate-limit.sh` and make it executable with `chmod +x set-rate-limit.sh`:
+
+```bash
+#!/bin/bash
+#
+# set-rate-limit.sh
+#
+# Configure or check the rate limit for the internal API key used between
+# the OpenHands Server and the Runtime API.
+#
+# This script runs commands inside the runtime-api pod using kubectl exec,
+# so it works regardless of whether the Runtime API is exposed externally.
+#
+# Usage:
+#   ./set-rate-limit.sh --check         # Check current rate limit
+#   ./set-rate-limit.sh <rate-limit>    # Set rate limit
+#
+# Examples:
+#   ./set-rate-limit.sh --check    # Display current rate limit
+#   ./set-rate-limit.sh 500        # Set limit to 500 requests per minute
+#   ./set-rate-limit.sh null       # Remove limit (allow unlimited)
+#
+# Prerequisites:
+#   - kubectl configured with access to the openhands namespace
+#
+
+set -e
+
+# ==============================================================================
+# Configuration
+# ==============================================================================
+
+NAMESPACE="openhands"
+RUNTIME_API_URL="http://localhost:5000"  # Internal URL within the pod
+
+# ==============================================================================
+# Parse command line arguments
+# ==============================================================================
+
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 [--check | <rate-limit>]"
+    echo ""
+    echo "Options:"
+    echo "  --check     Display the current rate limit without changing it"
+    echo ""
+    echo "Arguments:"
+    echo "  rate-limit  Requests per minute (integer), or 'null' to remove the limit"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --check     # Check current rate limit"
+    echo "  $0 500         # Set limit to 500 requests per minute"
+    echo "  $0 null        # Remove limit (allow unlimited requests)"
+    exit 1
+fi
+
+CHECK_ONLY=false
+RATE_LIMIT=""
+
+if [ "$1" == "--check" ]; then
+    CHECK_ONLY=true
+    echo "Checking current rate limit..."
+else
+    RATE_LIMIT="$1"
+    # Validate rate limit is either a number or "null"
+    if [ "$RATE_LIMIT" != "null" ] && ! [[ "$RATE_LIMIT" =~ ^[0-9]+$ ]]; then
+        echo "Error: rate-limit must be a positive integer or 'null'"
+        exit 1
+    fi
+    echo "Rate limit to set: $RATE_LIMIT"
+fi
+echo ""
+
+# ==============================================================================
+# Step 1: Find the runtime-api pod
+# ==============================================================================
+
+echo "Step 1: Finding runtime-api pod..."
+
+# Get the name of a running runtime-api pod
+POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=runtime-api \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+if [ -z "$POD" ]; then
+    echo "Error: Could not find a runtime-api pod in namespace '$NAMESPACE'"
+    echo "Make sure the runtime-api deployment is running."
+    exit 1
+fi
+
+echo "  ✓ Found pod: $POD"
+
+# ==============================================================================
+# Step 2: Retrieve the admin password from Kubernetes secrets
+# ==============================================================================
+
+echo "Step 2: Retrieving admin password from Kubernetes secret..."
+
+# The admin password was created during installation and stored in the
+# 'admin-password' secret in the openhands namespace
+ADMIN_PASSWORD=$(kubectl get secret admin-password -n "$NAMESPACE" \
+    -o jsonpath='{.data.admin-password}' | base64 -d)
+
+if [ -z "$ADMIN_PASSWORD" ]; then
+    echo "Error: Could not retrieve admin password from Kubernetes secret."
+    echo "Make sure the 'admin-password' secret exists in the '$NAMESPACE' namespace."
+    exit 1
+fi
+
+echo "  ✓ Admin password retrieved"
+
+# ==============================================================================
+# Step 3: Run the rate limit update inside the pod
+# ==============================================================================
+
+# Determine the action description for output
+if [ "$CHECK_ONLY" = true ]; then
+    echo "Step 3: Connecting to runtime-api pod and checking rate limit..."
+else
+    echo "Step 3: Connecting to runtime-api pod and updating rate limit..."
+fi
+
+# We'll execute a Python script inside the pod that:
+# 1. Gets a challenge from the local API
+# 2. Computes the PBKDF2 hash
+# 3. Authenticates and gets a JWT token
+# 4. Finds the default API key
+# 5. Optionally updates its rate limit (if not --check mode)
+
+# Pass CHECK_ONLY and RATE_LIMIT to the Python script
+# For check-only mode, we pass "CHECK" as the rate limit
+if [ "$CHECK_ONLY" = true ]; then
+    RATE_LIMIT_ARG="'CHECK'"
+else
+    RATE_LIMIT_ARG="$RATE_LIMIT"
+fi
+
+kubectl exec -n "$NAMESPACE" "$POD" -- python3 -c "
+import json
+import hashlib
+import binascii
+import urllib.request
+import urllib.error
+
+RUNTIME_API_URL = '$RUNTIME_API_URL'
+ADMIN_PASSWORD = '''$ADMIN_PASSWORD'''
+RATE_LIMIT_ARG = $RATE_LIMIT_ARG  # This will be an int, None (from 'null'), or 'CHECK'
+
+CHECK_ONLY = RATE_LIMIT_ARG == 'CHECK'
+RATE_LIMIT = None if CHECK_ONLY else RATE_LIMIT_ARG
+
+def api_request(path, method='GET', data=None, token=None):
+    \"\"\"Make an HTTP request to the Runtime API.\"\"\"
+    url = f'{RUNTIME_API_URL}{path}'
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    
+    req = urllib.request.Request(url, method=method, headers=headers)
+    if data:
+        req.data = json.dumps(data).encode('utf-8')
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8')
+        raise Exception(f'HTTP {e.code}: {error_body}')
+
+# Step 3a: Get authentication challenge
+print('  Getting authentication challenge...')
+challenge_resp = api_request('/api/admin/challenge')
+challenge = challenge_resp['challenge']
+salt = challenge_resp['salt']
+
+# Step 3b: Compute PBKDF2 hash
+# The salt is: salt + challenge (concatenated as strings, then UTF-8 encoded)
+# Parameters: 10000 iterations, 32-byte output
+combined_salt = (salt + challenge).encode('utf-8')
+dk = hashlib.pbkdf2_hmac('sha256', ADMIN_PASSWORD.encode(), combined_salt, 10000, dklen=32)
+hash_hex = binascii.hexlify(dk).decode()
+
+# Step 3c: Authenticate and get JWT token
+print('  Authenticating...')
+login_resp = api_request('/api/admin/login', method='POST', data={
+    'challenge': challenge,
+    'hash': hash_hex
+})
+token = login_resp['token']
+print('  ✓ Authentication successful')
+
+# Step 3d: Get all API keys and find the 'default' key
+print('  Finding default API key...')
+keys = api_request('/api/admin/api-keys', token=token)
+
+default_key = None
+for key in keys:
+    if key.get('name') == 'default':
+        default_key = key
+        break
+
+if not default_key:
+    print('  Error: Could not find API key named \"default\"')
+    print(f'  Available keys: {[k.get(\"name\") for k in keys]}')
+    exit(1)
+
+key_id = default_key['id']
+current_limit = default_key.get('max_requests_per_minute')
+current_display = 'unlimited' if current_limit is None else current_limit
+print(f'  ✓ Found default key (ID: {key_id})')
+print()
+print('================================================')
+print(f'Current rate limit: {current_display}')
+print('================================================')
+
+# Step 3e: Update the rate limit (only if not in check-only mode)
+if not CHECK_ONLY:
+    new_display = 'unlimited' if RATE_LIMIT is None else RATE_LIMIT
+    print()
+    print(f'  Updating rate limit to {new_display}...')
+    
+    updated_key = api_request(f'/api/admin/api-keys/{key_id}', method='PUT', token=token, data={
+        'max_requests_per_minute': RATE_LIMIT
+    })
+    
+    final_limit = updated_key.get('max_requests_per_minute')
+    final_display = 'unlimited' if final_limit is None else final_limit
+    print(f'  ✓ Rate limit updated successfully')
+    print()
+    print('================================================')
+    print(f'New rate limit: {final_display}')
+    print('================================================')
+"
+```
+
+### Usage Examples
+
+**Check the current rate limit:**
+
+```bash
+./set-rate-limit.sh --check
+```
+
+**Set a rate limit of 500 requests per minute:**
+
+```bash
+./set-rate-limit.sh 500
+```
+
+**Remove the rate limit (allow unlimited requests):**
+
+```bash
+./set-rate-limit.sh null
+```
+
+### Expected Output
+
+**Checking the current rate limit:**
+
+```
+Checking current rate limit...
+
+Step 1: Finding runtime-api pod...
+  ✓ Found pod: openhands-runtime-api-5d4f6b7c8d-x2k9m
+Step 2: Retrieving admin password from Kubernetes secret...
+  ✓ Admin password retrieved
+Step 3: Connecting to runtime-api pod and checking rate limit...
+  Getting authentication challenge...
+  Authenticating...
+  ✓ Authentication successful
+  Finding default API key...
+  ✓ Found default key (ID: 1)
+
+================================================
+Current rate limit: unlimited
+================================================
+```
+
+**Setting a rate limit:**
+
+```
+Rate limit to set: 500
+
+Step 1: Finding runtime-api pod...
+  ✓ Found pod: openhands-runtime-api-5d4f6b7c8d-x2k9m
+Step 2: Retrieving admin password from Kubernetes secret...
+  ✓ Admin password retrieved
+Step 3: Connecting to runtime-api pod and updating rate limit...
+  Getting authentication challenge...
+  Authenticating...
+  ✓ Authentication successful
+  Finding default API key...
+  ✓ Found default key (ID: 1)
+
+================================================
+Current rate limit: unlimited
+================================================
+
+  Updating rate limit to 500...
+  ✓ Rate limit updated successfully
+
+================================================
+New rate limit: 500
+================================================
+```
+
+## Choosing a Rate Limit Value
+
+The appropriate rate limit depends on your usage patterns:
+
+| Scenario | Suggested Limit |
+|----------|-----------------|
+| Small team (< 10 concurrent users) | 200-300 req/min |
+| Medium deployment (10-50 users) | 500-1000 req/min |
+| Large deployment or heavy automation | 1000+ req/min |
+
+<Warning>
+  Setting the limit too low can cause sandbox operations to fail with 429 errors.
+  Monitor your Runtime API logs after making changes.
+</Warning>
+
+## Troubleshooting
+
+### Checking Current Rate Limit Status
+
+View the Runtime API logs to see rate limit events:
+
+```bash
+kubectl logs -l app.kubernetes.io/name=runtime-api -n openhands --tail=100 | grep -i "rate limit"
+```
+
+When a rate limit is exceeded, you'll see messages like:
+
+```
+Rate limit exceeded for default at /start
+```
+
+### Still Seeing Rate Limits After Upgrading?
+
+If you upgraded your deployment but are still experiencing 429 errors, the most likely
+cause is that you're running an older version of the Runtime API that has **hardcoded
+rate limits**.
+
+#### Background: Rate Limiting History
+
+Prior to Helm chart version **0.2.8**, the Runtime API had a hardcoded limit of
+**100 requests per minute** on all endpoints. This was not configurable — every
+deployment was subject to this limit regardless of settings.
+
+Starting with chart version **0.2.8** (image `sha-1a920e8`), rate limiting was changed to:
+- **No rate limit by default** — the internal API key is created without a limit
+- **Configurable per-key** — administrators can optionally set limits via the admin API
+
+| Chart Version | Image Tag | Rate Limiting Behavior |
+|---------------|-----------|------------------------|
+| 0.2.8 (latest) | `sha-1a920e8` | No limit by default, configurable |
+| 0.2.6 - 0.2.7 | `sha-7857be8` | No limit by default, configurable |
+| 0.2.1 - 0.2.5 | `sha-20ec8b3` | **Hardcoded 100 req/min** |
+| Earlier | Various | **Hardcoded 100 req/min** |
+
+#### Step 1: Check Your Chart Version
+
+```bash
+helm list -n openhands | grep runtime-api
+```
+
+If you're on a version older than 0.2.6, you need to upgrade to remove the hardcoded limits.
+
+#### Step 2: Check the Running Image
+
+Verify what image is actually running in your cluster:
+
+```bash
+kubectl get deployment -n openhands -l app.kubernetes.io/name=runtime-api \
+  -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'
+```
+
+You should see `ghcr.io/openhands/runtime-api:sha-1a920e8` (or `sha-7857be8` or newer).
+
+If you see an older image tag (like `sha-20ec8b3` or earlier), you're running the old
+code with hardcoded limits.
+
+#### Step 3: Check the Error Message Format
+
+The error message format tells you which version of rate limiting is active:
+
+- **Old (hardcoded)**: `Rate limit exceeded` (generic message from slowapi library)
+- **New (configurable)**: `Rate limit exceeded: 500 per 1 minute` (includes the specific limit)
+
+If you see the old format, the new code isn't running yet.
+
+#### Step 4: Upgrade the Chart
+
+To get configurable rate limiting, upgrade to chart version 0.2.8 or later:
+
+```bash
+helm repo update
+helm upgrade runtime-api -n openhands \
+  oci://ghcr.io/all-hands-ai/helm-charts/runtime-api \
+  -f your-values.yaml
+```
+
+After upgrading, verify the new pods are running:
+
+```bash
+kubectl rollout status deployment -n openhands -l app.kubernetes.io/name=runtime-api
+```
+
+### Common Issues
+
+**429 errors after setting a limit**: Your limit may be too low. Check the logs to see
+how many requests are being made, then adjust the limit accordingly.
+
+**Authentication failures**: JWT tokens expire after 24 hours. If you get 401 errors,
+repeat the authentication steps to get a new token.
+
+**"Admin functionality is disabled" error**: The `ADMIN_PASSWORD` environment variable
+may not be set in the Runtime API deployment. Check the deployment configuration.
+
+## Related Configuration
+
+<CardGroup cols={2}>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Configure memory, CPU, and storage limits for sandboxes.
+  </Card>
+  <Card title="K8s Install Overview" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Return to the Kubernetes installation overview.
+  </Card>
+</CardGroup>
