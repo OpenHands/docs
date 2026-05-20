@@ -15,6 +15,9 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `docs.json` — Mintlify site configuration (nav tabs, redirects, OpenAPI integration)
 - `overview/` — high-level docs (intro, quickstart, community, skills overview)
 - `openhands/usage/` — product docs for Web/Cloud/CLI/etc.
+- `openhands/usage/agent-canvas/` — Agent Canvas Beta docs (setup, backends, development, profiles, customize/settings, automations, self-hosting, troubleshooting)
+- `openhands/usage/run-openhands/local-setup.mdx` and related Local GUI pages remain on their existing URLs as **Local GUI (Legacy)** docs; prefer Agent Canvas pages for the current local/self-hosted UI
+
 - `sdk/` — Agent SDK docs (guides, architecture, API reference pages)
 - `openapi/` — OpenAPI specs consumed by Mintlify
   - `openapi/openapi.json` — OpenHands REST API schema
