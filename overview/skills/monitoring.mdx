@@ -1,0 +1,169 @@
+---
+title: Monitoring and Improving Skills
+description: Monitor skill performance in production using logging, evaluation metrics, dashboarding, and automated feedback aggregation.
+---
+
+After creating and deploying a skill, monitor its performance to ensure it works correctly in production. This is particularly important for skills used in automated workflows like CI/CD pipelines.
+
+## The Monitoring Workflow
+
+Production skill monitoring follows a four-part process:
+
+1. **Logging** - Record agent behavior during skill execution
+2. **Evaluating** - Measure performance using relevant metrics
+3. **Dashboarding** - Visualize metrics over time
+4. **Aggregating** - Use feedback to improve the skill
+
+## Logging Agent Behavior
+
+OpenHands includes OpenTelemetry-compatible instrumentation via the [Laminar](https://github.com/lmnr-ai/lmnr) library. Set up logging to capture agent traces during skill execution.
+
+### For SDK Users
+
+Set the `LMNR_PROJECT_API_KEY` environment variable to send traces to Laminar, or configure any OpenTelemetry-compatible backend:
+
+```bash
+export LMNR_PROJECT_API_KEY="your-api-key"
+```
+
+See the [SDK Observability Guide](/sdk/guides/observability) for detailed configuration options including Honeycomb, Jaeger, Datadog, and other OTLP-compatible backends.
+
+### For GitHub Actions
+
+When using skills in GitHub workflows, add the API key to your action configuration. See the [PR review action example](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/action.yml) for reference.
+
+## Evaluating Performance
+
+Define metrics that reflect whether your skill is working correctly. Effective metrics measure actual outcomes rather than intermediate steps.
+
+### Example: PR Review Skill
+
+For a code review skill, measure suggestion acceptance rate:
+
+```
+suggestion_accuracy = ai_suggestions_reflected / ai_suggestions
+```
+
+Track:
+- Number of suggestions made by the agent
+- Number of suggestions incorporated by developers
+
+### Implementation Approach
+
+1. **Create an evaluation workflow** - Run after the main task completes (e.g., after PR merge)
+2. **Collect relevant data** - Agent output, human responses, final results
+3. **Use LLM as judge** - Feed data into a prompt that calculates metrics
+
+Example evaluation prompt excerpt:
+
+```
+### ai_suggestions
+Count items where the body contains an actionable code suggestion
+(look for code blocks, "suggestion:", specific changes to make).
+Do NOT count general praise or approval-only comments.
+
+### ai_suggestions_reflected
+Count suggestions that were incorporated. A suggestion is "reflected" if:
+1. A human response indicates the suggestion was implemented, OR
+2. The suggestion appears in the final diff
+```
+
+See the [evaluation action example](https://github.com/OpenHands/extensions/blob/main/.github/workflows/pr-review-evaluation.yml) for a complete implementation.
+
+## Dashboarding Metrics
+
+Visualize metrics over time to identify trends. With Laminar or similar platforms, create SQL queries that aggregate evaluation results.
+
+Track:
+- Metric trends (improving or degrading)
+- Performance across different contexts (repos, file types, etc.)
+- Comparison between prompt variations or models
+
+## Aggregating Feedback for Improvement
+
+Use language models to analyze patterns in evaluation results and suggest skill improvements.
+
+### Process
+
+1. **Collect evaluation data** - Aggregate analyses from recent runs
+2. **Provide current skill content** - Include the existing SKILL.md
+3. **Use a reasoning model** - Feed both into a long-context model (Gemini-2-Pro, Claude 3.5 Sonnet, etc.)
+4. **Extract actionable suggestions** - Review model output for concrete improvements
+
+### Example Output
+
+Example output from aggregation:
+
+```
+### Issue: Context-Unaware Suggestions
+The agent suggests technically correct changes that conflict with
+repository conventions (e.g., suggesting integration tests when the
+repo uses mocks).
+
+Frequency: ~15% of suggestions
+Recommendation: Add repo-specific testing philosophy to references/
+```
+
+## Deployment in Automated Workflows
+
+Skills can run automatically in CI/CD pipelines. The [OpenHands Extensions repository](https://github.com/OpenHands/extensions/tree/main/plugins) includes example GitHub Actions for common automation patterns.
+
+### Common Automation Use Cases
+
+- **PR review** - Run code review skills when PRs are marked "ready for review"
+- **Issue triage** - Classify and label new issues
+- **Code generation** - Generate boilerplate or documentation
+- **Security scanning** - Check for vulnerabilities and suggest fixes
+
+See the [GitHub Workflows guide](/sdk/guides/github-workflows/pr-review) for SDK-based automation examples.
+
+## Best Practices
+
+<Accordion title="Choose Meaningful Metrics">
+  Select metrics that reflect real-world outcomes, not just intermediate steps.
+  
+  **Good metrics:**
+  - Suggestion acceptance rate (for code review)
+  - Issue classification accuracy (for triage)
+  - Time to resolution (for bug fixing)
+  
+  **Poor metrics:**
+  - Number of suggestions made
+  - Lines of code generated
+  - Tokens consumed
+</Accordion>
+
+<Accordion title="Start Simple">
+  Begin with basic logging before implementing complex evaluation pipelines.
+  
+  1. Set up OpenTelemetry logging
+  2. Review traces manually to understand agent behavior
+  3. Identify patterns in successes and failures
+  4. Design metrics based on observed patterns
+  5. Automate evaluation
+</Accordion>
+
+<Accordion title="Iterate on Skills Based on Data">
+  Use evaluation results to make targeted improvements:
+  
+  - Low accuracy → Review skill instructions for clarity
+  - Inconsistent behavior → Add more specific examples
+  - Context errors → Expand references/ with domain knowledge
+  - Repetitive failures → Create scripts for deterministic tasks
+</Accordion>
+
+<Accordion title="Monitor Multiple Dimensions">
+  Track performance across different contexts:
+  
+  - **By repository** - Different repos may need different approaches
+  - **By file type** - Skills may work better on certain languages
+  - **By time** - Identify degradation or improvement trends
+  - **By model** - Compare different LLM backends
+</Accordion>
+
+## Further Reading
+
+- **[SDK Observability Guide](/sdk/guides/observability)** - Detailed OpenTelemetry configuration
+- **[GitHub Workflows](/sdk/guides/github-workflows/pr-review)** - Automate skills in CI/CD
+- **[Hooks Guide](/sdk/guides/hooks)** - Event-driven skill execution
+- **[Creating Skills](/overview/skills/creating)** - Skill creation fundamentals
