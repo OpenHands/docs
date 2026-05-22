@@ -604,6 +604,33 @@ replacement for either.
 | Content past 30k chars is invisible | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
 | `thinking_blocks` not scanned | Scanning model reasoning risks false positives on deliberation | Separate injection-only CoT scan |
 
+#### Extraction budget and primary-surface-first ordering
+
+The 30k-character cap is applied per scanning corpus, not per field: every
+field competes for one shared budget (the `_BoundedSegments` buffer in
+`defense_in_depth/utils.py`). That creates a secondary risk — a single
+oversized field could consume the whole budget and leave higher-value
+fields unscanned. `tool_name` has no length validation in the SDK, so a 30k
+hallucinated name is a real starvation vector, not just a theoretical one.
+
+The analyzer addresses this by **extraction order**, not a per-field cap:
+the primary attack surface is added first, so it always receives budget
+even when a later field is adversarially large.
+
+- Executable corpus: `tool_call.arguments` (the primary prompt-injection
+  surface) → `tool_name` → `tool_call.name`.
+- Reasoning corpus: `summary` (what the agent is about to do) →
+  `reasoning_content` → `thought`.
+
+The two corpora are extracted with separate budgets and concatenated
+without a second outer cap, so a budget-filling `arguments` payload cannot
+crowd `summary` out of the injection scan.
+
+**Remaining boundary** (a strict xfail in the test suite): a payload past
+30k characters *within a single field* is still truncated and invisible.
+That is the deliberate ReDoS trade-off already listed above; extraction
+order does not change it.
+
 <Note>
 Ready-to-run example: [examples/01_standalone_sdk/47_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/47_defense_in_depth_security.py)
 </Note>
