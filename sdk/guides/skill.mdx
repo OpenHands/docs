@@ -9,6 +9,57 @@ This guide shows how to implement skills in the SDK. For conceptual overview, se
 
 OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers.
 
+## Skill Injection Behavior
+
+Understanding where skill content appears in the prompt is critical. The behavior differs based on skill format and trigger configuration:
+
+| Skill Format | Trigger | Where Content Appears | Model Mediated? |
+|--------------|---------|----------------------|-----------------|
+| **AgentSkills** (`SKILL.md`) | Any | `<available_skills>` (description only) | ✅ Yes — agent calls `invoke_skill()` |
+| **AgentSkills** (`SKILL.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+| **Legacy** (inline/`*.md`) | `None` | **`<REPO_CONTEXT>` (full content in the initial system prompt; included in LLM context for each turn)** | ❌ No |
+| **Legacy** (inline/`*.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+
+<Warning>
+**Token Usage Warning**: Legacy skills with `trigger=None` add their **full content** to `<REPO_CONTEXT>` in the initial `SystemPromptEvent`. That system message remains part of the conversation context for subsequent LLM calls, so the content still affects token usage on each turn. Consider using AgentSkills format (`SKILL.md`) for progressive disclosure instead.
+</Warning>
+
+### Prompt Structure
+
+Skills appear in different parts of the system prompt:
+
+```xml icon="file"
+<!-- System Prompt Structure -->
+
+<REPO_CONTEXT>
+  <!-- Legacy trigger=None skills: FULL content in the initial system prompt;
+       included in LLM context for each turn while retained in history -->
+  [BEGIN context from [agents]]
+  ... AGENTS.md content ...
+  [END Context]
+</REPO_CONTEXT>
+
+<SKILLS>
+  <available_skills>
+    <!-- AgentSkills + legacy with triggers: description only -->
+    <skill>
+      <name>github</name>
+      <description>Interact with GitHub...</description>
+    </skill>
+  </available_skills>
+</SKILLS>
+```
+
+When a trigger matches, content is injected into the **user message**:
+
+```xml icon="file"
+<EXTRA_INFO>
+The following information has been included based on a keyword match for "github".
+Skill location: /path/to/skill
+... skill content ...
+</EXTRA_INFO>
+```
+
 ## Context Loading Methods
 
 | Method | When Content Loads | Use Case |
@@ -49,6 +100,10 @@ agent_context = AgentContext(
     ]
 )
 ```
+
+<Warning>
+**Important**: Inline skills with `trigger=None` use **legacy format** behavior — full content is added to `<REPO_CONTEXT>` in the initial system prompt and remains part of the conversation context for subsequent LLM calls. For large skills, consider using the AgentSkills `SKILL.md` format for progressive disclosure.
+</Warning>
 
 ## Trigger-Loaded Context
 
@@ -836,9 +891,15 @@ from openhands.sdk.context.skills import load_skills_from_dir
 repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
 ```
 
-- **repo_skills**: Skills from `repo.md` files (always active)
-- **knowledge_skills**: Skills from `knowledge/` subdirectories
-- **agent_skills**: Skills from `SKILL.md` files (AgentSkills standard)
+| Return Value | Source Files | Injection Behavior |
+|--------------|--------------|-------------------|
+| **repo_skills** | `repo.md`, `AGENTS.md`, `.cursorrules` | Full content in `<REPO_CONTEXT>` in the initial system prompt; included in LLM context for each turn |
+| **knowledge_skills** | `knowledge/` subdirectories, `*.md` with triggers | Listed in `<available_skills>`, auto-inject on trigger |
+| **agent_skills** | `SKILL.md` files (AgentSkills standard) | Listed in `<available_skills>`, agent calls `invoke_skill()` |
+
+<Tip>
+When passing to `AgentContext(skills=...)`, all three types are accepted. The injection behavior depends on the skill's `is_agentskills_format` flag and `trigger` field — see [Skill Injection Behavior](#skill-injection-behavior).
+</Tip>
 
 #### `discover_skill_resources()`
 
@@ -1054,6 +1115,167 @@ Follow these guidelines:
 - Use absolute paths (e.g., `"/path/to/prompt.j2"`) to load from any location
 - Pass variables to the template via `system_prompt_kwargs`
 - The `system_message_suffix` from `AgentContext` is automatically appended after your custom prompt
+
+## Dynamic Command Execution
+
+Skills support inline shell command execution for injecting dynamic context at render time. This is useful for including repository state, environment information, or computed values in skill content.
+
+<Warning>
+**Security**: Commands execute with full shell privileges. Only use this feature with trusted skill sources. User-provided content should never be passed to command execution.
+</Warning>
+
+### Basic Syntax
+
+Use `` !`command` `` to execute a shell command and replace it with stdout:
+
+```markdown icon="markdown"
+---
+name: repo-context
+description: Injects current repository state
+triggers:
+  - git
+  - commit
+---
+
+# Repository Context
+
+Current branch: !`git branch --show-current`
+Last commit: !`git log -1 --oneline`
+```
+
+When triggered, the skill content becomes:
+
+```markdown icon="markdown"
+# Repository Context
+
+Current branch: main
+Last commit: a1b2c3d Fix authentication bug
+```
+
+### Safety Rules
+
+**Code blocks are never executed.** Both fenced and inline code blocks are preserved:
+
+````markdown icon="markdown"
+# Safe Examples
+
+Regular inline code: `git status` → preserved as-is
+Fenced block: → preserved as-is
+```bash
+!`echo "not executed"`
+```
+
+Dynamic command: !`echo "executed"` → replaced with "executed"
+````
+
+**Unclosed fenced blocks protect trailing content.** If a fenced block isn't closed (odd number of ``` delimiters), everything after it is treated as inside the fence:
+
+````markdown icon="markdown"
+```bash
+!`echo "inside fence - not executed"`
+```
+
+!`echo "between fences - executed"`
+
+```bash
+!`echo "unclosed fence - not executed"`
+````
+
+### Escape Syntax
+
+Use `` \!`cmd` `` to output the literal text `` !`cmd` `` without execution:
+
+```markdown icon="markdown"
+# Documenting the Syntax
+
+To execute a command, use \!`command` syntax.
+For example: \!`git status` shows the current git state.
+```
+
+Output:
+```markdown
+# Documenting the Syntax
+
+To execute a command, use !`command` syntax.
+For example: !`git status` shows the current git state.
+```
+
+### Error Handling
+
+Failed commands return inline error markers:
+
+| Scenario | Output |
+|----------|--------|
+| Command fails | `[Error: Command `xyz` exited with code 1: error message]` |
+| Command times out | `[Error: Command `xyz` timed out after 10s]` |
+| Large output (>50KB) | Output truncated with `... [output truncated]` |
+
+### Programmatic Rendering
+
+When using skills programmatically, call `render_content()` to execute commands:
+
+```python icon="python" focus={6-7}
+from openhands.sdk.context import Skill
+
+skill = Skill.load("/path/to/skill/SKILL.md")
+
+# Render with command execution
+rendered = skill.render_content(working_dir="/path/to/repo")
+print(rendered)  # Commands replaced with output
+```
+
+The `working_dir` parameter sets the current directory for command execution, enabling workspace-relative commands like `git status`.
+
+## Migrating from Legacy to AgentSkills Format
+
+If you have legacy inline skills consuming many tokens, convert them to AgentSkills format for progressive disclosure:
+
+### Before (Legacy Format)
+
+```python icon="python"
+# Legacy: Full content in <REPO_CONTEXT> in the initial system prompt
+Skill(
+    name="api-guidelines",
+    content="""
+    # API Guidelines
+    ... 2000 lines of detailed documentation ...
+    """,
+    trigger=None,  # Always-on context - affects token usage on each turn!
+)
+```
+
+### After (AgentSkills Format)
+
+Create a directory `api-guidelines/SKILL.md`:
+
+```markdown icon="markdown"
+---
+name: api-guidelines
+description: Comprehensive API design guidelines for the project. Invoke when designing or reviewing API endpoints.
+---
+
+# API Guidelines
+
+... 2000 lines of detailed documentation ...
+```
+
+Then load it:
+
+```python icon="python"
+from openhands.sdk.skills import load_skills_from_dir
+
+# AgentSkills: Only description in prompt, agent reads full content on demand
+_, _, skills = load_skills_from_dir("/path/to/skills")
+agent_context = AgentContext(skills=list(skills.values()))
+```
+
+### Benefits
+
+| Aspect | Legacy `trigger=None` | AgentSkills `SKILL.md` |
+|--------|----------------------|------------------------|
+| Token usage | Full content in system prompt; included in LLM context for each turn | Description only (~100 chars) |
+| Model control | None — always present | Agent decides when to read |
+| Scalability | Limited by context window | Many skills without token bloat |
 
 ## Next Steps
 
