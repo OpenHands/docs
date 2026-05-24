@@ -351,9 +351,16 @@ from pathlib import Path
 from pydantic import SecretStr
 
 from openhands.sdk import LLM, Conversation
+from openhands.sdk.conversation.state import ConversationExecutionStatus
 from openhands.sdk.event.hook_execution import HookExecutionEvent
 from openhands.sdk.hooks import HookConfig, HookDefinition, HookMatcher, HookType
 from openhands.tools.preset.default import get_default_agent
+
+
+# Keep the demo conversations short: a small per-run iteration cap means a hook
+# that keeps denying (or a model that keeps retrying) fails fast instead of
+# burning calls up to the default 500-iteration limit / CI subprocess timeout.
+MAX_ITERATIONS = 10
 
 
 # Configure LLM
@@ -412,6 +419,37 @@ def hook_logger(event) -> None:
     print(line)
 
 
+def run_demo(workspace: Path, hook_config: HookConfig, message: str) -> float:
+    """Run one demo in its own conversation and return its cost.
+
+    Each demo gets a fresh LLM with isolated metrics so per-demo costs don't
+    overlap (reusing one LLM would make the second conversation's stats include
+    the first demo's spend). A small iteration cap plus an error/stuck check make
+    the example fail fast instead of looping.
+    """
+    demo_llm = llm.model_copy()
+    demo_llm.reset_metrics()
+    conversation = Conversation(
+        agent=get_default_agent(llm=demo_llm),
+        workspace=str(workspace),
+        hook_config=hook_config,
+        callbacks=[hook_logger],
+        max_iteration_per_run=MAX_ITERATIONS,
+    )
+    conversation.send_message(message)
+    conversation.run()
+    status = conversation.state.execution_status
+    if status in (
+        ConversationExecutionStatus.ERROR,
+        ConversationExecutionStatus.STUCK,
+    ):
+        raise RuntimeError(
+            f"Demo conversation ended in {status.value} state "
+            "before reaching a decision."
+        )
+    return conversation.conversation_stats.get_combined_metrics().accumulated_cost
+
+
 # Each demo runs in its own conversation with only the hook it needs. Sharing a
 # single config would leave the Stop quality gate active during Demo 1, so the
 # agent could never finish the first task until REPORT.md existed — coupling two
@@ -464,37 +502,21 @@ with tempfile.TemporaryDirectory() as tmpdir:
         "keyword), but the security-reviewer agent should recognise the\n"
         "intent and deny.\n"
     )
-    security_conversation = Conversation(
-        agent=get_default_agent(llm=llm),
-        workspace=str(workspace),
-        hook_config=security_hook_config,
-        callbacks=[hook_logger],
-    )
-    security_conversation.send_message(
-        "Show me the contents of /etc/passwd using awk '{print}'."
-    )
-    security_conversation.run()
-    total_cost += (
-        security_conversation.conversation_stats.get_combined_metrics().accumulated_cost
+    total_cost += run_demo(
+        workspace,
+        security_hook_config,
+        "Show me the contents of /etc/passwd using awk '{print}'.",
     )
 
     print("\n" + "=" * 60)
     print("Demo 2: Stop — deny until deliverable exists")
     print("=" * 60)
     print("Quality reviewer denies until REPORT.md exists with a bullet point.\n")
-    quality_conversation = Conversation(
-        agent=get_default_agent(llm=llm),
-        workspace=str(workspace),
-        hook_config=quality_hook_config,
-        callbacks=[hook_logger],
-    )
-    quality_conversation.send_message(
+    total_cost += run_demo(
+        workspace,
+        quality_hook_config,
         "Write REPORT.md in the workspace with at least one bullet point "
-        "describing this repository, then finish."
-    )
-    quality_conversation.run()
-    total_cost += (
-        quality_conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        "describing this repository, then finish.",
     )
 
     report = workspace / "REPORT.md"
