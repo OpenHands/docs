@@ -11,6 +11,16 @@ You'll opt into Analytics and configure conversations to automatically send trac
 
 This guide is for users who want to explore analytics on their OpenHands Enterprise conversations.
 
+It covers both supported install paths:
+
+- **Replicated (VM install)** -- if you followed the [Quick Start](/enterprise/quick-start) and
+  manage OpenHands through the Replicated Admin Console.
+- **Helm (Kubernetes install)** -- if you deployed the `openhands` Helm chart into your own
+  Kubernetes cluster (see [Kubernetes Installation](/enterprise/k8s-install/index)).
+
+Most of the workflow (creating a Laminar project, creating an API key, viewing traces) is
+the same on both paths. The two install-specific steps are tabbed below.
+
 ### Why Laminar?
 
 [Laminar](https://laminar.sh/) is an open source observability platform for AI agents like OpenHands.
@@ -29,31 +39,182 @@ For more information on evaluating skills, see [Evaluating Agent Skills](https:/
 
 ### Prerequisites
 
-Before you begin, make sure you completed the [Quick Start guide](/enterprise/quick-start).
+Before you begin, make sure you have completed the install for your path:
+
+- **Replicated**: [Quick Start guide](/enterprise/quick-start)
+- **Helm**: [Kubernetes Installation guide](/enterprise/k8s-install/index)
+
+You will also need:
+
+- DNS records (and a TLS certificate covering the SAN) for `analytics.app.<your-base-domain>`.
+  On Replicated, this is included in the [Quick Start DNS table](/enterprise/quick-start#dns-and-tls-setup).
+  On Helm, you choose the hostname yourself in `site-values.yaml`.
+- An ingress controller already running in the cluster (Replicated installs ship Traefik; Helm
+  installs typically use Traefik as well -- see the [chart README](https://github.com/OpenHands/OpenHands-Cloud/blob/main/charts/openhands/README.md)).
 
 ## Enable Analytics
 
-You should see an **Analytics Configuration** section on the application configuration page.
+<Tabs>
+  <Tab title="Replicated (VM Install)">
+    On the application configuration page in the Admin Console, find the
+    **Analytics Configuration** section.
 
-Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+    Check the **Enable Analytics** box. The installer will set up Laminar and template the
+    required hostnames and Keycloak wiring for you.
 
-![Configure Analytics](./images/laminar-configure-analytics.png)
+    ![Configure Analytics](./images/laminar-configure-analytics.png)
+  </Tab>
+
+  <Tab title="Helm (Kubernetes Install)">
+    Add the `laminar` block to your `site-values.yaml` and set the top-level `env.LMNR_*`
+    keys so the application sends traces to Laminar.
+
+    Replace `example.com` with your base domain, and replace `traefik` with the name of
+    your ingress controller's IngressClass.
+
+    ```yaml
+    # site-values.yaml
+
+    env:
+      # Where the application sends traces. Must match laminar.appServer.ingress.hostname below.
+      LMNR_BASE_URL: "https://laminar-api.app.example.com"
+      # Use OTLP/HTTP (rather than gRPC) for trace ingestion.
+      LMNR_FORCE_HTTP: "true"
+      # LMNR_PROJECT_API_KEY is set in a later step, after you create an ingest-only key
+      # in the Laminar UI.
+
+    laminar:
+      enabled: true
+      global:
+        # Sets provider-specific defaults; not auto-detected. Use "gcp" or "aws".
+        cloudProvider: "gcp"
+      frontend:
+        ingress:
+          enabled: true
+          hostname: "analytics.app.example.com"        # REQUIRED
+          className: "traefik"                          # your ingress controller's IngressClass
+          externalDns:
+            enabled: false                             # true if external-dns manages your DNS
+          tls:
+            enabled: true
+            clusterIssuer: ""                          # see TLS options below
+            secretName: "laminar-frontend-tls"
+        env:
+          # Must match laminar.frontend.ingress.hostname above.
+          nextauthUrl: "https://analytics.app.example.com"
+          nextPublicUrl: "https://analytics.app.example.com"
+        extraEnv:
+          # Wires the Laminar UI to your existing Keycloak realm so users can sign in
+          # with the same identity provider they use for OpenHands.
+          - name: AUTH_KEYCLOAK_ID
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-realm
+                key: client-id
+          - name: AUTH_KEYCLOAK_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-realm
+                key: client-secret
+          - name: AUTH_KEYCLOAK_ISSUER
+            value: "https://auth.app.example.com/realms/allhands"
+      appServer:
+        ingress:
+          hostname: "laminar-api.app.example.com"      # REQUIRED -- matches LMNR_BASE_URL
+          className: "traefik"
+          externalDns:
+            enabled: false
+          tls:
+            enabled: true
+            clusterIssuer: ""
+            secretName: "laminar-app-server-tls"
+    ```
+
+    <Tip>
+      **AWS clusters** can swap `laminar.appServer.ingress` for an L4 Network Load Balancer:
+
+      ```yaml
+      laminar:
+        appServer:
+          loadBalancer:
+            enabled: true
+            hostname: "laminar-api.app.example.com"
+      ```
+
+      This is the upstream chart's recommended pattern on AWS. See the [lmnr-helm
+      configuration guide](https://github.com/lmnr-ai/lmnr-helm/blob/main/CONFIGURATION.md)
+      for details.
+    </Tip>
+
+    ### TLS options
+
+    The `laminar.frontend.ingress.tls` and `laminar.appServer.ingress.tls` blocks above
+    work with either pattern:
+
+    - **Pre-existing TLS secret** (recommended if your DNS and certs are managed externally):
+      leave `clusterIssuer: ""` and create the secrets yourself. Concatenate the certificate
+      and CA bundle into a full chain first:
+
+      ```bash
+      cat cert.pem ca-bundle.pem > fullchain.pem
+
+      kubectl create secret tls laminar-frontend-tls \
+        -n openhands --cert=fullchain.pem --key=private-key.pem
+
+      kubectl create secret tls laminar-app-server-tls \
+        -n openhands --cert=fullchain.pem --key=private-key.pem
+      ```
+
+    - **cert-manager with Let's Encrypt**: set `clusterIssuer: "letsencrypt"` (or the name
+      of any other `ClusterIssuer` in your cluster). The hostnames must be publicly
+      DNS-resolvable so Let's Encrypt can complete the HTTP-01 challenge.
+
+    See the [lmnr-helm configuration guide](https://github.com/lmnr-ai/lmnr-helm/blob/main/CONFIGURATION.md)
+    for additional DNS and TLS variants, including manual DNS and pre-existing ACM certificates.
+
+    ### Apply the change
+
+    ```bash
+    helm upgrade --install openhands \
+      --namespace openhands \
+      oci://ghcr.io/all-hands-ai/helm-charts/openhands \
+      -f site-values.yaml
+    ```
+  </Tab>
+</Tabs>
 
 ## Deploy
 
-OpenHands will begin deploying. You can expect the deployment status to transition from
-**Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
+<Tabs>
+  <Tab title="Replicated (VM Install)">
+    OpenHands will begin deploying. You can expect the deployment status to transition from
+    **Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
 
-![Deployment in progress](./images/laminar-deploy-in-progress.png)
+    ![Deployment in progress](./images/laminar-deploy-in-progress.png)
 
-Click **Details** next to the deployment status to monitor individual resources. Resources
-shown in orange are still deploying -- wait until all resources are ready.
+    Click **Details** next to the deployment status to monitor individual resources. Resources
+    shown in orange are still deploying -- wait until all resources are ready.
 
-![Deployment status details](./images/laminar-deployment-status-details.png)
+    ![Deployment status details](./images/laminar-deployment-status-details.png)
+  </Tab>
+
+  <Tab title="Helm (Kubernetes Install)">
+    Watch the Laminar pods come up in your cluster:
+
+    ```bash
+    kubectl get pods -n openhands -l app.kubernetes.io/instance=openhands -w
+    ```
+
+    You should see pods for `laminar-frontend`, `laminar-app-server`, `laminar-clickhouse`,
+    `laminar-postgres`, `laminar-rabbitmq`, `laminar-redis`, and the Quickwit components.
+    Wait until all pods are `Running` and ready before continuing.
+  </Tab>
+</Tabs>
 
 ## Access Laminar UI
 
-Once the deployment status shows **Ready**, navigate to `https://analytics.app.<your-base-domain>`.
+Once the deployment is **Ready**, navigate to `https://analytics.app.<your-base-domain>`
+(or the `laminar.frontend.ingress.hostname` you configured for the Helm install).
 
 Click the **Continue with Keycloak** button:
 
@@ -67,29 +228,68 @@ Once a project has been created, Laminar is ready to listen for traces.
 
 ![Laminar Listen Traces](./images/laminar-listen-traces.png)
 
-## Create an ingest only API Key
+## Create an ingest-only API Key
 
-Important: Always use ingest API keys when deploying.
+<Warning>
+  Always use **ingest-only** API keys for the OpenHands integration. Ingest-only keys can
+  only write traces -- they cannot be used to read data, so they are safe to embed in
+  configuration.
+</Warning>
 
-Create a key with the right permissions. Ingest only keys are recommended as they only have write access to write traces. They cannot be used to read data.
+Create a key with ingest-only permissions:
 
 ![Configure Laminar Ingest Only Key](./images/laminar-ingest-only-key.png)
 
-## Set Laminar Project API Key to enable automatic conversation traces
+## Wire the API key into the install
 
-Set the ingest only key as the Laminar Project API Key in the Admin Console configuration:
+<Tabs>
+  <Tab title="Replicated (VM Install)">
+    Paste the ingest-only key into the **Laminar Project API Key** field in the Admin Console
+    configuration:
 
-![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+    ![Configure Laminar Project API Key](./images/laminar-configure-key.png)
 
-Click **Save config**.
+    Click **Save config**, then deploy the change:
 
-## Deploy Updated Configuration
+    ![Laminar Deploy Again](./images/laminar-deploy-again.png)
 
-Deploy the config change after setting the Laminar Project API Key in the Admin Console.
+    Wait for the deployment to complete.
+  </Tab>
 
-![Laminar Deploy Again](./images/laminar-deploy-again.png)
+  <Tab title="Helm (Kubernetes Install)">
+    Set the ingest-only key in your `site-values.yaml` under the top-level `env` block:
 
-Wait for the deployment to complete.
+    ```yaml
+    # site-values.yaml
+
+    env:
+      LMNR_BASE_URL: "https://laminar-api.app.example.com"
+      LMNR_FORCE_HTTP: "true"
+      LMNR_PROJECT_API_KEY: "<paste-your-ingest-only-key-here>"
+    ```
+
+    <Tip>
+      For a production install, store the key in a Kubernetes Secret and reference it from
+      your values file or via `--set-string` at install time, rather than committing it to
+      source control.
+    </Tip>
+
+    Apply the change:
+
+    ```bash
+    helm upgrade --install openhands \
+      --namespace openhands \
+      oci://ghcr.io/all-hands-ai/helm-charts/openhands \
+      -f site-values.yaml
+    ```
+
+    Wait for the rollout to complete:
+
+    ```bash
+    kubectl rollout status deploy/openhands -n openhands
+    ```
+  </Tab>
+</Tabs>
 
 ## Start a conversation
 
