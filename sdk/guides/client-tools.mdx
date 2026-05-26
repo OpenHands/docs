@@ -1,0 +1,122 @@
+---
+title: Client-Defined Tools
+description: Register UI-action tools from JSON specs — no Python executor required. The agent calls the tool; your frontend handles execution via WebSocket events.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+**Client-defined tools** let frontend applications (e.g. a browser UI) register tools purely via JSON spec — without writing a Python executor. When the agent invokes such a tool, the SDK immediately returns an acknowledgment observation so the agent loop continues, and emits an `ActionEvent` over the WebSocket so the client can perform the actual work (open a panel, navigate, display a notification, etc.).
+
+This is the recommended pattern for any tool whose logic lives entirely in the UI rather than on the server.
+
+## How It Works
+
+1. **Define** a `ClientToolSpec` — a JSON Schema description of the tool name, description, and parameters.
+2. **Register** it with `ClientTool.from_spec()` + `register_tool()` so the SDK knows about it.
+3. **Wire it** into the agent with `Tool(name=...)` as you would any other tool.
+4. **Intercept calls** in an event callback by checking `ActionEvent.tool_name`.
+5. **Execute** the action in the frontend — the SDK returns a no-op acknowledgment so the agent continues.
+
+## Defining a ClientToolSpec
+
+```python icon="python" wrap
+from openhands.sdk.tool import ClientToolSpec
+
+spec = ClientToolSpec(
+    name="show_notification",
+    description="Display a notification banner in the UI.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "message": {"type": "string", "description": "Text to display"},
+            "level": {
+                "type": "string",
+                "enum": ["info", "warning", "error"],
+                "description": "Severity level",
+            },
+        },
+        "required": ["message", "level"],
+    },
+)
+```
+
+`ClientToolSpec` accepts any valid [JSON Schema object](https://json-schema.org/understanding-json-schema/reference/object) as `parameters`.
+
+## Registering and Wiring
+
+```python icon="python" wrap
+from openhands.sdk import Tool
+from openhands.sdk.tool import ClientTool, register_tool
+
+# Create a ToolDefinition from the spec and register it globally
+tool_instance = ClientTool.from_spec(spec)
+register_tool(spec.name, tool_instance)
+
+# Include it in the agent's tool list like any other tool
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=TerminalTool.name),
+        Tool(name="show_notification"),
+    ],
+)
+```
+
+## Intercepting Calls in the Frontend
+
+Use an event callback to observe when the agent calls a client tool:
+
+```python icon="python" wrap
+from openhands.sdk import Event
+from openhands.sdk.event.llm_convertible.action import ActionEvent
+
+CLIENT_TOOL_NAMES = {"show_notification", "navigate_to"}
+
+def on_event(event: Event) -> None:
+    if isinstance(event, ActionEvent) and event.tool_name in CLIENT_TOOL_NAMES:
+        args = event.action.model_dump() if event.action else {}
+        # In a real app: forward args over WebSocket to the browser
+        print(f"[CLIENT] {event.tool_name}({args})")
+
+conversation = Conversation(agent=agent, workspace=cwd, callbacks=[on_event])
+```
+
+The SDK returns `"Tool call dispatched to client."` as the observation, so the agent continues its reasoning loop without waiting for client-side execution.
+
+## Default Annotations
+
+Client tools are registered with conservative defaults:
+
+| Annotation | Default | Meaning |
+|---|---|---|
+| `readOnlyHint` | `True` | The tool does not modify persistent state |
+| `destructiveHint` | `False` | The tool is not destructive |
+
+These defaults are appropriate for UI-action tools. Override them on the `ClientToolSpec` if needed.
+
+## Ready-to-Run Example
+
+This example demonstrates:
+- Defining two `ClientToolSpec` objects (`show_notification`, `navigate_to`)
+- Registering them via `ClientTool.from_spec()` + `register_tool()`
+- Wiring both into an `Agent` alongside `TerminalTool`
+- Intercepting calls in an event callback (simulating a WebSocket frontend handler)
+- Asserting both tools are called and printing `EXAMPLE_COST`
+
+This example is available on GitHub: [examples/01_standalone_sdk/51_client_defined_tools.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/51_client_defined_tools.py)
+
+```python icon="python" expandable examples/01_standalone_sdk/51_client_defined_tools.py
+<example code will be auto-synced>
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/51_client_defined_tools.py"/>
+
+## Next Steps
+
+- **[Custom Tools](/sdk/guides/custom-tools)** — Build tools with full Python executors for server-side logic
+- **[Model Context Protocol](/sdk/guides/mcp)** — Integrate external MCP tool servers
+- **[Hooks](/sdk/guides/hooks)** — Observe and intercept all agent events with lifecycle hooks
