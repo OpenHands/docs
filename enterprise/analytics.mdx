@@ -69,6 +69,11 @@ You will also need:
     Add the `laminar` block to your `site-values.yaml` and set the top-level `env.LMNR_*`
     keys so the application sends traces to Laminar.
 
+    This guide assumes a single-cluster install where OpenHands runtimes and Laminar run
+    in the same Kubernetes cluster. Traces are sent to the in-cluster Laminar Service,
+    so you only need **one** new DNS record and TLS SAN -- the user-facing Laminar UI
+    hostname (e.g. `analytics.app.<your-base-domain>`).
+
     Replace `example.com` with your base domain, and replace `traefik` with the name of
     your ingress controller's IngressClass.
 
@@ -76,10 +81,11 @@ You will also need:
     # site-values.yaml
 
     env:
-      # Where the application sends traces. Must match laminar.appServer.ingress.hostname below.
-      LMNR_BASE_URL: "https://laminar-api.app.example.com"
-      # Use OTLP/HTTP (rather than gRPC) for trace ingestion.
+      # The application sends traces to the in-cluster Laminar Service. No external
+      # hostname is required for ingestion.
+      LMNR_BASE_URL: "http://laminar-app-server-service"
       LMNR_FORCE_HTTP: "true"
+      LMNR_HTTP_PORT: "8000"
       # LMNR_PROJECT_API_KEY is set in a later step, after you create an ingest-only key
       # in the Laminar UI.
 
@@ -91,7 +97,7 @@ You will also need:
       frontend:
         ingress:
           enabled: true
-          hostname: "analytics.app.example.com"        # REQUIRED
+          hostname: "analytics.app.example.com"        # REQUIRED -- the Laminar UI hostname
           className: "traefik"                          # your ingress controller's IngressClass
           externalDns:
             enabled: false                             # true if external-dns manages your DNS
@@ -118,19 +124,66 @@ You will also need:
                 key: client-secret
           - name: AUTH_KEYCLOAK_ISSUER
             value: "https://auth.app.example.com/realms/allhands"
-      appServer:
-        ingress:
-          hostname: "laminar-api.app.example.com"      # REQUIRED -- matches LMNR_BASE_URL
-          className: "traefik"
-          externalDns:
-            enabled: false
-          tls:
-            enabled: true
-            clusterIssuer: ""
-            secretName: "laminar-app-server-tls"
     ```
 
-    <Tip>
+    ### TLS options for the frontend ingress
+
+    The `laminar.frontend.ingress.tls` block above works with either pattern:
+
+    - **Pre-existing TLS secret** (recommended if your DNS and certs are managed externally):
+      leave `clusterIssuer: ""` and create the secret yourself. Concatenate the certificate
+      and CA bundle into a full chain first:
+
+      ```bash
+      cat cert.pem ca-bundle.pem > fullchain.pem
+
+      kubectl create secret tls laminar-frontend-tls \
+        -n openhands --cert=fullchain.pem --key=private-key.pem
+      ```
+
+    - **cert-manager with Let's Encrypt**: set `clusterIssuer: "letsencrypt"` (or the name
+      of any other `ClusterIssuer` in your cluster). The hostname must be publicly
+      DNS-resolvable so Let's Encrypt can complete the HTTP-01 challenge.
+
+    ### Apply the change
+
+    ```bash
+    helm upgrade --install openhands \
+      --namespace openhands \
+      oci://ghcr.io/all-hands-ai/helm-charts/openhands \
+      -f site-values.yaml
+    ```
+
+    <Accordion title="Advanced: expose the app-server externally (multi-cluster only)">
+      Skip this section unless OpenHands runtimes will be sending traces from **outside**
+      the cluster where Laminar runs. Almost all installs are single-cluster and should
+      use the in-cluster ingest configuration above.
+
+      For multi-cluster setups, expose the Laminar app-server through your ingress (or, on
+      AWS, an L4 Network Load Balancer) and point `LMNR_BASE_URL` at the external hostname.
+      This adds a second DNS record and TLS SAN (e.g. `laminar-api.app.<your-base-domain>`).
+
+      ```yaml
+      # site-values.yaml
+
+      env:
+        LMNR_BASE_URL: "https://laminar-api.app.example.com"
+        LMNR_FORCE_HTTP: "true"
+        # Omit LMNR_HTTP_PORT -- the port comes from the URL.
+
+      laminar:
+        appServer:
+          ingress:
+            hostname: "laminar-api.app.example.com"
+            className: "traefik"
+            externalDns:
+              enabled: false
+            tls:
+              enabled: true
+              clusterIssuer: ""
+              secretName: "laminar-app-server-tls"
+      ```
+
       **AWS clusters** can swap `laminar.appServer.ingress` for an L4 Network Load Balancer:
 
       ```yaml
@@ -141,45 +194,9 @@ You will also need:
             hostname: "laminar-api.app.example.com"
       ```
 
-      This is the upstream chart's recommended pattern on AWS. See the [lmnr-helm
-      configuration guide](https://github.com/lmnr-ai/lmnr-helm/blob/main/CONFIGURATION.md)
-      for details.
-    </Tip>
-
-    ### TLS options
-
-    The `laminar.frontend.ingress.tls` and `laminar.appServer.ingress.tls` blocks above
-    work with either pattern:
-
-    - **Pre-existing TLS secret** (recommended if your DNS and certs are managed externally):
-      leave `clusterIssuer: ""` and create the secrets yourself. Concatenate the certificate
-      and CA bundle into a full chain first:
-
-      ```bash
-      cat cert.pem ca-bundle.pem > fullchain.pem
-
-      kubectl create secret tls laminar-frontend-tls \
-        -n openhands --cert=fullchain.pem --key=private-key.pem
-
-      kubectl create secret tls laminar-app-server-tls \
-        -n openhands --cert=fullchain.pem --key=private-key.pem
-      ```
-
-    - **cert-manager with Let's Encrypt**: set `clusterIssuer: "letsencrypt"` (or the name
-      of any other `ClusterIssuer` in your cluster). The hostnames must be publicly
-      DNS-resolvable so Let's Encrypt can complete the HTTP-01 challenge.
-
-    See the [lmnr-helm configuration guide](https://github.com/lmnr-ai/lmnr-helm/blob/main/CONFIGURATION.md)
-    for additional DNS and TLS variants, including manual DNS and pre-existing ACM certificates.
-
-    ### Apply the change
-
-    ```bash
-    helm upgrade --install openhands \
-      --namespace openhands \
-      oci://ghcr.io/all-hands-ai/helm-charts/openhands \
-      -f site-values.yaml
-    ```
+      See the [lmnr-helm configuration guide](https://github.com/lmnr-ai/lmnr-helm/blob/main/CONFIGURATION.md)
+      for additional DNS and TLS variants, including manual DNS and pre-existing ACM certificates.
+    </Accordion>
   </Tab>
 </Tabs>
 
@@ -263,8 +280,9 @@ Create a key with ingest-only permissions:
     # site-values.yaml
 
     env:
-      LMNR_BASE_URL: "https://laminar-api.app.example.com"
+      LMNR_BASE_URL: "http://laminar-app-server-service"
       LMNR_FORCE_HTTP: "true"
+      LMNR_HTTP_PORT: "8000"
       LMNR_PROJECT_API_KEY: "<paste-your-ingest-only-key-here>"
     ```
 
