@@ -1,0 +1,470 @@
+---
+title: Jira Data Center
+description: Configure the Jira Data Center integration for a self-hosted OpenHands Enterprise install.
+icon: ticket
+---
+
+This guide walks an operator through enabling the Jira Data Center integration on a
+self-hosted **OpenHands Enterprise (OHE)** installation — both the Replicated VM-based
+install (see the [Quick Start](/enterprise/quick-start)) and standalone Helm
+([Kubernetes Installation](/enterprise/k8s-install/index)).
+
+Once enabled, end users can mention `@openhands` (or add an `openhands` label) on a Jira
+ticket and OpenHands will read the ticket, plan the work, and open a pull request in the
+linked repository.
+
+<Info>
+  If you are looking for the **OpenHands Cloud** Jira Data Center integration (no
+  self-hosting involved), see [Jira Data Center
+  Integration](/openhands/usage/cloud/project-management/jira-dc-integration) — that page
+  uses the All-Hands-managed flow and skips the OHE-specific steps below.
+</Info>
+
+## Overview
+
+Unlike OpenHands Cloud, a self-hosted install needs:
+
+1. Its **own** service account in your Jira Data Center server, so OpenHands can read
+   issues and post comments/reactions as a real Jira user.
+2. (Optionally, but recommended) its **own** OAuth 2.0 application on your Jira Data
+   Center server, so each end user can prove ownership of their Jira account before
+   OpenHands acts on their behalf.
+3. A **webhook** in your Jira Data Center server pointing back at your OHE install, so
+   ticket events reach OpenHands.
+
+The configuration involves four phases:
+
+<Steps>
+  <Step title="Verify prerequisites" />
+  <Step title="Set up Jira Data Center (service account, PAT, OAuth app)" />
+  <Step title="Configure OpenHands Enterprise" />
+  <Step title="Create the webhook in Jira Data Center" />
+  <Step title="Have users link their Jira accounts" />
+</Steps>
+
+## Prerequisites
+
+Before you start, confirm:
+
+- **OHE is already installed and reachable.** You can sign in to OpenHands Enterprise at
+  `https://app.<your-base-domain>` (e.g. `https://app.mycompany.com`).
+- **Your Jira Data Center server can reach OHE over HTTPS.** Jira will deliver webhook
+  events to `https://app.<your-base-domain>/integration/jira-dc/events`, so any firewall
+  between Jira and OHE must allow that path.
+- **OHE can reach your Jira Data Center server over HTTPS.** When users link their
+  accounts via OAuth, OHE redeems the authorization code against your Jira server. The
+  integrations pod must be able to make outbound HTTPS calls to your Jira Data Center
+  base URL.
+- **Valid TLS certificates** on both `app.<your-base-domain>` and your Jira Data Center
+  server. If your Jira server uses an internal CA, that CA must already be mounted into
+  the integrations pod via the existing OHE custom-CA bundle.
+- **A Jira Data Center admin** is available to create the service account, OAuth
+  application, and webhook.
+
+<Note>
+  Replace `<your-base-domain>` throughout this guide with the same domain you used
+  during installation (the value behind `KOTS_HOSTNAME` or the `ingress.host` Helm
+  value). Replace `<your-jira-host>` with the hostname of your Jira Data Center server
+  (e.g. `jira.mycompany.com`).
+</Note>
+
+## Step 1: Set up Jira Data Center
+
+You need three things from your Jira Data Center server **before** configuring OHE:
+
+| What | Required when | Used by OpenHands to… |
+|---|---|---|
+| Service account email | always | identify the bot user that comments / reacts on tickets |
+| Service account Personal Access Token (PAT) | always | authenticate as the bot when calling the Jira REST API |
+| OAuth 2.0 application credentials (Client ID + Client Secret + Base URL) | only when **link method = OAuth** | let each end user prove ownership of their Jira account |
+
+You can pick the link method later in [Step 2](#step-2-configure-openhands-enterprise).
+OAuth is strongly recommended — the only reason to fall back to "email match" is if your
+Jira Data Center server has no OAuth 2.0 application support.
+
+### Create the service account
+
+1. Sign in to Jira Data Center as an administrator.
+2. Open **⚙️ Administration → User Management → Create User**.
+3. Create a dedicated bot user:
+   - **Username:** `openhands-agent`
+   - **Full name:** `OpenHands Agent`
+   - **Email:** an address on a domain you control (e.g. `openhands@<your-company>.com`).
+     Save this value — you will paste it into OHE as the **Jira Data Center Service
+     Account Email**.
+   - **Password:** any strong password.
+4. Add the new user to a group that has **Browse Projects** and **Add Comments**
+   permissions on every project you want OpenHands to work on. The bot does **not** need
+   admin or "Bulk Change" permissions.
+
+### Generate the service account PAT
+
+1. Sign **out** of the admin account, then sign in as `openhands-agent`.
+2. Open the avatar menu → **Profile → Personal Access Tokens → Create token**.
+3. Use these values:
+   - **Name:** `OpenHands Enterprise integration`
+   - **Expiry:** set the longest acceptable expiry for your organization (1 year is
+     typical). OHE will keep using the token until it is rotated.
+4. Click **Create** and copy the token immediately — Jira will not show it again. You
+   will paste it into OHE as the **Jira Data Center Service Account PAT**.
+
+### Create the OAuth 2.0 application
+
+<Note>
+  Skip this section if you plan to use the **Email match** link method in
+  [Step 2](#step-2-configure-openhands-enterprise). Email match links users by comparing
+  their Jira email to their OpenHands email, with no per-user proof-of-ownership step.
+</Note>
+
+1. Sign back in as a Jira admin.
+2. Open **⚙️ Administration → Applications → Application links** (Jira's OAuth 2.0
+   admin UI — the exact label varies by Jira Data Center version, but it is always
+   under the *Applications* admin section).
+3. Create an incoming OAuth 2.0 application with:
+   - **Application name:** `OpenHands Enterprise`
+   - **Callback URL** (also called *Redirect URL*):
+     `https://app.<your-base-domain>/integration/jira-dc/callback`
+   - **Scopes / permissions:** read access to user profiles and issues. The exact scope
+     names depend on your Jira Data Center version — selecting the equivalent of
+     "Read user profile" and "Read issues" is sufficient.
+4. Save the application. Jira will display a **Client ID** and **Client Secret**. Copy
+   both — Jira will not reveal the secret again. You will paste them into OHE as the
+   **Jira Data Center OAuth Client ID / Client Secret**.
+
+<Warning>
+  The callback URL must match `https://app.<your-base-domain>/integration/jira-dc/callback`
+  exactly, including the `https://` scheme. Trailing slashes and `http://` URLs will be
+  rejected by Jira when users complete the OAuth handshake.
+</Warning>
+
+You also need the **base URL** of your Jira Data Center server (e.g.
+`https://jira.mycompany.com`, including the `https://` scheme and no trailing slash) —
+OHE uses it to call the Jira API and to redirect users into the OAuth flow.
+
+## Step 2: Configure OpenHands Enterprise
+
+Pick the path that matches how OHE is deployed.
+
+<Tabs>
+  <Tab title="Replicated (VM/embedded cluster)">
+    1. Open the Replicated admin console at
+       `https://<admin-console-host>:30000` and sign in.
+    2. Navigate to **Config → Jira Data Center Integration** (or search "Jira" in the
+       config side panel).
+    3. Set the following values:
+
+       | Field | Value |
+       |---|---|
+       | **Enable Jira Data Center Integration** | ✅ on |
+       | **How should Jira users be linked to OpenHands accounts?** | `OAuth (verified, recommended)` or `Email match (no OAuth app required)` |
+       | **Jira Data Center Service Account Email** | from [Step 1](#create-the-service-account) |
+       | **Jira Data Center Service Account PAT** | from [Step 1](#generate-the-service-account-pat) |
+       | **Jira Data Center Base URL** (OAuth only) | `https://<your-jira-host>` |
+       | **Jira Data Center OAuth Client ID** (OAuth only) | from [Step 1](#create-the-oauth-20-application) |
+       | **Jira Data Center OAuth Client Secret** (OAuth only) | from [Step 1](#create-the-oauth-20-application) |
+
+    4. Click **Save config** and then **Deploy** the new version.
+    5. Wait for the deployment to reach **Ready** — Replicated will roll the integrations
+       pod with the new secret and environment variables, and will mirror
+       `jira_data_center_enabled` into the frontend feature-flag config so the **Jira
+       Data Center** card renders in **Settings → Integrations**.
+
+    Behind the scenes this:
+
+    - Creates a Kubernetes `Secret/jira-dc-app` holding the service-account email + PAT
+      and (when using OAuth) the OAuth client ID / secret / base URL.
+    - Sets `jiraDc.enabled=true` and `jiraDc.linkMethod=oauth|email` on the `openhands`
+      chart.
+    - Exposes `/integration/jira-dc/events` (webhook receiver) and
+      `/integration/jira-dc/callback` (OAuth redirect) on the integrations ingress on
+      port 3000.
+
+  </Tab>
+  <Tab title="Standalone Helm">
+    Set the Jira DC values directly on the `openhands` and `openhands-secrets` charts.
+
+    In your `values.yaml` for the `openhands` chart:
+
+    ```yaml
+    jiraDc:
+      enabled: true
+      linkMethod: oauth   # or "email"
+
+    env:
+      # The web UI uses a feature-flag map built from OH_WEB_CLIENT_FEATURE_FLAGS_*
+      # env vars; without this mirror the Jira DC card never renders in
+      # Settings → Integrations, even though the backend routes are live.
+      OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_JIRA_DC: "true"
+    ```
+
+    In your `values.yaml` for the `openhands-secrets` chart:
+
+    ```yaml
+    config:
+      # Required for both link methods:
+      jira_data_center_service_account_email: "openhands@<your-company>.com"
+      jira_data_center_service_account_pat:   "<service-account-PAT>"
+
+      # Required only when linkMethod=oauth:
+      jira_data_center_base_url:      "https://<your-jira-host>"
+      jira_data_center_client_id:     "<oauth-client-id>"
+      jira_data_center_client_secret: "<oauth-client-secret>"
+    ```
+
+    Then redeploy:
+
+    ```bash
+    helm upgrade --install openhands-secrets ./charts/openhands-secrets \
+      -f values-secrets.yaml -n openhands
+
+    helm upgrade --install openhands ./charts/openhands \
+      -f values.yaml -n openhands
+    ```
+
+    <Tip>
+      If you manage the secret yourself, skip the `openhands-secrets` chart and create a
+      `Secret/jira-dc-app` directly with keys `service-account-email`,
+      `service-account-pat`, and (for OAuth) `base-url`, `client-id`, `client-secret`.
+      The deployment reads each key independently and marks them `optional: true`, so
+      you can omit the OAuth-only keys when `linkMethod: email`.
+    </Tip>
+
+  </Tab>
+</Tabs>
+
+Confirm the integrations pod restarted with the new environment:
+
+```bash
+kubectl -n openhands set env deployment/openhands-integrations --list \
+  | grep '^JIRA_DC_\|^ENABLE_JIRA_DC'
+```
+
+For an OAuth install you should see:
+
+```
+ENABLE_JIRA_DC=true
+JIRA_DC_WEBHOOKS_ENABLED=1
+JIRA_DC_ENABLE_OAUTH=1
+JIRA_DC_SERVICE_ACCOUNT_EMAIL=...
+JIRA_DC_SERVICE_ACCOUNT_PAT=...
+JIRA_DC_CLIENT_ID=...
+JIRA_DC_CLIENT_SECRET=...
+JIRA_DC_BASE_URL=https://<your-jira-host>
+```
+
+For an email-match install, `JIRA_DC_ENABLE_OAUTH=0` and the four `*_CLIENT_*` /
+`*_BASE_URL` vars are absent.
+
+## Step 3: Create the webhook in Jira Data Center
+
+With OHE configured, point Jira at your install so ticket events reach OpenHands.
+
+1. Sign in to Jira Data Center as an admin.
+2. Open **⚙️ Administration → System → WebHooks → Create a WebHook**.
+3. Use these values:
+   - **Name:** `OpenHands Enterprise`
+   - **URL:** `https://app.<your-base-domain>/integration/jira-dc/events`
+   - **Issue related events:** select **Issue updated** and **Comment created**. Both
+     are required — `Issue updated` is how OpenHands sees the `openhands` label being
+     added, and `Comment created` is how it sees `@openhands …` mentions.
+   - **JQL filter:** leave empty to start. Once the integration is working, you can
+     narrow it to specific projects (e.g. `project in (OH, PLTF)`) to reduce noise.
+4. Click **Create**.
+
+<Note>
+  Jira Data Center does **not** require a shared webhook secret for the OHE webhook
+  receiver — OpenHands validates events by re-fetching the referenced issue via the
+  service-account PAT before acting on it. If your Jira Data Center version exposes a
+  webhook-secret field, you can leave it blank.
+</Note>
+
+Verify the webhook fires by editing any ticket and tailing the integrations pod:
+
+```bash
+kubectl -n openhands logs deployment/openhands-integrations -f \
+  | grep -i 'jira[_-]dc'
+```
+
+You should see a `jira_dc_on_event` (or similar) log entry within a few seconds of
+saving the ticket.
+
+## Step 4: Have users link their Jira accounts
+
+`@openhands` will only act on tickets for users whose Jira identity has been linked to
+an OpenHands user. Every user — including the admin who configured the integration —
+needs to do this once.
+
+1. Each user signs in at `https://app.<your-base-domain>`.
+2. They open **Settings → Integrations → Jira Data Center → Configure**.
+3. They enter:
+   - **Workspace name:** the hostname of your Jira Data Center server (e.g.
+     `jira.mycompany.com` — *not* the full URL).
+   - On the **first** workspace configuration of a deployment, they will also be asked
+     for the **Service Account Email** and **Service Account PAT** so OHE can validate
+     it can reach Jira. These match the values you pasted in
+     [Step 2](#step-2-configure-openhands-enterprise) — once a workspace is registered
+     the first time, subsequent users are not asked again for it.
+4. **OAuth link method:** they are redirected to your Jira Data Center server to
+   approve the OpenHands OAuth application. After approval Jira redirects back to
+   `https://app.<your-base-domain>/integration/jira-dc/callback` and the link is saved.
+5. **Email-match link method:** OHE checks that the email on their OpenHands account
+   matches an active user in Jira Data Center via the service-account PAT, and saves
+   the link immediately — no per-user redirect happens.
+
+<Note>
+  Only the user who first configured a workspace can edit or unlink it from
+  **Settings → Integrations**. Other users who link to the same workspace see a
+  read-only view. If the original user unlinks the workspace, **all** other users
+  linked to that workspace are unlinked as well — only the original user can
+  re-activate it.
+</Note>
+
+## Using the integration
+
+Once at least one user is linked, that user can trigger OpenHands from any Jira ticket
+in a project they have access to. There are two trigger styles:
+
+- **Label trigger.** Add the `openhands` label to a ticket. OpenHands will read the
+  ticket description, plan the work, and open a PR.
+- **Mention trigger.** Comment with
+  `@openhands please review these requirements, generate a plan, and then proceed with implementation`.
+  Any subsequent `@openhands …` comment on the same ticket is treated as a follow-up
+  message in the **same** OpenHands conversation.
+
+Tell OpenHands which repository to operate on by mentioning the repo in the ticket body
+or in a comment. For example:
+
+```
+As an administrator for my web app, I want to configure SAML so I can provide
+secure access to my system.
+
+GitHub repository: AcmeCo/WebApp
+
+AC:
+- Verify an administrator can configure SAML settings
+- Verify an end user can authenticate via SAML
+```
+
+The conversation runs as the **Jira user who triggered it**, after their Jira identity
+is resolved to their linked OpenHands user — so it uses **their** LLM keys, **their**
+linked Git provider tokens, and **their** organization. The `openhands-agent` service
+account is only used to read the ticket and post `@openhands` reactions/comments back
+into Jira.
+
+## Limitations
+
+- **No air-gapped operation.** Both Jira → OHE (webhook events) and OHE → Jira (REST API
+  + OAuth redemption) need network connectivity. Fully air-gapped Jira deployments
+  cannot use the integration today.
+- **No PAT rotation.** OHE keeps using the service-account PAT until you replace it in
+  the Replicated admin console or in the `openhands-secrets` values and redeploy.
+- **One Jira Data Center server per install.** The OHE backend assumes a single
+  `JIRA_DC_BASE_URL` per deployment. To integrate against multiple Jira servers, run
+  multiple OHE installs.
+- **Email-match link method** trusts that the Jira email and the OpenHands (Keycloak)
+  email are administered by the same identity provider. Do not use it if Jira users
+  can self-set their email to an address they don't own — OAuth gives you a real
+  proof-of-ownership step.
+- **Service Account permissions.** OpenHands only acts on tickets the
+  `openhands-agent` user can see. If a project is restricted (e.g. private to a
+  specific group), add the service account to the appropriate group or OHE will
+  appear to "ignore" tickets in that project.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="The Jira Data Center card does not appear in Settings → Integrations">
+    The frontend renders integration cards from a feature-flag map. On a **Replicated**
+    install, `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_JIRA_DC` is mirrored from
+    `jira_data_center_enabled` automatically — if the card is missing, your KOTS config
+    did not save (`Save config` not clicked) or the new version was not deployed.
+
+    On a **standalone Helm** install, you must set
+    `env.OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_JIRA_DC: "true"` on the `openhands` chart
+    yourself. Without this mirror the backend routes are live but no UI surface exists
+    to link an account.
+
+    Verify with:
+
+    ```bash
+    kubectl -n openhands set env deployment/openhands-app --list \
+      | grep OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_JIRA_DC
+    ```
+  </Accordion>
+
+  <Accordion title="Webhook events from Jira are not arriving">
+    1. Confirm the webhook URL is exactly
+       `https://app.<your-base-domain>/integration/jira-dc/events` — Jira will silently
+       deliver `404`s if the path is misspelled.
+    2. From a host on the same network as your Jira server:
+
+       ```bash
+       curl -i https://app.<your-base-domain>/integration/jira-dc/events
+       ```
+
+       You should get an HTTP response (a 405 / 415 is expected and fine — it means the
+       route exists). If the request times out or the TLS certificate is rejected, fix
+       DNS / firewall / TLS before re-saving the webhook in Jira.
+    3. Confirm Jira's outbound HTTP allow-list (some hardened installs block external
+       webhooks by default).
+    4. Tail the integrations pod and edit a ticket — you should see a `jira_dc`-tagged
+       log entry within a few seconds.
+  </Accordion>
+
+  <Accordion title="OAuth redirect fails with 'redirect_uri does not match'">
+    Jira Data Center enforces an exact match on the OAuth application's callback URL.
+    Open your OAuth application in Jira and confirm the callback is exactly:
+
+    ```
+    https://app.<your-base-domain>/integration/jira-dc/callback
+    ```
+
+    No trailing slash, no `http://`, no IP literal. If you change it, save the
+    application and have the user retry the link flow from
+    **Settings → Integrations → Jira Data Center → Configure**.
+  </Accordion>
+
+  <Accordion title="OpenHands ignores @openhands mentions on a ticket">
+    1. Has the commenting user linked their Jira account in
+       **Settings → Integrations**? If not, OpenHands will not respond — by design,
+       conversations only run as a linked OpenHands user.
+    2. Does the `openhands-agent` service account have permission to see the project?
+       Add it to the appropriate Jira group and try again.
+    3. Tail the integrations pod logs while commenting. If you see the webhook arrive
+       but no conversation start, capture the log line and check that the project key
+       isn't excluded by your webhook's JQL filter.
+  </Accordion>
+
+  <Accordion title="Email-match link succeeds but @openhands still asks the user to link">
+    The OpenHands user record was matched to a different Jira user than expected. This
+    usually means the Jira and OpenHands (Keycloak) emails differ in case or in domain.
+    Verify with:
+
+    ```bash
+    kubectl -n openhands exec -it deployment/openhands-postgres -- \
+      psql -U postgres -d openhands \
+      -c "SELECT jira_dc_user_email, keycloak_user_id FROM jira_dc_user_links;"
+    ```
+
+    Either correct the email on the OpenHands user, or switch the deployment to the
+    **OAuth** link method, which does not rely on email matching.
+  </Accordion>
+
+  <Accordion title="Rotating the service-account PAT or OAuth client secret">
+    1. Issue a new PAT or regenerate the OAuth client secret in Jira Data Center.
+    2. **Replicated:** update the value in **Config → Jira Data Center Integration**
+       and click **Deploy**. **Standalone Helm:** update the value in the
+       `openhands-secrets` values file and `helm upgrade` both charts.
+    3. The integrations pod will roll automatically with the new secret. Existing
+       user account links remain valid — no need to have users re-link.
+  </Accordion>
+</AccordionGroup>
+
+## Reference
+
+- Replicated config group: [`replicated/config.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/replicated/config.yaml) (`jira_data_center_integration`)
+- Helm chart values: [`charts/openhands/values.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/charts/openhands/values.yaml) (`jiraDc.*`)
+- Secret template: [`charts/openhands-secrets/templates/jira-dc-app.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/charts/openhands-secrets/templates/jira-dc-app.yaml)
+- Integrations env vars: [`charts/openhands/templates/_env.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/charts/openhands/templates/_env.yaml) (`JIRA_DC_*`)
+- Ingress route: [`charts/openhands/templates/ingress-integrations.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/charts/openhands/templates/ingress-integrations.yaml) (`/integration/jira-dc/events`)
+- Cloud-hosted Jira Data Center flow (for end-user UX reference): [Jira Data Center Integration](/openhands/usage/cloud/project-management/jira-dc-integration)
