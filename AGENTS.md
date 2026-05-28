@@ -198,10 +198,23 @@ Run locally:
 uv run --with pytest --with requests pytest -q tests/
 ```
 
+## OpenHands/extensions — No Release Tags
+
+`OpenHands/extensions` does **not** publish versioned release tags (no `v1`, `v2`, etc.).
+All GitHub Action references to plugins in that repo must use `@main`:
+
+```yaml
+uses: OpenHands/extensions/plugins/qa-changes@main
+uses: OpenHands/extensions/plugins/pr-review@main
+```
+
+Do **not** suggest pinning to `@v1` or any other tag — they don't exist and the workflow will fail.
+
 ## Related repos (source-of-truth)
 
 - OpenHands Agent SDK: https://github.com/OpenHands/software-agent-sdk
 - OpenHands CLI: https://github.com/OpenHands/OpenHands-CLI
 - OpenHands (Web/App): https://github.com/OpenHands/OpenHands
+- OpenHands Extensions: https://github.com/OpenHands/extensions (plugins, skills, actions — **no release tags**)
 
 When updating SDK features or examples, expect to update this repo too (especially under `sdk/`).

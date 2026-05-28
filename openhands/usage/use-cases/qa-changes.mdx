@@ -1,0 +1,201 @@
+---
+title: Automated QA Testing
+description: Validate pull request changes by actually running the software — not just reading code or running tests
+automation:
+  icon: vial
+  summary: >-
+    Functionally test PR changes by exercising the software as a real user would.
+---
+
+<Card
+  title="View QA Changes Plugin"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes"
+>
+  Check out the complete QA changes plugin with ready-to-use code and configuration.
+</Card>
+
+Automated QA testing goes beyond code review and CI: instead of reading diffs or running the test suite, the QA agent actually **runs the software** and verifies that changes work as claimed. It sets up the environment, exercises changed behavior as a real user would (browser, CLI, API requests), and posts a structured report with evidence.
+
+This is Layer 2 of the [Verification Stack](https://www.openhands.dev/blog/verification-stack), complementing the [code review agent](/openhands/usage/use-cases/code-review).
+
+## Overview
+
+The QA agent follows a four-phase methodology:
+
+1. **Understand** — Reads the PR diff, title, and description. Classifies changes (new feature, bug fix, refactor, config) and identifies entry points (CLI commands, API endpoints, UI pages).
+2. **Setup** — Bootstraps the repository: installs dependencies, builds the project, notes CI status.
+3. **Exercise** — The core phase: spins up servers, opens browsers, runs CLI commands, makes HTTP requests — testing the changed behavior as a real user would. For bug fixes, it reproduces the bug on the base branch and verifies the fix on the PR branch.
+4. **Report** — Posts a structured QA report as a PR comment, with evidence (commands run, outputs, screenshots) and a verdict (PASS / FAIL / PARTIAL).
+
+The QA agent knows when to give up: after exhausting multiple approaches without progress, it reports what it tried and stops — rather than spinning endlessly.
+
+## What It Does (and Doesn't)
+
+<CardGroup cols={2}>
+  <Card title="QA Agent Does" icon="check">
+    - Run the actual application and interact with it
+    - Make real HTTP requests, run real CLI commands
+    - Open browsers and verify UI changes
+    - Reproduce bugs and verify fixes end-to-end
+    - Report with evidence (commands, outputs, screenshots)
+  </Card>
+  <Card title="QA Agent Does NOT" icon="xmark">
+    - Run the test suite (that's CI's job)
+    - Analyze code for style or structure (that's code review's job)
+    - Run linters, formatters, or type checkers
+    - Substitute `--help` or `--dry-run` for real execution
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+### GitHub Actions
+
+Create `.github/workflows/qa-changes.yml` in your repository:
+
+```yaml
+name: QA Changes
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  qa:
+    if: |
+      (github.event.action == 'opened' && github.event.pull_request.draft == false) ||
+      github.event.action == 'ready_for_review' ||
+      github.event.label.name == 'qa-this'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run QA Changes
+        uses: OpenHands/extensions/plugins/qa-changes@main
+        with:
+          llm-model: anthropic/claude-sonnet-4-20250514
+          llm-api-key: ${{ secrets.LLM_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Add your `LLM_API_KEY` to your repository's **Settings → Secrets and variables → Actions**.
+
+### In a Conversation
+
+You can also trigger QA manually in any OpenHands conversation. First, install the skill:
+
+```
+/add-skill https://github.com/OpenHands/extensions/tree/main/skills/qa-changes
+```
+
+Then invoke it:
+
+```
+/qa-changes
+```
+
+The agent will ask for the PR to test, or you can provide context directly:
+
+```
+/qa-changes — Please QA PR #42 on the my-org/my-repo repository.
+Focus on the new dashboard page and verify it renders correctly.
+```
+
+## QA Report Format
+
+The QA agent posts a structured report as a PR comment:
+
+```
+## QA Report
+
+**Status: PASS** ✅
+
+### Changes Tested
+- New `/api/health` endpoint returns 200 with version info
+- Dashboard page renders at `/dashboard` with correct data
+
+### Evidence
+1. Started server with `npm run dev`
+2. `curl http://localhost:3000/api/health` → 200 OK, body: {"status":"ok","version":"1.2.0"}
+3. Navigated to http://localhost:3000/dashboard — page renders correctly
+   [screenshot attached]
+
+### Edge Cases
+- Empty database state: dashboard shows "No data" placeholder ✅
+- Invalid auth token: returns 401 as expected ✅
+```
+
+## Customization
+
+### Change Types
+
+The QA agent adapts its approach based on the type of change:
+
+| Change Type | QA Approach |
+|-------------|-------------|
+| **Frontend / UI** | Starts dev server, opens browser, verifies visual changes, tests interactions |
+| **CLI** | Runs commands with realistic arguments, verifies output, tests edge cases |
+| **API / Backend** | Starts server, makes HTTP requests, verifies responses and side effects |
+| **Bug fix** | Reproduces bug on base branch, verifies fix on PR branch (before/after) |
+| **Library / SDK** | Writes and runs a short script that imports and calls changed functions |
+
+### Repository-Specific QA Guidelines
+
+Add repo-specific QA instructions by creating `.agents/skills/qa-guide.md`:
+
+```markdown
+---
+name: qa-guide
+description: Project-specific QA guidelines
+triggers:
+- /qa-changes
+---
+
+# QA Guidelines for [Your Project]
+
+## Environment Setup
+- Run `make setup` to initialize the development environment
+- The dev server runs on port 8080
+
+## Key Test Scenarios
+- Always verify the admin dashboard at /admin after backend changes
+- For API changes, test with both authenticated and unauthenticated requests
+
+## Known Limitations
+- The payment module requires a Stripe test key — skip payment flow testing
+```
+
+## Integration with the Verification Stack
+
+The QA agent is most powerful when used alongside the [code review agent](/openhands/usage/use-cases/code-review) and the [iterate skill](https://github.com/OpenHands/extensions/tree/main/skills/iterate) as part of the full [Verification Stack](https://www.openhands.dev/blog/verification-stack):
+
+1. **Code review** catches issues by reading the diff (style, security, data structures)
+2. **QA** catches issues by running the software (behavioral regressions, UI bugs)
+3. **Iterate** orchestrates the loop — fixing issues flagged by either verifier and re-polling until the PR is clean
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="QA agent can't start the server">
+    Ensure your repository's setup instructions are documented in `README.md` or `AGENTS.md`. The agent follows these to bootstrap the environment. If setup requires special steps, add them to a custom QA guide.
+  </Accordion>
+
+  <Accordion title="QA report says PARTIAL">
+    PARTIAL means some scenarios passed and others failed or couldn't be tested. Read the report details — it will explain what worked and what didn't. Common causes: missing environment variables, external service dependencies, or insufficient permissions.
+  </Accordion>
+
+  <Accordion title="QA takes too long">
+    For large PRs with many changed entry points, the agent may need more time. Consider splitting large PRs into smaller, focused changes. You can also add a custom QA guide that prioritizes the most important scenarios.
+  </Accordion>
+</AccordionGroup>
+
+## Related Resources
+
+- [QA Changes Plugin](https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes) — GitHub Actions plugin
+- [QA Changes Skill](https://github.com/OpenHands/extensions/tree/main/skills/qa-changes) — Detailed skill methodology
+- [Verification Stack](https://www.openhands.dev/blog/verification-stack) — How QA fits into the full verification pipeline
+- [Automated Code Review](/openhands/usage/use-cases/code-review) — The complementary code review agent
