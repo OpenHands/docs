@@ -4539,39 +4539,47 @@ curl https://agent-server.example.com/health
 - Resource exhaustion
 - Container failures
 
-## Client SDK
+## Client Integration Architecture
 
-Python SDK for interacting with Agent Server:
+The SDK implements a **workspace-based dispatch pattern** for connecting to agent servers. The `Conversation` factory inspects the workspace type and returns the appropriate conversation implementation.
 
-```python
-from openhands.client import AgentServerClient
-
-client = AgentServerClient(
-    url="https://agent-server.example.com",
-    api_key="your-api-key"
-)
-
-# Create conversation
-conversation = client.create_conversation()
-
-# Send message
-response = client.send_message(
-    conversation_id=conversation.id,
-    message="Hello, agent!"
-)
-
-# Stream responses
-for event in client.stream_conversation(conversation.id):
-    if event.type == "message":
-        print(event.content)
+```mermaid
+flowchart LR
+    Conv["Conversation()"] --> Check{"Workspace Type?"}
+    Check -->|LocalWorkspace| Local["LocalConversation"]
+    Check -->|RemoteWorkspace| Remote["RemoteConversation"]
+    Remote -->|HTTP/WebSocket| Server["Agent Server"]
+    
+    style Conv fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Remote fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Server fill:#fff4df,stroke:#b7791f,stroke-width:2px
 ```
 
-**Client handles**:
-- Authentication
-- Request/response serialization
-- Error handling
-- Streaming
-- Retries
+### Workspace Types
+
+| Workspace | Conversation Type | Communication |
+|-----------|------------------|---------------|
+| [`LocalWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/local.py) | [`LocalConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/local_conversation.py) | Direct execution |
+| [`OpenHandsCloudWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/cloud/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTPS + WebSocket to OpenHands Cloud |
+| [`APIRemoteWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/remote_api/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTPS + WebSocket to Runtime API |
+| [`DockerWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/docker/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTP + WebSocket to local container |
+
+### [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) Responsibilities
+
+The `RemoteConversation` implementation handles all client-server concerns:
+
+- **Session management**: Authenticates and maintains connection to agent server
+- **Event streaming**: WebSocket connection for real-time agent events
+- **Request routing**: HTTP calls for conversation lifecycle operations
+- **Reconnection**: Automatic retry logic for transient failures
+
+### Usage Examples
+
+For complete working examples with all required setup:
+
+- **[OpenHands Cloud Workspace](/sdk/guides/agent-server/cloud-workspace)** - Managed cloud infrastructure
+- **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Custom runtime environments
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Local containerized execution
 
 ## Cost Considerations
 
@@ -8993,12 +9001,17 @@ export LLM_API_KEY=your-api-key-here
 <AccordionGroup>
   <Accordion title="Option 1: Install via PyPI" icon="box">
     ```bash
-    pip install openhands-sdk # Core SDK (openhands.sdk)
-    pip install openhands-tools  # Built-in tools (openhands.tools)
-    # Optional: required for sandboxed workspaces in Docker or remote servers
-    pip install openhands-workspace # Workspace backends (openhands.workspace)
-    pip install openhands-agent-server # Remote agent server (openhands.agent_server)
+    # Core SDK + built-in tools — install together so their versions stay aligned
+    pip install -U openhands-sdk openhands-tools
+
+    # Optional: sandboxed workspaces in Docker or remote servers.
+    # List every package in one command so they all resolve to the same version.
+    pip install -U openhands-sdk openhands-tools openhands-workspace openhands-agent-server
     ```
+
+    <Warning>
+      `openhands-sdk` and `openhands-tools` are a matched set: they are built, tested, and released together at the same version number, and `openhands-tools` imports `openhands-sdk` internals directly. Always install and upgrade them in a **single** `pip` command so their versions match. Installing them separately can leave a newer `openhands-tools` against an older `openhands-sdk` (for example, when a previously installed copy is not upgraded), which fails at import with errors like `ModuleNotFoundError: No module named 'openhands.sdk.utils.path'`. To pin a specific release, use the same version for both, e.g. `pip install "openhands-sdk==1.22.1" "openhands-tools==1.22.1"`.
+    </Warning>
   </Accordion>
 
   <Accordion title="Option 2: Install from Source" icon="code">
@@ -11767,6 +11780,17 @@ cd agent-sdk
 uv run python examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
 ```
 
+
+## Settings and Secrets API Examples
+
+The remote agent-server examples also include end-to-end scripts for settings-backed secrets and authenticated LLM configuration:
+
+- [examples/02_remote_agent_server/12_settings_and_secrets_api.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/12_settings_and_secrets_api.py) demonstrates storing secrets through the Settings and Secrets API, referencing them with `LookupSecret`, and cleaning them up after use.
+- [examples/02_remote_agent_server/13_workspace_get_llm.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/13_workspace_get_llm.py) demonstrates configuring LLM settings on an authenticated agent-server and retrieving them through `RemoteWorkspace.get_llm()`.
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/12_settings_and_secrets_api.py"/>
+<RunExampleCode path_to_script="examples/02_remote_agent_server/13_workspace_get_llm.py"/>
+
 ## Next Steps
 
 - **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Connect to Runtime API service
@@ -12013,7 +12037,7 @@ ENV PYTHONPATH="/app:${PYTHONPATH}"
 This example is available on GitHub: [examples/02_remote_agent_server/06_custom_tool/](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/02_remote_agent_server/06_custom_tool)
 </Note>
 
-```python icon="python" expandable examples/02_remote_agent_server/06_custom_tool/custom_tool_example.py
+```python icon="python" expandable examples/02_remote_agent_server/06_custom_tool/main.py
 """Example: Using custom tools with remote agent server.
 
 This example demonstrates how to use custom tools with a remote agent server
@@ -13471,9 +13495,9 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 > A ready-to-run example is available [here](#ready-to-run-example)!
 
-`AgentSettings` gives you a structured, serializable way to define an agent's model, tools, and optional subsystems like the condenser. Use it when you want to store agent configuration in JSON, send it over an API, or rebuild agents from validated settings later.
+`OpenHandsAgentSettings` gives you a structured, serializable way to define an agent's model, tools, and optional subsystems like the condenser. Use it when you want to store agent configuration in JSON, send it over an API, or rebuild agents from validated settings later.
 
-## Why Use AgentSettings
+## Why Use Agent Settings
 
 - Keep agent configuration as data instead of wiring everything together imperatively.
 - Validate settings with Pydantic before creating an agent.
@@ -13482,17 +13506,17 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 ## Build Settings
 
-Create an `AgentSettings` object with the same ingredients you would normally pass to an `Agent`.
+Create an `OpenHandsAgentSettings` object with the same ingredients you would normally pass to an `Agent`.
 
 ```python icon="python" focus={8, 11, 12, 13}
 from pydantic import SecretStr
 
-from openhands.sdk import AgentSettings, LLM, Tool
-from openhands.sdk.settings import CondenserSettings
+from openhands.sdk import LLM, Tool
+from openhands.sdk.settings import CondenserSettings, OpenHandsAgentSettings
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
-settings = AgentSettings(
+settings = OpenHandsAgentSettings(
     llm=LLM(
         model="anthropic/claude-sonnet-4-5-20250929",
         api_key=SecretStr("your-api-key"),
@@ -13507,11 +13531,11 @@ settings = AgentSettings(
 
 ## Serialize and Restore Settings
 
-Because `AgentSettings` is a Pydantic model, you can dump it to JSON-compatible data and restore it later.
+Because `OpenHandsAgentSettings` is a Pydantic model, you can dump it to JSON-compatible data and restore it later.
 
 ```python icon="python" focus={1, 2}
 payload = settings.model_dump(mode="json")
-restored = AgentSettings.model_validate(payload)
+restored = OpenHandsAgentSettings.model_validate(payload)
 ```
 
 This is useful when:
@@ -13538,10 +13562,10 @@ This example is available on GitHub: [examples/01_standalone_sdk/46_agent_settin
 </Note>
 
 ```python icon="python" expandable examples/01_standalone_sdk/46_agent_settings.py
-"""Create, serialize, and deserialize AgentSettings, then build a working agent.
+"""Create, serialize, and deserialize OpenHandsAgentSettings, then build an agent.
 
 Demonstrates:
-1. Configuring an agent entirely through AgentSettings (LLM, tools, condenser).
+1. Configuring an agent entirely through OpenHandsAgentSettings (LLM, tools, condenser).
 2. Serializing settings to JSON and restoring them.
 3. Building an Agent from settings via ``create_agent()``.
 4. Running a short conversation to prove the settings take effect.
@@ -13553,7 +13577,7 @@ import os
 
 from pydantic import SecretStr
 
-from openhands.sdk import LLM, AgentSettings, Conversation, Tool
+from openhands.sdk import LLM, Conversation, OpenHandsAgentSettings, Tool
 from openhands.sdk.settings import CondenserSettings
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
@@ -13563,7 +13587,7 @@ from openhands.tools.terminal import TerminalTool
 api_key = os.getenv("LLM_API_KEY")
 assert api_key is not None, "LLM_API_KEY environment variable is not set."
 
-settings = AgentSettings(
+settings = OpenHandsAgentSettings(
     llm=LLM(
         model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
         api_key=SecretStr(api_key),
@@ -13582,7 +13606,7 @@ print("Serialized settings (JSON):")
 print(json.dumps(payload, indent=2, default=str)[:800], "…")
 print()
 
-restored = AgentSettings.model_validate(payload)
+restored = OpenHandsAgentSettings.model_validate(payload)
 assert restored.condenser.enabled is True
 assert restored.condenser.max_size == 50
 assert len(restored.tools) == 2
@@ -13613,7 +13637,7 @@ print()
 
 # ── 4. Different settings → different behavior ───────────────────────────
 # Now create settings with ONLY the terminal tool and condenser disabled.
-terminal_only_settings = AgentSettings(
+terminal_only_settings = OpenHandsAgentSettings(
     llm=settings.llm,
     tools=[Tool(name=TerminalTool.name)],
     condenser=CondenserSettings(enabled=False),
@@ -18242,6 +18266,27 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 | SessionStart | When conversation starts | No |
 | SessionEnd | When conversation ends | No |
 
+## Exit Codes
+
+Hook scripts signal their result through their exit code. The SDK matches the
+[Claude Code hook contract](https://docs.claude.com/en/docs/claude-code/hooks):
+
+- **`0` — success.** The operation proceeds. `stdout` is parsed as JSON for
+  structured output (`decision`, `reason`, `additionalContext`, `continue`).
+- **`2` — block.** The operation is denied. For `PreToolUse` and
+  `UserPromptSubmit` this rejects the action; for `Stop` it prevents the
+  agent from finishing and the conversation continues. `stderr` / `reason`
+  is surfaced as feedback.
+- **Any other non-zero exit code — non-blocking error.** `success` is set to
+  `False` and the error is logged via `HookExecutionEvent`, but the
+  operation still proceeds.
+
+<Warning>
+Only exit code `2` blocks. Exit code `1` (the conventional Unix failure
+code) is treated as a non-blocking error. A hook intended to enforce a
+policy must exit with `2`.
+</Warning>
+
 ## Key Concepts
 
 - Registration points: subscribe to events or attach pre/post hooks around LLM calls and tool execution
@@ -18254,7 +18299,7 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 This example is available on GitHub: [examples/01_standalone_sdk/33_hooks](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/33_hooks/)
 </Note>
 
-```python icon="python" expandable examples/01_standalone_sdk/33_hooks/33_hooks.py
+```python icon="python" expandable examples/01_standalone_sdk/33_hooks/main.py
 """OpenHands Agent SDK — Hooks Example
 
 Demonstrates the OpenHands hooks system.
@@ -18408,7 +18453,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
     print(f"\nEXAMPLE_COST: {cost}")
 ```
-<RunExampleCode path_to_script="examples/01_standalone_sdk/33_hooks/33_hooks.py"/>
+<RunExampleCode path_to_script="examples/01_standalone_sdk/33_hooks/main.py"/>
 
 
 ### Hook Scripts
@@ -19946,6 +19991,17 @@ store.delete("gpt")
 ```
 
 <RunExampleCode path_to_script="examples/01_standalone_sdk/44_model_switching_in_convo.py"/>
+
+
+## Agent-Driven LLM Switching
+
+Saved profiles can also be exposed to the agent through the `switch_llm` built-in tool. The tool call switches the conversation's active profile after the current model finishes the tool call, so future model calls use the selected profile.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/49_switch_llm_tool.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/49_switch_llm_tool.py)
+</Note>
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/49_switch_llm_tool.py"/>
 
 ## Next Steps
 
@@ -23581,6 +23637,33 @@ replacement for either.
 | No Cyrillic/homoglyph detection | NFKC maps compatibility forms, not cross-script confusables | Unicode TR39 confusable tables |
 | Content past 30k chars is invisible | Hard cap prevents regex denial-of-service | Raise the cap (increases ReDoS exposure) |
 | `thinking_blocks` not scanned | Scanning model reasoning risks false positives on deliberation | Separate injection-only CoT scan |
+
+#### Extraction budget and primary-surface-first ordering
+
+The 30k-character cap is applied per scanning corpus, not per field: every
+field competes for one shared budget (the `_BoundedSegments` buffer in
+`defense_in_depth/utils.py`). That creates a secondary risk — a single
+oversized field could consume the whole budget and leave higher-value
+fields unscanned. `tool_name` has no length validation in the SDK, so a 30k
+hallucinated name is a real starvation vector, not just a theoretical one.
+
+The analyzer addresses this by **extraction order**, not a per-field cap:
+the primary attack surface is added first, so it always receives budget
+even when a later field is adversarially large.
+
+- Executable corpus: `tool_call.arguments` (the primary prompt-injection
+  surface) → `tool_name` → `tool_call.name`.
+- Reasoning corpus: `summary` (what the agent is about to do) →
+  `reasoning_content` → `thought`.
+
+The two corpora are extracted with separate budgets and concatenated
+without a second outer cap, so a budget-filling `arguments` payload cannot
+crowd `summary` out of the injection scan.
+
+**Remaining boundary** (a strict xfail in the test suite): a payload past
+30k characters *within a single field* is still truncated and invisible.
+That is the deliberate ReDoS trade-off already listed above; extraction
+order does not change it.
 
 <Note>
 Ready-to-run example: [examples/01_standalone_sdk/47_defense_in_depth_security.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/47_defense_in_depth_security.py)
@@ -28478,10 +28561,6 @@ Key aspects of the plugin system:
 ### Creating Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/creating-automations.md
 
-<Info>
-**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
-</Info>
-
 The easiest way to create an automation is to ask OpenHands directly. The Automation Skill handles all the details—you just describe what you want.
 
 ## Prompt vs Plugin Automations
@@ -28556,7 +28635,7 @@ The prompt is what the AI agent executes each time the automation runs. Write it
 
 Tell the automation what to do with its output:
 
-- "Post to the #alerts Slack channel" (requires [Slack MCP](/openhands/usage/cloud/slack-installation))
+- "Post to the #alerts Slack channel" (requires [Slack MCP](/openhands/usage/settings/mcp-settings))
 - "Save to `reports/weekly-summary.md`"
 - "Create a GitHub issue with the findings" (automatic if you logged in with GitHub)
 - "Send a message via the configured notification service"
@@ -28586,7 +28665,7 @@ Each automation runs in a full OpenHands sandbox with:
 - **Your secrets**: Access API keys stored in Settings > Secrets
 - **MCP integrations**: Use your configured MCP servers
 - **Network access**: Make HTTP requests, connect to APIs
-- **Git provider access**: Tokens from your Cloud login (GitHub, GitLab, or Bitbucket) are automatically included
+- **Git provider access**: Tokens from your login (GitHub, GitLab, or Bitbucket) are automatically included
 
 ## Schedules
 
@@ -28621,10 +28700,6 @@ Once your automation is created:
 
 ### Event-Based Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/event-automations.md
-
-<Info>
-**Beta Feature**: Event-based automations are in beta for **OpenHands Cloud** and **OpenHands Enterprise** users.
-</Info>
 
 Event-based automations run when something happens—a PR is opened, an issue is commented on, or a webhook fires—instead of on a schedule. This is ideal for responsive workflows like auto-reviewing PRs, triaging issues, or reacting to external service events.
 
@@ -28716,7 +28791,9 @@ For services beyond GitHub—like Linear, Stripe, or Slack—register a custom w
 
 ### Walkthrough: Linear Integration
 
-This example walks through setting up a Linear webhook to auto-triage new issues.
+<Note>
+This example walks through setting up a Linear webhook to auto-triage new issues using Automations in **[OpenHands Cloud](https://app.all-hands.dev)**.
+</Note>
 
 #### Step 1: Get Your Webhook Secret from Linear
 
@@ -28830,10 +28907,6 @@ New to automations? Start with the [Automations Overview](/openhands/usage/autom
 ### Managing Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/managing-automations.md
 
-<Info>
-**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
-</Info>
-
 You can manage your automations by asking OpenHands directly—just like you created them.
 
 ## Viewing Your Automations
@@ -28931,13 +29004,9 @@ Deleting an automation is permanent. Consider disabling it instead if you might 
 ### Automations Overview
 Source: https://docs.openhands.dev/openhands/usage/automations/overview.md
 
-<Info>
-**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
-</Info>
-
 Automations let you schedule AI-powered tasks that run automatically—daily reports, health checks, data syncs, and more. Each automation runs a full OpenHands conversation on your chosen schedule, with access to your LLM settings, stored secrets, and integrations.
 
-Your git provider credentials are automatically available—if you logged into OpenHands Cloud with GitHub, GitLab, or Bitbucket, that access is included by default.
+Your git provider credentials are automatically available—if you logged into OpenHands with GitHub, GitLab, or Bitbucket, that access is included by default.
 
 ## What Can Automations Do?
 
@@ -28948,7 +29017,7 @@ Your git provider credentials are automatically available—if you logged into O
 - **Send notifications**: Post updates to Slack, create GitHub issues, or send alerts
 
 <Note>
-Automations can only interact with services you've configured access to. For example, posting to Slack requires the [Slack MCP integration](/openhands/usage/cloud/slack-installation). Git providers you logged in with (GitHub, GitLab, Bitbucket) are automatically available.
+Automations can only interact with services you've configured access to. For example, posting to Slack requires the [Slack MCP integration](/openhands/usage/settings/mcp-settings). Git providers you logged in with (GitHub, GitLab, Bitbucket) are automatically available.
 </Note>
 
 ## Two Types of Automations
@@ -28995,25 +29064,14 @@ When your automation runs:
 
 Automations are user-scoped—each automation and its runs belong to you. Conversations created by your automations automatically appear in your conversations list, just like any other conversation you start.
 
-Your automation has access to everything a normal OpenHands conversation does: terminal, file editing, your configured LLM, stored secrets, and MCP integrations. Git provider tokens from your Cloud login (GitHub, GitLab, or Bitbucket) are automatically included.
+Your automation has access to everything a normal OpenHands conversation does: terminal, file editing, your configured LLM, stored secrets, and MCP integrations. Git provider tokens from your login (GitHub, GitLab, or Bitbucket) are automatically included.
 
 ## Getting Started
 
-Before creating automations, complete this one-time setup:
+**Prerequisites**
 
-### 1. Create an OpenHands API Key
-
-Go to [Settings > API Keys](https://app.all-hands.dev/settings/api-keys) and create a new API key.
-
-### 2. Save the API Key as a Secret
-
-Copy the API key value and go to [Settings > Secrets](https://app.all-hands.dev/settings/secrets). Create a new secret with:
-- **Name**: `OPENHANDS_API_KEY`
-- **Value**: Your API key from step 1
-
-This allows the Automation Skill to create and manage automations on your behalf.
-
-### 3. Start a Conversation
+- **Configured LLM** in your settings
+- **Stored secrets** (optional) for any additional API keys your automations need (e.g., Slack tokens)
 
 Open a new conversation in OpenHands and ask it to create an automation:
 
@@ -29022,13 +29080,11 @@ Create an automation that runs every Monday at 9 AM and summarizes
 our open GitHub issues, then posts to #engineering on Slack.
 ```
 
-You can also list existing automations, enable/disable them, or trigger manual runs—all through conversation.
+Once you create an automation, you can view them by clicking on the "Automations" icon on the left-hand navigation.
 
-## Prerequisites
+You can also ask OpenHands to list [existing automations, enable/disable them, or trigger manual runs](/openhands/usage/automations/managing-automations).
 
-- **OpenHands Cloud or Enterprise account** (not available in open-source)
-- **Configured LLM** in your [settings](https://app.all-hands.dev/settings)
-- **Stored secrets** (optional) for any additional API keys your automations need (e.g., Slack tokens)
+
 
 ---
 
@@ -29582,7 +29638,7 @@ You can configure multiple hook types and multiple hooks per event:
 
 ## See Also
 
-- [Repository Customization](/openhands/usage/customization/repository) - Setup scripts and pre-commit hooks
+- [Repository Customization](/openhands/usage/customization/repository) - Setup scripts and repository-specific hooks
 - [Skills](/overview/skills) - Extend agent behavior with prompt-based skills
 - [Hooks (SDK Guide)](/sdk/guides/hooks) - Programmatic hooks for SDK developers
 
@@ -29615,29 +29671,45 @@ blocking dangerous commands, enforcing linting before the agent finishes, or log
 
 See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide.
 
-## Pre-commit Script
-You can add a `.openhands/pre-commit.sh` file to create a custom git pre-commit hook that runs before each commit.
-This can be used to enforce code quality standards, run tests, or perform other checks before allowing commits.
+## Repository-Specific Stop Hooks
 
-For example:
-```bash
+For repository-specific quality gates, use a [Stop hook](/openhands/usage/customization/hooks) in `.openhands/hooks.json`.
+Stop hooks run when OpenHands tries to finish a task and can block completion until formatting, linting, tests, or other
+repo-specific checks pass. They work across current agent-server-backed OpenHands flows.
+
+For example, create `.openhands/hooks/quality_gate.sh`:
+
+```bash .openhands/hooks/quality_gate.sh
 #!/bin/bash
-# Run linting checks
-cd frontend && npm run lint
-if [ $? -ne 0 ]; then
-  echo "Frontend linting failed. Please fix the issues before committing."
-  exit 1
-fi
+cd "${OPENHANDS_PROJECT_DIR:-$PWD}"
 
-# Run tests
-cd backend && pytest tests/unit
-if [ $? -ne 0 ]; then
-  echo "Backend tests failed. Please fix the issues before committing."
-  exit 1
+# Replace this with your repo's checks, such as npm run lint, pytest, or make test.
+if ! make test 2>&1; then
+  echo '{"decision":"deny","reason":"Quality checks failed. Fix them before finishing."}'
+  exit 2
 fi
 
 exit 0
 ```
+
+Then register it in `.openhands/hooks.json`:
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/quality_gate.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+If you currently use `.openhands/pre-commit.sh`, migrate those checks to Stop hooks when you want quality gates to apply
+to current agent-server-backed OpenHands flows. Move the check commands into a Stop hook script like the one above. See the
+[Hooks](/openhands/usage/customization/hooks) guide for complete behavior and JSON response details.
 
 ### Debugging
 Source: https://docs.openhands.dev/openhands/usage/developers/debugging.md
@@ -32428,20 +32500,38 @@ for the canonical list of supported parameters.
 
 ## Model Recommendations
 
-Based on our evaluations of language models for coding tasks (using the SWE-bench dataset), we can provide some
-recommendations for model selection. Our latest benchmarking results can be found in
-[this spreadsheet](https://docs.google.com/spreadsheets/d/1wOUdFCMyY6Nt0AIqF705KN4JKOWgeI4wUGUP60krXXs/edit?gid=0).
+Model quality for coding agents changes quickly. These recommendations are based on current
+[OpenHands Index](https://index.openhands.dev/home) results where available. The linked
+[openhands-index-results repository](https://github.com/OpenHands/openhands-index-results) contains the full scores and
+trajectories for each run.
 
-Based on these findings and community feedback, these are the latest models that have been verified to work reasonably well with OpenHands:
+Use the strongest model you can afford for long-running or high-stakes tasks. Use lower-cost profiles for routine edits,
+then switch back to a stronger model for planning, debugging, and review.
 
-### Cloud / API-Based Models
+### Best Cloud Models by Family
 
-- [anthropic/claude-sonnet-4-20250514](https://www.anthropic.com/api) (recommended)
-- [anthropic/claude-sonnet-4-5-20250929](https://www.anthropic.com/api) (recommended)
-- [openai/gpt-5-2025-08-07](https://openai.com/api/) (recommended)
-- [gemini/gemini-3-pro-preview](https://blog.google/products/gemini/gemini-3/)
-- [deepseek/deepseek-chat](https://api-docs.deepseek.com/)
-- [moonshot/kimi-k2-0711-preview](https://platform.moonshot.ai/docs/pricing/chat#generation-model-kimi-k2)
+| Family | Recommended Model | Model String | OpenHands Index Average | Notes |
+|--------|-------------------|--------------|-------------------------|-------|
+| Claude | [Claude Opus 4.7](https://github.com/OpenHands/openhands-index-results/tree/main/results/claude-opus-4-7) | `anthropic/claude-opus-4-7` | 68.2 | Best Claude-series result in the OpenHands Index. Use it for complex, long-running software work. Claude Opus 4.6 is close behind at 66.7. |
+| GPT | [GPT-5.5](https://github.com/OpenHands/openhands-index-results/tree/main/results/GPT-5.5) | `openai/gpt-5.5` | 65.9 | Best GPT-series result in the OpenHands Index. GPT-5.4 is close behind at 64.3. |
+| Gemini | [Gemini 3.1 Pro](https://github.com/OpenHands/openhands-index-results/tree/main/results/Gemini-3.1-Pro) | `gemini/gemini-3.1-pro-preview` | 57.0 | Best Gemini-series result in the OpenHands Index. Use Gemini 3 Flash when cost or latency is more important than top accuracy. |
+
+### Strong Open / Open-Weight Models
+
+These open or open-weight models have good OpenHands Index scores or are recommended for local OpenHands setups:
+
+| Model | Suggested Model String | OpenHands Index Average | Notes |
+|-------|------------------------|-------------------------|-------|
+| [GLM-5.1](https://github.com/OpenHands/openhands-index-results/tree/main/results/GLM-5.1) | `openrouter/z-ai/glm-5.1` | 58.2 | Strongest open-weight result currently listed in the OpenHands Index. |
+| [Kimi-K2.6](https://github.com/OpenHands/openhands-index-results/tree/main/results/Kimi-K2.6) | `openrouter/moonshotai/kimi-k2.6` | 57.1 | Strong open-weight option, especially for coding and information-gathering tasks. |
+| [DeepSeek-V4-Pro](https://github.com/OpenHands/openhands-index-results/tree/main/results/DeepSeek-V4-Pro) | `openrouter/deepseek/deepseek-v4-pro` | 51.3 | Strong coding and test-generation scores; current Index entry covers three benchmarks. |
+| [MiniMax-M2.7](https://github.com/OpenHands/openhands-index-results/tree/main/results/MiniMax-M2.7) | `openrouter/minimax/minimax-m2.7` | 43.4 | Recommended as a lower-cost open-weight option with strong SWE-bench and SWT-bench scores. Also available from MiniMax-compatible OpenAI endpoints as `openai/MiniMax-M2.7`. |
+| [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | `openai/Qwen3.6-35B-A3B` for local OpenAI-compatible servers, or `openrouter/qwen/qwen3.6-35b-a3b` through OpenRouter | Not yet listed | Recommended local / self-hosted model for OpenHands. It is open-weight, supports a large context window, and is featured in the [local LLM guide](/openhands/usage/llms/local-llms). |
+
+<Note>
+Hosted model strings can vary by provider and region. If a model string is not accepted, check the provider console and
+the [LiteLLM provider list](https://docs.litellm.ai/docs/providers), then use the provider-specific model ID shown there.
+</Note>
 
 If you have successfully run OpenHands with specific providers, we encourage you to open a PR to share your setup process
 to help others using the same provider!
@@ -32456,15 +32546,16 @@ limits and monitor usage.
 
 ### Local / Self-Hosted Models
 
-- [mistralai/devstral-small](https://openhands.dev/blog/devstral-a-new-state-of-the-art-open-model-for-coding-agents) (20 May 2025) -- also available through [OpenRouter](https://openrouter.ai/mistralai/devstral-small:free)
-- [all-hands/openhands-lm-32b-v0.1](https://openhands.dev/blog/introducing-openhands-lm-32b----a-strong-open-coding-agent-model) (31 March 2025) -- also available through [OpenRouter](https://openrouter.ai/all-hands/openhands-lm-32b-v0.1)
+For local and self-hosted usage, start with
+[Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B). See the
+[local LLM guide](/openhands/usage/llms/local-llms) for LM Studio, Ollama, SGLang, and vLLM setup examples.
 
 ### Known Issues
 
 <Note>
-Most current local and open source models are not as powerful. When using such models, you may see long
-wait times between messages, poor responses, or errors about malformed JSON. OpenHands can only be as powerful as the
-models driving it. However, if you do find ones that work, please add them to the verified list above.
+Open-weight and local models still vary widely in tool-use reliability. If you see long wait times, poor responses, or
+errors about malformed JSON, try a stronger model, increase the context window, or switch to a frontier cloud model for
+that task.
 </Note>
 
 ## LLM Configuration
@@ -32543,7 +32634,7 @@ Source: https://docs.openhands.dev/openhands/usage/llms/local-llms.md
 
 ## News
 
-- 2025/12/12: We now recommend two powerful local models for OpenHands: [Qwen3-Coder-30B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) and [Devstral Small 2 (24B)](https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512). Both models deliver excellent performance on coding tasks and work great with OpenHands!
+- 2026/05/21: We now recommend [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) as the first local model to try with OpenHands. It is an open-weight MoE model built for agentic coding, supports a large context window, and is available through LM Studio, Ollama, vLLM, and SGLang.
 
 ## Quickstart: Running OpenHands with a Local LLM using LM Studio
 
@@ -32551,13 +32642,13 @@ This guide explains how to serve a local LLM using [LM Studio](https://lmstudio.
 
 We recommend:
 - **LM Studio** as the local model server, which handles metadata downloads automatically and offers a simple, user-friendly interface for configuration.
-- **Qwen3-Coder-30B-A3B-Instruct** as the LLM for software development. This model is optimized for coding tasks and works excellently with agent-style workflows like OpenHands.
+- **Qwen3.6-35B-A3B** as the LLM for software development. This model is optimized for agentic coding and works well with tool-heavy workflows like OpenHands.
 
 ### Hardware Requirements
 
-Running Qwen3-Coder-30B-A3B-Instruct requires:
-- A recent GPU with at least 12GB of VRAM (tested on RTX 3060 with 12GB VRAM + 64GB RAM), or
-- A Mac with Apple Silicon with at least 32GB of RAM
+Running Qwen3.6-35B-A3B requires:
+- A recent GPU with at least 24GB of VRAM for quantized variants, or multiple GPUs for full precision and larger context windows, or
+- A Mac with Apple Silicon with at least 64GB of unified memory for quantized variants
 
 ### 1. Install LM Studio
 
@@ -32570,7 +32661,7 @@ Download and install the LM Studio desktop app from [lmstudio.ai](https://lmstud
 
 ![image](./screenshots/01_lm_studio_open_model_hub.png)
 
-3. Search for **"Qwen3-Coder-30B-A3B-Instruct"**, confirm you're downloading from the official Qwen publisher, then proceed to download.
+3. Search for **"Qwen3.6-35B-A3B"**, confirm you're downloading from the official Qwen publisher, then proceed to download.
 
 ![image](./screenshots/02_lm_studio_download_devstral.png)
 
@@ -32584,7 +32675,7 @@ Download and install the LM Studio desktop app from [lmstudio.ai](https://lmstud
 ![image](./screenshots/03_lm_studio_open_load_model.png)
 
 3. Enable the "Manually choose model load parameters" switch.
-4. Select **Qwen3-Coder-30B-A3B-Instruct** from the model list.
+4. Select **Qwen3.6-35B-A3B** from the model list.
 
 ![image](./screenshots/04_lm_studio_setup_devstral_part_1.png)
 
@@ -32646,7 +32737,7 @@ When started for the first time, OpenHands will prompt you to set up the LLM pro
 2. Enable the "Advanced" switch at the top of the page to show all the available settings.
 
 3. Set the following values:
-    - **Custom Model**: `openai/qwen/qwen3-coder-30b-a3b-instruct` (the Model API identifier from LM Studio, prefixed with "openai/")
+    - **Custom Model**: `openai/qwen/qwen3.6-35b-a3b` (the Model API identifier from LM Studio, prefixed with "openai/")
     - **Base URL**: `http://host.docker.internal:1234/v1`
     - **API Key**: `local-llm`
 
@@ -32675,14 +32766,14 @@ This section describes how to run local LLMs with OpenHands using alternative ba
 ### Create an OpenAI-Compatible Endpoint with Ollama
 
 - Install Ollama following [the official documentation](https://ollama.com/download).
-- Example launch command for Qwen3-Coder-30B-A3B-Instruct:
+- Example launch command for Qwen3.6-35B-A3B:
 
 ```bash
 # ⚠️ WARNING: OpenHands requires a large context size to work properly.
 # When using Ollama, set OLLAMA_CONTEXT_LENGTH to at least 22000.
 # The default (4096) is way too small — not even the system prompt will fit, and the agent will not behave correctly.
 OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_HOST=0.0.0.0:11434 OLLAMA_KEEP_ALIVE=-1 nohup ollama serve &
-ollama pull qwen3-coder:30b
+ollama pull qwen3.6:35b-a3b
 ```
 
 ### Create an OpenAI-Compatible Endpoint with vLLM or SGLang
@@ -32690,7 +32781,7 @@ ollama pull qwen3-coder:30b
 First, download the model checkpoint:
 
 ```bash
-huggingface-cli download Qwen/Qwen3-Coder-30B-A3B-Instruct --local-dir Qwen/Qwen3-Coder-30B-A3B-Instruct
+huggingface-cli download Qwen/Qwen3.6-35B-A3B --local-dir Qwen/Qwen3.6-35B-A3B
 ```
 
 #### Serving the model using SGLang
@@ -32700,8 +32791,8 @@ huggingface-cli download Qwen/Qwen3-Coder-30B-A3B-Instruct --local-dir Qwen/Qwen
 
 ```bash
 SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 python3 -m sglang.launch_server \
-    --model Qwen/Qwen3-Coder-30B-A3B-Instruct \
-    --served-model-name Qwen3-Coder-30B-A3B-Instruct \
+    --model Qwen/Qwen3.6-35B-A3B \
+    --served-model-name Qwen3.6-35B-A3B \
     --port 8000 \
     --tp 2 --dp 1 \
     --host 0.0.0.0 \
@@ -32714,11 +32805,11 @@ SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1 python3 -m sglang.launch_server \
 - Example launch command (with at least 2 GPUs):
 
 ```bash
-vllm serve Qwen/Qwen3-Coder-30B-A3B-Instruct \
+vllm serve Qwen/Qwen3.6-35B-A3B \
     --host 0.0.0.0 --port 8000 \
     --api-key mykey \
     --tensor-parallel-size 2 \
-    --served-model-name Qwen3-Coder-30B-A3B-Instruct \
+    --served-model-name Qwen3.6-35B-A3B \
     --enable-prefix-caching
 ```
 
@@ -32735,11 +32826,11 @@ pip install git+https://github.com/snowflakedb/ArcticInference.git
 2. Run the launch command with speculative decoding enabled:
 
 ```bash
-vllm serve Qwen/Qwen3-Coder-30B-A3B-Instruct \
+vllm serve Qwen/Qwen3.6-35B-A3B \
     --host 0.0.0.0 --port 8000 \
     --api-key mykey \
     --tensor-parallel-size 2 \
-    --served-model-name Qwen3-Coder-30B-A3B-Instruct \
+    --served-model-name Qwen3.6-35B-A3B \
     --speculative-config '{"method": "suffix"}'
 ```
 
@@ -32763,8 +32854,8 @@ Once OpenHands is running, open the Settings page in the UI and go to the `LLM` 
 2. Enable the **Advanced** toggle at the top of the page.
 3. Set the following parameters, if you followed the examples above:
    - **Custom Model**: `openai/<served-model-name>`
-     - For **Ollama**: `openai/qwen3-coder:30b`
-     - For **SGLang/vLLM**: `openai/Qwen3-Coder-30B-A3B-Instruct`
+     - For **Ollama**: `openai/qwen3.6:35b-a3b`
+     - For **SGLang/vLLM**: `openai/Qwen3.6-35B-A3B`
    - **Base URL**: `http://host.docker.internal:<port>/v1`
      Use port `11434` for Ollama, or `8000` for SGLang and vLLM.
    - **API Key**:
@@ -33754,6 +33845,163 @@ conversations.
 
 - `Enable memory condensation` - Turn on this setting to activate this feature.
 - `Memory condenser max history size` - The condenser will summarize the history after this many events.
+
+## LLM Profiles
+
+LLM profiles allow you to save multiple LLM configurations and switch between them, even during an active conversation.
+This is useful when you want to use different models for different tasks—for example, a faster model for simple tasks
+and a more powerful model for complex reasoning.
+
+### Creating an LLM Profile
+
+Profiles are automatically created when you save a configuration on the LLM settings page. To create a new profile:
+
+1. Navigate to `Settings > LLM`.
+2. Configure your desired LLM provider, model, and API key.
+3. Click `Save Changes`.
+
+A new profile will be created with your configuration. The most recently saved profile becomes the active profile
+for new conversations.
+
+Alternatively, you can click the `Add LLM Profile` button in the Available Profiles section to create a new profile
+directly.
+
+### Managing LLM Profiles
+
+You can manage your saved profiles in the `Available Profiles` section of the LLM settings page. Each profile shows:
+
+- **Profile name**: A unique identifier for the configuration
+- **Model**: The LLM model associated with the profile
+- **Active badge**: Indicates which profile is currently active
+
+Click the menu icon (three dots) on any profile to access these actions:
+
+- **Edit**: Modify the profile's LLM configuration
+- **Rename**: Change the profile name
+- **Set as Active**: Make this profile the default for new conversations
+- **Delete**: Remove the profile
+
+<Note>
+You can save up to 10 LLM profiles per account. Delete unused profiles if you need to create new ones.
+</Note>
+
+### Switching Profiles During a Conversation
+
+One of the most powerful features of LLM profiles is the ability to switch models mid-conversation without losing context.
+This allows you to:
+
+- Start with a fast, cost-effective model for initial exploration
+- Switch to a more powerful model when the task requires deeper reasoning
+- Use specialized models for specific types of tasks
+
+For example, you might create profiles like these:
+
+| Example Profile | Example Use | Example Cost Pattern |
+| --- | --- | --- |
+| `claude-opus-4-7` | Frontend design and visual polish | Higher cost |
+| `gpt-5.5` | Planning, instruction following, or review | Balanced for complex reasoning |
+| `minimax-m2.7` | Day-to-day implementation | Lower cost |
+
+The profile names above are examples. Use names that match the saved profiles in your OpenHands environment.
+
+To switch profiles during an active conversation:
+
+1. Look for the **profile selector button** in the chat input area. It displays the name of the currently active profile.
+2. Click the button to open the profile menu.
+3. Select the profile you want to switch to.
+
+The conversation will continue with the new model, maintaining all previous context and history. The switch takes effect
+immediately for subsequent messages.
+
+<Tip>
+The profile selector shows a checkmark next to the currently active profile. If no profile matches the running model,
+the button will show "Select a model" as a placeholder.
+</Tip>
+
+### Switching Profiles with the `/model` Slash Command
+
+You can also list and switch profiles directly from the chat input using the `/model` slash command:
+
+- `/model` — Lists your saved LLM profiles.
+- `/model <profile-name>` — Switches the running conversation to that profile.
+
+This is equivalent to using the profile selector button and works without leaving the chat. Profile names must match the
+saved profile exactly. The switch applies to future agent steps; it does not rerun earlier messages.
+
+A common workflow is to use a stronger model for planning and then switch to a lower-cost model for implementation:
+
+1. Start the conversation with `gpt-5.5` selected.
+2. Ask OpenHands to plan the work before editing files:
+
+   ```text
+   Plan the OpenHands features page. Do not edit files yet.
+   ```
+
+3. Send `/model` to list available profiles.
+4. Send `/model minimax-m2.7` to switch profiles.
+5. Ask OpenHands to implement the plan:
+
+   ```text
+   Now implement the plan.
+   ```
+
+![Agent Canvas showing example /model command output that lists saved profiles and switches to another profile](/openhands/static/img/model-command-agent-canvas.png)
+
+<Note>
+Model switching requires saved LLM profiles. If `/model` is not suggested in the chat input, create profiles in
+`Settings > LLM` and confirm that your backend supports profile switching.
+</Note>
+
+### Letting the Agent Select Models Dynamically
+
+When the model selection tool is available, the agent can choose a saved profile for the next phase of work. For example,
+it can implement frontend changes with a design-focused model and then switch to an instruction-following model for review.
+
+In the Agent SDK, this capability is exposed as the built-in `SwitchLLMTool`, which produces `switch_llm` tool calls.
+Agent Canvas displays those tool calls as `Switch LLM profile` events in the conversation timeline so you can see when
+and why the model changed.
+
+Create the profiles you want the agent to choose from, then ask OpenHands to use specific profiles for different phases
+of the task. For example:
+
+```text
+Implement a simple web page on the features of OpenHands with Claude Opus 4.7, and then switch to GPT-5.5 and review the code.
+```
+
+![Agent Canvas showing example switch_llm tool calls that move a task between saved profiles](/openhands/static/img/model-selection-tool-agent-canvas.png)
+
+The model selection tool behaves as follows:
+
+- The current model decides to call the tool and provides a short reason.
+- The switch takes effect on the next LLM call after the tool succeeds.
+- Conversation history, files, and task state are preserved.
+- If a profile name is missing or misspelled, the tool returns an error and the agent should choose a valid profile or
+  ask for help.
+
+For custom SDK agents, include `SwitchLLMTool` when constructing the agent. See the SDK example:
+[examples/01_standalone_sdk/49_switch_llm_tool.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/49_switch_llm_tool.py).
+
+### How Profile Switching Works
+
+When you switch profiles during a conversation:
+
+1. The new LLM configuration is loaded from your saved profile
+2. The conversation context (all previous messages and actions) is preserved
+3. Future messages are processed using the new model
+4. The conversation metadata is updated to reflect the new model
+
+This seamless switching allows you to leverage different models' strengths without starting a new conversation or
+losing your progress.
+
+### Best Practices for Using LLM Profiles
+
+- **Name profiles descriptively**: Use names like "Claude Sonnet - Fast" or "GPT-4 - Complex Tasks" to easily
+  identify which profile to use.
+- **Create task-specific profiles**: Set up profiles optimized for different workflows, such as code review,
+  documentation, or debugging.
+- **Keep API keys updated**: Ensure each profile has a valid API key.
+- **Test before critical work**: When switching profiles mid-conversation, send a simple test message to confirm
+  the new model is responding correctly.
 
 ### Model Context Protocol (MCP)
 Source: https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md
@@ -36810,6 +37058,271 @@ Once you've connected your account, you can:
 - [Learn about the Cloud UI](/openhands/usage/cloud/cloud-ui).
 - [Install the OpenHands Slack app](/openhands/usage/cloud/slack-installation).
 
+### Managing Members
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/managing-members.md
+
+## Inviting Users
+
+To add a new member to your organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Click **Invite Organization Members** in the menu.
+3. Enter the email address of the user you want to invite.
+4. Click **Add**.
+
+The invited user will receive an email with instructions to accept the invitation and join your organization.
+Once they accept, they will be added as a **Member** by default.
+
+<Note>
+  Invitations expire after 7 days. If the invitation expires, you'll need to send a new one.
+</Note>
+
+## Changing User Roles
+
+After a user has joined your organization, an Admin or Owner can modify their role:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Org Members**.
+3. Find the user whose role you want to change.
+4. Click the role dropdown next to their name.
+5. Select the new role: `Owner`, `Admin`, or `Member`.
+6. Confirm the change.
+
+<Warning>
+  Changing a user's role takes effect immediately. Be careful when demoting users, as they will lose access
+  to features associated with their previous role.
+</Warning>
+
+## Removing Members
+
+To remove a member from your organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Org Members**.
+3. Find the user you want to remove.
+4. Click the **Remove** button next to their name.
+5. Confirm the removal.
+
+Removed members will lose access to the organization's shared resources immediately, but their private
+conversations will remain intact.
+
+## Next Steps
+
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand what each role can do.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure your organization's resources.
+
+### Organizations Overview
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/overview.md
+
+## What are Organizations?
+
+Organizations allow multiple users to collaborate within a shared workspace in OpenHands Cloud or OpenHands Enterprise. With
+Organizations, teams can share a pool of credits, use consistent LLM configurations, and streamline access
+to repositories.
+
+<Note>
+  Organizations is a commercial feature available with an OpenHands Cloud subscription or OpenHands Enterprise.
+</Note>
+
+## Key Features
+
+Organizations provide the following capabilities:
+
+- **Multiple Users** - Add team members to a common organization for centralized management.
+- **Shared Credits** - Pool OpenHands Cloud credits across all organization members.
+- **Default LLM Configuration** - Define the default model provider and LLM that all members can use.
+- **Git Organization Claiming** - Claim specific Git organizations to route OpenHands resolver requests to your organization.
+
+## Conversation Visibility
+
+By default, conversations remain **private to individual members** of an organization. Each user's conversations
+are only visible to them. 
+
+## Getting Started
+
+To start using Organizations:
+
+1. Subscribe to an OpenHands Cloud plan or OpenHands Enterprise.
+2. Create a new organization from the OpenHands Cloud dashboard.
+3. [Invite team members](/openhands/usage/cloud/organizations/managing-members) to join your organization.
+4. Configure your organization's [LLM settings](/openhands/usage/cloud/organizations/settings) and shared resources.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Learn how to invite users and manage roles.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure LLM providers, credits, and Git organization claims.
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand the different permission levels.
+
+### Roles and Permissions
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/roles-permissions.md
+
+## Overview
+
+Organizations in OpenHands support three roles, each with different levels of access and capabilities:
+**Member**, **Admin**, and **Owner**. This page describes what each role can do.
+
+## Permissions Table
+
+| Permission | Member | Admin | Owner |
+|------------|:------:|:-----:|:-----:|
+| Create conversations | ✓ | ✓ | ✓ |
+| Manage private settings | ✓ | ✓ | ✓ |
+| Invite users | | ✓ | ✓ |
+| Elevate users to Admin role | | ✓ | ✓ |
+| Add credits | | ✓ | ✓ |
+| Modify LLM settings | | ✓ | ✓ |
+| Elevate users to Owner role | | | ✓ |
+| Claim Git organizations | | | ✓ |
+| Delete organization | | | ✓ |
+
+## Role Descriptions
+
+### Member
+
+Members are the default role for users joining an organization. Members can:
+
+- **Create conversations** - Start new conversations using the organization's shared credits.
+- **Manage their own private settings** - Configure settings that are only visible to them, including:
+  - MCP servers
+  - Secrets
+  - API keys
+  - Git user settings
+  - Slack integration
+
+Members cannot invite new users, modify organization-wide settings (like LLM settings), or manage other users' roles.
+
+### Admin
+
+Admins have all the capabilities of Members, plus the ability to manage the organization's settings and users. Admins can:
+
+- Everything a Member can do.
+- **Invite users** - Send invitations to new team members.
+- **Change user roles** - Promote Members to Admin or demote Admins to Members.
+- **Add credits** - Purchase and add credits to the organization's shared pool.
+- **Modify LLM settings** - Configure the default LLM provider and model for the organization.
+
+Admins cannot delete the organization or claim Git organizations.
+
+### Owner
+
+Owners have full control over the organization. Owners can:
+
+- Everything an Admin can do.
+- **Delete the organization** - Permanently remove the organization and all associated data.
+- **Claim Git organizations** - Link specific Git organizations to route OpenHands resolver requests to this organization.
+
+<Note>
+  Every organization must have at least one Owner. If you need to transfer ownership, first promote another
+  user to Owner before changing your own role.
+</Note>
+
+## Private Settings
+
+Regardless of role, all organization members have control over their own **private settings**. These settings
+are personal to each user and are not visible to other organization members, including Admins and Owners.
+
+Private settings include:
+
+- **MCP Servers** - Configure Model Context Protocol servers.
+- **Secrets** - Store sensitive values like API tokens and credentials.
+- **API Keys** - Manage keys for programmatic access to OpenHands.
+- **Git Settings** - Configure personal Git authentication and preferences.
+- **Slack Integration** - Connect your personal Slack workspace.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Learn how to invite and manage users.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure organization-wide settings.
+
+### Organization Settings
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/settings.md
+
+## Overview
+
+Organization settings allow Admins and Owners to configure shared resources that all members can use. This
+includes LLM configurations, credits management, and Git organization claims.
+
+## LLM Configuration
+
+<Note>
+  Modifying LLM settings requires Admin or Owner permissions.
+</Note>
+
+Organizations can define a default LLM provider and model that all members will use:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. Select the `LLM` tab.
+2. Select the `LLM` tab.
+3. Choose your preferred **LLM provider** from the available options.
+4. Select the **model** you want to use as the default.
+5. Click `Save Changes`.
+
+All organization members will use this LLM configuration for their conversations unless they have configured
+personal overrides.
+
+## Managing Credits
+
+<Note>
+  Adding credits requires Admin or Owner permissions.
+</Note>
+
+Organization credits are shared across all members. To add credits:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. Click **+ Add**.
+4. Choose the amount of credits to purchase.
+5. Complete the payment process.
+
+Credits will be added to the organization's shared pool immediately and can be used by any member.
+
+### Monitoring Usage
+
+You can monitor credit usage from the **Organization** settings page, which shows the current credit balance.
+
+For detailed usage reporting at the user level, use the API endpoint:
+
+```
+GET /api/organizations/{org_id}/members/financial
+```
+
+This endpoint provides financial usage data for all members within your organization.
+
+## Claiming Git Organizations
+
+<Note>
+  Claiming Git organizations requires Owner permissions.
+</Note>
+
+Claiming a Git organization links it to your OpenHands organization, allowing OpenHands resolver requests
+for repositories in that Git organization to be routed to your organization.
+
+Owners have the ability to claim a Git organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. In the **Git Conversation Routing** section, Git organizations from your linked GitHub/GitLab accounts are listed automatically.
+4. Click **Claim** next to the Git organization you want to link to your OpenHands organization.
+
+<Warning>
+  You must have admin access to the Git organization to claim it. The verification process confirms your
+  authorization.
+</Warning>
+
+### Benefits of Claiming Git Organizations
+
+When a Git organization is claimed:
+
+- All resolver requests for repositories in that Git organization are automatically routed to your OpenHands organization.
+- Organization members can work seamlessly with repositories in the claimed Git organization.
+- Usage is tracked against your organization's credit pool.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Invite users and manage roles.
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand permission levels.
+
 ### Plugin Launcher
 Source: https://docs.openhands.dev/openhands/usage/cloud/plugin-launcher.md
 
@@ -38135,6 +38648,586 @@ When OpenHands starts, it:
 - **For SDK integration**: See [SDK MCP Guide](/sdk/guides/mcp)
 - **For architecture details**: See [MCP Architecture](/sdk/arch/mcp)
 
+### Plugins
+Source: https://docs.openhands.dev/overview/plugins.md
+
+Plugins provide a way to package and distribute multiple agent components as a single unit. Instead of managing individual skills, hooks, and configurations separately, plugins bundle everything together for easier installation and distribution.
+
+## What Are Plugins?
+
+A plugin is a directory structure that can contain:
+
+- **Skills**: Specialized knowledge and workflows
+- **Hooks**: Event handlers for tool lifecycle
+- **MCP Config**: External tool server configurations  
+- **Agents**: Specialized agent definitions
+- **Commands**: Slash commands
+<Info>
+The plugin format is compatible with the [Claude Code plugin structure](https://github.com/anthropics/claude-code/tree/main/plugins). Both `.plugin/` (OpenHands-native) and `.claude-plugin/` (Claude Code compatible) directory names are supported for the metadata directory.
+</Info>
+
+## Plugins vs Skills
+
+Understanding the difference helps you choose the right approach:
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="book">
+    **Specialized prompts for specific tasks**
+    
+    - One skill = one specific capability
+    - Just a SKILL.md file (+ optional resources)
+    - Lightweight and focused
+    - Quick to create and share
+    
+    **When to use:**
+    - Adding single capabilities
+    - Simple workflows
+    - Domain-specific knowledge
+    - Quick solutions
+  </Card>
+  
+  <Card title="Plugins" icon="plug">
+    **Multi-component bundles**
+    
+    - Multiple skills + hooks + config
+    - Complete feature ecosystems
+    - Coordinated components
+    - Professional distribution
+    
+    **When to use:**
+    - Complete feature sets
+    - Tool integrations
+    - Team standards
+    - Commercial distributions
+  </Card>
+</CardGroup>
+
+### Comparison Table
+
+| Aspect | Skills | Plugins |
+|--------|--------|---------|
+| **Complexity** | Simple | Comprehensive |
+| **Components** | Knowledge only | Skills + hooks + MCP + commands |
+| **Use Case** | Single capability | Complete feature set |
+| **Creation** | Few minutes | Planned development |
+| **Distribution** | Copy directory | Structured package |
+| **Maintenance** | Individual files | Coordinated bundle |
+
+### When to Use Each
+
+**Use a Skill when you need:**
+- A single reusable prompt or workflow
+- Domain-specific knowledge
+- Simple automation
+- Quick solutions
+
+**Use a Plugin when you need:**
+- Multiple related skills working together
+- Event handlers (hooks) for tool actions
+- External tool integrations (MCP)
+- Complete platform integrations
+- Team or organizational standards
+
+**Example: Code Quality**
+
+*As separate skills:*
+```
+.agents/skills/
+├── python-linting/
+├── code-review/
+└── pre-commit-setup/
+```
+
+*As a plugin:*
+```
+code-quality-plugin/
+├── .plugin/plugin.json          # or .claude-plugin/plugin.json
+├── skills/
+│   ├── linting/
+│   ├── review/
+│   └── setup/
+├── hooks/hooks.json             # Post-edit linting
+└── .mcp.json                    # Code analysis tools
+```
+
+The plugin version bundles all quality-related capabilities and automatically runs checks after file edits.
+
+## Plugin Structure
+
+A complete plugin follows this directory structure:
+
+```
+plugin-name/
+├── .plugin/                     # or .claude-plugin/
+│   └── plugin.json              # Required: Plugin metadata
+├── skills/
+│   └── skill-name/
+│       └── SKILL.md             # Individual skills
+├── hooks/
+│   └── hooks.json               # Tool lifecycle hooks
+├── agents/
+│   └── agent-name.md            # Specialized agents
+├── commands/
+│   └── command-name.md          # Slash commands
+├── .mcp.json                    # MCP server config
+└── README.md                    # Documentation
+```
+
+### Required Components
+
+Only one file is required:
+
+- **`plugin-name/.plugin/plugin.json`** or **`plugin-name/.claude-plugin/plugin.json`**: Plugin metadata
+
+All other components are optional—include only what your plugin needs.
+
+### Plugin Metadata
+
+The `plugin.json` file defines your plugin:
+
+```json
+{
+  "name": "code-quality",
+  "version": "1.0.0",
+  "description": "Code quality tools and workflows",
+  "author": {
+    "name": "Your Name",
+    "email": "your@email.com"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/example/code-quality-plugin"
+}
+```
+
+The `author` field can also be a simple string such as `"Your Name"`.
+
+## Plugin Components Explained
+
+<AccordionGroup>
+  <Accordion title="Skills">
+    Skills in plugins work identically to standalone skills. Each skill has its own directory with a SKILL.md file:
+    
+    ```
+    skills/
+    ├── linting/
+    │   ├── SKILL.md
+    │   └── scripts/
+    └── testing/
+        └── SKILL.md
+    ```
+    
+    See [Skills Documentation](/overview/skills) for skill creation details.
+  </Accordion>
+  
+  <Accordion title="Hooks">
+    Hooks are event handlers that run during tool lifecycle events:
+    
+    ```json
+    {
+      "hooks": {
+        "PostToolUse": [
+          {
+            "matcher": "file_editor",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "ruff check $OPENHANDS_PROJECT_DIR",
+                "timeout": 10
+              }
+            ]
+          }
+        ]
+      }
+    }
+    ```
+    
+    Hook commands have access to these environment variables:
+    - `$OPENHANDS_PROJECT_DIR`: Path to the project directory
+    - `$OPENHANDS_SESSION_ID`: Current session identifier
+    - `$OPENHANDS_EVENT_TYPE`: The triggering event type
+    - `$OPENHANDS_TOOL_NAME`: Name of the tool that triggered the hook
+    
+    **Common use cases:**
+    - Run linters after file edits
+    - Validate tool inputs
+    - Log tool usage
+    - Trigger dependent actions
+    
+    **Available hook events:**
+    - `PreToolUse`: Before tool execution
+    - `PostToolUse`: After tool execution
+    - `UserPromptSubmit`: When the user submits a prompt
+    - `SessionStart`: When the session starts
+    - `SessionEnd`: When the session ends
+    - `Stop`: When execution stops
+  </Accordion>
+  
+  <Accordion title="MCP Configuration">
+    MCP (Model Context Protocol) servers provide external tools and resources:
+    
+    ```json
+    {
+      "mcpServers": {
+        "fetch": {
+          "command": "uvx",
+          "args": ["mcp-server-fetch"]
+        },
+        "github": {
+          "command": "uvx",
+          "args": ["mcp-server-github"],
+          "env": {
+            "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+          }
+        }
+      }
+    }
+    ```
+    
+    **Use cases:**
+    - Connect to external APIs
+    - Add specialized tools
+    - Integrate third-party services
+    
+    Learn more: [Model Context Protocol](/overview/model-context-protocol)
+  </Accordion>
+  
+  <Accordion title="Agents">
+    Specialized agent definitions for specific tasks:
+    
+    ```markdown
+    ---
+    name: code-reviewer
+    description: Specialized agent for code review tasks
+    ---
+    
+    # Code Review Agent
+    
+    This agent specializes in reviewing code according to team standards...
+    ```
+    
+    Agents in plugins can use the plugin's skills and hooks automatically.
+  </Accordion>
+  
+  <Accordion title="Commands">
+    Custom slash commands for plugin functionality:
+    
+    ```markdown
+    ---
+    name: /lint
+    description: Run linters on current file
+    ---
+    
+    # Lint Command
+    
+    Run configured linters on the current file...
+    ```
+    
+    Commands provide quick access to plugin features.
+  </Accordion>
+</AccordionGroup>
+
+## Using Plugins
+
+How you use plugins depends on your platform:
+
+<Tabs>
+  <Tab title="CLI">
+    **Via configuration file:**
+    
+    Create `~/.openhands/config.toml`:
+    ```toml
+    [plugins]
+    sources = [
+      "/path/to/local/plugin",
+      "github:org/plugin-repo",
+    ]
+    ```
+    
+    **Via command line:**
+    ```bash
+    openhands --plugin /path/to/plugin
+    openhands --plugin github:org/plugin-repo
+    ```
+    
+    Plugins are loaded when OpenHands starts.
+  </Tab>
+  
+  <Tab title="SDK">
+    Load plugins programmatically:
+    
+    ```python
+    from openhands.sdk import LLM, Agent, Conversation
+    from openhands.sdk.plugin import PluginSource
+    from pydantic import SecretStr
+    
+    llm = LLM(model="claude-sonnet-4-20250514", api_key=SecretStr("your-api-key"))
+    agent = Agent(llm=llm)
+    
+    plugins = [
+        PluginSource(source="/path/to/plugin"),
+        PluginSource(source="github:org/repo", ref="v1.0.0"),
+    ]
+    
+    conversation = Conversation(
+        agent=agent,
+        plugins=plugins,
+    )
+    ```
+    
+    See [SDK Plugins Guide](/sdk/guides/plugins) for details.
+  </Tab>
+  
+  <Tab title="Local GUI">
+    **Via UI:**
+    1. Open Settings
+    2. Navigate to Plugins section
+    3. Add plugin path or GitHub URL
+    4. Restart to load
+    
+    **Via file system:**
+    Place plugins in `.openhands/plugins/` in your workspace.
+  </Tab>
+  
+  <Tab title="OpenHands Cloud">
+    **Via Cloud UI:**
+    1. Navigate to Workspace Settings
+    2. Select Plugins tab
+    3. Browse plugin library or add custom plugin
+    4. Click "Enable" to activate
+    
+    Organization admins can publish plugins for team-wide access.
+  </Tab>
+</Tabs>
+
+## Installing Plugins
+
+### From a Local Directory
+
+1. **Verify plugin structure**:
+   ```bash
+   ls plugin-dir/.plugin/plugin.json || ls plugin-dir/.claude-plugin/plugin.json
+   ```
+
+2. **Use the plugin path** in your configuration or command line
+
+### From GitHub
+
+Plugins can be loaded directly from GitHub repositories:
+
+```
+github:OpenHands/example-plugin
+github:org/repo/path/to/plugin    # For monorepos
+github:org/repo#branch-name        # Specific branch
+github:org/repo#v1.0.0            # Specific tag
+```
+
+### Plugin Sources
+
+<CardGroup cols={2}>
+  <Card title="Official Registry" icon="github">
+    [github.com/OpenHands/extensions](https://github.com/OpenHands/extensions)
+    
+    Community-maintained plugins
+  </Card>
+  
+  <Card title="Custom Repositories" icon="code">
+    Your own GitHub repositories
+    
+    Organization or private plugins
+  </Card>
+</CardGroup>
+
+## Creating Plugins
+
+To create your own plugin:
+
+### 1. Plan Your Components
+
+Determine what your plugin needs:
+- Which skills?
+- What hooks for automation?
+- Any MCP integrations?
+- Custom commands?
+
+### 2. Create Directory Structure
+
+```bash
+mkdir -p my-plugin/.plugin
+mkdir -p my-plugin/skills
+mkdir -p my-plugin/hooks
+```
+
+Use `.claude-plugin/` instead of `.plugin/` if you want Claude Code-compatible naming.
+
+### 3. Create Plugin Metadata
+
+Create `my-plugin/.plugin/plugin.json` (or `my-plugin/.claude-plugin/plugin.json`):
+```json
+{
+  "name": "my-plugin",
+  "version": "0.1.0",
+  "description": "My custom plugin",
+  "author": {
+    "name": "Your Name"
+  }
+}
+```
+
+### 4. Add Components
+
+Add skills, hooks, and other components as needed:
+
+```
+my-plugin/
+├── .plugin/plugin.json          # or .claude-plugin/plugin.json
+├── skills/
+│   └── my-skill/
+│       └── SKILL.md
+└── hooks/
+    └── hooks.json
+```
+
+### 5. Test Locally
+
+Load your plugin and verify all components work:
+
+```bash
+openhands --plugin /path/to/my-plugin
+```
+
+### 6. Distribute
+
+Options for distribution:
+- **GitHub repository**: Push to GitHub and share URL
+- **File sharing**: Zip and share directory
+- **Package registry**: Submit to official registry
+
+## Plugin Examples
+
+<CardGroup cols={2}>
+  <Card title="Code Quality Plugin" icon="check">
+    **Contains:**
+    - Python linting skill
+    - JavaScript linting skill
+    - Post-edit hooks for auto-linting
+    - Pre-commit setup
+    
+    **Use case:** Enforce code standards
+  </Card>
+  
+  <Card title="DevOps Plugin" icon="server">
+    **Contains:**
+    - Kubernetes deployment skill
+    - Docker build skill
+    - CI/CD workflow skill
+    - kubectl MCP server
+    
+    **Use case:** Infrastructure management
+  </Card>
+  
+  <Card title="API Integration Plugin" icon="link">
+    **Contains:**
+    - REST API client skill
+    - Authentication skill
+    - Rate limiting hooks
+    - API MCP server
+    
+    **Use case:** External service integration
+  </Card>
+  
+  <Card title="Testing Plugin" icon="flask">
+    **Contains:**
+    - Unit testing skill
+    - Integration testing skill
+    - Post-code hooks for test runs
+    - Coverage commands
+    
+    **Use case:** Automated testing
+  </Card>
+</CardGroup>
+
+## Plugin Development Best Practices
+
+<Steps>
+  <Step title="Start with Skills">
+    Begin by creating the core skills your plugin needs. Test them individually before bundling.
+  </Step>
+  
+  <Step title="Add Automation with Hooks">
+    Identify repetitive tasks and automate them with hooks. Example: run linters after file edits.
+  </Step>
+  
+  <Step title="Integrate External Tools">
+    Add MCP servers for external tool integration. This provides your skills with additional capabilities.
+  </Step>
+  
+  <Step title="Document Thoroughly">
+    Include a comprehensive README explaining:
+    - What the plugin does
+    - How to install it
+    - Configuration options
+    - Example usage
+  </Step>
+  
+  <Step title="Version Carefully">
+    Use semantic versioning (major.minor.patch) and document breaking changes.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Plugin Not Loading">
+    **Check:**
+    - `.plugin/plugin.json` or `.claude-plugin/plugin.json` exists and is valid JSON
+    - Plugin path is correct
+    - All referenced files exist
+    
+    **Debug:**
+    ```bash
+    # Verify structure
+    ls -la plugin-name/.plugin/plugin.json || ls -la plugin-name/.claude-plugin/plugin.json
+    
+    # Check JSON syntax
+    (cat plugin-name/.plugin/plugin.json 2>/dev/null || cat plugin-name/.claude-plugin/plugin.json) | python -m json.tool
+    ```
+  </Accordion>
+  
+  <Accordion title="Skills Not Triggering">
+    **Check:**
+    - Skills have valid SKILL.md files
+    - Frontmatter includes `triggers`
+    - Trigger keywords match your prompts
+    
+    **Test:**
+    Use explicit trigger keywords from the skill's frontmatter.
+  </Accordion>
+  
+  <Accordion title="Hooks Not Running">
+    **Check:**
+    - `hooks/hooks.json` syntax is valid
+    - Hook matchers target the right tools
+    - Commands are executable
+    
+    **Debug:**
+    Check logs for hook execution errors.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+- **[Learn about Skills](/overview/skills)** - Understand the core component of plugins
+- **[Explore MCP](/overview/model-context-protocol)** - Add external tool integrations
+- **[SDK Plugins Guide](/sdk/guides/plugins)** - Programmatic plugin usage
+- **[Browse Examples](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/05_skills_and_plugins/02_loading_plugins/example_plugins)** - See complete plugin structures
+
+## Further Reading
+
+For SDK developers:
+- **[SDK Plugins Documentation](/sdk/guides/plugins)** - Detailed SDK integration
+- **[Hooks Guide](/sdk/guides/hooks)** - Event handler details
+- **[MCP Integration](/sdk/guides/mcp)** - External tool servers
+
 ### Quick Start
 Source: https://docs.openhands.dev/overview/quickstart.md
 
@@ -38302,9 +39395,765 @@ Each skill file may include frontmatter that provides additional information. In
 
 ## Learn More
 
+- **To add existing skills**: See [Adding New Skills](/overview/skills/adding)
+- **To create your own skills**: See [Creating New Skills](/overview/skills/creating)
+- **To monitor skill performance**: See [Monitoring and Improving Skills](/overview/skills/monitoring)
+- **For bundling multiple components**: See [Plugins](/overview/plugins)
 - **For SDK integration**: See [SDK Skills Guide](/sdk/guides/skill)
 - **For architecture details**: See [Skills Architecture](/sdk/arch/skill)
 - **For specific skill types**: See [Repository Skills](/overview/skills/repo), [Keyword Skills](/overview/skills/keyword), [Organization Skills](/overview/skills/org), and [Global Skills](/overview/skills/public)
+
+### Adding New Skills
+Source: https://docs.openhands.dev/overview/skills/adding.md
+
+OpenHands makes it easy to extend your agent's capabilities by adding pre-built skills from the community or custom repositories. Skills can be added globally (available in all conversations) or to specific projects.
+
+## Using the Add-Skill Action
+
+The quickest way to add a skill is using the `/add-skill` command in your conversation with OpenHands. This command fetches skills from GitHub repositories and installs them in your workspace.
+
+### Basic Usage
+
+Provide a GitHub URL pointing to a skill:
+
+```
+/add-skill https://github.com/OpenHands/extensions/tree/main/skills/codereview
+```
+
+OpenHands will:
+1. Parse the URL to identify the repository and skill path
+2. Fetch the skill files from GitHub
+3. Install the skill in `.agents/skills/` directory
+4. Verify the installation
+5. Make the skill immediately available
+
+### Supported URL Formats
+
+The `/add-skill` command accepts various GitHub URL formats:
+
+- Full GitHub tree URL: `https://github.com/OpenHands/extensions/tree/main/skills/codereview`
+- Repository path: `https://github.com/OpenHands/extensions/skills/codereview`
+- Short form: `github.com/OpenHands/extensions/skills/codereview`
+- Shorthand: `OpenHands/extensions/skills/codereview`
+
+### Examples
+
+Add the code review skill:
+```
+/add-skill https://github.com/OpenHands/extensions/tree/main/skills/codereview-roasted
+```
+
+Add the Kubernetes skill:
+```
+/add-skill OpenHands/extensions/skills/kubernetes
+```
+
+Add a skill from a custom repository:
+```
+/add-skill https://github.com/your-org/your-repo/tree/main/custom-skills/analytics
+```
+
+## Skill Storage Locations
+
+Skills are stored in different locations depending on the platform and scope:
+
+<Tabs>
+  <Tab title="CLI">
+    The CLI supports two skill locations:
+    
+    **User-level skills** (global, available in all conversations):
+    ```
+    ~/.openhands/skills/
+    ```
+    
+    **Project-level skills** (specific to current directory):
+    ```
+    .agents/skills/
+    ```
+    
+    Skills added via `/add-skill` are installed in `.agents/skills/` of your current workspace, making them available for that project.
+    
+    To add skills globally, manually place skill directories in `~/.openhands/skills/`.
+  </Tab>
+  
+  <Tab title="SDK">
+    SDK users programmatically load skills:
+    
+    ```python
+    from openhands.sdk import Skill
+    
+    # Load from a directory
+    skill = Skill.load("/path/to/skill")
+    
+    # Load all skills from a directory
+    skills = Skill.load_all("/path/to/skills")
+    ```
+    
+    See the [SDK Skills Guide](/sdk/guides/skill) for more details.
+  </Tab>
+  
+  <Tab title="Local GUI">
+    Skills are stored in:
+    ```
+    .agents/skills/
+    ```
+    
+    The GUI provides a visual interface for managing skills, but skills can also be added manually by placing them in this directory.
+  </Tab>
+  
+  <Tab title="OpenHands Cloud">
+    OpenHands Cloud provides a centralized skill library accessible through the web interface. Skills can be:
+    - Added from the official registry with one click
+    - Imported from your connected repositories
+    - Shared across your team or organization
+    
+    See the [Cloud UI documentation](/openhands/usage/cloud/cloud-ui) for details.
+  </Tab>
+</Tabs>
+
+## Manual Installation
+
+You can also manually install skills by copying skill directories into the appropriate location.
+
+### For Project-Level Skills
+
+1. Create the skills directory if it doesn't exist:
+   ```bash
+   mkdir -p .agents/skills
+   ```
+
+2. Copy or clone the skill directory:
+   ```bash
+   # Using git
+   git clone https://github.com/OpenHands/extensions temp-clone
+   cp -r temp-clone/skills/codereview .agents/skills/
+   rm -rf temp-clone
+   
+   # Or download and extract manually
+   ```
+
+3. Verify the skill structure:
+   ```bash
+   ls .agents/skills/codereview/SKILL.md
+   ```
+
+### For User-Level Skills (CLI Only)
+
+1. Create the global skills directory:
+   ```bash
+   mkdir -p ~/.openhands/skills
+   ```
+
+2. Add skills to this directory:
+   ```bash
+   cp -r /path/to/skill ~/.openhands/skills/
+   ```
+
+Skills in `~/.openhands/skills/` are available in all your conversations when using the CLI.
+
+## Verifying Installation
+
+After adding a skill, verify it's available:
+
+1. **Check the file exists**: The skill directory should contain at least a `SKILL.md` file
+   ```bash
+   ls .agents/skills/your-skill/SKILL.md
+   ```
+
+2. **Test the trigger**: For keyword-triggered skills, use one of the trigger words in your prompt:
+   ```
+   Help me set up kubernetes
+   ```
+
+3. **Check skill loading**: OpenHands will indicate when a skill is loaded in response to your prompt
+
+## Skill Updates
+
+To update a skill to the latest version:
+
+1. **Remove the old version**:
+   ```bash
+   rm -rf .agents/skills/skill-name
+   ```
+
+2. **Add the updated version**:
+   ```
+   /add-skill https://github.com/OpenHands/extensions/tree/main/skills/skill-name
+   ```
+
+Or manually pull updates if you cloned the skill repository.
+
+## Authentication for Private Skills
+
+The `/add-skill` command automatically uses the `GITHUB_TOKEN` environment variable to access private repositories via the GitHub API.
+
+For manual `git clone` operations (such as when cloning directly into `.agents/skills/`), you'll need to handle authentication differently—typically using SSH keys or embedding a personal access token in the clone URL.
+
+**Using `/add-skill` with private repositories:**
+
+1. Set the `GITHUB_TOKEN` environment variable:
+
+```bash
+export GITHUB_TOKEN=your_github_token
+```
+
+2. Use `/add-skill` as normal with private repository URLs
+
+The command will automatically use the token for authentication.
+
+## Skill Conflicts
+
+If a skill with the same name already exists, OpenHands will warn you before overwriting. To resolve conflicts:
+
+1. **Rename the existing skill**: Move or rename the existing skill directory
+2. **Choose a different installation location**: Install at user-level vs project-level
+3. **Overwrite**: Confirm the overwrite when prompted
+
+## Next Steps
+
+- **[Browse available skills](https://github.com/OpenHands/extensions)** in the official registry
+- **[Create your own skills](/overview/skills/creating)** for custom workflows
+- **[Learn about keyword triggers](/overview/skills/keyword)** to make skills activate automatically
+- **[Understand skill structure](/sdk/guides/skill)** for the AgentSkills format
+
+### Creating New Skills
+Source: https://docs.openhands.dev/overview/skills/creating.md
+
+Instead of repeating the same prompts or instructions in every conversation, create a skill that OpenHands can load automatically when needed. Skills transform one-time prompts into reusable, maintainable knowledge that improves over time.
+
+## Why Create Skills?
+
+**Before (repeating yourself):**
+```
+Please analyze this code using our company's Python style guide:
+- Use black for formatting
+- Max line length 88
+- Use type hints for all functions
+- Follow PEP 8 naming conventions
+...
+```
+
+**After (using a skill):**
+```
+Review this Python code
+```
+
+The skill triggers automatically and applies all your style guidelines consistently.
+
+## When to Create a Skill
+
+Create a skill when you find yourself:
+
+- Repeating the same instructions across multiple conversations
+- Working with domain-specific knowledge (company policies, API schemas, workflows)
+- Using the same multi-step procedures repeatedly
+- Needing consistent behavior for specific tools or frameworks
+- Sharing best practices across a team
+
+## Quick Start
+
+### Automated Approach: Let OpenHands Help
+
+To create a skill with guided assistance, ask OpenHands to help you:
+
+```
+Create a skill for [your use case]
+```
+
+or simply:
+
+```
+Write a new skill
+```
+
+The `skill-creator` skill (from the [OpenHands public skills library](https://github.com/OpenHands/extensions/tree/main/skills/skill-creator)) will guide you through an interactive process:
+- Asks questions about your use cases and requirements
+- Suggests appropriate skill structure (references, scripts, assets)
+- Helps you write effective trigger keywords and descriptions
+- Ensures you follow best practices automatically
+- Creates the complete skill structure for you
+
+This is the recommended approach, especially when you're starting out.
+
+### Manual Approach
+
+If you prefer to create the skill structure manually:
+
+1. **Create the skill directory**:
+   ```bash
+   mkdir -p .agents/skills/my-skill
+   ```
+
+2. **Create the SKILL.md file**:
+   ```bash
+   touch .agents/skills/my-skill/SKILL.md
+   ```
+
+3. **Add content** (see structure and guidelines below)
+
+4. **Test it** by using a trigger keyword in your prompt
+
+## Determining Scope
+
+Before writing your skill, define its scope clearly:
+
+### Ask These Questions
+
+1. **What specific task does this skill handle?**
+   - ❌ Too broad: "Help with coding"
+   - ✅ Focused: "Lint Python code using ruff with our company rules"
+
+2. **What knowledge is required?**
+   - Code style guidelines
+   - API documentation
+   - Domain-specific schemas
+   - Multi-step procedures
+
+3. **What resources are needed?**
+   - Scripts for deterministic tasks
+   - Reference documents for detailed information
+   - Asset files for templates or boilerplate
+
+4. **Who will use this skill?**
+   - Just you (keep it simple)
+   - Your team (add more documentation)
+   - Public sharing (comprehensive examples)
+
+### Scope Examples
+
+**Good scope (focused):**
+- "Configure pre-commit hooks for Python projects"
+- "Generate financial reports using our SQL schema"
+- "Deploy to our Kubernetes staging environment"
+
+**Poor scope (too broad):**
+- "Help with Python"
+- "Work with databases"
+- "Deploy applications"
+
+## Choosing Name and Triggers
+
+The skill name and trigger keywords determine when OpenHands loads your skill.
+
+### Naming Your Skill
+
+Choose a clear, descriptive name:
+
+- **Use lowercase with hyphens**: `python-linting`, `k8s-deploy`, `api-docs`
+- **Be specific**: `ruff-linter` not just `linter`
+- **Match common terms**: Use vocabulary your users know
+
+### Defining Triggers
+
+Triggers are keywords that automatically activate your skill. Choose words users naturally say when they need this skill.
+
+<AccordionGroup>
+  <Accordion title="Keyword Triggers">
+    List specific words or phrases that should activate the skill:
+    
+    ```yaml
+    ---
+    name: python-linting
+    description: This skill should be used when the user asks to "lint Python code", "check Python style", "run ruff", or mentions Python code quality.
+    triggers:
+    - lint
+    - linting
+    - ruff
+    - code quality
+    ---
+    ```
+    
+    **Best practices:**
+    - Include 2-5 trigger keywords
+    - Use terms users actually say
+    - Include tool names (e.g., "ruff", "pytest")
+    - Include action words (e.g., "lint", "test", "deploy")
+  </Accordion>
+  
+  <Accordion title="Description-Based Triggering">
+    The skill description is crucial for trigger matching. Write it in third person and include specific phrases:
+    
+    ```yaml
+    description: This skill should be used when the user asks to "deploy to Kubernetes", "apply K8s manifests", "check pod status", or mentions kubectl commands. Provides comprehensive Kubernetes deployment workflows.
+    ```
+    
+    **Key elements:**
+    - Start with "This skill should be used when..."
+    - Quote specific user phrases: "deploy to Kubernetes"
+    - List concrete scenarios
+    - Mention related tools or frameworks
+  </Accordion>
+</AccordionGroup>
+
+### Examples of Good Triggers
+
+```yaml
+# API integration skill
+triggers:
+- stripe
+- payment
+- checkout
+```
+
+```yaml
+# Database skill
+triggers:
+- bigquery
+- sql query
+- data warehouse
+```
+
+```yaml
+# Deployment skill
+triggers:
+- deploy
+- kubernetes
+- k8s
+- kubectl
+```
+
+## Defining the Skill Body
+
+The skill body contains the instructions OpenHands will follow. Write in imperative form (command form) rather than second person.
+
+### Basic Structure
+
+```markdown
+---
+name: skill-name
+description: This skill should be used when...
+triggers:
+- keyword1
+- keyword2
+---
+
+# Skill Title
+
+Brief overview of what this skill does.
+
+## Core Instructions
+
+Main procedures and guidelines.
+
+## Common Patterns
+
+Typical use cases and solutions.
+
+## Additional Resources
+
+(Optional) References to bundled files.
+```
+
+### Writing Style
+
+**Use imperative/infinitive form:**
+✅ "Check the configuration file"
+✅ "Validate input before processing"
+✅ "Run tests after deployment"
+
+**Avoid second person:**
+❌ "You should check the configuration"
+❌ "You need to validate input"
+❌ "You must run tests"
+
+### Keep It Focused
+
+**SKILL.md content:**
+- Core concepts and workflows (1,500-2,000 words ideal)
+- Essential procedures
+- Quick reference information
+- Pointers to additional resources
+
+**What NOT to include:**
+- Exhaustive API documentation (use `references/` instead)
+- Detailed edge cases (use `references/` instead)
+- Long examples (use `references/` instead)
+
+## Best Practices and Tips
+
+### Use Numbered Step Workflows
+
+For multi-step procedures, use numbered lists:
+
+```markdown
+## Deployment Workflow
+
+1. **Validate the configuration**:
+   ```bash
+   kubectl apply --dry-run=client -f deployment.yaml
+   ```
+
+2. **Apply to staging**:
+   ```bash
+   kubectl apply -f deployment.yaml -n staging
+   ```
+
+3. **Verify pod status**:
+   ```bash
+   kubectl get pods -n staging --watch
+   ```
+
+4. **Check logs**:
+   ```bash
+   kubectl logs -f deployment/app-name -n staging
+   ```
+```
+
+**Benefits:**
+- Clear sequence for complex workflows
+- Easy to follow and verify
+- Reduces errors from skipped steps
+
+### Add Large Files as References
+
+Keep SKILL.md lean by moving detailed content to `references/`:
+
+```
+my-skill/
+├── SKILL.md                    # Core instructions (< 3,000 words)
+└── references/
+    ├── api-docs.md             # Detailed API reference
+    ├── examples.md             # Comprehensive examples
+    └── troubleshooting.md      # Edge cases and fixes
+```
+
+**In SKILL.md, reference these files:**
+
+```markdown
+## Additional Resources
+
+For detailed information, see:
+- **`references/api-docs.md`** - Complete API documentation
+- **`references/examples.md`** - Working code examples
+- **`references/troubleshooting.md`** - Common issues and solutions
+```
+
+**Benefits:**
+- Keeps context window smaller when skill loads
+- OpenHands reads references only when needed
+- Easier to maintain and update specific sections
+
+### Create Scripts for Predictable Steps
+
+For tasks that are repeatedly rewritten or need deterministic behavior, create executable scripts:
+
+```
+my-skill/
+├── SKILL.md
+└── scripts/
+    ├── validate_config.py
+    ├── deploy.sh
+    └── rollback.sh
+```
+
+**When to use scripts:**
+- Same code being rewritten repeatedly
+- Deterministic reliability required
+- Complex parsing or validation
+- Multi-step automation
+
+**Reference scripts in SKILL.md:**
+
+```markdown
+## Validation
+
+Run the validation script:
+
+\`\`\`bash
+python3 scripts/validate_config.py config.yaml
+\`\`\`
+
+This checks:
+- YAML syntax
+- Required fields
+- Value constraints
+```
+
+**Benefits:**
+- Token efficient (scripts can run without being read)
+- Deterministic behavior
+- Reusable across projects
+- Can be versioned and tested
+
+### Include Quick Reference Tables
+
+Use tables for configuration options, command flags, or status codes:
+
+```markdown
+## Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `timeout` | 30s | Maximum wait time |
+| `retries` | 3 | Number of retry attempts |
+| `env` | production | Target environment |
+```
+
+### Provide Concrete Examples
+
+Show real examples, not abstract descriptions:
+
+```markdown
+## Example Usage
+
+Deploy the web application:
+
+\`\`\`bash
+# Build the image
+docker build -t myapp:v1.0 .
+
+# Push to registry
+docker push registry.example.com/myapp:v1.0
+
+# Update Kubernetes deployment
+kubectl set image deployment/web web=registry.example.com/myapp:v1.0
+\`\`\`
+```
+
+### Use Progressive Disclosure
+
+Structure information from simple to complex:
+
+1. **SKILL.md**: Essential workflows and core concepts
+2. **references/**: Detailed patterns, advanced techniques, edge cases
+3. **scripts/**: Automation for predictable tasks
+4. **assets/**: Templates and boilerplate files
+
+## Complete Example
+
+Here's a complete skill for Python code review:
+
+```
+python-review/
+├── SKILL.md
+├── references/
+│   ├── style-guide.md
+│   └── common-issues.md
+└── scripts/
+    └── run-checks.sh
+```
+
+**SKILL.md:**
+```markdown
+---
+name: python-review
+description: This skill should be used when the user asks to "review Python code", "check Python style", "lint Python", or requests code quality analysis. Provides comprehensive Python code review workflows.
+triggers:
+- python review
+- code review
+- lint python
+- black
+- ruff
+---
+
+# Python Code Review
+
+Review Python code using company standards and best practices.
+
+## Review Workflow
+
+1. **Run automated checks**:
+   \`\`\`bash
+   scripts/run-checks.sh
+   \`\`\`
+
+2. **Review linter output** for:
+   - Style violations (Black, Ruff)
+   - Type errors (mypy)
+   - Security issues (bandit)
+
+3. **Check code structure**:
+   - Function length (< 50 lines)
+   - Complexity (< 10 cyclomatic)
+   - Naming conventions
+
+4. **Verify tests**:
+   \`\`\`bash
+   pytest tests/ --cov=src --cov-report=term
+   \`\`\`
+
+## Style Guidelines
+
+- **Formatting**: Black with 88-character line limit
+- **Linting**: Ruff with company config
+- **Types**: Full type hints for public APIs
+- **Docstrings**: Google style for all public functions
+
+## Additional Resources
+
+- **`references/style-guide.md`** - Complete style guide
+- **`references/common-issues.md`** - Common mistakes and fixes
+- **`scripts/run-checks.sh`** - Automated quality checks
+```
+
+## Testing Your Skill
+
+After creating your skill:
+
+1. **Verify structure**:
+   ```bash
+   ls .agents/skills/your-skill/SKILL.md
+   ```
+
+2. **Check frontmatter**: Ensure YAML is valid with `name`, `description`, and `triggers`
+
+3. **Test trigger keywords**: Use a trigger word in a prompt:
+   ```
+   Help me lint this Python code
+   ```
+
+4. **Verify loading**: OpenHands should indicate the skill was loaded
+
+5. **Iterate**: Improve based on actual usage
+
+<Info>
+For production deployments, see [Monitoring and Improving Skills](/overview/skills/monitoring) to track performance using logging, evaluation metrics, dashboarding, and automated feedback aggregation.
+</Info>
+
+## Common Mistakes to Avoid
+
+<Warning>
+**Mistake 1: Vague triggers**
+❌ `description: Helps with Python`
+✅ `description: This skill should be used when the user asks to "lint Python code", "run black", or mentions Python code quality`
+</Warning>
+
+<Warning>
+**Mistake 2: Everything in SKILL.md**
+❌ Single 10,000-word SKILL.md
+✅ Focused SKILL.md (2,000 words) + references/ for details
+</Warning>
+
+<Warning>
+**Mistake 3: Using "you" in instructions**
+❌ "You should validate the config"
+✅ "Validate the config"
+</Warning>
+
+<Warning>
+**Mistake 4: Missing examples**
+❌ Abstract descriptions only
+✅ Concrete examples with actual commands
+</Warning>
+
+## Next Steps
+
+- **[Add your skill](/overview/skills/adding)** to your workspace
+- **[Monitor skill performance](/overview/skills/monitoring)** in production
+- **[Share skills](https://github.com/OpenHands/extensions)** with the community
+- **[Learn the AgentSkills format](/sdk/guides/skill)** for advanced features
+- **[Explore example skills](https://github.com/OpenHands/extensions)** for inspiration
+
+## Further Reading
+
+For advanced skill creation techniques and SDK integration:
+- **[Monitoring Skills](/overview/skills/monitoring)** - Track performance and improve skills in production
+- **[Plugins](/overview/plugins)** - Bundle multiple skills with hooks and MCP config
+- **[SDK Skills Guide](/sdk/guides/skill)** - Programmatic skill creation
+- **[Observability & Tracing](/sdk/guides/observability)** - OpenTelemetry configuration details
+- **[GitHub Workflows](/sdk/guides/github-workflows/pr-review)** - Automate skills in CI/CD pipelines
+- **[Skills Architecture](/sdk/arch/skill)** - Technical details
+- **[Official Skill Registry](https://github.com/OpenHands/extensions)** - Community examples
 
 ### Keyword-Triggered Skills
 Source: https://docs.openhands.dev/overview/skills/keyword.md
@@ -38327,18 +40176,202 @@ Enclose the frontmatter in triple dashes (---) and include the following fields:
 
 ## Example
 
-Keyword-triggered skill file example located at `.agents/skills/yummy.md`:
-```
+Here's a simplified example of the `github` skill located at `.agents/skills/github/SKILL.md`:
+
+```markdown
 ---
+name: github
+description: Interact with GitHub repositories, pull requests, issues, and workflows using the GITHUB_TOKEN environment variable and GitHub CLI. Use when working with code hosted on GitHub or managing GitHub resources.
 triggers:
-- yummyhappy
-- happyyummy
+- github
+- git
 ---
 
-The user has said the magic word. Respond with "That was delicious!"
+You have access to an environment variable, `GITHUB_TOKEN`, which allows you to interact with
+the GitHub API.
+
+<IMPORTANT>
+You can use `curl` with the `GITHUB_TOKEN` to interact with GitHub's API.
+ALWAYS use the GitHub API for operations instead of a web browser.
+ALWAYS use the `create_pr` tool to open a pull request
+</IMPORTANT>
+
+... (additional GitHub-specific instructions)
 ```
 
-[See examples of keyword-triggered skills in the official OpenHands Skills Registry](https://github.com/OpenHands/extensions)
+<Info>
+**Context Management with Platform Skills**: OpenHands includes specialized skills for platforms like GitHub and GitLab that are only triggered when needed (e.g., when you mention "github" or "gitlab" in your prompt). This keeps your context clean and focused, loading platform-specific guidance only when working with those services.
+</Info>
+
+[See more examples of keyword-triggered skills in the official OpenHands Skills Registry](https://github.com/OpenHands/extensions)
+
+### Monitoring and Improving Skills
+Source: https://docs.openhands.dev/overview/skills/monitoring.md
+
+After creating and deploying a skill, monitor its performance to ensure it works correctly in production. This is particularly important for skills used in automated workflows like CI/CD pipelines.
+
+## The Monitoring Workflow
+
+Production skill monitoring follows a four-part process:
+
+1. **Logging** - Record agent behavior during skill execution
+2. **Evaluating** - Measure performance using relevant metrics
+3. **Dashboarding** - Visualize metrics over time
+4. **Aggregating** - Use feedback to improve the skill
+
+## Logging Agent Behavior
+
+OpenHands includes OpenTelemetry-compatible instrumentation via the [Laminar](https://github.com/lmnr-ai/lmnr) library. Set up logging to capture agent traces during skill execution.
+
+### For SDK Users
+
+Set the `LMNR_PROJECT_API_KEY` environment variable to send traces to Laminar, or configure any OpenTelemetry-compatible backend:
+
+```bash
+export LMNR_PROJECT_API_KEY="your-api-key"
+```
+
+See the [SDK Observability Guide](/sdk/guides/observability) for detailed configuration options including Honeycomb, Jaeger, Datadog, and other OTLP-compatible backends.
+
+### For GitHub Actions
+
+When using skills in GitHub workflows, add the API key to your action configuration. See the [PR review action example](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/action.yml) for reference.
+
+## Evaluating Performance
+
+Define metrics that reflect whether your skill is working correctly. Effective metrics measure actual outcomes rather than intermediate steps.
+
+### Example: PR Review Skill
+
+For a code review skill, measure suggestion acceptance rate:
+
+```
+suggestion_accuracy = ai_suggestions_reflected / ai_suggestions
+```
+
+Track:
+- Number of suggestions made by the agent
+- Number of suggestions incorporated by developers
+
+### Implementation Approach
+
+1. **Create an evaluation workflow** - Run after the main task completes (e.g., after PR merge)
+2. **Collect relevant data** - Agent output, human responses, final results
+3. **Use LLM as judge** - Feed data into a prompt that calculates metrics
+
+Example evaluation prompt excerpt:
+
+```
+### ai_suggestions
+Count items where the body contains an actionable code suggestion
+(look for code blocks, "suggestion:", specific changes to make).
+Do NOT count general praise or approval-only comments.
+
+### ai_suggestions_reflected
+Count suggestions that were incorporated. A suggestion is "reflected" if:
+1. A human response indicates the suggestion was implemented, OR
+2. The suggestion appears in the final diff
+```
+
+See the [evaluation action example](https://github.com/OpenHands/extensions/blob/main/.github/workflows/pr-review-evaluation.yml) for a complete implementation.
+
+## Dashboarding Metrics
+
+Visualize metrics over time to identify trends. With Laminar or similar platforms, create SQL queries that aggregate evaluation results.
+
+Track:
+- Metric trends (improving or degrading)
+- Performance across different contexts (repos, file types, etc.)
+- Comparison between prompt variations or models
+
+## Aggregating Feedback for Improvement
+
+Use language models to analyze patterns in evaluation results and suggest skill improvements.
+
+### Process
+
+1. **Collect evaluation data** - Aggregate analyses from recent runs
+2. **Provide current skill content** - Include the existing SKILL.md
+3. **Use a reasoning model** - Feed both into a long-context model (Gemini-2-Pro, Claude 3.5 Sonnet, etc.)
+4. **Extract actionable suggestions** - Review model output for concrete improvements
+
+### Example Output
+
+Example output from aggregation:
+
+```
+### Issue: Context-Unaware Suggestions
+The agent suggests technically correct changes that conflict with
+repository conventions (e.g., suggesting integration tests when the
+repo uses mocks).
+
+Frequency: ~15% of suggestions
+Recommendation: Add repo-specific testing philosophy to references/
+```
+
+## Deployment in Automated Workflows
+
+Skills can run automatically in CI/CD pipelines. The [OpenHands Extensions repository](https://github.com/OpenHands/extensions/tree/main/plugins) includes example GitHub Actions for common automation patterns.
+
+### Common Automation Use Cases
+
+- **PR review** - Run code review skills when PRs are marked "ready for review"
+- **Issue triage** - Classify and label new issues
+- **Code generation** - Generate boilerplate or documentation
+- **Security scanning** - Check for vulnerabilities and suggest fixes
+
+See the [GitHub Workflows guide](/sdk/guides/github-workflows/pr-review) for SDK-based automation examples.
+
+## Best Practices
+
+<Accordion title="Choose Meaningful Metrics">
+  Select metrics that reflect real-world outcomes, not just intermediate steps.
+  
+  **Good metrics:**
+  - Suggestion acceptance rate (for code review)
+  - Issue classification accuracy (for triage)
+  - Time to resolution (for bug fixing)
+  
+  **Poor metrics:**
+  - Number of suggestions made
+  - Lines of code generated
+  - Tokens consumed
+</Accordion>
+
+<Accordion title="Start Simple">
+  Begin with basic logging before implementing complex evaluation pipelines.
+  
+  1. Set up OpenTelemetry logging
+  2. Review traces manually to understand agent behavior
+  3. Identify patterns in successes and failures
+  4. Design metrics based on observed patterns
+  5. Automate evaluation
+</Accordion>
+
+<Accordion title="Iterate on Skills Based on Data">
+  Use evaluation results to make targeted improvements:
+  
+  - Low accuracy → Review skill instructions for clarity
+  - Inconsistent behavior → Add more specific examples
+  - Context errors → Expand references/ with domain knowledge
+  - Repetitive failures → Create scripts for deterministic tasks
+</Accordion>
+
+<Accordion title="Monitor Multiple Dimensions">
+  Track performance across different contexts:
+  
+  - **By repository** - Different repos may need different approaches
+  - **By file type** - Skills may work better on certain languages
+  - **By time** - Identify degradation or improvement trends
+  - **By model** - Compare different LLM backends
+</Accordion>
+
+## Further Reading
+
+- **[SDK Observability Guide](/sdk/guides/observability)** - Detailed OpenTelemetry configuration
+- **[GitHub Workflows](/sdk/guides/github-workflows/pr-review)** - Automate skills in CI/CD
+- **[Hooks Guide](/sdk/guides/hooks)** - Event-driven skill execution
+- **[Creating Skills](/overview/skills/creating)** - Skill creation fundamentals
 
 ### Organization and User Skills
 Source: https://docs.openhands.dev/overview/skills/org.md
@@ -38642,56 +40675,176 @@ Enterprise customers receive:
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
 
+### Analytics
+Source: https://docs.openhands.dev/enterprise/analytics.md
+
+This guide walks you through setting up and using Laminar for Analytics in OpenHands Enterprise.
+You'll opt into Analytics and configure conversations to automatically send traces to Laminar.
+
+## Who This Is For
+
+This guide is for users who want to explore analytics on their OpenHands Enterprise conversations.
+
+### Why Laminar?
+
+[Laminar](https://laminar.sh/) is an open source observability platform for AI agents like OpenHands.
+
+Use Laminar to view your conversation traces including prompts, tool calls, and answers. A trace is a record of what your agent did.
+
+Laminar can help you see where the agent went wrong. From traces, you can create signals. A signal is a natural language instruction to extract structured data from traces. Use signals to analyze recurring behavior across traces. You can then create better situations for prompting and measure them in Laminar. You can also analyze and improve your skills.
+
+For example, you can view all conversation traces related to a specific skill.
+
+Laminar can help you answer the following questions:
+- On a trace, did the agent do a good job using the skill?
+- On another trace, did the agent do a bad job?
+
+For more information on evaluating skills, see [Evaluating Agent Skills](https://www.openhands.dev/blog/evaluating-agent-skills).
+
+### Prerequisites
+
+Before you begin, make sure you completed the [Quick Start guide](/enterprise/quick-start).
+
+## Enable Analytics
+
+You should see an **Analytics Configuration** section on the application configuration page.
+
+Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+
+![Configure Analytics](./images/laminar-configure-analytics.png)
+
+## Deploy
+
+OpenHands will begin deploying. You can expect the deployment status to transition from
+**Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
+
+![Deployment in progress](./images/laminar-deploy-in-progress.png)
+
+Click **Details** next to the deployment status to monitor individual resources. Resources
+shown in orange are still deploying -- wait until all resources are ready.
+
+![Deployment status details](./images/laminar-deployment-status-details.png)
+
+## Access Laminar UI
+
+Once the deployment status shows **Ready**, navigate to `https://analytics.app.<your-base-domain>`.
+
+Click the **Continue with Keycloak** button:
+
+![Laminar Keycloak Auth](./images/laminar-keycloak-auth.png)
+
+## Create a Laminar project
+
+![Laminar Create Project](./images/laminar-create-project.png)
+
+Once a project has been created, Laminar is ready to listen for traces.
+
+![Laminar Listen Traces](./images/laminar-listen-traces.png)
+
+## Create an ingest only API Key
+
+Important: Always use ingest API keys when deploying.
+
+Create a key with ther right permissions. Ingest only keys are recommended as they only have write access to write traces. They cannot be used to read data.
+
+![Configure Laminar Ingest Only Key](./images/laminar-ingest-only-key.png)
+
+## Set Laminar Project API Key to enable automatic conversation traces
+
+Set the ingest only key as the Laminar Project API Key in the Admin Console configuration:
+
+![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+
+Click **Save config**.
+
+## Deploy Updated Configuration
+
+Deploy the config change after setting the Laminar Project API Key in the Admin Console.
+
+![Laminar Deploy Again](./images/laminar-deploy-again.png)
+
+Wait for the deployment to complete.
+
+## Start a conversation
+
+Navigate to the OpenHands UI at `https://app.<your-base-domain>`. Start a new conversation and try a prompt.
+
+![Start a Conversation](./images/laminar-openhands-conversation.png)
+
+Your conversations will now automatically send a trace to Laminar.
+
+![Laminar Trace](./images/laminar-trace.png)
+
+<video
+  controls
+  className="w-full aspect-video"
+  src="https://github.com/user-attachments/assets/0cdf1625-3246-4388-a989-765f00d33ffb"
+></video>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
+    Get the most out of your AI coding agents with effective prompting techniques.
+  </Card>
+  <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
+    Reach out to the OpenHands team for deployment assistance or questions.
+  </Card>
+  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
+    Explore the full OpenHands documentation for usage guides and features.
+  </Card>
+</CardGroup>
+
 ### Enterprise vs. Open Source
 Source: https://docs.openhands.dev/enterprise/enterprise-vs-oss.md
 
-This page describes the key differences between **OpenHands Local GUI** (open source) for individual developers and small teams running the Local GUI on their own machines, and **OpenHands Enterprise** for organizations that need advanced collaboration, integrations, and management capabilities.
+This page describes the key differences between **OpenHands Agent Canvas** (open source) for individual developers and small teams running the Agent Canvas on their own machines, and **OpenHands Enterprise** for organizations that need advanced collaboration, integrations, and management capabilities.
 
 ## Feature Comparison
 
-The table below highlights the key differences between the OpenHands Local GUI and OpenHands Enterprise offerings:
+The table below highlights the key differences between the OpenHands Agent Canvas and OpenHands Enterprise offerings:
 
-| Feature | Local GUI | OpenHands Enterprise |
+| Feature | Agent Canvas | OpenHands Enterprise |
 |---------|-------------------|----------------------|
 | **Full breadth of agent functionality (sub-agents, MCP, skills, model agnosticism)** | ✅ | ✅ |
-| **Where does the agent run?** | Local dev machines | Scalable, runtime sandboxes |
-| **Scalability** *Run multiple concurrent agent conversations* | Limited by machine | Unlimited, on-demand |
-| **'@OpenHands' in Slack and Jira** *Important for real-time resolution of bugs and feedback* | ❌ | ✅ |
-| **'@OpenHands' in GitHub, GitLab, Bitbucket** *Important for real-time resolution of PR comments and failing tests* | ❌ | ✅ |
-| **Multiple agent conversations in one place** *Give users visibility into all agent conversations* | ✅ | ✅ |
-| **Share conversations** *Unlock collaboration use cases* | ❌ | ✅ |
-| **Remote monitoring of agent conversations** *Enable Human-in-the-Loop operations for running agents* | ❌ Requires access to machine where agent is running | ✅ Monitor remotely from OpenHands Enterprise UI |
-| **Multi-user management and RBAC** *Roll out to several users and teams* | ❌ | ✅ |
-| **Automations** *Create scheduled and event-based workflows* | ❌ | ✅ |
+| **Where does the agent run?** | Locally or on a custom backend | Scalable, Kubernetes runtimes |
+| **Automations** <br /> *Create scheduled and event-based workflows* | ✅  | ✅ |
+| **'@OpenHands' in Slack and Jira** <br /> *Important for real-time resolution of bugs and feedback* | Requires custom [Automation](/openhands/usage/automations/overview) | Native integration |
+| **'@OpenHands' in GitHub, GitLab, Bitbucket** <br /> *Important for real-time resolution of PR comments and failing tests* | Requires custom [Automation](/openhands/usage/automations/overview) | Native integration |
+| **Share conversations** <br /> *Unlock collaboration use cases* | ❌ | ✅ |
+| **Multi-user Organizations and RBAC** <br /> *Roll out to several users and teams* | ❌ | ✅ |
+| **User and Organization Budgets** <br /> *Monitor and control costs* | ❌ | ✅ |
+| **Agent Observability Integrations** <br /> *Centralized logging of conversations* | ❌ | ✅ Uses Laminar|
+| **Private Plugin Marketplace** <br /> *Publish reusable plugins for teams to use* | ❌ | ✅ |
 | **SAML** | ❌ | ✅ |
 | **REST APIs** | ❌ | ✅ |
 
 ## When to Choose Each Option
 
-### OpenHands Local GUI
+### OpenHands Agent Canvas
 
-The OpenHands Local GUI is ideal for:
+The OpenHands Agent Canvas is ideal for:
 
 - Individual developers exploring AI-assisted coding
 - Small teams with basic requirements
 - Self-hosted environments where you manage your own infrastructure
-- Running OpenHands locally on your own machine
+- Running OpenHands locally on your own machine using the Agent Canvas
 
 ### OpenHands Enterprise
 
 OpenHands Enterprise is the right choice when you need:
 
-- **Team collaboration** — Share conversations and manage multiple users from a single platform
+- **Multi-use RBAC** — Manage multiple users from a single platform
 - **Platform integrations** — Invoke OpenHands directly from Slack, Jira, GitHub, GitLab, or Bitbucket
 - **Scalability** — Run unlimited parallel agent conversations without local resource constraints
 - **Enterprise security** — SAML authentication, RBAC, and centralized audit logs
-- **Remote monitoring** — Track agent progress in real-time from anywhere
+- **Usage Monitoring** — Track and enforce budgets; monitor usage across all users
 
 ## Getting Started
 
 <CardGroup cols={2}>
   <Card
-    title="Try Local GUI"
+    title="Try Agent Canvas"
     icon="desktop"
     href="/openhands/usage/run-openhands/local-setup#start-the-app"
   >
@@ -38705,6 +40858,113 @@ OpenHands Enterprise is the right choice when you need:
     Discuss your organization's requirements and get a customized deployment plan for OpenHands Enterprise.
   </Card>
 </CardGroup>
+
+### External PostgreSQL
+Source: https://docs.openhands.dev/enterprise/external-postgres.md
+
+OpenHands Enterprise can connect to an external PostgreSQL instance instead of using
+the bundled database. This is useful when you have existing database infrastructure,
+need specific backup/recovery procedures, or require high availability configurations.
+
+## PostgreSQL Version
+
+OpenHands Enterprise requires **PostgreSQL 16.4.0 or above**. PostgreSQL 17 is also supported.
+
+## Required Databases
+
+OpenHands Enterprise uses the following databases:
+
+| Database | Purpose |
+|----------|---------|
+| `openhands` | Core application data |
+| `bitnami_keycloak` | Identity and access management |
+| `litellm` | LLM proxy configuration and usage tracking |
+| `runtime_api_db` | Runtime/sandbox management |
+| `automations` | Scheduled tasks and automation workflows |
+
+## Database User Requirements
+
+The PostgreSQL user provided to OpenHands Enterprise needs specific privileges depending
+on your preferred setup approach.
+
+### Option 1: Automatic Database Creation (Recommended)
+
+If you provide a database user with the `CREATEDB` privilege, OpenHands Enterprise will
+automatically create all required databases during installation.
+
+```sql
+-- Create user with CREATEDB privilege
+CREATE USER openhands_user WITH PASSWORD 'your-secure-password' CREATEDB;
+```
+
+When the user creates its own databases, it will automatically have all necessary privileges
+on them including the ability to manage the `public` schema.
+
+### Option 2: Manual Database Creation
+
+If your security policies prevent granting `CREATEDB`, you must manually create all
+databases before installation:
+
+```sql
+-- Create the databases
+CREATE DATABASE openhands;
+CREATE DATABASE bitnami_keycloak;
+CREATE DATABASE litellm;
+CREATE DATABASE runtime_api_db;
+CREATE DATABASE automations;
+
+-- Create user without CREATEDB
+CREATE USER openhands_user WITH PASSWORD 'your-secure-password';
+
+-- Grant privileges on each database
+GRANT ALL PRIVILEGES ON DATABASE openhands TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE bitnami_keycloak TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE litellm TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE runtime_api_db TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE automations TO openhands_user;
+
+-- Connect to each database and grant schema privileges
+\c openhands
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c bitnami_keycloak
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c litellm
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c runtime_api_db
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c automations
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+```
+
+## Network Requirements
+
+Ensure your PostgreSQL instance is accessible from:
+
+- The OpenHands application pods/services
+- The Keycloak service
+- The LiteLLM proxy service
+- The Runtime API service
+
+If using network policies or firewalls, allow connections on the PostgreSQL port (default: 5432)
+from the OpenHands deployment.
+
+## Configuration
+
+When configuring OpenHands Enterprise, provide your external PostgreSQL connection details
+in the Admin Console or Helm values:
+
+- **Host**: Your PostgreSQL server hostname or IP
+- **Port**: PostgreSQL port (default: 5432)
+- **Username**: The database user created above
+- **Password**: The user's password
+
+<Note>
+  For production deployments, we recommend enabling SSL/TLS for database connections.
+</Note>
 
 ### Kubernetes Installation
 Source: https://docs.openhands.dev/enterprise/k8s-install.md
@@ -38754,6 +41014,10 @@ OpenHands Enterprise consists of several components deployed as Kubernetes workl
 | **Image Loader** | Pre-loads runtime container images on nodes |
 
 ## Guides
+
+<Card title="External PostgreSQL" icon="database" href="/enterprise/external-postgres">
+  Configure OpenHands to use your own PostgreSQL database instead of the bundled instance.
+</Card>
 
 <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
   Configure memory, CPU, and storage for optimal performance.
@@ -39191,6 +41455,7 @@ All items below must be completed before running the installer:
 - Inbound ports are open: `80`, `443`, and `30000`
 - Outbound domains are reachable from the VM
 - GitHub App prerequisites are prepared
+- (Optional) [External PostgreSQL](/enterprise/external-postgres) instance provisioned if using your own database
 
 <Warning>
   Do not run the installer until preflight checks pass.
@@ -39372,6 +41637,13 @@ You should now see the application configuration page.
 ### LLM Configuration
 
 Enter your Anthropic API key from the [Anthropic Console](https://console.anthropic.com/).
+
+### Database Configuration
+
+By default, OpenHands Enterprise uses a bundled PostgreSQL database. If you need to use your
+own PostgreSQL instance (for example, to integrate with existing database infrastructure or
+meet specific backup/HA requirements), see [External PostgreSQL](/enterprise/external-postgres)
+for setup instructions.
 
 ### GitHub Authentication
 
