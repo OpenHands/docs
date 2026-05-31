@@ -4539,39 +4539,47 @@ curl https://agent-server.example.com/health
 - Resource exhaustion
 - Container failures
 
-## Client SDK
+## Client Integration Architecture
 
-Python SDK for interacting with Agent Server:
+The SDK implements a **workspace-based dispatch pattern** for connecting to agent servers. The `Conversation` factory inspects the workspace type and returns the appropriate conversation implementation.
 
-```python
-from openhands.client import AgentServerClient
-
-client = AgentServerClient(
-    url="https://agent-server.example.com",
-    api_key="your-api-key"
-)
-
-# Create conversation
-conversation = client.create_conversation()
-
-# Send message
-response = client.send_message(
-    conversation_id=conversation.id,
-    message="Hello, agent!"
-)
-
-# Stream responses
-for event in client.stream_conversation(conversation.id):
-    if event.type == "message":
-        print(event.content)
+```mermaid
+flowchart LR
+    Conv["Conversation()"] --> Check{"Workspace Type?"}
+    Check -->|LocalWorkspace| Local["LocalConversation"]
+    Check -->|RemoteWorkspace| Remote["RemoteConversation"]
+    Remote -->|HTTP/WebSocket| Server["Agent Server"]
+    
+    style Conv fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Remote fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Server fill:#fff4df,stroke:#b7791f,stroke-width:2px
 ```
 
-**Client handles**:
-- Authentication
-- Request/response serialization
-- Error handling
-- Streaming
-- Retries
+### Workspace Types
+
+| Workspace | Conversation Type | Communication |
+|-----------|------------------|---------------|
+| [`LocalWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/local.py) | [`LocalConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/local_conversation.py) | Direct execution |
+| [`OpenHandsCloudWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/cloud/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTPS + WebSocket to OpenHands Cloud |
+| [`APIRemoteWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/remote_api/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTPS + WebSocket to Runtime API |
+| [`DockerWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/docker/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTP + WebSocket to local container |
+
+### [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) Responsibilities
+
+The `RemoteConversation` implementation handles all client-server concerns:
+
+- **Session management**: Authenticates and maintains connection to agent server
+- **Event streaming**: WebSocket connection for real-time agent events
+- **Request routing**: HTTP calls for conversation lifecycle operations
+- **Reconnection**: Automatic retry logic for transient failures
+
+### Usage Examples
+
+For complete working examples with all required setup:
+
+- **[OpenHands Cloud Workspace](/sdk/guides/agent-server/cloud-workspace)** - Managed cloud infrastructure
+- **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Custom runtime environments
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Local containerized execution
 
 ## Cost Considerations
 
@@ -11767,6 +11775,17 @@ cd agent-sdk
 uv run python examples/02_remote_agent_server/10_cloud_workspace_share_credentials.py
 ```
 
+
+## Settings and Secrets API Examples
+
+The remote agent-server examples also include end-to-end scripts for settings-backed secrets and authenticated LLM configuration:
+
+- [examples/02_remote_agent_server/12_settings_and_secrets_api.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/12_settings_and_secrets_api.py) demonstrates storing secrets through the Settings and Secrets API, referencing them with `LookupSecret`, and cleaning them up after use.
+- [examples/02_remote_agent_server/13_workspace_get_llm.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/13_workspace_get_llm.py) demonstrates configuring LLM settings on an authenticated agent-server and retrieving them through `RemoteWorkspace.get_llm()`.
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/12_settings_and_secrets_api.py"/>
+<RunExampleCode path_to_script="examples/02_remote_agent_server/13_workspace_get_llm.py"/>
+
 ## Next Steps
 
 - **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Connect to Runtime API service
@@ -12013,7 +12032,7 @@ ENV PYTHONPATH="/app:${PYTHONPATH}"
 This example is available on GitHub: [examples/02_remote_agent_server/06_custom_tool/](https://github.com/OpenHands/software-agent-sdk/tree/main/examples/02_remote_agent_server/06_custom_tool)
 </Note>
 
-```python icon="python" expandable examples/02_remote_agent_server/06_custom_tool/custom_tool_example.py
+```python icon="python" expandable examples/02_remote_agent_server/06_custom_tool/main.py
 """Example: Using custom tools with remote agent server.
 
 This example demonstrates how to use custom tools with a remote agent server
@@ -13471,9 +13490,9 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 > A ready-to-run example is available [here](#ready-to-run-example)!
 
-`AgentSettings` gives you a structured, serializable way to define an agent's model, tools, and optional subsystems like the condenser. Use it when you want to store agent configuration in JSON, send it over an API, or rebuild agents from validated settings later.
+`OpenHandsAgentSettings` gives you a structured, serializable way to define an agent's model, tools, and optional subsystems like the condenser. Use it when you want to store agent configuration in JSON, send it over an API, or rebuild agents from validated settings later.
 
-## Why Use AgentSettings
+## Why Use Agent Settings
 
 - Keep agent configuration as data instead of wiring everything together imperatively.
 - Validate settings with Pydantic before creating an agent.
@@ -13482,17 +13501,17 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 ## Build Settings
 
-Create an `AgentSettings` object with the same ingredients you would normally pass to an `Agent`.
+Create an `OpenHandsAgentSettings` object with the same ingredients you would normally pass to an `Agent`.
 
 ```python icon="python" focus={8, 11, 12, 13}
 from pydantic import SecretStr
 
-from openhands.sdk import AgentSettings, LLM, Tool
-from openhands.sdk.settings import CondenserSettings
+from openhands.sdk import LLM, Tool
+from openhands.sdk.settings import CondenserSettings, OpenHandsAgentSettings
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
-settings = AgentSettings(
+settings = OpenHandsAgentSettings(
     llm=LLM(
         model="anthropic/claude-sonnet-4-5-20250929",
         api_key=SecretStr("your-api-key"),
@@ -13507,11 +13526,11 @@ settings = AgentSettings(
 
 ## Serialize and Restore Settings
 
-Because `AgentSettings` is a Pydantic model, you can dump it to JSON-compatible data and restore it later.
+Because `OpenHandsAgentSettings` is a Pydantic model, you can dump it to JSON-compatible data and restore it later.
 
 ```python icon="python" focus={1, 2}
 payload = settings.model_dump(mode="json")
-restored = AgentSettings.model_validate(payload)
+restored = OpenHandsAgentSettings.model_validate(payload)
 ```
 
 This is useful when:
@@ -13538,10 +13557,10 @@ This example is available on GitHub: [examples/01_standalone_sdk/46_agent_settin
 </Note>
 
 ```python icon="python" expandable examples/01_standalone_sdk/46_agent_settings.py
-"""Create, serialize, and deserialize AgentSettings, then build a working agent.
+"""Create, serialize, and deserialize OpenHandsAgentSettings, then build an agent.
 
 Demonstrates:
-1. Configuring an agent entirely through AgentSettings (LLM, tools, condenser).
+1. Configuring an agent entirely through OpenHandsAgentSettings (LLM, tools, condenser).
 2. Serializing settings to JSON and restoring them.
 3. Building an Agent from settings via ``create_agent()``.
 4. Running a short conversation to prove the settings take effect.
@@ -13553,7 +13572,7 @@ import os
 
 from pydantic import SecretStr
 
-from openhands.sdk import LLM, AgentSettings, Conversation, Tool
+from openhands.sdk import LLM, Conversation, OpenHandsAgentSettings, Tool
 from openhands.sdk.settings import CondenserSettings
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
@@ -13563,7 +13582,7 @@ from openhands.tools.terminal import TerminalTool
 api_key = os.getenv("LLM_API_KEY")
 assert api_key is not None, "LLM_API_KEY environment variable is not set."
 
-settings = AgentSettings(
+settings = OpenHandsAgentSettings(
     llm=LLM(
         model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
         api_key=SecretStr(api_key),
@@ -13582,7 +13601,7 @@ print("Serialized settings (JSON):")
 print(json.dumps(payload, indent=2, default=str)[:800], "…")
 print()
 
-restored = AgentSettings.model_validate(payload)
+restored = OpenHandsAgentSettings.model_validate(payload)
 assert restored.condenser.enabled is True
 assert restored.condenser.max_size == 50
 assert len(restored.tools) == 2
@@ -13613,7 +13632,7 @@ print()
 
 # ── 4. Different settings → different behavior ───────────────────────────
 # Now create settings with ONLY the terminal tool and condenser disabled.
-terminal_only_settings = AgentSettings(
+terminal_only_settings = OpenHandsAgentSettings(
     llm=settings.llm,
     tools=[Tool(name=TerminalTool.name)],
     condenser=CondenserSettings(enabled=False),
@@ -18242,6 +18261,27 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 | SessionStart | When conversation starts | No |
 | SessionEnd | When conversation ends | No |
 
+## Exit Codes
+
+Hook scripts signal their result through their exit code. The SDK matches the
+[Claude Code hook contract](https://docs.claude.com/en/docs/claude-code/hooks):
+
+- **`0` — success.** The operation proceeds. `stdout` is parsed as JSON for
+  structured output (`decision`, `reason`, `additionalContext`, `continue`).
+- **`2` — block.** The operation is denied. For `PreToolUse` and
+  `UserPromptSubmit` this rejects the action; for `Stop` it prevents the
+  agent from finishing and the conversation continues. `stderr` / `reason`
+  is surfaced as feedback.
+- **Any other non-zero exit code — non-blocking error.** `success` is set to
+  `False` and the error is logged via `HookExecutionEvent`, but the
+  operation still proceeds.
+
+<Warning>
+Only exit code `2` blocks. Exit code `1` (the conventional Unix failure
+code) is treated as a non-blocking error. A hook intended to enforce a
+policy must exit with `2`.
+</Warning>
+
 ## Key Concepts
 
 - Registration points: subscribe to events or attach pre/post hooks around LLM calls and tool execution
@@ -18254,7 +18294,7 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 This example is available on GitHub: [examples/01_standalone_sdk/33_hooks](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/33_hooks/)
 </Note>
 
-```python icon="python" expandable examples/01_standalone_sdk/33_hooks/33_hooks.py
+```python icon="python" expandable examples/01_standalone_sdk/33_hooks/main.py
 """OpenHands Agent SDK — Hooks Example
 
 Demonstrates the OpenHands hooks system.
@@ -18408,7 +18448,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
     print(f"\nEXAMPLE_COST: {cost}")
 ```
-<RunExampleCode path_to_script="examples/01_standalone_sdk/33_hooks/33_hooks.py"/>
+<RunExampleCode path_to_script="examples/01_standalone_sdk/33_hooks/main.py"/>
 
 
 ### Hook Scripts
@@ -19946,6 +19986,17 @@ store.delete("gpt")
 ```
 
 <RunExampleCode path_to_script="examples/01_standalone_sdk/44_model_switching_in_convo.py"/>
+
+
+## Agent-Driven LLM Switching
+
+Saved profiles can also be exposed to the agent through the `switch_llm` built-in tool. The tool call switches the conversation's active profile after the current model finishes the tool call, so future model calls use the selected profile.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/49_switch_llm_tool.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/49_switch_llm_tool.py)
+</Note>
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/49_switch_llm_tool.py"/>
 
 ## Next Steps
 
@@ -28478,10 +28529,6 @@ Key aspects of the plugin system:
 ### Creating Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/creating-automations.md
 
-<Info>
-**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
-</Info>
-
 The easiest way to create an automation is to ask OpenHands directly. The Automation Skill handles all the details—you just describe what you want.
 
 ## Prompt vs Plugin Automations
@@ -28556,7 +28603,7 @@ The prompt is what the AI agent executes each time the automation runs. Write it
 
 Tell the automation what to do with its output:
 
-- "Post to the #alerts Slack channel" (requires [Slack MCP](/openhands/usage/cloud/slack-installation))
+- "Post to the #alerts Slack channel" (requires [Slack MCP](/openhands/usage/settings/mcp-settings))
 - "Save to `reports/weekly-summary.md`"
 - "Create a GitHub issue with the findings" (automatic if you logged in with GitHub)
 - "Send a message via the configured notification service"
@@ -28586,7 +28633,7 @@ Each automation runs in a full OpenHands sandbox with:
 - **Your secrets**: Access API keys stored in Settings > Secrets
 - **MCP integrations**: Use your configured MCP servers
 - **Network access**: Make HTTP requests, connect to APIs
-- **Git provider access**: Tokens from your Cloud login (GitHub, GitLab, or Bitbucket) are automatically included
+- **Git provider access**: Tokens from your login (GitHub, GitLab, or Bitbucket) are automatically included
 
 ## Schedules
 
@@ -28621,10 +28668,6 @@ Once your automation is created:
 
 ### Event-Based Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/event-automations.md
-
-<Info>
-**Beta Feature**: Event-based automations are in beta for **OpenHands Cloud** and **OpenHands Enterprise** users.
-</Info>
 
 Event-based automations run when something happens—a PR is opened, an issue is commented on, or a webhook fires—instead of on a schedule. This is ideal for responsive workflows like auto-reviewing PRs, triaging issues, or reacting to external service events.
 
@@ -28716,7 +28759,9 @@ For services beyond GitHub—like Linear, Stripe, or Slack—register a custom w
 
 ### Walkthrough: Linear Integration
 
-This example walks through setting up a Linear webhook to auto-triage new issues.
+<Note>
+This example walks through setting up a Linear webhook to auto-triage new issues using Automations in **[OpenHands Cloud](https://app.all-hands.dev)**.
+</Note>
 
 #### Step 1: Get Your Webhook Secret from Linear
 
@@ -28830,10 +28875,6 @@ New to automations? Start with the [Automations Overview](/openhands/usage/autom
 ### Managing Automations
 Source: https://docs.openhands.dev/openhands/usage/automations/managing-automations.md
 
-<Info>
-**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
-</Info>
-
 You can manage your automations by asking OpenHands directly—just like you created them.
 
 ## Viewing Your Automations
@@ -28931,13 +28972,9 @@ Deleting an automation is permanent. Consider disabling it instead if you might 
 ### Automations Overview
 Source: https://docs.openhands.dev/openhands/usage/automations/overview.md
 
-<Info>
-**Beta Feature**: Automations is currently in beta and available for **OpenHands Cloud** and **OpenHands Enterprise** users only.
-</Info>
-
 Automations let you schedule AI-powered tasks that run automatically—daily reports, health checks, data syncs, and more. Each automation runs a full OpenHands conversation on your chosen schedule, with access to your LLM settings, stored secrets, and integrations.
 
-Your git provider credentials are automatically available—if you logged into OpenHands Cloud with GitHub, GitLab, or Bitbucket, that access is included by default.
+Your git provider credentials are automatically available—if you logged into OpenHands with GitHub, GitLab, or Bitbucket, that access is included by default.
 
 ## What Can Automations Do?
 
@@ -28948,7 +28985,7 @@ Your git provider credentials are automatically available—if you logged into O
 - **Send notifications**: Post updates to Slack, create GitHub issues, or send alerts
 
 <Note>
-Automations can only interact with services you've configured access to. For example, posting to Slack requires the [Slack MCP integration](/openhands/usage/cloud/slack-installation). Git providers you logged in with (GitHub, GitLab, Bitbucket) are automatically available.
+Automations can only interact with services you've configured access to. For example, posting to Slack requires the [Slack MCP integration](/openhands/usage/settings/mcp-settings). Git providers you logged in with (GitHub, GitLab, Bitbucket) are automatically available.
 </Note>
 
 ## Two Types of Automations
@@ -28995,25 +29032,14 @@ When your automation runs:
 
 Automations are user-scoped—each automation and its runs belong to you. Conversations created by your automations automatically appear in your conversations list, just like any other conversation you start.
 
-Your automation has access to everything a normal OpenHands conversation does: terminal, file editing, your configured LLM, stored secrets, and MCP integrations. Git provider tokens from your Cloud login (GitHub, GitLab, or Bitbucket) are automatically included.
+Your automation has access to everything a normal OpenHands conversation does: terminal, file editing, your configured LLM, stored secrets, and MCP integrations. Git provider tokens from your login (GitHub, GitLab, or Bitbucket) are automatically included.
 
 ## Getting Started
 
-Before creating automations, complete this one-time setup:
+**Prerequisites**
 
-### 1. Create an OpenHands API Key
-
-Go to [Settings > API Keys](https://app.all-hands.dev/settings/api-keys) and create a new API key.
-
-### 2. Save the API Key as a Secret
-
-Copy the API key value and go to [Settings > Secrets](https://app.all-hands.dev/settings/secrets). Create a new secret with:
-- **Name**: `OPENHANDS_API_KEY`
-- **Value**: Your API key from step 1
-
-This allows the Automation Skill to create and manage automations on your behalf.
-
-### 3. Start a Conversation
+- **Configured LLM** in your settings
+- **Stored secrets** (optional) for any additional API keys your automations need (e.g., Slack tokens)
 
 Open a new conversation in OpenHands and ask it to create an automation:
 
@@ -29022,13 +29048,11 @@ Create an automation that runs every Monday at 9 AM and summarizes
 our open GitHub issues, then posts to #engineering on Slack.
 ```
 
-You can also list existing automations, enable/disable them, or trigger manual runs—all through conversation.
+Once you create an automation, you can view them by clicking on the "Automations" icon on the left-hand navigation.
 
-## Prerequisites
+You can also ask OpenHands to list [existing automations, enable/disable them, or trigger manual runs](/openhands/usage/automations/managing-automations).
 
-- **OpenHands Cloud or Enterprise account** (not available in open-source)
-- **Configured LLM** in your [settings](https://app.all-hands.dev/settings)
-- **Stored secrets** (optional) for any additional API keys your automations need (e.g., Slack tokens)
+
 
 ---
 
@@ -29582,7 +29606,7 @@ You can configure multiple hook types and multiple hooks per event:
 
 ## See Also
 
-- [Repository Customization](/openhands/usage/customization/repository) - Setup scripts and pre-commit hooks
+- [Repository Customization](/openhands/usage/customization/repository) - Setup scripts and repository-specific hooks
 - [Skills](/overview/skills) - Extend agent behavior with prompt-based skills
 - [Hooks (SDK Guide)](/sdk/guides/hooks) - Programmatic hooks for SDK developers
 
@@ -29615,29 +29639,45 @@ blocking dangerous commands, enforcing linting before the agent finishes, or log
 
 See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide.
 
-## Pre-commit Script
-You can add a `.openhands/pre-commit.sh` file to create a custom git pre-commit hook that runs before each commit.
-This can be used to enforce code quality standards, run tests, or perform other checks before allowing commits.
+## Repository-Specific Stop Hooks
 
-For example:
-```bash
+For repository-specific quality gates, use a [Stop hook](/openhands/usage/customization/hooks) in `.openhands/hooks.json`.
+Stop hooks run when OpenHands tries to finish a task and can block completion until formatting, linting, tests, or other
+repo-specific checks pass. They work across current agent-server-backed OpenHands flows.
+
+For example, create `.openhands/hooks/quality_gate.sh`:
+
+```bash .openhands/hooks/quality_gate.sh
 #!/bin/bash
-# Run linting checks
-cd frontend && npm run lint
-if [ $? -ne 0 ]; then
-  echo "Frontend linting failed. Please fix the issues before committing."
-  exit 1
-fi
+cd "${OPENHANDS_PROJECT_DIR:-$PWD}"
 
-# Run tests
-cd backend && pytest tests/unit
-if [ $? -ne 0 ]; then
-  echo "Backend tests failed. Please fix the issues before committing."
-  exit 1
+# Replace this with your repo's checks, such as npm run lint, pytest, or make test.
+if ! make test 2>&1; then
+  echo '{"decision":"deny","reason":"Quality checks failed. Fix them before finishing."}'
+  exit 2
 fi
 
 exit 0
 ```
+
+Then register it in `.openhands/hooks.json`:
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/quality_gate.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+If you currently use `.openhands/pre-commit.sh`, migrate those checks to Stop hooks when you want quality gates to apply
+to current agent-server-backed OpenHands flows. Move the check commands into a Stop hook script like the one above. See the
+[Hooks](/openhands/usage/customization/hooks) guide for complete behavior and JSON response details.
 
 ### Debugging
 Source: https://docs.openhands.dev/openhands/usage/developers/debugging.md
@@ -33755,6 +33795,163 @@ conversations.
 - `Enable memory condensation` - Turn on this setting to activate this feature.
 - `Memory condenser max history size` - The condenser will summarize the history after this many events.
 
+## LLM Profiles
+
+LLM profiles allow you to save multiple LLM configurations and switch between them, even during an active conversation.
+This is useful when you want to use different models for different tasks—for example, a faster model for simple tasks
+and a more powerful model for complex reasoning.
+
+### Creating an LLM Profile
+
+Profiles are automatically created when you save a configuration on the LLM settings page. To create a new profile:
+
+1. Navigate to `Settings > LLM`.
+2. Configure your desired LLM provider, model, and API key.
+3. Click `Save Changes`.
+
+A new profile will be created with your configuration. The most recently saved profile becomes the active profile
+for new conversations.
+
+Alternatively, you can click the `Add LLM Profile` button in the Available Profiles section to create a new profile
+directly.
+
+### Managing LLM Profiles
+
+You can manage your saved profiles in the `Available Profiles` section of the LLM settings page. Each profile shows:
+
+- **Profile name**: A unique identifier for the configuration
+- **Model**: The LLM model associated with the profile
+- **Active badge**: Indicates which profile is currently active
+
+Click the menu icon (three dots) on any profile to access these actions:
+
+- **Edit**: Modify the profile's LLM configuration
+- **Rename**: Change the profile name
+- **Set as Active**: Make this profile the default for new conversations
+- **Delete**: Remove the profile
+
+<Note>
+You can save up to 10 LLM profiles per account. Delete unused profiles if you need to create new ones.
+</Note>
+
+### Switching Profiles During a Conversation
+
+One of the most powerful features of LLM profiles is the ability to switch models mid-conversation without losing context.
+This allows you to:
+
+- Start with a fast, cost-effective model for initial exploration
+- Switch to a more powerful model when the task requires deeper reasoning
+- Use specialized models for specific types of tasks
+
+For example, you might create profiles like these:
+
+| Example Profile | Example Use | Example Cost Pattern |
+| --- | --- | --- |
+| `claude-opus-4-7` | Frontend design and visual polish | Higher cost |
+| `gpt-5.5` | Planning, instruction following, or review | Balanced for complex reasoning |
+| `minimax-m2.7` | Day-to-day implementation | Lower cost |
+
+The profile names above are examples. Use names that match the saved profiles in your OpenHands environment.
+
+To switch profiles during an active conversation:
+
+1. Look for the **profile selector button** in the chat input area. It displays the name of the currently active profile.
+2. Click the button to open the profile menu.
+3. Select the profile you want to switch to.
+
+The conversation will continue with the new model, maintaining all previous context and history. The switch takes effect
+immediately for subsequent messages.
+
+<Tip>
+The profile selector shows a checkmark next to the currently active profile. If no profile matches the running model,
+the button will show "Select a model" as a placeholder.
+</Tip>
+
+### Switching Profiles with the `/model` Slash Command
+
+You can also list and switch profiles directly from the chat input using the `/model` slash command:
+
+- `/model` — Lists your saved LLM profiles.
+- `/model <profile-name>` — Switches the running conversation to that profile.
+
+This is equivalent to using the profile selector button and works without leaving the chat. Profile names must match the
+saved profile exactly. The switch applies to future agent steps; it does not rerun earlier messages.
+
+A common workflow is to use a stronger model for planning and then switch to a lower-cost model for implementation:
+
+1. Start the conversation with `gpt-5.5` selected.
+2. Ask OpenHands to plan the work before editing files:
+
+   ```text
+   Plan the OpenHands features page. Do not edit files yet.
+   ```
+
+3. Send `/model` to list available profiles.
+4. Send `/model minimax-m2.7` to switch profiles.
+5. Ask OpenHands to implement the plan:
+
+   ```text
+   Now implement the plan.
+   ```
+
+![Agent Canvas showing example /model command output that lists saved profiles and switches to another profile](/openhands/static/img/model-command-agent-canvas.png)
+
+<Note>
+Model switching requires saved LLM profiles. If `/model` is not suggested in the chat input, create profiles in
+`Settings > LLM` and confirm that your backend supports profile switching.
+</Note>
+
+### Letting the Agent Select Models Dynamically
+
+When the model selection tool is available, the agent can choose a saved profile for the next phase of work. For example,
+it can implement frontend changes with a design-focused model and then switch to an instruction-following model for review.
+
+In the Agent SDK, this capability is exposed as the built-in `SwitchLLMTool`, which produces `switch_llm` tool calls.
+Agent Canvas displays those tool calls as `Switch LLM profile` events in the conversation timeline so you can see when
+and why the model changed.
+
+Create the profiles you want the agent to choose from, then ask OpenHands to use specific profiles for different phases
+of the task. For example:
+
+```text
+Implement a simple web page on the features of OpenHands with Claude Opus 4.7, and then switch to GPT-5.5 and review the code.
+```
+
+![Agent Canvas showing example switch_llm tool calls that move a task between saved profiles](/openhands/static/img/model-selection-tool-agent-canvas.png)
+
+The model selection tool behaves as follows:
+
+- The current model decides to call the tool and provides a short reason.
+- The switch takes effect on the next LLM call after the tool succeeds.
+- Conversation history, files, and task state are preserved.
+- If a profile name is missing or misspelled, the tool returns an error and the agent should choose a valid profile or
+  ask for help.
+
+For custom SDK agents, include `SwitchLLMTool` when constructing the agent. See the SDK example:
+[examples/01_standalone_sdk/49_switch_llm_tool.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/49_switch_llm_tool.py).
+
+### How Profile Switching Works
+
+When you switch profiles during a conversation:
+
+1. The new LLM configuration is loaded from your saved profile
+2. The conversation context (all previous messages and actions) is preserved
+3. Future messages are processed using the new model
+4. The conversation metadata is updated to reflect the new model
+
+This seamless switching allows you to leverage different models' strengths without starting a new conversation or
+losing your progress.
+
+### Best Practices for Using LLM Profiles
+
+- **Name profiles descriptively**: Use names like "Claude Sonnet - Fast" or "GPT-4 - Complex Tasks" to easily
+  identify which profile to use.
+- **Create task-specific profiles**: Set up profiles optimized for different workflows, such as code review,
+  documentation, or debugging.
+- **Keep API keys updated**: Ensure each profile has a valid API key.
+- **Test before critical work**: When switching profiles mid-conversation, send a simple test message to confirm
+  the new model is responding correctly.
+
 ### Model Context Protocol (MCP)
 Source: https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md
 
@@ -36810,6 +37007,271 @@ Once you've connected your account, you can:
 - [Learn about the Cloud UI](/openhands/usage/cloud/cloud-ui).
 - [Install the OpenHands Slack app](/openhands/usage/cloud/slack-installation).
 
+### Managing Members
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/managing-members.md
+
+## Inviting Users
+
+To add a new member to your organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Click **Invite Organization Members** in the menu.
+3. Enter the email address of the user you want to invite.
+4. Click **Add**.
+
+The invited user will receive an email with instructions to accept the invitation and join your organization.
+Once they accept, they will be added as a **Member** by default.
+
+<Note>
+  Invitations expire after 7 days. If the invitation expires, you'll need to send a new one.
+</Note>
+
+## Changing User Roles
+
+After a user has joined your organization, an Admin or Owner can modify their role:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Org Members**.
+3. Find the user whose role you want to change.
+4. Click the role dropdown next to their name.
+5. Select the new role: `Owner`, `Admin`, or `Member`.
+6. Confirm the change.
+
+<Warning>
+  Changing a user's role takes effect immediately. Be careful when demoting users, as they will lose access
+  to features associated with their previous role.
+</Warning>
+
+## Removing Members
+
+To remove a member from your organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Org Members**.
+3. Find the user you want to remove.
+4. Click the **Remove** button next to their name.
+5. Confirm the removal.
+
+Removed members will lose access to the organization's shared resources immediately, but their private
+conversations will remain intact.
+
+## Next Steps
+
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand what each role can do.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure your organization's resources.
+
+### Organizations Overview
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/overview.md
+
+## What are Organizations?
+
+Organizations allow multiple users to collaborate within a shared workspace in OpenHands Cloud or OpenHands Enterprise. With
+Organizations, teams can share a pool of credits, use consistent LLM configurations, and streamline access
+to repositories.
+
+<Note>
+  Organizations is a commercial feature available with an OpenHands Cloud subscription or OpenHands Enterprise.
+</Note>
+
+## Key Features
+
+Organizations provide the following capabilities:
+
+- **Multiple Users** - Add team members to a common organization for centralized management.
+- **Shared Credits** - Pool OpenHands Cloud credits across all organization members.
+- **Default LLM Configuration** - Define the default model provider and LLM that all members can use.
+- **Git Organization Claiming** - Claim specific Git organizations to route OpenHands resolver requests to your organization.
+
+## Conversation Visibility
+
+By default, conversations remain **private to individual members** of an organization. Each user's conversations
+are only visible to them. 
+
+## Getting Started
+
+To start using Organizations:
+
+1. Subscribe to an OpenHands Cloud plan or OpenHands Enterprise.
+2. Create a new organization from the OpenHands Cloud dashboard.
+3. [Invite team members](/openhands/usage/cloud/organizations/managing-members) to join your organization.
+4. Configure your organization's [LLM settings](/openhands/usage/cloud/organizations/settings) and shared resources.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Learn how to invite users and manage roles.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure LLM providers, credits, and Git organization claims.
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand the different permission levels.
+
+### Roles and Permissions
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/roles-permissions.md
+
+## Overview
+
+Organizations in OpenHands support three roles, each with different levels of access and capabilities:
+**Member**, **Admin**, and **Owner**. This page describes what each role can do.
+
+## Permissions Table
+
+| Permission | Member | Admin | Owner |
+|------------|:------:|:-----:|:-----:|
+| Create conversations | ✓ | ✓ | ✓ |
+| Manage private settings | ✓ | ✓ | ✓ |
+| Invite users | | ✓ | ✓ |
+| Elevate users to Admin role | | ✓ | ✓ |
+| Add credits | | ✓ | ✓ |
+| Modify LLM settings | | ✓ | ✓ |
+| Elevate users to Owner role | | | ✓ |
+| Claim Git organizations | | | ✓ |
+| Delete organization | | | ✓ |
+
+## Role Descriptions
+
+### Member
+
+Members are the default role for users joining an organization. Members can:
+
+- **Create conversations** - Start new conversations using the organization's shared credits.
+- **Manage their own private settings** - Configure settings that are only visible to them, including:
+  - MCP servers
+  - Secrets
+  - API keys
+  - Git user settings
+  - Slack integration
+
+Members cannot invite new users, modify organization-wide settings (like LLM settings), or manage other users' roles.
+
+### Admin
+
+Admins have all the capabilities of Members, plus the ability to manage the organization's settings and users. Admins can:
+
+- Everything a Member can do.
+- **Invite users** - Send invitations to new team members.
+- **Change user roles** - Promote Members to Admin or demote Admins to Members.
+- **Add credits** - Purchase and add credits to the organization's shared pool.
+- **Modify LLM settings** - Configure the default LLM provider and model for the organization.
+
+Admins cannot delete the organization or claim Git organizations.
+
+### Owner
+
+Owners have full control over the organization. Owners can:
+
+- Everything an Admin can do.
+- **Delete the organization** - Permanently remove the organization and all associated data.
+- **Claim Git organizations** - Link specific Git organizations to route OpenHands resolver requests to this organization.
+
+<Note>
+  Every organization must have at least one Owner. If you need to transfer ownership, first promote another
+  user to Owner before changing your own role.
+</Note>
+
+## Private Settings
+
+Regardless of role, all organization members have control over their own **private settings**. These settings
+are personal to each user and are not visible to other organization members, including Admins and Owners.
+
+Private settings include:
+
+- **MCP Servers** - Configure Model Context Protocol servers.
+- **Secrets** - Store sensitive values like API tokens and credentials.
+- **API Keys** - Manage keys for programmatic access to OpenHands.
+- **Git Settings** - Configure personal Git authentication and preferences.
+- **Slack Integration** - Connect your personal Slack workspace.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Learn how to invite and manage users.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure organization-wide settings.
+
+### Organization Settings
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/settings.md
+
+## Overview
+
+Organization settings allow Admins and Owners to configure shared resources that all members can use. This
+includes LLM configurations, credits management, and Git organization claims.
+
+## LLM Configuration
+
+<Note>
+  Modifying LLM settings requires Admin or Owner permissions.
+</Note>
+
+Organizations can define a default LLM provider and model that all members will use:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. Select the `LLM` tab.
+2. Select the `LLM` tab.
+3. Choose your preferred **LLM provider** from the available options.
+4. Select the **model** you want to use as the default.
+5. Click `Save Changes`.
+
+All organization members will use this LLM configuration for their conversations unless they have configured
+personal overrides.
+
+## Managing Credits
+
+<Note>
+  Adding credits requires Admin or Owner permissions.
+</Note>
+
+Organization credits are shared across all members. To add credits:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. Click **+ Add**.
+4. Choose the amount of credits to purchase.
+5. Complete the payment process.
+
+Credits will be added to the organization's shared pool immediately and can be used by any member.
+
+### Monitoring Usage
+
+You can monitor credit usage from the **Organization** settings page, which shows the current credit balance.
+
+For detailed usage reporting at the user level, use the API endpoint:
+
+```
+GET /api/organizations/{org_id}/members/financial
+```
+
+This endpoint provides financial usage data for all members within your organization.
+
+## Claiming Git Organizations
+
+<Note>
+  Claiming Git organizations requires Owner permissions.
+</Note>
+
+Claiming a Git organization links it to your OpenHands organization, allowing OpenHands resolver requests
+for repositories in that Git organization to be routed to your organization.
+
+Owners have the ability to claim a Git organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. In the **Git Conversation Routing** section, Git organizations from your linked GitHub/GitLab accounts are listed automatically.
+4. Click **Claim** next to the Git organization you want to link to your OpenHands organization.
+
+<Warning>
+  You must have admin access to the Git organization to claim it. The verification process confirms your
+  authorization.
+</Warning>
+
+### Benefits of Claiming Git Organizations
+
+When a Git organization is claimed:
+
+- All resolver requests for repositories in that Git organization are automatically routed to your OpenHands organization.
+- Organization members can work seamlessly with repositories in the claimed Git organization.
+- Usage is tracked against your organization's credit pool.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Invite users and manage roles.
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand permission levels.
+
 ### Plugin Launcher
 Source: https://docs.openhands.dev/openhands/usage/cloud/plugin-launcher.md
 
@@ -38642,56 +39104,176 @@ Enterprise customers receive:
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
 
+### Analytics
+Source: https://docs.openhands.dev/enterprise/analytics.md
+
+This guide walks you through setting up and using Laminar for Analytics in OpenHands Enterprise.
+You'll opt into Analytics and configure conversations to automatically send traces to Laminar.
+
+## Who This Is For
+
+This guide is for users who want to explore analytics on their OpenHands Enterprise conversations.
+
+### Why Laminar?
+
+[Laminar](https://laminar.sh/) is an open source observability platform for AI agents like OpenHands.
+
+Use Laminar to view your conversation traces including prompts, tool calls, and answers. A trace is a record of what your agent did.
+
+Laminar can help you see where the agent went wrong. From traces, you can create signals. A signal is a natural language instruction to extract structured data from traces. Use signals to analyze recurring behavior across traces. You can then create better situations for prompting and measure them in Laminar. You can also analyze and improve your skills.
+
+For example, you can view all conversation traces related to a specific skill.
+
+Laminar can help you answer the following questions:
+- On a trace, did the agent do a good job using the skill?
+- On another trace, did the agent do a bad job?
+
+For more information on evaluating skills, see [Evaluating Agent Skills](https://www.openhands.dev/blog/evaluating-agent-skills).
+
+### Prerequisites
+
+Before you begin, make sure you completed the [Quick Start guide](/enterprise/quick-start).
+
+## Enable Analytics
+
+You should see an **Analytics Configuration** section on the application configuration page.
+
+Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+
+![Configure Analytics](./images/laminar-configure-analytics.png)
+
+## Deploy
+
+OpenHands will begin deploying. You can expect the deployment status to transition from
+**Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
+
+![Deployment in progress](./images/laminar-deploy-in-progress.png)
+
+Click **Details** next to the deployment status to monitor individual resources. Resources
+shown in orange are still deploying -- wait until all resources are ready.
+
+![Deployment status details](./images/laminar-deployment-status-details.png)
+
+## Access Laminar UI
+
+Once the deployment status shows **Ready**, navigate to `https://analytics.app.<your-base-domain>`.
+
+Click the **Continue with Keycloak** button:
+
+![Laminar Keycloak Auth](./images/laminar-keycloak-auth.png)
+
+## Create a Laminar project
+
+![Laminar Create Project](./images/laminar-create-project.png)
+
+Once a project has been created, Laminar is ready to listen for traces.
+
+![Laminar Listen Traces](./images/laminar-listen-traces.png)
+
+## Create an ingest only API Key
+
+Important: Always use ingest API keys when deploying.
+
+Create a key with ther right permissions. Ingest only keys are recommended as they only have write access to write traces. They cannot be used to read data.
+
+![Configure Laminar Ingest Only Key](./images/laminar-ingest-only-key.png)
+
+## Set Laminar Project API Key to enable automatic conversation traces
+
+Set the ingest only key as the Laminar Project API Key in the Admin Console configuration:
+
+![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+
+Click **Save config**.
+
+## Deploy Updated Configuration
+
+Deploy the config change after setting the Laminar Project API Key in the Admin Console.
+
+![Laminar Deploy Again](./images/laminar-deploy-again.png)
+
+Wait for the deployment to complete.
+
+## Start a conversation
+
+Navigate to the OpenHands UI at `https://app.<your-base-domain>`. Start a new conversation and try a prompt.
+
+![Start a Conversation](./images/laminar-openhands-conversation.png)
+
+Your conversations will now automatically send a trace to Laminar.
+
+![Laminar Trace](./images/laminar-trace.png)
+
+<video
+  controls
+  className="w-full aspect-video"
+  src="https://github.com/user-attachments/assets/0cdf1625-3246-4388-a989-765f00d33ffb"
+></video>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
+    Get the most out of your AI coding agents with effective prompting techniques.
+  </Card>
+  <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
+    Reach out to the OpenHands team for deployment assistance or questions.
+  </Card>
+  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
+    Explore the full OpenHands documentation for usage guides and features.
+  </Card>
+</CardGroup>
+
 ### Enterprise vs. Open Source
 Source: https://docs.openhands.dev/enterprise/enterprise-vs-oss.md
 
-This page describes the key differences between **OpenHands Local GUI** (open source) for individual developers and small teams running the Local GUI on their own machines, and **OpenHands Enterprise** for organizations that need advanced collaboration, integrations, and management capabilities.
+This page describes the key differences between **OpenHands Agent Canvas** (open source) for individual developers and small teams running the Agent Canvas on their own machines, and **OpenHands Enterprise** for organizations that need advanced collaboration, integrations, and management capabilities.
 
 ## Feature Comparison
 
-The table below highlights the key differences between the OpenHands Local GUI and OpenHands Enterprise offerings:
+The table below highlights the key differences between the OpenHands Agent Canvas and OpenHands Enterprise offerings:
 
-| Feature | Local GUI | OpenHands Enterprise |
+| Feature | Agent Canvas | OpenHands Enterprise |
 |---------|-------------------|----------------------|
 | **Full breadth of agent functionality (sub-agents, MCP, skills, model agnosticism)** | ✅ | ✅ |
-| **Where does the agent run?** | Local dev machines | Scalable, runtime sandboxes |
-| **Scalability** *Run multiple concurrent agent conversations* | Limited by machine | Unlimited, on-demand |
-| **'@OpenHands' in Slack and Jira** *Important for real-time resolution of bugs and feedback* | ❌ | ✅ |
-| **'@OpenHands' in GitHub, GitLab, Bitbucket** *Important for real-time resolution of PR comments and failing tests* | ❌ | ✅ |
-| **Multiple agent conversations in one place** *Give users visibility into all agent conversations* | ✅ | ✅ |
-| **Share conversations** *Unlock collaboration use cases* | ❌ | ✅ |
-| **Remote monitoring of agent conversations** *Enable Human-in-the-Loop operations for running agents* | ❌ Requires access to machine where agent is running | ✅ Monitor remotely from OpenHands Enterprise UI |
-| **Multi-user management and RBAC** *Roll out to several users and teams* | ❌ | ✅ |
-| **Automations** *Create scheduled and event-based workflows* | ❌ | ✅ |
+| **Where does the agent run?** | Locally or on a custom backend | Scalable, Kubernetes runtimes |
+| **Automations** <br /> *Create scheduled and event-based workflows* | ✅  | ✅ |
+| **'@OpenHands' in Slack and Jira** <br /> *Important for real-time resolution of bugs and feedback* | Requires custom [Automation](/openhands/usage/automations/overview) | Native integration |
+| **'@OpenHands' in GitHub, GitLab, Bitbucket** <br /> *Important for real-time resolution of PR comments and failing tests* | Requires custom [Automation](/openhands/usage/automations/overview) | Native integration |
+| **Share conversations** <br /> *Unlock collaboration use cases* | ❌ | ✅ |
+| **Multi-user Organizations and RBAC** <br /> *Roll out to several users and teams* | ❌ | ✅ |
+| **User and Organization Budgets** <br /> *Monitor and control costs* | ❌ | ✅ |
+| **Agent Observability Integrations** <br /> *Centralized logging of conversations* | ❌ | ✅ Uses Laminar|
+| **Private Plugin Marketplace** <br /> *Publish reusable plugins for teams to use* | ❌ | ✅ |
 | **SAML** | ❌ | ✅ |
 | **REST APIs** | ❌ | ✅ |
 
 ## When to Choose Each Option
 
-### OpenHands Local GUI
+### OpenHands Agent Canvas
 
-The OpenHands Local GUI is ideal for:
+The OpenHands Agent Canvas is ideal for:
 
 - Individual developers exploring AI-assisted coding
 - Small teams with basic requirements
 - Self-hosted environments where you manage your own infrastructure
-- Running OpenHands locally on your own machine
+- Running OpenHands locally on your own machine using the Agent Canvas
 
 ### OpenHands Enterprise
 
 OpenHands Enterprise is the right choice when you need:
 
-- **Team collaboration** — Share conversations and manage multiple users from a single platform
+- **Multi-use RBAC** — Manage multiple users from a single platform
 - **Platform integrations** — Invoke OpenHands directly from Slack, Jira, GitHub, GitLab, or Bitbucket
 - **Scalability** — Run unlimited parallel agent conversations without local resource constraints
 - **Enterprise security** — SAML authentication, RBAC, and centralized audit logs
-- **Remote monitoring** — Track agent progress in real-time from anywhere
+- **Usage Monitoring** — Track and enforce budgets; monitor usage across all users
 
 ## Getting Started
 
 <CardGroup cols={2}>
   <Card
-    title="Try Local GUI"
+    title="Try Agent Canvas"
     icon="desktop"
     href="/openhands/usage/run-openhands/local-setup#start-the-app"
   >
