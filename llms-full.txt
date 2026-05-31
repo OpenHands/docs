@@ -4539,39 +4539,47 @@ curl https://agent-server.example.com/health
 - Resource exhaustion
 - Container failures
 
-## Client SDK
+## Client Integration Architecture
 
-Python SDK for interacting with Agent Server:
+The SDK implements a **workspace-based dispatch pattern** for connecting to agent servers. The `Conversation` factory inspects the workspace type and returns the appropriate conversation implementation.
 
-```python
-from openhands.client import AgentServerClient
-
-client = AgentServerClient(
-    url="https://agent-server.example.com",
-    api_key="your-api-key"
-)
-
-# Create conversation
-conversation = client.create_conversation()
-
-# Send message
-response = client.send_message(
-    conversation_id=conversation.id,
-    message="Hello, agent!"
-)
-
-# Stream responses
-for event in client.stream_conversation(conversation.id):
-    if event.type == "message":
-        print(event.content)
+```mermaid
+flowchart LR
+    Conv["Conversation()"] --> Check{"Workspace Type?"}
+    Check -->|LocalWorkspace| Local["LocalConversation"]
+    Check -->|RemoteWorkspace| Remote["RemoteConversation"]
+    Remote -->|HTTP/WebSocket| Server["Agent Server"]
+    
+    style Conv fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Remote fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    style Server fill:#fff4df,stroke:#b7791f,stroke-width:2px
 ```
 
-**Client handles**:
-- Authentication
-- Request/response serialization
-- Error handling
-- Streaming
-- Retries
+### Workspace Types
+
+| Workspace | Conversation Type | Communication |
+|-----------|------------------|---------------|
+| [`LocalWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/workspace/local.py) | [`LocalConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/local_conversation.py) | Direct execution |
+| [`OpenHandsCloudWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/cloud/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTPS + WebSocket to OpenHands Cloud |
+| [`APIRemoteWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/remote_api/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTPS + WebSocket to Runtime API |
+| [`DockerWorkspace`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-workspace/openhands/workspace/docker/workspace.py) | [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) | HTTP + WebSocket to local container |
+
+### [`RemoteConversation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py) Responsibilities
+
+The `RemoteConversation` implementation handles all client-server concerns:
+
+- **Session management**: Authenticates and maintains connection to agent server
+- **Event streaming**: WebSocket connection for real-time agent events
+- **Request routing**: HTTP calls for conversation lifecycle operations
+- **Reconnection**: Automatic retry logic for transient failures
+
+### Usage Examples
+
+For complete working examples with all required setup:
+
+- **[OpenHands Cloud Workspace](/sdk/guides/agent-server/cloud-workspace)** - Managed cloud infrastructure
+- **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Custom runtime environments
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Local containerized execution
 
 ## Cost Considerations
 
@@ -18241,6 +18249,27 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 | Stop | When agent tries to finish | Yes (exit 2) |
 | SessionStart | When conversation starts | No |
 | SessionEnd | When conversation ends | No |
+
+## Exit Codes
+
+Hook scripts signal their result through their exit code. The SDK matches the
+[Claude Code hook contract](https://docs.claude.com/en/docs/claude-code/hooks):
+
+- **`0` — success.** The operation proceeds. `stdout` is parsed as JSON for
+  structured output (`decision`, `reason`, `additionalContext`, `continue`).
+- **`2` — block.** The operation is denied. For `PreToolUse` and
+  `UserPromptSubmit` this rejects the action; for `Stop` it prevents the
+  agent from finishing and the conversation continues. `stderr` / `reason`
+  is surfaced as feedback.
+- **Any other non-zero exit code — non-blocking error.** `success` is set to
+  `False` and the error is logged via `HookExecutionEvent`, but the
+  operation still proceeds.
+
+<Warning>
+Only exit code `2` blocks. Exit code `1` (the conventional Unix failure
+code) is treated as a non-blocking error. A hook intended to enforce a
+policy must exit with `2`.
+</Warning>
 
 ## Key Concepts
 
@@ -33755,6 +33784,99 @@ conversations.
 - `Enable memory condensation` - Turn on this setting to activate this feature.
 - `Memory condenser max history size` - The condenser will summarize the history after this many events.
 
+## LLM Profiles
+
+LLM profiles allow you to save multiple LLM configurations and switch between them, even during an active conversation.
+This is useful when you want to use different models for different tasks—for example, a faster model for simple tasks
+and a more powerful model for complex reasoning.
+
+### Creating an LLM Profile
+
+Profiles are automatically created when you save a configuration on the LLM settings page. To create a new profile:
+
+1. Navigate to `Settings > LLM`.
+2. Configure your desired LLM provider, model, and API key.
+3. Click `Save Changes`.
+
+A new profile will be created with your configuration. The most recently saved profile becomes the active profile
+for new conversations.
+
+Alternatively, you can click the `Add LLM Profile` button in the Available Profiles section to create a new profile
+directly.
+
+### Managing LLM Profiles
+
+You can manage your saved profiles in the `Available Profiles` section of the LLM settings page. Each profile shows:
+
+- **Profile name**: A unique identifier for the configuration
+- **Model**: The LLM model associated with the profile
+- **Active badge**: Indicates which profile is currently active
+
+Click the menu icon (three dots) on any profile to access these actions:
+
+- **Edit**: Modify the profile's LLM configuration
+- **Rename**: Change the profile name
+- **Set as Active**: Make this profile the default for new conversations
+- **Delete**: Remove the profile
+
+<Note>
+You can save up to 10 LLM profiles per account. Delete unused profiles if you need to create new ones.
+</Note>
+
+### Switching Profiles During a Conversation
+
+One of the most powerful features of LLM profiles is the ability to switch models mid-conversation without losing context.
+This allows you to:
+
+- Start with a fast, cost-effective model for initial exploration
+- Switch to a more powerful model when the task requires deeper reasoning
+- Use specialized models for specific types of tasks
+
+To switch profiles during an active conversation:
+
+1. Look for the **profile selector button** in the chat input area. It displays the name of the currently active profile.
+2. Click the button to open the profile menu.
+3. Select the profile you want to switch to.
+
+The conversation will continue with the new model, maintaining all previous context and history. The switch takes effect
+immediately for subsequent messages.
+
+<Tip>
+The profile selector shows a checkmark next to the currently active profile. If no profile matches the running model,
+the button will show "Select a model" as a placeholder.
+</Tip>
+
+### Switching Profiles with the `/model` Slash Command
+
+You can also list and switch profiles directly from the chat input using the `/model` slash command:
+
+- `/model` — Lists your saved LLM profiles, including which one is active and whether each profile has an API key set.
+- `/model <name>` — Switches the conversation to the profile with the given name.
+
+This is equivalent to using the profile selector button and works without leaving the chat.
+
+### How Profile Switching Works
+
+When you switch profiles during a conversation:
+
+1. The new LLM configuration is loaded from your saved profile
+2. The conversation context (all previous messages and actions) is preserved
+3. Future messages are processed using the new model
+4. The conversation metadata is updated to reflect the new model
+
+This seamless switching allows you to leverage different models' strengths without starting a new conversation or
+losing your progress.
+
+### Best Practices for Using LLM Profiles
+
+- **Name profiles descriptively**: Use names like "Claude Sonnet - Fast" or "GPT-4 - Complex Tasks" to easily
+  identify which profile to use.
+- **Create task-specific profiles**: Set up profiles optimized for different workflows, such as code review,
+  documentation, or debugging.
+- **Keep API keys updated**: Ensure each profile has a valid API key.
+- **Test before critical work**: When switching profiles mid-conversation, send a simple test message to confirm
+  the new model is responding correctly.
+
 ### Model Context Protocol (MCP)
 Source: https://docs.openhands.dev/openhands/usage/settings/mcp-settings.md
 
@@ -36809,6 +36931,271 @@ Once you've connected your account, you can:
 - [Use OpenHands with your Bitbucket repositories](/openhands/usage/cloud/bitbucket-installation).
 - [Learn about the Cloud UI](/openhands/usage/cloud/cloud-ui).
 - [Install the OpenHands Slack app](/openhands/usage/cloud/slack-installation).
+
+### Managing Members
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/managing-members.md
+
+## Inviting Users
+
+To add a new member to your organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Click **Invite Organization Members** in the menu.
+3. Enter the email address of the user you want to invite.
+4. Click **Add**.
+
+The invited user will receive an email with instructions to accept the invitation and join your organization.
+Once they accept, they will be added as a **Member** by default.
+
+<Note>
+  Invitations expire after 7 days. If the invitation expires, you'll need to send a new one.
+</Note>
+
+## Changing User Roles
+
+After a user has joined your organization, an Admin or Owner can modify their role:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Org Members**.
+3. Find the user whose role you want to change.
+4. Click the role dropdown next to their name.
+5. Select the new role: `Owner`, `Admin`, or `Member`.
+6. Confirm the change.
+
+<Warning>
+  Changing a user's role takes effect immediately. Be careful when demoting users, as they will lose access
+  to features associated with their previous role.
+</Warning>
+
+## Removing Members
+
+To remove a member from your organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Org Members**.
+3. Find the user you want to remove.
+4. Click the **Remove** button next to their name.
+5. Confirm the removal.
+
+Removed members will lose access to the organization's shared resources immediately, but their private
+conversations will remain intact.
+
+## Next Steps
+
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand what each role can do.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure your organization's resources.
+
+### Organizations Overview
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/overview.md
+
+## What are Organizations?
+
+Organizations allow multiple users to collaborate within a shared workspace in OpenHands Cloud or OpenHands Enterprise. With
+Organizations, teams can share a pool of credits, use consistent LLM configurations, and streamline access
+to repositories.
+
+<Note>
+  Organizations is a commercial feature available with an OpenHands Cloud subscription or OpenHands Enterprise.
+</Note>
+
+## Key Features
+
+Organizations provide the following capabilities:
+
+- **Multiple Users** - Add team members to a common organization for centralized management.
+- **Shared Credits** - Pool OpenHands Cloud credits across all organization members.
+- **Default LLM Configuration** - Define the default model provider and LLM that all members can use.
+- **Git Organization Claiming** - Claim specific Git organizations to route OpenHands resolver requests to your organization.
+
+## Conversation Visibility
+
+By default, conversations remain **private to individual members** of an organization. Each user's conversations
+are only visible to them. 
+
+## Getting Started
+
+To start using Organizations:
+
+1. Subscribe to an OpenHands Cloud plan or OpenHands Enterprise.
+2. Create a new organization from the OpenHands Cloud dashboard.
+3. [Invite team members](/openhands/usage/cloud/organizations/managing-members) to join your organization.
+4. Configure your organization's [LLM settings](/openhands/usage/cloud/organizations/settings) and shared resources.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Learn how to invite users and manage roles.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure LLM providers, credits, and Git organization claims.
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand the different permission levels.
+
+### Roles and Permissions
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/roles-permissions.md
+
+## Overview
+
+Organizations in OpenHands support three roles, each with different levels of access and capabilities:
+**Member**, **Admin**, and **Owner**. This page describes what each role can do.
+
+## Permissions Table
+
+| Permission | Member | Admin | Owner |
+|------------|:------:|:-----:|:-----:|
+| Create conversations | ✓ | ✓ | ✓ |
+| Manage private settings | ✓ | ✓ | ✓ |
+| Invite users | | ✓ | ✓ |
+| Elevate users to Admin role | | ✓ | ✓ |
+| Add credits | | ✓ | ✓ |
+| Modify LLM settings | | ✓ | ✓ |
+| Elevate users to Owner role | | | ✓ |
+| Claim Git organizations | | | ✓ |
+| Delete organization | | | ✓ |
+
+## Role Descriptions
+
+### Member
+
+Members are the default role for users joining an organization. Members can:
+
+- **Create conversations** - Start new conversations using the organization's shared credits.
+- **Manage their own private settings** - Configure settings that are only visible to them, including:
+  - MCP servers
+  - Secrets
+  - API keys
+  - Git user settings
+  - Slack integration
+
+Members cannot invite new users, modify organization-wide settings (like LLM settings), or manage other users' roles.
+
+### Admin
+
+Admins have all the capabilities of Members, plus the ability to manage the organization's settings and users. Admins can:
+
+- Everything a Member can do.
+- **Invite users** - Send invitations to new team members.
+- **Change user roles** - Promote Members to Admin or demote Admins to Members.
+- **Add credits** - Purchase and add credits to the organization's shared pool.
+- **Modify LLM settings** - Configure the default LLM provider and model for the organization.
+
+Admins cannot delete the organization or claim Git organizations.
+
+### Owner
+
+Owners have full control over the organization. Owners can:
+
+- Everything an Admin can do.
+- **Delete the organization** - Permanently remove the organization and all associated data.
+- **Claim Git organizations** - Link specific Git organizations to route OpenHands resolver requests to this organization.
+
+<Note>
+  Every organization must have at least one Owner. If you need to transfer ownership, first promote another
+  user to Owner before changing your own role.
+</Note>
+
+## Private Settings
+
+Regardless of role, all organization members have control over their own **private settings**. These settings
+are personal to each user and are not visible to other organization members, including Admins and Owners.
+
+Private settings include:
+
+- **MCP Servers** - Configure Model Context Protocol servers.
+- **Secrets** - Store sensitive values like API tokens and credentials.
+- **API Keys** - Manage keys for programmatic access to OpenHands.
+- **Git Settings** - Configure personal Git authentication and preferences.
+- **Slack Integration** - Connect your personal Slack workspace.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Learn how to invite and manage users.
+- [Organization Settings](/openhands/usage/cloud/organizations/settings) - Configure organization-wide settings.
+
+### Organization Settings
+Source: https://docs.openhands.dev/openhands/usage/cloud/organizations/settings.md
+
+## Overview
+
+Organization settings allow Admins and Owners to configure shared resources that all members can use. This
+includes LLM configurations, credits management, and Git organization claims.
+
+## LLM Configuration
+
+<Note>
+  Modifying LLM settings requires Admin or Owner permissions.
+</Note>
+
+Organizations can define a default LLM provider and model that all members will use:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. Select the `LLM` tab.
+2. Select the `LLM` tab.
+3. Choose your preferred **LLM provider** from the available options.
+4. Select the **model** you want to use as the default.
+5. Click `Save Changes`.
+
+All organization members will use this LLM configuration for their conversations unless they have configured
+personal overrides.
+
+## Managing Credits
+
+<Note>
+  Adding credits requires Admin or Owner permissions.
+</Note>
+
+Organization credits are shared across all members. To add credits:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. Click **+ Add**.
+4. Choose the amount of credits to purchase.
+5. Complete the payment process.
+
+Credits will be added to the organization's shared pool immediately and can be used by any member.
+
+### Monitoring Usage
+
+You can monitor credit usage from the **Organization** settings page, which shows the current credit balance.
+
+For detailed usage reporting at the user level, use the API endpoint:
+
+```
+GET /api/organizations/{org_id}/members/financial
+```
+
+This endpoint provides financial usage data for all members within your organization.
+
+## Claiming Git Organizations
+
+<Note>
+  Claiming Git organizations requires Owner permissions.
+</Note>
+
+Claiming a Git organization links it to your OpenHands organization, allowing OpenHands resolver requests
+for repositories in that Git organization to be routed to your organization.
+
+Owners have the ability to claim a Git organization:
+
+1. Hover over the profile icon in the lower left — an account menu will appear.
+2. Select **Organization**.
+3. In the **Git Conversation Routing** section, Git organizations from your linked GitHub/GitLab accounts are listed automatically.
+4. Click **Claim** next to the Git organization you want to link to your OpenHands organization.
+
+<Warning>
+  You must have admin access to the Git organization to claim it. The verification process confirms your
+  authorization.
+</Warning>
+
+### Benefits of Claiming Git Organizations
+
+When a Git organization is claimed:
+
+- All resolver requests for repositories in that Git organization are automatically routed to your OpenHands organization.
+- Organization members can work seamlessly with repositories in the claimed Git organization.
+- Usage is tracked against your organization's credit pool.
+
+## Next Steps
+
+- [Managing Members](/openhands/usage/cloud/organizations/managing-members) - Invite users and manage roles.
+- [Roles and Permissions](/openhands/usage/cloud/organizations/roles-permissions) - Understand permission levels.
 
 ### Plugin Launcher
 Source: https://docs.openhands.dev/openhands/usage/cloud/plugin-launcher.md
