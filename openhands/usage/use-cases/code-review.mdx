@@ -101,6 +101,27 @@ The PR review workflow uses the OpenHands Software Agent SDK to analyze your cod
   </Step>
 </Steps>
 
+### In a Conversation
+
+You can also trigger a code review manually in any OpenHands conversation. First, install the skill:
+
+```
+/add-skill https://github.com/OpenHands/extensions/tree/main/skills/code-review
+```
+
+Then invoke it:
+
+```
+/codereview
+```
+
+The agent will ask for the PR to review, or you can provide context directly:
+
+```
+/codereview — Please review PR #123 on my-org/my-repo.
+Focus on the new authentication middleware.
+```
+
 ## Composite Action
 
 <Note>
@@ -367,23 +388,162 @@ See real automated reviews in action on the OpenHands Software Agent SDK reposit
 
 ## Automate This
 
-You can schedule daily code reviews using [OpenHands Automations](/openhands/usage/automations/overview).
-Copy this prompt into a new conversation to set one up:
+There are two ways to automate PR reviews with OpenHands: as a **GitHub Action** (per-repo) or as an **OpenHands Automation** (org-wide, event-driven). Choose the approach that fits your needs, or use both.
+
+### Option A: GitHub Action (Per-Repo)
+
+Use the [pr-review plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review) as a GitHub Actions workflow. Copy the [example workflow](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/workflows/pr-review-by-openhands.yml) into `.github/workflows/pr-review.yml` in your repository, add your `LLM_API_KEY` to **Settings → Secrets and variables → Actions**, and customize the trigger conditions and model as needed.
+
+See the [action.yml](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/action.yml) for all available inputs (`llm-model`, `llm-base-url`, `use-sub-agents`, `require-evidence`, and more).
+
+**When to use this:** You want per-repo control, need to integrate with existing CI checks, or want to pin specific action versions per repository.
+
+### Option B: OpenHands Automation (Org-Wide)
+
+<Warning>
+Before setting up an event-driven automation, complete the one-time [prerequisites for GitHub event automations](/openhands/usage/automations/event-automations#prerequisites-for-github-event-automations) — install the GitHub App, create a team org, and claim your GitHub organization. Without these steps, GitHub events will silently never arrive.
+</Warning>
+
+[OpenHands Automations](/openhands/usage/automations/overview) is an event-triggered automation system that replaces per-repo GitHub Actions workflows. You define the trigger once and it covers all repositories matching your filter — no per-repo workflow files needed. It also leverages the full OpenHands runtime (browser, tools, sandbox), which GitHub Actions cannot.
+
+**When to use this:** You want a single configuration that covers all repos in your org, or you need the full OpenHands runtime for more advanced review workflows.
+
+#### Prerequisites: Bot Account
+
+For org-level automations, you should create a dedicated **bot account** (a separate GitHub user) and add it to your [OpenHands organization](/openhands/usage/cloud/organizations/overview). The bot account is the identity that will approve pull requests, request changes, and post review comments — keeping automated actions separate from human activity. Team members can then request this bot as a reviewer to trigger on-demand reviews.
+
+#### Setup: Create the Automation via Prompt
+
+Log in to [OpenHands Cloud](https://app.all-hands.dev) as your bot account (or under your team org) and send the following prompt in a new conversation. Replace the placeholders with your values:
+
+- `YOUR_ORG` — your GitHub organization name (e.g., `mycompany`)
+- `YOUR_BOT_LOGIN` — the GitHub username of your bot account (e.g., `mycompany-bot`)
+
+````
+Create an OpenHands Cloud automation using the Plugin Preset with the following configuration:
+
+**Name:** PR Review: YOUR_ORG/* (ready for review, review-this, or reviewer requested)
+
+**Plugin:** github:OpenHands/extensions (repo_path: plugins/pr-review)
+
+**Trigger events:**
+- pull_request.opened
+- pull_request.ready_for_review
+- pull_request.review_requested
+- pull_request.labeled
+
+**Filter:**
+```
+glob(repository.full_name, 'YOUR_ORG/*') && (
+    label.name == 'review-this'
+    || requested_reviewer.login == 'YOUR_BOT_LOGIN'
+    || (!label && !requested_reviewer
+        && pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+        && pull_request.author_association != 'FIRST_TIMER'
+        && pull_request.author_association != 'NONE'
+        && !pull_request.draft)
+)
+```
+
+**Timeout:** 600 seconds
+
+**Prompt (use this exactly):**
+```
+Before starting the code review, complete these steps in order:
+
+Step 1 — Build the session URL.
+Run this in terminal:
+  SESSION_URL="${AUTOMATION_SESSION_URL:-${AUTOMATION_API_URL:-https://app.all-hands.dev}}"
+  echo "SESSION_URL=${SESSION_URL}"
+
+Step 2 — Extract PR info from the event payload:
+  PR_NUMBER=$(echo "$AUTOMATION_EVENT_PAYLOAD" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p['pull_request']['number'])")
+  REPO=$(echo "$AUTOMATION_EVENT_PAYLOAD" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p['repository']['full_name'])")
+
+Step 3 — Post a progress comment and save the comment ID:
+  COMMENT_ID=$(curl -s -X POST \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+    -d "{\"body\": \"🔍 **Review in progress…**\\n\\nWe are performing the review through OpenHands Cloud Automation. You can log in and [view the conversation here](${SESSION_URL}).\"}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+Step 4 — /codereview
+Review the pull request using the pr-review plugin. Post a comprehensive code review on GitHub with inline comments on specific changed lines where appropriate, and a concise overall summary. Avoid duplicating existing unresolved review comments.
+
+When submitting the review, choose the appropriate event type:
+- Use "event": "APPROVE" when the PR is ready to merge with no blocking issues (minor suggestions are fine)
+- Use "event": "REQUEST_CHANGES" when there are blocking issues that must be fixed before merging
+- Use "event": "COMMENT" only when you need more information or are providing an informational review without a clear verdict
+
+At the end of the top-level review body include exactly:
+  _This review was generated by an AI agent (OpenHands) on behalf of the user through OpenHands Automation. [View conversation](${SESSION_URL})_
+
+Step 5 — After the review is posted, update the progress comment:
+  curl -s -X PATCH \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO/issues/comments/$COMMENT_ID" \
+    -d "{\"body\": \"✅ **Review complete.**\\n\\nThis review was performed through OpenHands Cloud Automation. You can log in and [view the conversation here](${SESSION_URL}).\"}"
+```
+````
+
+<Note>
+**Team review requests:** The `requested_reviewer` field is only populated for individual reviewer requests. When a *team* is requested as reviewer, GitHub uses `requested_team` instead. To also match team requests, add `|| requested_team.slug == 'YOUR_TEAM_SLUG'` to the filter.
+
+**How `!label` works:** JMESPath treats absent fields as `null`, and `!null` evaluates to `true`. This means the third branch fires for `opened` and `ready_for_review` events (which have no `label` or `requested_reviewer` in the payload), while correctly staying silent for `labeled` and `review_requested` events where those fields are set.
+</Note>
+
+#### What This Produces
+
+When the automation is created and a qualifying PR event occurs, the bot will:
+
+1. **Post a progress comment** on the PR: "🔍 Review in progress…" with a link to the live conversation
+2. **Run the pr-review plugin** which analyzes the diff and posts a structured code review with inline comments — approving clean PRs, requesting changes when there are blocking issues, or leaving an informational comment when the verdict is unclear
+3. **Update the progress comment** to "✅ Review complete." with the conversation link
+
+The automation triggers on four conditions:
+- **`opened`** — when a new non-draft PR is created (for established contributors only)
+- **`ready_for_review`** — when a draft PR is marked ready (for established contributors only)
+- **`review_requested`** — when your bot account is requested as a reviewer. This is the primary way team members trigger an on-demand review — they simply request the bot from the PR's "Reviewers" sidebar. The bot then posts its review under its own GitHub identity, so approvals and change requests come from a clear, dedicated account.
+- **`labeled`** — when the `review-this` label is added to any PR
+
+The automation does not re-run when new commits are pushed to an existing PR (`pull_request.synchronize` is intentionally excluded to avoid noisy re-reviews). To request a follow-up review after addressing feedback, re-add the `review-this` label or re-request the reviewer.
+
+<Note>
+The `$AUTOMATION_SESSION_URL` variable is injected by the automation runtime and resolves to a direct link to the conversation (e.g., `https://app.all-hands.dev/conversations/{uuid}`). The prompt includes fallbacks (`$AUTOMATION_API_URL`, then the default app URL) for environments where the variable is not yet available.
+
+The `$AUTOMATION_EVENT_PAYLOAD` variable contains the full GitHub webhook event as JSON. The `$GITHUB_TOKEN` (from the configured GitHub integration) is also automatically available. No additional configuration is needed for any of these variables.
+</Note>
+
+#### Single-Repo vs Org-Wide
+
+The prompt above uses `glob(repository.full_name, 'YOUR_ORG/*')` to cover **all repos** in your org. To target a single repo instead, replace the filter's first condition:
 
 ```
-Create an automation called "Daily Code Review" that runs every weekday at 9 AM.
-
-It should:
-1. Find all open PRs that have no reviews yet
-2. For each PR, review the diff for bugs, style issues, and security concerns
-3. Post a summary of findings as a comment on each PR
-
-Learn more at https://docs.openhands.dev/openhands/usage/use-cases/code-review
+repository.full_name == 'YOUR_ORG/YOUR_REPO' && (
+    label.name == 'review-this'
+    || requested_reviewer.login == 'YOUR_BOT_LOGIN'
+    || (!label && !requested_reviewer
+        && pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+        && pull_request.author_association != 'FIRST_TIMER'
+        && pull_request.author_association != 'NONE'
+        && !pull_request.draft)
+)
 ```
 
-For inline review comments on every push, use the
-[pr-review plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review)
-as a GitHub Action instead.
+<Note>
+The `review-this` label and `requested_reviewer` branches do not exclude draft PRs — labeling a draft or requesting the bot on a draft will still fire the automation. This is intentional: explicit review requests should be honored regardless of draft status.
+</Note>
+
+#### Testing
+
+After creating the automation:
+
+1. Add the `review-this` label to any open PR in a covered repo — this is the most reliable test since it works regardless of author history (you may need to [create the label](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels#creating-a-label) in your repo first if it doesn't exist)
+2. Alternatively, request your bot as a reviewer on any PR, or open a new non-draft PR (note: the auto-trigger on `opened` requires the PR author to already have contributor history in that specific repo — `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, and `NONE` associations are excluded)
+3. Watch for the "🔍 Review in progress…" comment — it should appear within a few seconds
+4. The full review will typically follow within a few minutes, depending on PR size
 
 ## Related Resources
 
