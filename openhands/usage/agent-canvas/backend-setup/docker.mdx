@@ -1,6 +1,124 @@
 ---
 title: Setup a Docker Backend
-description: Run an OpenHands agent server in Docker and connect Agent Canvas to it.
+description: Build a custom OpenHands Agent Server image and connect Agent Canvas to it.
 ---
 
-Coming soon.
+This guide walks through building a **custom Agent Server image** that layers extra tooling (for example, the JDK) on top of the official base image, running it locally with Docker, and registering it as a backend in Agent Canvas.
+
+Use this approach when the default backend's toolchain is missing something your agent needs, such as a specific language runtime, build tool, or CLI.
+
+## Prerequisites
+
+- Docker installed and running
+- An LLM API key (Anthropic, OpenAI, etc.)
+- Agent Canvas installed and running locally — see [Setup](/openhands/usage/agent-canvas/setup)
+
+## 1. Build a Custom Image
+
+The OpenHands Agent Server publishes a base image at `ghcr.io/openhands/agent-server`. Extend it with a small `Dockerfile` that installs whatever your agent needs.
+
+The example below adds the JDK and a few common utilities. Save it as `Dockerfile`:
+
+```dockerfile icon="docker"
+FROM ghcr.io/openhands/agent-server:latest-python
+
+USER root
+
+# Install Java (JDK) and common build/diagnostic utilities.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      default-jdk \
+      maven \
+      unzip \
+      vim \
+      less \
+ && rm -rf /var/lib/apt/lists/*
+
+# Switch back to the unprivileged user that the base image runs as.
+USER openhands
+```
+
+<Note>
+  The base image already ships with Python, Node.js, `git`, `jq`, `tmux`, build tools, and a VS Code Web + VNC stack. Only add what you actually need on top.
+</Note>
+
+Build the image with a tag you can reference later:
+
+```bash
+docker build -t my-agent-server:latest .
+```
+
+<Tip>
+  For ARM hosts (Apple Silicon, Graviton), prefer the matching base tag (for example `latest-python` already supports multi-arch). If you need to force a platform, pass `--platform linux/amd64` to `docker build`.
+</Tip>
+
+## 2. Run the Custom Image
+
+Start the image, expose the agent server's HTTP port, and protect it with a session API key. The agent server reads `SESSION_API_KEY` from the environment and requires the same value on the `X-Session-API-Key` header for every request.
+
+```bash
+# Pick any sufficiently random value; you'll paste it into Agent Canvas later.
+export SESSION_API_KEY="$(openssl rand -hex 32)"
+
+docker run -d \
+  --name openhands-agent-server \
+  -p 8000:8000 \
+  -e SESSION_API_KEY="$SESSION_API_KEY" \
+  my-agent-server:latest
+```
+
+Verify the server is reachable:
+
+```bash
+curl -H "X-Session-API-Key: $SESSION_API_KEY" http://localhost:8000/health
+```
+
+<Warning>
+  The agent server can execute arbitrary shell commands inside the container. Treat `SESSION_API_KEY` like a production credential and **do not expose port 8000 to the public internet** without a TLS-terminating reverse proxy in front of it.
+</Warning>
+
+To follow logs or stop the container:
+
+```bash
+docker logs -f openhands-agent-server
+docker stop openhands-agent-server
+```
+
+## 3. Add the Backend in Agent Canvas
+
+With the container running, point Agent Canvas at it:
+
+1. Open Agent Canvas.
+2. Click the backend switcher in the top bar and choose **Manage Backends**.
+3. Click **Add Backend** and fill in:
+   - **Name** — anything memorable, e.g. `Local Docker (JDK)`
+   - **Host / Base URL** — `http://localhost:8000`
+   - **API Key** — the `SESSION_API_KEY` value from step 2
+   - **Type** — `Local`
+4. Save the backend and select it as the **active backend**.
+
+Agent Canvas will run a health check against the URL. Once it passes, the backend is ready to handle conversations using the tools you baked into the image.
+
+<Note>
+  See [Connect and Manage Backends](/openhands/usage/agent-canvas/backends) for what changes when you switch the active backend (settings, LLM availability, MCP servers, automations).
+</Note>
+
+## Updating the Image
+
+When you want to add more tooling or pick up a newer agent server release:
+
+```bash
+docker pull ghcr.io/openhands/agent-server:latest-python
+docker build -t my-agent-server:latest .
+docker stop openhands-agent-server && docker rm openhands-agent-server
+# then re-run the `docker run` from step 2
+```
+
+The existing backend entry in Agent Canvas keeps working as long as the host, port, and `SESSION_API_KEY` stay the same.
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Setup a Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+- [Setup a VM Backend](/openhands/usage/agent-canvas/backend-setup/vm)
+- [Agent Server Overview](/sdk/guides/agent-server/overview)
