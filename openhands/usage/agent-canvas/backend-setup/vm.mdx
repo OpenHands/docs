@@ -1,55 +1,49 @@
 ---
-title: VM / Self-Hosted Backend
-description: Run Agent Canvas on a VM or dedicated machine and access it remotely.
+title: VM Backend
+description: Run a headless Agent Canvas backend on a VM and connect to it from your local UI.
 ---
 
-This guide walks through deploying Agent Canvas on a virtual machine or dedicated host so you can reach it from anywhere.
+Use `--backend-only` to run just the agent server and automation backend on a remote machine — no frontend served. Connect to it from your local Agent Canvas through **Manage Backends**.
 
 <Warning>
-  Agent Canvas drives an agent that can read and write the host filesystem, execute shell commands, and access the network. Treat the machine like any host that holds production credentials.
+  The agent server can read and write the host filesystem, execute shell commands, and access the network. Lock down the machine before starting.
 </Warning>
 
 ## Overview
 
 ```mermaid
 flowchart LR
-    user(["🧑 You"])
+    local(["🧑 Local Agent Canvas"])
     subgraph vm["Your VM"]
         direction LR
-        nginx["nginx :443\n(TLS)"]
         ingress["Ingress proxy\n127.0.0.1:8000"]
-        static["Static server\n:3001"]
         agent["Agent server\n:18000"]
         automation["Automation backend\n:18001"]
-        nginx --> ingress
-        ingress -- "/*" --> static
         ingress -- "/api/*, /sockets" --> agent
         ingress -- "/api/automation/*" --> automation
     end
-    user -- "HTTPS / 443" --> nginx
+    local -- "HTTPS / SSH tunnel" --> ingress
 ```
 
-A single `agent-canvas --public` command starts the agent server, automation backend, and static frontend, fronted by an ingress proxy on `127.0.0.1:8000`. nginx terminates TLS and forwards to that single port.
+`agent-canvas --backend-only --public` starts the agent server and automation backend behind an ingress proxy on `127.0.0.1:8000`. No frontend is served — you connect from your local Agent Canvas UI.
 
-## 1. Provision a Machine
+<Tip>
+  If you also want to serve the UI from the VM, see [Self-Hosting Agent Canvas](/openhands/usage/agent-canvas/self-hosting) instead.
+</Tip>
 
-Any always-on Linux or macOS host with a stable network connection:
+## 1. Provision and Secure the Machine
 
-- **Cloud VM** — DigitalOcean, AWS EC2, GCP, Hetzner, Linode, etc. Ubuntu 24.04 LTS is a good default. 2 vCPU / 4 GB RAM is enough for a single user.
-- **Dedicated hardware** — a Mac Mini, Intel NUC, or spare laptop.
+Any always-on Linux or macOS host:
 
-## 2. Lock Down the Network
+- **Cloud VM** — Ubuntu 24.04 LTS, 2 vCPU / 4 GB RAM is enough for a single user.
+- **Dedicated hardware** — Mac Mini, Intel NUC, spare laptop.
 
-Do this **before** starting Agent Canvas.
-
-At the cloud-provider or network level, restrict inbound traffic:
+Lock down inbound traffic **before** starting the backend:
 
 - **Port 22 (SSH)** — your IP or VPN CIDR only.
 - **Everything else** — drop.
 
-All Agent Canvas services bind to `127.0.0.1`, but the network firewall guarantees nothing is reachable from outside even if something binds incorrectly.
-
-## 3. Install Prerequisites and Start Agent Canvas
+## 2. Install Prerequisites
 
 On Ubuntu:
 
@@ -63,123 +57,44 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 On macOS, install Node and `uv` via Homebrew instead.
 
-Start Agent Canvas in public mode:
+## 3. Start the Backend
 
 ```bash
-LOCAL_BACKEND_API_KEY=<choose-a-strong-secret> npx @openhands/agent-canvas --public
+LOCAL_BACKEND_API_KEY=<choose-a-strong-secret> npx @openhands/agent-canvas --backend-only --public
 ```
 
-The `--public` flag means the API key is **not** baked into the frontend. Anyone who opens the UI must enter the key before they can interact with the agent.
+- `--backend-only` starts only the agent server and automation backend (no frontend).
+- `--public` requires `LOCAL_BACKEND_API_KEY` — every API request must carry a matching `X-Session-API-Key` header.
 
-<Tip>
-  Without `--public`, the key is auto-injected into the frontend — convenient for local-only use, but unsafe when the deployment is reachable by others.
-</Tip>
+## 4. Connect from Your Local Agent Canvas
 
-At this point, Agent Canvas is running but only accessible via SSH tunnel. That's sufficient for personal use. For browser access without tunneling, continue to step 4.
-
-## 4. (Optional) Add a Domain with nginx + TLS
-
-If you want browser access from anywhere — a phone, another laptop, etc. — point a domain at the machine and front it with nginx + Let's Encrypt.
-
-### Point a Domain at the Machine
-
-Create an `A` record pointing to the machine's public IP (e.g. `canvas.example.com`):
-
-```bash
-dig +short canvas.example.com
-```
-
-### Open Ports 80 and 443
-
-Update your network firewall to additionally allow:
-
-- **Port 80 (HTTP)** — open to `0.0.0.0/0` (required for Let's Encrypt HTTP-01 challenges). nginx redirects all HTTP to HTTPS.
-- **Port 443 (HTTPS)** — restrict to your IP if possible. If you need it world-open, `LOCAL_BACKEND_API_KEY` is your primary defense.
-
-### Install nginx and Certbot
-
-```bash
-apt-get install -y nginx certbot python3-certbot-nginx
-```
-
-### Configure nginx
-
-Save this at `/etc/nginx/sites-available/canvas.example.com`, replacing the domain:
-
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-    server_name canvas.example.com;
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # WebSocket / SSE support — required for live agent events.
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-}
-```
-
-Enable the site and issue a certificate:
-
-```bash
-ln -sf /etc/nginx/sites-available/canvas.example.com \
-       /etc/nginx/sites-enabled/canvas.example.com
-nginx -t && systemctl reload nginx
-
-certbot --nginx -d canvas.example.com \
-    --non-interactive --agree-tos \
-    --email you@example.com \
-    --redirect
-```
-
-Certbot adds the `listen 443 ssl` block, a 301 redirect from HTTP to HTTPS, and a systemd timer for auto-renewal.
-
-### Verify
-
-```bash
-curl -I https://canvas.example.com/      # → 200 (API key entry screen)
-curl -I http://canvas.example.com/       # → 301 redirect to HTTPS
-```
-
-Open `https://canvas.example.com/` in a browser, enter your `LOCAL_BACKEND_API_KEY`, and confirm you land in Agent Canvas.
-
-## 5. (Optional) Connect from Your Local Agent Canvas
-
-You don't have to use the remote UI directly. If you already run Agent Canvas locally, add the remote machine as a backend:
+On your laptop, open Agent Canvas and add the VM as a backend:
 
 1. Open **Manage Backends** → **Add Backend**.
 2. Fill in:
    - **Name** — e.g. `my-vm`
-   - **Host / Base URL** — `https://canvas.example.com` (or `http://localhost:8000` if using an SSH tunnel)
+   - **Host / Base URL** — `http://localhost:8000` (if using an SSH tunnel) or the VM's URL if you've set up a reverse proxy
    - **API Key** — the `LOCAL_BACKEND_API_KEY` from step 3
 3. Save and select it as the active backend.
 
-## Security Checklist
+### Using an SSH Tunnel
 
-Before exposing Agent Canvas to a broader network:
+The simplest way to reach the backend without exposing ports:
 
-1. **Restrict inbound network access** — only open ports you need (SSH, 80/443 for the reverse proxy).
-2. **Use `--public` mode** with a strong `LOCAL_BACKEND_API_KEY`.
-3. **Use TLS** — put a reverse proxy in front with Let's Encrypt if the UI is internet-reachable.
-4. **Treat the host as sensitive infrastructure** — it stores secrets, conversations, and working copies.
+```bash
+ssh -L 8000:127.0.0.1:8000 user@your-vm
+```
+
+Then use `http://localhost:8000` as the backend URL in Agent Canvas.
+
+### Using a Reverse Proxy
+
+If you prefer direct HTTPS access, put nginx + Let's Encrypt in front of `127.0.0.1:8000`. See the [Self-Hosting guide](/openhands/usage/agent-canvas/self-hosting#4-optional-add-a-domain-with-nginx--tls) for the full nginx + TLS walkthrough — the same configuration works for backend-only deployments.
 
 ## Related Guides
 
 - [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Self-Hosting Agent Canvas](/openhands/usage/agent-canvas/self-hosting) — deploy the full stack (UI + backend)
 - [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
 - [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
 - [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)
