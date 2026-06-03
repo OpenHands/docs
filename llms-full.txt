@@ -42099,7 +42099,57 @@ Day-to-day usage is identical to OpenHands Cloud — see
 [Working With the Slack App](/openhands/usage/cloud/slack-installation#working-with-the-slack-app)
 for screenshots and the "mention `@openhands` in a thread" follow-up flow.
 
-A few self-hosted specifics worth knowing:
+### What context the agent receives
+
+When `@openhands` is mentioned, the bot does two things before starting (or
+continuing) an OpenHands conversation:
+
+1. It strips the `<@BOT_ID>` mention out of the triggering message and uses the
+   remainder as the agent's initial user prompt.
+2. It fetches surrounding Slack history via the Slack Web API and appends those
+   messages to the agent's system prompt as additional context.
+
+**Channel vs. thread — different sources, never mixed.** The bot branches on
+whether the triggering Slack event has a `thread_ts`:
+
+| Where `@openhands` is mentioned     | What the bot fetches                                                                | API method used         |
+| ----------------------------------- | ----------------------------------------------------------------------------------- | ----------------------- |
+| Inside a thread                     | Only that thread's replies (up to 21 — the trigger plus 20 prior)                   | `conversations.replies` |
+| At the top level of a channel       | The channel's recent message stream (up to 21 — the trigger plus 20 prior)          | `conversations.history` |
+
+A top-level mention will **not** surface any thread the bot is not part of, and
+an in-thread mention will **not** surface broader channel discussion outside the
+thread. Where you mention the bot directly controls which Slack messages it can
+see.
+
+**New conversation vs. follow-up.**
+
+- A **top-level** mention always starts a brand-new OpenHands conversation.
+- An **in-thread** mention where the thread already has an OpenHands
+  conversation tied to it (matched on `(channel_id, thread_ts)`) appends a
+  message to that conversation instead. See "Thread ownership" below for who is
+  allowed to do this.
+- On a follow-up, **only the single triggering reply** is forwarded — the
+  agent's running memory is expected to carry the rest. Follow-ups are
+  noticeably leaner than the initial mention.
+
+**What is dropped.** Only the `text` field of each surrounding message is
+forwarded. The integration does **not** pass message authors / display names,
+timestamps, file or image attachments, reactions, edits, permalinks, or Slack
+canvases. There is also no summarization or condensation today — once the
+21-message window is full, older messages are simply not included.
+
+<Tip>
+  Practical guidance for end users:
+  - For broad channel context, mention `@openhands` at the channel's top level.
+  - For focused work on a specific discussion, mention it **inside** the
+    relevant thread.
+  - Do not expect attached files, images, or canvases to be visible to the
+    agent — only message text is forwarded. If a screenshot or document is
+    important, describe its contents in the message you send.
+</Tip>
+
+### Self-hosted specifics
 
 - **Repo selection.** When a user starts a new conversation without an obvious repo in
   the message, OpenHands posts an ephemeral repo picker. The picker calls back to
