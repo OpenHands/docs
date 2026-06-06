@@ -138,6 +138,8 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Checks out `OpenHands/software-agent-sdk`
 - Runs the agent-server OpenAPI generator
 - Updates `openapi/agent-sdk.json` via an automated PR
+- **Important:** agent-server OpenAPI generation is environment-sensitive. If `SESSION_API_KEY` or `OH_SESSION_API_KEYS_0` is set when `openhands-agent-server/openhands/agent_server/openapi.py` runs, FastAPI includes the `X-Session-API-Key` `APIKeyHeader` security scheme in the generated schema. For neutral docs generation, ensure those env vars are unset.
+
 
 ## Docs writing conventions
 
