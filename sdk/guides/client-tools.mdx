@@ -16,10 +16,9 @@ This is the recommended pattern for any tool whose logic lives entirely in the U
 ## How It Works
 
 1. **Define** a `ClientToolSpec` — a JSON Schema description of the tool name, description, and parameters.
-2. **Register** it with `ClientTool.from_spec()` + `register_tool()` so the SDK knows about it.
-3. **Wire it** into the agent with `Tool(name=...)` as you would any other tool.
-4. **Intercept calls** in an event callback by checking `ActionEvent.tool_name`.
-5. **Execute** the action in the frontend — the SDK returns a no-op acknowledgment so the agent continues.
+2. **Pass** the specs to `Conversation(..., client_tools=[...])`. The SDK registers them and injects them into the agent's tool list automatically — no manual `register_tool()` / `Tool(name=...)` wiring required.
+3. **Intercept calls** in an event callback by checking `ActionEvent.tool_name`.
+4. **Execute** the action in the frontend — the SDK returns a no-op acknowledgment so the agent continues.
 
 ## Defining a ClientToolSpec
 
@@ -46,25 +45,34 @@ spec = ClientToolSpec(
 
 `ClientToolSpec` accepts any valid [JSON Schema object](https://json-schema.org/understanding-json-schema/reference/object) as `parameters`.
 
-## Registering and Wiring
+## Wiring Into a Conversation
+
+Pass the specs straight to `Conversation` via `client_tools`. The SDK registers
+them and injects the matching `Tool` specs into the agent — you don't need to
+call `register_tool()` or add `Tool(name=...)` entries yourself.
 
 ```python icon="python" wrap
 from openhands.sdk import Tool
-from openhands.sdk.tool import ClientTool, register_tool
 
-# Create a ToolDefinition from the spec and register it globally
-tool_instance = ClientTool.from_spec(spec)
-register_tool(spec.name, tool_instance)
-
-# Include it in the agent's tool list like any other tool
 agent = Agent(
     llm=llm,
-    tools=[
-        Tool(name=TerminalTool.name),
-        Tool(name="show_notification"),
-    ],
+    tools=[Tool(name=TerminalTool.name)],  # standard tools only
+)
+
+conversation = Conversation(
+    agent=agent,
+    workspace=cwd,
+    callbacks=[on_event],
+    client_tools=[spec],  # registered + injected by the SDK
 )
 ```
+
+<Note>
+Each client tool's JSON Schema travels with the conversation, so two
+conversations can define the same tool name with the same schema without
+clobbering each other. Reusing a name with a *different* schema in the same
+process raises an explicit error.
+</Note>
 
 ## Intercepting Calls in the Frontend
 
@@ -82,38 +90,53 @@ def on_event(event: Event) -> None:
         # In a real app: forward args over WebSocket to the browser
         print(f"[CLIENT] {event.tool_name}({args})")
 
-conversation = Conversation(agent=agent, workspace=cwd, callbacks=[on_event])
+conversation = Conversation(
+    agent=agent, workspace=cwd, callbacks=[on_event], client_tools=[spec]
+)
 ```
 
 The SDK returns `"Tool call dispatched to client."` as the observation, so the agent continues its reasoning loop without waiting for client-side execution.
 
-## Default Annotations
+## Annotations and Security Risk
 
-Client tools are registered with conservative defaults:
+By default, a `ClientToolSpec` leaves [tool annotations](https://modelcontextprotocol.io/specification/server/tools#tool)
+**unset**. Client tools can trigger arbitrary frontend side effects, so the SDK
+does *not* optimistically assume they are read-only or idempotent. Leaving
+annotations unset keeps the conservative behavior — in particular, the agent is
+asked to predict a `security_risk` before calling the tool.
 
-| Annotation | Default | Meaning |
-|---|---|---|
-| `readOnlyHint` | `True` | The tool does not modify persistent state |
-| `destructiveHint` | `False` | The tool is not destructive |
+If a tool really is read-only, set the annotations explicitly:
 
-These defaults are appropriate for UI-action tools. Override them on the `ClientToolSpec` if needed.
+```python icon="python" wrap
+from openhands.sdk.tool import ToolAnnotations
+
+spec = ClientToolSpec(
+    name="view_panel",
+    description="Open a read-only panel in the UI.",
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
+)
+```
+
+The original JSON Schema you provide in `parameters` (including `enum`s, nested
+objects, numeric bounds, and `additionalProperties`) is preserved verbatim when
+the tool is exported to the LLM, so client-defined constraints are never dropped.
 
 ## Ready-to-Run Example
 
 This example demonstrates:
 - Defining two `ClientToolSpec` objects (`show_notification`, `navigate_to`)
-- Registering them via `ClientTool.from_spec()` + `register_tool()`
-- Wiring both into an `Agent` alongside `TerminalTool`
+- Passing them to `Conversation` via `client_tools` (auto-registered + injected)
+- Running alongside `TerminalTool`
 - Intercepting calls in an event callback (simulating a WebSocket frontend handler)
 - Asserting both tools are called and printing `EXAMPLE_COST`
 
-This example is available on GitHub: [examples/01_standalone_sdk/51_client_defined_tools.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/51_client_defined_tools.py)
+This example is available on GitHub: [examples/01_standalone_sdk/53_client_defined_tools.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/53_client_defined_tools.py)
 
-```python icon="python" expandable examples/01_standalone_sdk/51_client_defined_tools.py
+```python icon="python" expandable examples/01_standalone_sdk/53_client_defined_tools.py
 <example code will be auto-synced>
 ```
 
-<RunExampleCode path_to_script="examples/01_standalone_sdk/51_client_defined_tools.py"/>
+<RunExampleCode path_to_script="examples/01_standalone_sdk/53_client_defined_tools.py"/>
 
 ## With the Agent Server
 
