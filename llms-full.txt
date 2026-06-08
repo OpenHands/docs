@@ -9217,9 +9217,9 @@ Each `AgentContext` field is tagged as ACP-compatible or not. At initialization,
 | `load_user_skills` | ✅ | Load skills from `~/.openhands/skills/` |
 | `load_public_skills` | ✅ | Load skills from the public extensions repo |
 | `marketplace_path` | ✅ | Filter public skills via marketplace JSON |
-| `secrets` | ❌ | ACP subprocesses do not use OpenHands secret injection |
+| `secrets` | ✅ | Injected into the ACP subprocess environment (and masked if the server echoes them back) |
 
-Passing `secrets` (or any future field marked `acp_compatible: False`) raises `NotImplementedError`.
+Any `AgentContext` field marked `acp_compatible: False` raises `NotImplementedError` at initialization.
 
 ### What ACPAgent Does Not Support
 
@@ -9263,7 +9263,6 @@ If you attach to an existing conversation by `conversation_id`, use `ACPAgent` f
 agent = ACPAgent(
     acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
     acp_args=["--profile", "my-profile"],      # extra CLI args
-    acp_env={"ANTHROPIC_API_KEY": "sk-..."},   # extra env vars
 )
 ```
 
@@ -9271,7 +9270,23 @@ agent = ACPAgent(
 |-----------|-------------|
 | `acp_command` | Command to start the ACP server (required) |
 | `acp_args` | Additional arguments appended to the command |
-| `acp_env` | Additional environment variables for the server process |
+| `acp_env` | **Deprecated** (removed in 1.29.0). Route env/credentials through the conversation's `secrets` or `agent_context.secrets` instead — see below. |
+
+### Environment Variables and Credentials
+
+Pass the environment variables and credentials the ACP server needs through the conversation's `secrets` (or `agent_context.secrets`). They flow into the conversation's secret registry, are injected into the ACP subprocess environment, and are masked if the server echoes them back into its output:
+
+```python icon="python"
+conversation = Conversation(
+    agent=agent,
+    workspace="./my-project",
+    secrets={"ANTHROPIC_API_KEY": "sk-..."},
+)
+```
+
+<Note>
+`acp_env` still works but is deprecated and will be removed in 1.29.0; prefer the secret-registry channels above for environment variables and credentials.
+</Note>
 
 ### Authentication
 
@@ -28469,6 +28484,1258 @@ If you encounter issues with the search functionality:
 - Ensure you have an active internet connection.
 - Check Tavily's status page for any service disruptions.
 
+### ACP Agents
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/acp-agents.md
+
+Agent Canvas can drive your conversations with the built-in **OpenHands** agent or with an external **ACP agent** — Claude Code, Codex, or Gemini CLI. This guide explains what ACP agents are, how to onboard one, and how to switch agents or models later.
+
+## What is an ACP agent?
+
+The [Agent Client Protocol (ACP)](https://agentclientprotocol.com/protocol/overview) is a standard for talking to coding agents over JSON-RPC on stdio. Instead of Agent Canvas calling an LLM directly, the Agent Server spawns the agent's own CLI as a subprocess and relays each turn to it. The external agent manages its own LLM, tools, and execution; Agent Canvas sends messages and renders what comes back.
+
+```mermaid
+flowchart LR
+    canvas["Agent Canvas<br/>(this UI)"]
+    server["Agent Server"]
+    acp["ACP subprocess<br/>(e.g. claude-agent-acp)"]
+    llm["LLM provider<br/>(Anthropic / OpenAI / Google)"]
+    canvas -- "PATCH /api/settings<br/>(agent_kind, acp_*)" --> server
+    canvas -- "conversation turns" --> server
+    server -- "spawn + JSON-RPC over stdio" --> acp
+    acp -- "API calls" --> llm
+```
+
+The Agent Server owns the subprocess and the credentials; Agent Canvas only records *which* agent to run and surfaces a form for the secrets it needs. The agent choice is stored per backend, so switching backends can switch agents.
+
+## Supported providers
+
+| Provider | Default command |
+|---|---|
+| **Claude Code** | `npx -y @agentclientprotocol/claude-agent-acp` |
+| **Codex** | `npx -y @zed-industries/codex-acp` |
+| **Gemini CLI** | `npx -y @google/gemini-cli --acp` |
+
+The provider list is sourced from the OpenHands SDK registry (`openhands.sdk.settings.acp_providers`, mirrored into `@openhands/typescript-client`) and enriched with Canvas UI metadata. Adding or changing a provider happens upstream in the SDK.
+
+## Authentication
+
+<Info>
+  ACP agents authenticate **two ways: a subscription login, or an API key** — and the onboarding fields are optional. If you're already signed in to the provider's CLI on the machine the agent runs on, it reuses that login automatically, so locally you often don't need a key at all. **The login takes priority over an API key:** while you're signed in, a key set in the environment isn't used — so the onboarding key fields do nothing and can be left blank.
+</Info>
+
+A "subscription login" is the credential the provider's own CLI stores when you sign in once — a file in your home directory, or, for Claude Code on macOS, the system **Keychain**. When the Agent Server runs **on that same machine** (a local or self-hosted backend), the provider CLI finds that login automatically — no API key required. On a clean cloud sandbox there's no stored login, so an API key is needed instead.
+
+| Provider | Subscription login (auto-detected) | API key |
+|---|---|---|
+| **Claude Code** | A Claude Code login (Pro/Max), from Claude Code's own credential store: the **macOS Keychain**, or `~/.claude/.credentials.json` on Linux | `ANTHROPIC_API_KEY` |
+| **Codex** | A ChatGPT login (`codex login`) cached at `~/.codex/auth.json` | `OPENAI_API_KEY` |
+| **Gemini CLI** | Your Google login (`gemini`/`gemini --acp`) cached at `~/.gemini/oauth_creds.json` | `GEMINI_API_KEY` |
+
+All three collect an *optional* API key (plus base URL) in onboarding. As noted above, a subscription / OAuth login takes priority over an API key — when the provider's CLI is signed in, a key set in the environment is not used:
+
+- **Codex** — `codex login status` keeps reporting the ChatGPT login even with `OPENAI_API_KEY` set.
+- **Gemini CLI** — uses the OAuth auth type chosen at `gemini` login; `GEMINI_API_KEY` is only consulted if you switch the auth type. The free Google login is the common no-key path locally — sign in once and it just works.
+- **Claude Code** — with both present, `claude auth status` reports it is authenticated via the subscription (`claude.ai`), not the key. The login is auto-detected from the macOS Keychain (or `~/.claude/.credentials.json` on Linux); `CLAUDE_CONFIG_DIR` is **not** required for it — it only relocates Claude Code's config directory (settings/history, not the token) and signals the SDK to strip a conflicting `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`.
+
+The one exception is the **base URL** (`*_BASE_URL`): a custom value points the CLI at a different endpoint (a proxy or gateway) and *does* take effect even under a login — for Gemini it rides the ACP `gateway` param. It's an advanced override, not needed for normal use.
+
+## Onboarding an ACP agent
+
+First-time users get a four-step onboarding modal. To onboard an ACP agent:
+
+1. **Choose agent** — pick Claude Code, Codex, or Gemini CLI instead of OpenHands. The choice is saved immediately to your backend's settings.
+2. **Check backend** — confirms Agent Canvas can reach the Agent Server.
+3. **Set up credentials** — enter the provider's API key (and, optionally, a custom base URL for a proxy or gateway). All three providers collect these here, and every field is optional.
+4. **Say hello** — creates your first conversation and closes the modal.
+
+<Note>
+  Every credential field is optional and the step is skippable. Leave a field blank to reuse a key already set on the backend, or to authenticate the agent through a subscription / OAuth login instead.
+</Note>
+
+### How credentials reach the agent
+
+Each credential you enter is saved as a **global secret** whose name is exactly the environment variable the Agent Server exports into the ACP subprocess (e.g. `ANTHROPIC_API_KEY`). Saving in onboarding is identical to adding the secret under **Settings → Secrets**, where you can edit or remove it anytime. Keeping the secret name equal to the env var is what makes a saved key actually reach the provider CLI.
+
+## Switching agent or model later
+
+Open **Settings → Agent** at any time:
+
+- **Agent** — switch between **OpenHands** and **ACP**.
+- **Preset** — pick a built-in provider (Claude Code, Codex, Gemini CLI) or **Custom** to point at any other ACP server.
+- **Command** — the command line used to spawn the subprocess. Selecting a preset fills this in; editing it to match another preset re-detects that provider. API keys are *not* entered here — they live in the Secrets panel.
+- **Model** — choose a suggested model for the provider or enter a custom model override. Built-in providers save a concrete model rather than leaving it blank.
+
+Saving writes an `agent_settings_diff` (`agent_kind`, `acp_server`, `acp_command`, `acp_model`) to `PATCH /api/settings`. A running conversation keeps the agent it started with; the new choice applies to conversations you start afterward.
+
+## Custom ACP servers
+
+Any stdio ACP server works: choose **Custom** in Settings → Agent and enter its launch command. Custom servers have no curated model list, so enter the model ID the server expects (if any) as a custom model. Pass credentials by adding the env vars the server reads as global secrets under **Settings → Secrets**.
+
+## Related Guides
+
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+
+### Cloud Backend
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/cloud.md
+
+You can connect Agent Canvas to [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) as a backend. Conversations and automations then run in OpenHands Cloud's on-demand sandboxes instead of on your local machine.
+
+## When to Use It
+
+A Cloud backend is a good fit when you want to:
+
+- Run agents without tying up local resources
+- Use OpenHands Cloud's managed sandboxes and integrations
+- Keep your local machine for development while offloading agent work
+
+## Prerequisites
+
+- An [OpenHands Cloud](https://app.all-hands.dev) account
+- Agent Canvas installed — see [Setup](/openhands/usage/agent-canvas/setup)
+
+## Add a Cloud Backend
+
+1. Open Agent Canvas and click the backend switcher in the top bar.
+2. Choose **Manage Backends** → **Add Backend**.
+3. Click **Login with OpenHands Cloud** and sign in with your account.
+
+Once connected, select it as the active backend. Conversations will now run in OpenHands Cloud.
+
+### OpenHands Enterprise
+
+If your organization runs OpenHands Enterprise, click **Advanced** in the Add Backend flow and enter your enterprise host URL before signing in.
+
+## What's Different with a Cloud Backend
+
+- **Sandboxed execution** — each conversation runs in an isolated cloud sandbox rather than on your host filesystem.
+- **Cloud integrations** — GitHub, GitLab, Bitbucket, Slack, and other integrations configured in OpenHands Cloud are available.
+- **Settings are per-backend** — LLM configuration, secrets, and MCP servers saved against the Cloud backend are independent from your local backend settings.
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud)
+- [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+
+### Docker Backend
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/docker.md
+
+The official Docker image packages the full Agent Canvas stack — backend and frontend — in a single container. The agent runs inside the container rather than directly on your host, giving you a sandboxed environment out of the box.
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) installed and running (Docker Desktop on macOS/Windows, or Docker Engine on Linux)
+- Agent Canvas installed locally (if connecting from another instance) — see [Setup](/openhands/usage/agent-canvas/setup)
+
+## Run the Official Image
+
+Mount a persistence directory for settings, secrets, and conversation history, and a projects directory for workspace access.
+
+<Tabs>
+  <Tab title="macOS / Linux">
+    ```bash
+    mkdir -p ~/projects ~/.openhands
+
+    docker run -it --rm \
+      -p 8000:8000 \
+      -v ~/.openhands:/home/openhands/.openhands \
+      -v ~/projects:/projects \
+      ghcr.io/openhands/agent-canvas:latest
+    ```
+  </Tab>
+  <Tab title="Windows (PowerShell)">
+    ```powershell
+    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.openhands", "$env:USERPROFILE\projects" | Out-Null
+
+    docker run -it --rm `
+      -p 8000:8000 `
+      -v "$($env:USERPROFILE)\.openhands:/home/openhands/.openhands" `
+      -v "$($env:USERPROFILE)\projects:/projects" `
+      ghcr.io/openhands/agent-canvas:latest
+    ```
+
+    <Note>
+      Docker Desktop for Windows must be installed and running. PowerShell uses backticks (`` ` ``) for line continuation instead of backslashes.
+    </Note>
+  </Tab>
+</Tabs>
+
+Agent Canvas is now running at `http://localhost:8000`. The agent can access any project under the mounted `/projects` path.
+
+### Environment Variables
+
+Configuration is passed via `-e` flags on `docker run`:
+
+| Variable | Purpose |
+|----------|---------|
+| `PORT` | Ingress port inside the container (default `8000`). Map it with `-p <host>:<PORT>`. |
+| `LOCAL_BACKEND_API_KEY` | API key for the server. Auto-generated and persisted if not set. |
+| `OH_SECRET_KEY` | Secret used to protect stored settings and secrets. |
+
+<Warning>
+  The agent server can execute arbitrary shell commands inside the container. If exposing it beyond localhost, set `LOCAL_BACKEND_API_KEY` to a strong secret.
+</Warning>
+
+## Connect from the Frontend
+
+Start the frontend separately and point it at the container:
+
+```bash
+agent-canvas --frontend-only
+```
+
+Then add the Docker backend:
+
+1. Click the backend switcher → **Manage Backends** → **Add Backend**.
+2. Fill in:
+   - **Name** — e.g. `docker-backend`
+   - **Host / Base URL** — `http://localhost:8000`
+   - **API Key** — the `LOCAL_BACKEND_API_KEY` value (check container logs if auto-generated)
+3. Save and select it as the active backend.
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+- [VM Backend](/openhands/usage/agent-canvas/backend-setup/vm)
+- [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm)
+
+### Local Backend
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/local.md
+
+Use `--backend-only` to start a local backend. Each backend runs behind an ingress proxy on its own port.
+
+## Start a Backend
+
+```bash
+agent-canvas --backend-only
+```
+
+This starts the backend on `127.0.0.1:8000`. No frontend is served.
+
+## Running Multiple Backends
+
+You can run several backends at the same time on different ports — for example, one per project or toolchain:
+
+```bash
+agent-canvas --backend-only --port 8001
+agent-canvas --backend-only --port 8002
+agent-canvas --backend-only --port 8003
+```
+
+Each instance gets its own backend and ingress proxy.
+
+## Connect the Frontend
+
+Start the frontend separately:
+
+```bash
+agent-canvas --frontend-only
+```
+
+Then add your backends through **Manage Backends**:
+
+1. Click the backend switcher → **Manage Backends** → **Add Backend**.
+2. Fill in the **Host / Base URL** (e.g. `http://localhost:8001`) and **API Key**.
+3. Repeat for each backend you started.
+
+Switch between them from the backend selector depending on what you're working on.
+
+<Tip>
+  If you just want a quick single-machine setup, running `agent-canvas` without any flags starts the full stack (frontend + backend) on one port. The split approach above is useful when you want multiple backends or want to keep the frontend and backends on separate processes.
+</Tip>
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [VM Backend](/openhands/usage/agent-canvas/backend-setup/vm) — headless backend on a remote machine
+- [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm) — backend on a remote machine
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker) — run in a container
+
+### VM / Self-Hosted Backend
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/vm.md
+
+Use `--backend-only` to run the backend on a remote machine, then connect from your local frontend with `--frontend-only`.
+
+<Warning>
+  The agent server can read and write the host filesystem, execute shell commands, and access the network. Lock down the machine before starting.
+</Warning>
+
+## 1. Provision and Secure the Machine
+
+Any always-on Linux or macOS host:
+
+- **Cloud VM** — Ubuntu 24.04 LTS, 2 vCPU / 4 GB RAM is enough for a single user.
+- **Dedicated hardware** — Mac Mini, Intel NUC, spare laptop.
+
+Lock down inbound traffic **before** starting the backend:
+
+- **Port 22 (SSH)** — your IP or VPN CIDR only.
+- **Everything else** — drop.
+
+## 2. Install Prerequisites
+
+On Ubuntu:
+
+```bash
+apt-get update && apt-get install -y curl git
+
+# Node.js 22.x (via nvm, asdf, or NodeSource)
+# uv (for the agent server runtime):
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+On macOS, install Node and `uv` via Homebrew instead.
+
+## 3. Start the Backend
+
+```bash
+LOCAL_BACKEND_API_KEY=<choose-a-strong-secret> npx @openhands/agent-canvas --backend-only --public
+```
+
+- `--backend-only` starts only the backend (no frontend).
+- `--public` requires `LOCAL_BACKEND_API_KEY` — every API request must carry a matching `X-Session-API-Key` header.
+
+<Tip>
+  To also serve the UI from the VM (e.g. to access it from a phone), drop `--backend-only`. With the full stack, `--public` requires users to enter the API key in the UI before interacting with the agent.
+</Tip>
+
+## 4. Connect from Your Local Machine
+
+On your laptop, start the frontend:
+
+```bash
+agent-canvas --frontend-only
+```
+
+Then add the VM as a backend:
+
+1. Click the backend switcher → **Manage Backends** → **Add Backend**.
+2. Fill in:
+   - **Name** — e.g. `my-vm`
+   - **Host / Base URL** — `http://localhost:8000` (if using an SSH tunnel) or the VM's URL if you've set up a reverse proxy
+   - **API Key** — the `LOCAL_BACKEND_API_KEY` from step 3
+3. Save and select it as the active backend.
+
+### Using an SSH Tunnel
+
+The simplest way to reach the backend without exposing ports:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 user@your-vm
+```
+
+Then use `http://localhost:8000` as the backend URL.
+
+## 5. (Optional) Add a Domain with nginx + TLS
+
+If you want direct HTTPS access without an SSH tunnel, point a domain at the machine and front it with nginx + Let's Encrypt.
+
+### Point a Domain at the Machine
+
+Create an `A` record pointing to the machine's public IP (e.g. `canvas.example.com`):
+
+```bash
+dig +short canvas.example.com
+```
+
+### Open Ports 80 and 443
+
+Update your network firewall to additionally allow:
+
+- **Port 80 (HTTP)** — open to `0.0.0.0/0` (required for Let's Encrypt HTTP-01 challenges). nginx redirects all HTTP to HTTPS.
+- **Port 443 (HTTPS)** — restrict to your IP if possible. If you need it world-open, `LOCAL_BACKEND_API_KEY` is your primary defense.
+
+### Install nginx and Certbot
+
+```bash
+apt-get install -y nginx certbot python3-certbot-nginx
+```
+
+### Configure nginx
+
+Save this at `/etc/nginx/sites-available/canvas.example.com`, replacing the domain:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name canvas.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket / SSE support — required for live agent events.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+Enable the site and issue a certificate:
+
+```bash
+ln -sf /etc/nginx/sites-available/canvas.example.com \
+       /etc/nginx/sites-enabled/canvas.example.com
+nginx -t && systemctl reload nginx
+
+certbot --nginx -d canvas.example.com \
+    --non-interactive --agree-tos \
+    --email you@example.com \
+    --redirect
+```
+
+### Verify
+
+```bash
+curl -I https://canvas.example.com/      # → 200
+curl -I http://canvas.example.com/       # → 301 redirect to HTTPS
+```
+
+Use `https://canvas.example.com` as the **Host / Base URL** when adding the backend in Manage Backends.
+
+## Security Checklist
+
+Before exposing the backend to a broader network:
+
+1. **Restrict inbound network access** — only open ports you need (SSH, 80/443 for the reverse proxy).
+2. **Use `--public` mode** with a strong `LOCAL_BACKEND_API_KEY`.
+3. **Use TLS** — put a reverse proxy in front with Let's Encrypt if the backend is internet-reachable.
+4. **Treat the host as sensitive infrastructure** — it stores secrets, conversations, and working copies.
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
+- [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)
+
+### Backends
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backends.md
+
+A **backend** is an [agent server](/sdk/guides/agent-server/overview#what-is-a-remote-agent-server) and the workspace it operates in. All conversations, settings, and automations run against whichever backend is currently selected.
+
+## Connecting to a Backend
+
+Any Agent Canvas frontend can connect to any Agent Canvas backend. Use the backend switcher in the UI to open **Manage Backends**, where you can add, edit, or remove entries. Each entry stores a display name, host URL, and an API key for authentication.
+
+Settings, LLM configuration, MCP servers, and automations are all scoped to the active backend — switching backends switches all of these.
+
+## Recommended Setups
+
+| Setup | When to use | How |
+|-------|-------------|-----|
+| **Default local** | Quick local work on your machine | Run `agent-canvas` — a local backend is created automatically |
+| **Backend-only (local)** | Multiple projects, or separate frontend and backend processes | Run `agent-canvas --backend-only` (optionally on different ports), connect with `--frontend-only`. See [Local Backend](/openhands/usage/agent-canvas/backend-setup/local). |
+| **Backend-only (remote)** | Always-on server, more powerful hardware, or team-shared access | Run `agent-canvas --backend-only --public` on a VM with a `LOCAL_BACKEND_API_KEY`, connect via SSH tunnel or reverse proxy. See [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm). |
+| **Cloud** | Managed sandboxes without local resources | Connect to [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) from **Manage Backends**. See [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud). |
+
+### Customize and Settings
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/customize-and-settings.md
+
+Agent Canvas separates **Customize** from **Settings**.
+
+- **Customize** — teach the agent new things. **Skills** give it domain knowledge and specific instructions. **MCP Servers** connect it to external tools and data sources.
+- **Settings** — configure how the agent runs. Choose your LLM, store secrets, tune context handling, and set agent behavior. Settings are saved per backend.
+
+## Customize
+
+Open the top-level `Customize` area to manage:
+
+- [Skills](/overview/skills)
+- [MCP Servers](/openhands/usage/settings/mcp-settings)
+
+Use the section navigation inside `Customize` to switch between those pages.
+
+<Note>
+  MCP configuration lives under `Customize > MCP Servers`, not under `Settings`.
+</Note>
+
+## Settings
+
+The `Settings` area currently includes the following sections:
+
+| Section | Purpose |
+|---------|---------|
+| `Agent` | Agent behavior and agent-specific capabilities |
+| `LLM` | Provider, model, API key, and profile configuration |
+| `Condenser` | Context compression and summarization behavior |
+| `Verification` | Approval and verification-related behavior |
+| `Application` | UI-level preferences and app behavior |
+| `Secrets` | Stored secrets used by the active backend |
+
+On local backends, the `LLM` page also includes an `Available Profiles` area for saved profiles.
+
+## Configuration Is Per Backend
+
+Both Customize and Settings are tied to the **active backend**. That means:
+
+- Changing backends changes which configuration you are editing
+- Skills, MCP servers, secrets, and other settings saved for one backend do not automatically apply to every other backend
+- The available options can differ depending on backend capabilities
+
+## Practical Example
+
+You might use this split like this:
+
+- Add a GitHub review skill in `Customize > Skills`
+- Add a Slack or fetch MCP server in `Customize > MCP Servers`
+- Save your preferred model in `Settings > LLM`
+- Store tokens in `Settings > Secrets`
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations)
+
+### Contributing
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/development.md
+
+Agent Canvas is open source. To work on it from source:
+
+1. Clone the repo and install dependencies:
+    ```bash
+    git clone https://github.com/OpenHands/agent-canvas.git
+    cd agent-canvas
+    npm install
+    ```
+
+2. Start the full development stack:
+    ```bash
+    npm run dev
+    ```
+
+For development workflows, environment variables, testing, and advanced configuration, see the [Development Guide](https://github.com/OpenHands/agent-canvas/blob/main/docs/DEVELOPMENT.md) in the repository.
+
+### First Time Setup
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/first-time-setup.md
+
+When you open Agent Canvas for the first time, a four-step setup wizard walks you through the core configuration. Each step can be skipped and revisited later from `Settings`.
+
+## Step 1: Choose Your Agent
+
+![Agent Canvas first-time setup — Choose your agent screen showing OpenHands, Claude Code, Codex, and Gemini CLI options](/openhands/static/img/agent-canvas-setup-step-1.png)
+
+Agent Canvas uses the **Agent-Client Protocol (ACP)** to communicate with agents, which means you're not locked into a single provider.
+
+- **OpenHands** (selected by default) — the general-purpose OpenHands agent, best for coding and exploration.
+- **Claude Code** — Anthropic's Claude Code agent.
+- **Codex** — OpenAI's Codex agent.
+- **Gemini CLI** — Google's Gemini CLI agent.
+
+Choosing a third-party agent lets you interact with it through the Agent Canvas interface and bring your existing subscriptions from those providers.
+
+You can change your agent at any time from `Settings`.
+
+## Step 2: Check Your Backend
+
+![Agent Canvas first-time setup — Check your backend screen showing a connected local backend at 127.0.0.1:8000](/openhands/static/img/agent-canvas-setup-step-2.png)
+
+Agent Canvas routes all conversations through an **agent server backend**. By default, it connects to your local machine (`http://127.0.0.1:8000`), which is ideal for working on local projects.
+
+The setup screen shows your current backend connection status. If the server is running, you'll see a **"You're connected!"** confirmation.
+
+Each backend entry stores:
+
+- A display name (e.g. `Local`)
+- A host URL
+- An optional API key
+
+<Note>
+  To add remote or cloud backends, or to manage multiple backend connections, see [Connect and Manage Backends](/openhands/usage/agent-canvas/backends).
+</Note>
+
+## Step 3: Set Up Your LLM
+
+![Agent Canvas first-time setup — Set up your LLM screen showing provider and model selection with an API key field](/openhands/static/img/agent-canvas-setup-step-3.png)
+
+Agent Canvas supports **bring-your-own LLM key**. Select your LLM provider and model, then paste in your API key.
+
+Available options:
+
+- **Direct provider keys** — use your own API key from Anthropic, OpenAI, Google, or any other supported provider.
+- **OpenHands Cloud** — use an [OpenHands Cloud](https://app.all-hands.dev) API key to access verified models without managing provider accounts directly. Find your API key in the `API Keys` tab of OpenHands Cloud.
+
+The setup screen defaults to `OpenHands` as the provider and pre-selects a recommended model. Switch the `LLM Provider` dropdown to choose a different provider.
+
+## Step 4: Start From a Proven Workflow
+
+![Agent Canvas first-time setup — Say hello screen showing pre-built workflow templates including GitHub PR review copilot, GitHub repository monitor, and Slack standup digest](/openhands/static/img/agent-canvas-setup-step-4.png)
+
+Agent Canvas is designed as an **automation-centric developer control center**. The final setup step invites you to kick things off with a pre-built workflow template rather than starting from a blank conversation.
+
+Each template bundles an agent prompt, an implementation sketch, and the MCP connections needed to run it. Pick one to open a pre-filled conversation and finish the details with the agent.
+
+A recommended starting point is the **[GitHub PR Review Copilot](/openhands/usage/agent-canvas/prebuilt/github-pr-review)**. This automation uses your GitHub MCP connection to poll for new pull requests and run agent review conversations locally — no cloud infrastructure required.
+
+Other available templates include:
+
+- **GitHub Repository Monitor** — watch a repository for `@OpenHands` mentions and respond automatically.
+- **Slack Standup Digest** — summarize yesterday's Slack activity into an async standup note.
+
+You can browse all pre-built automations from the `Automate` view at any time. See [Pre-built Automations](/openhands/usage/agent-canvas/prebuilt-automations) for the full list.
+
+### LLM Profiles and Model Configuration
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/llm-profiles.md
+
+Agent Canvas supports configuring your LLM provider, model, and credentials from the UI. It also supports saved **LLM profiles**, which make it easier to switch models without re-entering provider settings each time.
+
+## Where to Configure Models
+
+Open `Settings > LLM` to:
+
+- choose a provider
+- select or enter a model
+- add the required API key
+- save reusable LLM profiles
+
+## Working with LLM Profiles
+
+LLM profiles are useful when you want different model setups for different tasks, such as:
+
+- a fast profile for iteration
+- a stronger profile for planning or review
+- a local model profile for offline experiments
+
+## Switching Profiles in a Conversation
+
+You can switch profiles from the chat input with the `/model` command:
+
+- `/model` — list the saved profiles available to the conversation
+- `/model <profile-name>` — switch to a specific saved profile
+
+Agent Canvas also shows model-switch events in the conversation timeline so you can see when a profile changed during a task.
+
+<Note>
+  LLM profiles are fully supported in Agent Canvas and are still rolling out in OpenHands Cloud. If you connect Agent Canvas to a cloud backend, profiles you configure in Agent Canvas may be available there before the same profiles appear in the hosted OpenHands Cloud UI for your account.
+</Note>
+
+## Recommended Workflow
+
+1. Configure a default profile in `Settings > LLM`.
+2. Create additional profiles for specific tasks or cost levels.
+3. Start a conversation.
+4. Use `/model` when you want to switch profiles without leaving the chat.
+
+## Related Guides
+
+- [Setup](/openhands/usage/agent-canvas/setup)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+- [LLM Settings](/openhands/usage/settings/llm-settings)
+
+### Agent Canvas Overview
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/overview.md
+
+<Note>
+  Agent Canvas is in Beta. Expect the install path, packaging, and some UI details to keep evolving.
+</Note>
+
+## Why Agent Canvas
+
+- **One UI to drive any agent**: run conversations with OpenHands, Claude Code, Codex, or Gemini CLI through the same browser interface.
+- **Bring your own LLM**: connect Anthropic, OpenAI, Google, or any OpenAI-compatible provider. Switch models per conversation.
+- **Built-in automations**: schedule cron jobs or wire up event-driven workflows against GitHub, Linear, Slack, and custom webhooks.
+- **Run it anywhere**: a single `agent-canvas` command starts the full stack locally. Self-host on a VM, or connect to OpenHands Cloud.
+
+## Key Concepts
+
+| Concept | What It Means |
+|---------|----------------|
+| **Agent Canvas** | A UI and backend server for running agents and automations. The `agent-canvas` command starts both together. |
+| **Backend** | Any Canvas UI can securely connect to any Canvas backend: running locally, on a remote machine, or on [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud). Register multiple and switch between them. |
+| **Conversation** | A single agent session tied to a backend. Each conversation has its own message history, tool calls, and file changes. |
+| **Automation** | A workflow that runs on a cron schedule or in response to events from GitHub, Linear, Slack, or custom webhooks. Automations may start agent conversations as needed. |
+
+## How It Fits with Other OpenHands Products
+
+- **Agent Canvas**: the recommended browser-based UI for running OpenHands locally or self-hosted.
+- **Local GUI (Legacy)**: legacy UI requiring Docker.
+- **OpenHands Cloud**: a fully managed version of OpenHands.
+- **OpenHands SDK**: the Python framework behind the agent system.
+
+## Where to Start
+
+- [Install](/openhands/usage/agent-canvas/setup) — Use the published npm package to run Agent Canvas from your terminal.
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends) — Switch between local and remote backends.
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings) — Configure skills, MCP servers, and backend-synced settings.
+- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations) — Get started with a ready-made automation workflow.
+- [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm) — Run a backend on a VM and connect remotely.
+
+### Setup a Pre-built Automation
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt-automations.md
+
+Agent Canvas ships with a set of pre-built automations for the most common agent workflows. Each one is a ready-to-use starting point — pick the one that fits your use case, connect it to the right backend, and you can have an automation running in minutes.
+
+## Available Pre-built Automations
+
+| Automation | What It Does |
+|------------|-------------|
+| [GitHub PR Review Assistant](/openhands/usage/agent-canvas/prebuilt/github-pr-review) | Automatically reviews pull requests and posts feedback as a comment |
+| [GitHub Repository Monitor](/openhands/usage/agent-canvas/prebuilt/github-repo-monitor) | Watches a repository for events and triggers agent actions in response |
+| [Slack Channel Monitor](/openhands/usage/agent-canvas/prebuilt/slack-channel-monitor) | Listens to a Slack channel and triggers an agent when a message matches a pattern |
+
+---
+
+Every canvas backend includes an automation service, so you can run agents on a schedule or in response to external events.
+
+## What You Can Do
+
+In the `Automate` view, you can:
+
+- Browse existing automations
+- Inspect automation configuration and activity
+- Enable or disable automations
+- Work with recommended automation flows
+
+## How Creation Flows Usually Start
+
+The `Automations` view is mainly for browsing and managing automations that already exist.
+
+In practice, new automation setup often starts in one of two ways:
+
+- From a conversation, where you ask OpenHands to create an automation for you
+- From a recommended automation flow in the `Automations` view
+
+Visit the Automations Docs have a more [detailed guide on creating automations](/openhands/usage/automations/creating-automations).
+
+Automations run against the active backend. Use [Manage Backends](/openhands/usage/agent-canvas/backends) to see and switch which backend your automations run on.
+
+### GitHub PR Review Assistant
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-pr-review.md
+
+Use the GitHub PR Review Assistant when you want Agent Canvas to watch pull requests and have an OpenHands agent review them.
+
+The setup has two parts:
+
+- Give the active backend access to GitHub
+- Start the pre-built PR review workflow from `Automate`
+
+## Prerequisites
+
+Before you start, make sure you have:
+
+- Agent Canvas installed and running
+- An LLM configured for the backend that will run the automation
+- Access to create a GitHub token for the repository you want to review
+- Access to install MCP servers and save secrets in Agent Canvas
+
+If you are new to Agent Canvas, start with [Install](/openhands/usage/agent-canvas/setup) and [First-Time Setup](/openhands/usage/agent-canvas/first-time-setup).
+
+## Create a GitHub Access Token
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/tokens).
+2. Click `Generate new token`.
+3. Prefer a fine-grained personal access token if your organization supports it.
+4. Give the token a clear name, such as `Agent Canvas PR Reviewer`.
+5. Select repository access:
+   - Choose `Only select repositories` for the safest setup.
+   - Choose `All repositories` only if the automation needs broad access.
+6. Set an expiration date that matches your team's security policy.
+
+## Add Repository Permissions
+
+In the token setup screen, grant the permissions the reviewer needs.
+
+For a PR review automation, use:
+
+| Permission | Access |
+|------------|--------|
+| `Contents` | Read and write |
+| `Issues` | Read and write |
+| `Pull requests` | Read and write |
+| `Metadata` | Read-only |
+| `Actions` | Read-only, if the automation should inspect CI results |
+| `Checks` | Read-only, if the automation should inspect check runs |
+
+Then click `Generate token` and copy the token immediately.
+
+<Note>
+  GitHub only shows the token once. Store it somewhere secure until you finish configuring Agent Canvas.
+</Note>
+
+## Add the GitHub MCP Server
+
+The GitHub MCP server gives the agent tools for reading repositories, inspecting pull requests, and posting review output.
+
+1. In Agent Canvas, check the backend switcher in the bottom-left corner.
+2. Make sure the active backend is the backend where you want the PR review automation to run.
+3. Open `Customize`.
+4. Open `MCP Servers`.
+5. Select `GitHub` from the MCP library.
+6. Paste the GitHub token you created earlier.
+7. Make sure the secret-creation toggle is on so Agent Canvas creates the token secret automatically when you save the MCP server configuration.
+8. Save the MCP server configuration.
+
+## Start the PR Review Workflow
+
+1. Open `Automate` in the left navigation.
+2. Find `Start from a proven workflow`.
+3. Choose the GitHub PR review workflow.
+4. Agent Canvas opens a new conversation with a prefilled setup prompt.
+5. Send the prompt as-is, or edit it first if you already know what you want.
+
+After you send the prompt, the agent starts a setup conversation. It uses the preconfigured skills and GitHub access to interview you, clarify the review workflow, and create the automation.
+
+## Customize the Review
+
+You do not need to know every detail before sending the prefilled prompt. The agent will ask follow-up questions to clarify:
+
+- The repository owner and name
+- Which pull requests to review
+- Whether the agent should post a single summary comment or detailed inline feedback
+- Whether the agent should inspect CI results before commenting
+- Any files, directories, or checks the reviewer should ignore
+
+You can edit the prefilled prompt before sending it if you want to provide any of those details up front.
+
+## Verify the Automation
+
+After the automation is created:
+
+1. Open `Automate`.
+2. Confirm the new automation appears in the list.
+3. Open the automation details and check that it is enabled.
+4. Trigger or wait for a matching pull request event.
+5. Confirm that the agent run appears and that the review is posted to GitHub.
+
+## Related Guides
+
+- [GitHub Repository Monitor](/openhands/usage/agent-canvas/prebuilt/github-repo-monitor)
+- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+
+### GitHub Repository Monitor
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-repo-monitor.md
+
+Use the GitHub Repository Monitor when you want Agent Canvas to watch a repository and trigger an OpenHands agent when matching activity happens.
+
+Common examples include:
+
+- Monitoring new issues and pull requests
+- Watching failed CI runs
+- Checking for dependency or release activity
+- Creating follow-up work when a repository changes
+
+## Prerequisites
+
+Before you start, make sure you have:
+
+- Agent Canvas installed and running
+- An LLM configured for the backend that will run the automation
+- Access to create a GitHub token for the repository you want to monitor
+- Access to install MCP servers and save secrets in Agent Canvas
+
+If you are new to Agent Canvas, start with [Install](/openhands/usage/agent-canvas/setup) and [First-Time Setup](/openhands/usage/agent-canvas/first-time-setup).
+
+## Create a GitHub Access Token
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/tokens).
+2. Click `Generate new token`.
+3. Prefer a fine-grained personal access token if your organization supports it.
+4. Give the token a clear name, such as `Agent Canvas Repo Monitor`.
+5. Select repository access:
+   - Choose `Only select repositories` for the safest setup.
+   - Choose `All repositories` only if the automation needs broad access.
+6. Set an expiration date that matches your team's security policy.
+
+## Add Repository Permissions
+
+In the token setup screen, grant only the permissions your monitor needs.
+
+For most repository monitors, start with:
+
+| Permission | Access |
+|------------|--------|
+| `Contents` | Read-only, or read and write if the agent will open changes |
+| `Issues` | Read and write if the agent will triage or comment on issues |
+| `Pull requests` | Read and write if the agent will inspect or comment on pull requests |
+| `Metadata` | Read-only |
+| `Actions` | Read-only, if the automation should inspect workflow runs |
+| `Checks` | Read-only, if the automation should inspect check runs |
+
+Then click `Generate token` and copy the token immediately.
+
+<Note>
+  If you change token permissions later, you may need to update the token or create a new one.
+</Note>
+
+## Add the GitHub MCP Server
+
+The GitHub MCP server gives the agent tools for reading repository state and taking GitHub actions.
+
+1. In Agent Canvas, check the backend switcher in the bottom-left corner.
+2. Make sure the active backend is the backend where you want the repository monitor to run.
+3. Open `Customize`.
+4. Open `MCP Servers`.
+5. Select `GitHub` from the MCP library.
+6. Paste the GitHub token you created earlier.
+7. Make sure the secret-creation toggle is on so Agent Canvas creates the token secret automatically when you save the MCP server configuration.
+8. Save the MCP server configuration.
+
+## Start the Repository Monitor Workflow
+
+1. Open `Automate` in the left navigation.
+2. Find `Start from a proven workflow`.
+3. Choose the GitHub repository monitor workflow.
+4. Agent Canvas opens a new conversation with a prefilled setup prompt.
+5. Send the prompt as-is, or edit it first if you already know what you want.
+
+After you send the prompt, the agent starts a setup conversation. It uses the preconfigured skills and GitHub access to interview you, clarify the monitoring workflow, and create the automation.
+
+## Customize the Monitor
+
+You do not need to know every detail before sending the prefilled prompt. The agent will ask follow-up questions to clarify:
+
+- The repository owner and name
+- The events or conditions the monitor should watch
+- How often the automation should check the repository, if it is schedule-based
+- What the agent should do when it finds a match
+- Where the agent should report results, such as a GitHub comment or Slack channel
+
+You can edit the prefilled prompt before sending it if you want to provide any of those details up front.
+
+For example, you can ask the monitor to watch for failed workflow runs, summarize the failure, and open a pull request when the fix is straightforward.
+
+## Verify the Automation
+
+After the automation is created:
+
+1. Open `Automate`.
+2. Confirm the new automation appears in the list.
+3. Open the automation details and check that it is enabled.
+4. Trigger or wait for matching repository activity.
+5. Confirm that the agent run appears and performs the action you requested.
+
+## Related Guides
+
+- [GitHub PR Review Assistant](/openhands/usage/agent-canvas/prebuilt/github-pr-review)
+- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+
+### Slack Channel Monitor
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/slack-channel-monitor.md
+
+Use the Slack Channel Monitor when you want Agent Canvas to watch a Slack channel and trigger an OpenHands agent when a message matches your instructions.
+
+Common examples include:
+
+- Responding when someone mentions a support keyword
+- Turning bug reports into GitHub issues
+- Summarizing incidents from an alerts channel
+- Running a repository task from a Slack request
+
+## Prerequisites
+
+Before you start, make sure you have:
+
+- Agent Canvas installed and running
+- An LLM configured for the backend that will run the automation
+- Permission to create and install a Slack app in your workspace
+- Access to install MCP servers and save secrets in Agent Canvas
+
+If you are new to Agent Canvas, start with [Install](/openhands/usage/agent-canvas/setup) and [First-Time Setup](/openhands/usage/agent-canvas/first-time-setup).
+
+## Create the Slack App
+
+1. Go to the [Slack API dashboard](https://api.slack.com/apps).
+2. Click `Create New App`.
+3. Select `From scratch`.
+4. Enter an app name, such as `OpenHands`.
+5. Choose the workspace where you want to install the bot.
+6. Click `Create App`.
+
+## Add Bot Token Scopes
+
+Before Slack gives you a bot token, you need to define what the bot is allowed to do.
+
+1. In the Slack app settings, open `OAuth & Permissions`.
+2. Scroll to `Scopes`.
+3. Under `Bot Token Scopes`, click `Add an OAuth Scope`.
+4. Add the scopes required by the Slack MCP server and your monitor.
+
+For a channel monitor, add these bot token scopes:
+
+| Scope | Purpose |
+|-------|---------|
+| `app_mentions:read` | View messages that directly mention the app in conversations it belongs to |
+| `channels:read` | List and read public channel metadata |
+| `channels:history` | Read messages from public channels |
+| `chat:write` | Send messages as the app |
+| `emoji:read` | View custom emoji in the workspace |
+| `groups:history` | Read messages from private channels the app has been added to |
+| `reactions:read` | View emoji reactions and associated message content |
+| `reactions:write` | Add and edit emoji reactions |
+| `users:read` | Resolve Slack users and profiles |
+
+<Note>
+  Slack may require you to reinstall the app after changing scopes.
+</Note>
+
+## Install the App and Copy the Bot Token
+
+1. Stay on the `OAuth & Permissions` page.
+2. Click `Install to Workspace`.
+3. Review the requested permissions.
+4. Click `Allow`.
+5. Copy the `Bot User OAuth Token` from the `OAuth Tokens` section.
+
+## Invite the Bot to Channels
+
+The bot does not automatically join channels.
+
+Invite it to every channel you want the automation to monitor. The Agent Canvas backend can only watch channels the bot can access.
+
+## Find Your Slack Workspace ID
+
+The Slack MCP server also needs your workspace ID.
+
+You can find it from your Slack URL or workspace settings. See Slack's guide to [locating your Slack URL or ID](https://slack.com/help/articles/221769328-Locate-your-Slack-URL-or-ID).
+
+## Add the Slack MCP Server
+
+The Slack MCP server gives the agent tools for reading Slack channel activity and posting responses.
+
+1. In Agent Canvas, check the backend switcher in the bottom-left corner.
+2. Make sure the active backend is the backend where you want the Slack monitor to run.
+3. Open `Customize`.
+4. Open `MCP Servers`.
+5. Select `Slack` from the MCP library.
+6. Paste the bot token.
+7. Enter your Slack workspace ID.
+8. Make sure the secret-creation toggle is on so Agent Canvas creates the bot token secret automatically when you save the MCP server configuration.
+9. Save the MCP server configuration.
+
+## Start the Slack Channel Monitor Workflow
+
+1. Open `Automate` in the left navigation.
+2. Find `Start from a proven workflow`.
+3. Choose the Slack channel monitor workflow.
+4. Agent Canvas opens a new conversation with a prefilled setup prompt.
+5. Send the prompt as-is, or edit it first if you already know what you want.
+
+After you send the prompt, the agent starts a setup conversation. It uses the preconfigured skills and Slack access to interview you, clarify the channel monitor, and create the automation.
+
+## Customize the Monitor
+
+You do not need to know every detail before sending the prefilled prompt. The agent will ask follow-up questions to clarify:
+
+- The Slack channel or channels to monitor
+- The message pattern, keyword, or mention that should trigger the agent
+- What the agent should do when a message matches
+- Whether the agent should reply in Slack
+- Any GitHub repository or external service the agent should use
+
+
+<Info>
+  If you want the automation to watch for `@your-bot-name`, tell the agent to watch for Slack bot mentions as well as the trigger phrases you set. That way, it can respond when someone mentions the bot directly, not just when a specific keyword appears.
+</Info>
+
+You can edit the prefilled prompt before sending it if you want to provide any of those details up front.
+
+For example, you can ask the tell the agent to configure the automation to watch an #alerts channel, summarize new incidents, and create a GitHub issue when a message includes a production error.
+
+
+## Verify the Automation
+
+After the automation is created:
+
+1. Open `Automate`.
+2. Confirm the new automation appears in the list.
+3. Open the automation details and check that it is enabled.
+4. Post a test message in a channel the bot has joined.
+5. Confirm that the agent run appears and performs the action you requested.
+
+## Related Guides
+
+- [GitHub Repository Monitor](/openhands/usage/agent-canvas/prebuilt/github-repo-monitor)
+- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+
+### Install
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md
+
+<Warning>
+  Agent Canvas starts an agent server on the machine where you run it. Treat that machine as trusted infrastructure and review the guidance in [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm) before exposing it to a network you do not control.
+</Warning>
+
+<Tabs>
+  <Tab title="npm">
+    **Prerequisites:** [Node.js](https://nodejs.org/en/download) 22.12 or later, `npm`, and [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
+
+    **Install:**
+    ```bash
+    npm install -g @openhands/agent-canvas
+    ```
+
+    **Run:**
+    ```bash
+    agent-canvas
+    ```
+
+    By default, Agent Canvas starts on `http://localhost:8000`.
+
+    ### CLI Flags
+
+    | Flag | Description |
+    |------|-------------|
+    | `-p`, `--port <port>` | Set the ingress port (default `8000`) |
+    | `--public` | Enable public mode — requires `LOCAL_BACKEND_API_KEY`. The key is **not** injected into the frontend; users must enter it when the UI loads. Use this for any deployment reachable by others. See [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm). |
+    | `--backend-only` | Start only the backend behind ingress (no frontend). Use this to run a headless backend on a VM or server. |
+    | `--frontend-only` | Start only the static frontend behind ingress (no agent server or automation). Use this to point a local UI at a remote backend. |
+    | `-v`, `--version` | Show the version number |
+    | `--info` | Show the version and default stack configuration (agent server version, ports, etc.) |
+    | `-h`, `--help` | Show the built-in help output |
+
+    ### Environment Variables
+
+    | Variable | Purpose |
+    |----------|---------|
+    | `LOCAL_BACKEND_API_KEY` | API key for the server. Required in `--public` mode; optional otherwise (auto-generated and persisted across restarts). |
+    | `OH_SECRET_KEY` | Secret used to protect stored settings and secrets |
+    | `OH_AGENT_SERVER_VERSION` | Pin a specific agent server version (e.g. `0.1.0`) |
+  </Tab>
+  <Tab title="Docker">
+    **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) (Docker Desktop on macOS/Windows, or Docker Engine on Linux).
+
+    A Docker image is available that sandboxes the entire Agent Canvas stack. Mount your project files and a persistence directory for settings, secrets, and conversation history.
+
+    Create a host directory for your projects (the agent can access any folder under this path) and run the container:
+
+    **macOS / Linux:**
+    ```bash
+    mkdir -p ~/projects ~/.openhands
+
+    docker run -it --rm \
+      -p 8000:8000 \
+      -v ~/.openhands:/home/openhands/.openhands \
+      -v ~/projects:/projects \
+      ghcr.io/openhands/agent-canvas:latest
+    ```
+
+    **Windows (PowerShell):**
+    ```powershell
+    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.openhands", "$env:USERPROFILE\projects" | Out-Null
+
+    docker run -it --rm `
+      -p 8000:8000 `
+      -v "$($env:USERPROFILE)\.openhands:/home/openhands/.openhands" `
+      -v "$($env:USERPROFILE)\projects:/projects" `
+      ghcr.io/openhands/agent-canvas:latest
+    ```
+
+    <Note>
+      On Windows, Docker Desktop must be installed and running. PowerShell uses backticks (`` ` ``) for line continuation instead of backslashes.
+    </Note>
+
+    ### Environment Variables
+
+    Configuration is passed via `-e` flags on `docker run`:
+
+    | Variable | Purpose |
+    |----------|---------|
+    | `PORT` | Ingress port inside the container (default `8000`). Map it with `-p <host>:<PORT>`. |
+    | `LOCAL_BACKEND_API_KEY` | API key for the server. Auto-generated and persisted if not set. |
+    | `OH_SECRET_KEY` | Secret used to protect stored settings and secrets |
+  </Tab>
+</Tabs>
+
+<Note>
+  If you want to clone the repository, run custom dev modes, or configure Vite-specific environment variables, use the [Contribute / Development guide](/openhands/usage/agent-canvas/development) instead.
+</Note>
+
+## First Steps After Launch
+
+After the UI opens:
+
+1. Confirm the default local backend is healthy.
+2. Open `Settings > LLM` and configure a provider, model, and API key.
+3. Open `Customize` if you want to add skills or MCP servers.
+4. Return to the home screen and enter a prompt to start your first conversation.
+5. If you want the conversation tied to a local folder, choose `Open Workspace` first.
+
+## Next Steps
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+
+### Troubleshooting
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/troubleshooting.md
+
+Use this page for the most common Agent Canvas problems.
+
+## Command Not Found
+
+If `agent-canvas` is not available after installation:
+
+- confirm the package installed successfully with `npm install -g @openhands/agent-canvas`
+- make sure your npm global bin directory is on your `PATH`
+- run `agent-canvas --help` to confirm the binary resolves correctly
+
+## Missing `uv`
+
+Agent Canvas relies on `uv` to run the local agent server stack.
+
+If startup fails because `uv` or `uvx` is missing, install it from the official guide:
+
+- [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+
+## Port Already in Use
+
+Agent Canvas listens on port `8000` by default. If that port is busy, start it on another one:
+
+```bash
+agent-canvas --port 3000
+```
+
+## Backend Is Unreachable
+
+If Agent Canvas cannot talk to the active backend:
+
+- open `Manage Backends`
+- verify the backend host or base URL
+- verify the API key if the backend requires one
+- switch to another backend to confirm the issue is backend-specific
+
+## LLM Profiles Do Not Match OpenHands Cloud
+
+Agent Canvas currently has fuller support for LLM profiles than the hosted OpenHands Cloud UI.
+
+If profiles appear in Agent Canvas but not in OpenHands Cloud directly, that can be expected while the Cloud rollout is still in progress.
+
+## MCP Settings Are Missing
+
+MCP configuration does not live under `Settings`.
+
+Open the top-level `Customize` area, then go to `MCP Servers`.
+
+## Automation Features Are Unavailable
+
+If the `Automations` view shows an unavailable or unhealthy state, the active backend may not have a working automation service.
+
+Start with the default local backend to confirm the UI works, then debug the remote backend separately.
+
+## Get Help
+
+If you are still stuck:
+
+- [Join the OpenHands Slack community](https://openhands.dev/joinslack)
+- [Open an issue in the Agent Canvas repository](https://github.com/OpenHands/agent-canvas/issues)
+- [Browse the Agent Canvas source](https://github.com/OpenHands/agent-canvas)
+
 ### Main Agent and Capabilities
 Source: https://docs.openhands.dev/openhands/usage/agents.md
 
@@ -28947,11 +30214,78 @@ Source: https://docs.openhands.dev/openhands/usage/automations/event-automations
 
 Event-based automations run when something happens—a PR is opened, an issue is commented on, or a webhook fires—instead of on a schedule. This is ideal for responsive workflows like auto-reviewing PRs, triaging issues, or reacting to external service events.
 
+## Prerequisites for GitHub Event Automations
+
+GitHub event automations require some one-time setup before events will flow. If any step is missing, automations will appear to work (manual triggers succeed) but GitHub events will silently never arrive.
+
+### 1. Install the OpenHands GitHub App
+
+The OpenHands GitHub App must be installed on the GitHub organization that owns the repositories you want to monitor. Install it from your [GitHub integration settings](/openhands/usage/cloud/github-installation). The app needs access to the repositories that will generate events.
+
+### 2. Create an OpenHands Team Organization
+
+If you're working with repositories owned by a GitHub organization (e.g., `myorg/my-repo`), you need an OpenHands **team organization** — not just a personal account. GitHub events for org repos are routed to team orgs, not personal orgs.
+
+If you don't already have one, create a team organization — see [What Are Organizations](/openhands/usage/cloud/organizations/overview#what-are-organizations) for details and how to get started.
+
+### 3. Claim Your GitHub Organization
+
+<Warning>
+**This is the most commonly missed step.** Without it, GitHub events have nowhere to be routed and will be silently dropped.
+</Warning>
+
+Your OpenHands team org must **claim** the GitHub organization to establish the link between GitHub webhooks and your OpenHands org. Claiming tells the event router: _"Events for repos in this GitHub org should go to this OpenHands team org."_
+
+To claim a GitHub org:
+
+1. Switch to your team org using the org switcher in the sidebar
+2. Go to **Organization Settings**
+3. In the **Git Conversation Routing** section, find your GitHub org
+4. Click **Claim**
+
+You must be an **Owner** of the OpenHands team org and have **admin access** to the GitHub org to complete the claim. See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations) for full details.
+
+<Tip>
+Each GitHub organization can only be claimed by one OpenHands team org. If another team has already claimed it, coordinate with them or contact support.
+</Tip>
+
+### 4. Create the Automation Under the Team Org
+
+Make sure you are switched to the **team org** (not your personal org) when creating the automation. The automation must live in the same org that claimed the GitHub organization — otherwise events won't match.
+
+### 5. (Optional) Add Service Accounts to the Team Org
+
+If you're using a service account (like a bot account) to create or own automations, that account must be a **member of the team org**. Invite them from the [Organization Members](/openhands/usage/cloud/organizations/managing-members) page.
+
+### Troubleshooting
+
+If your automation doesn't trigger on GitHub events:
+
+<AccordionGroup>
+  <Accordion title="GitHub App not installed on the org">
+    The OpenHands GitHub App must be installed on the GitHub organization that owns your repositories. Go to [GitHub integration settings](/openhands/usage/cloud/github-installation) and verify it is installed with access to the relevant repos. Without this, no webhook events are sent to OpenHands.
+  </Accordion>
+  <Accordion title="GitHub org not claimed">
+    The most common cause. Go to **Organization Settings → Git Conversation Routing** and check if your GitHub org shows as claimed. If not, click **Claim**. See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations).
+  </Accordion>
+  <Accordion title="Automation in personal org instead of team org">
+    GitHub events for org repos are routed to the **team org** that claimed the GitHub org. If you created the automation under your personal org, events will never reach it. Switch to the team org and recreate the automation.
+  </Accordion>
+  <Accordion title="Event type or filter mismatch">
+    Double-check that the event type (e.g., `pull_request.labeled`) and filter expression match the action you're testing. Use wildcards like `pull_request.*` to match all actions during debugging.
+  </Accordion>
+  <Accordion title="Automation is disabled">
+    Verify the automation is enabled. You can check via the automations list or by asking OpenHands to list your automations.
+  </Accordion>
+</AccordionGroup>
+
+---
+
 ## Built-In vs. Custom Integrations
 
 | Type | Setup | Best For |
 |------|-------|----------|
-| **Built-in (GitHub)** | None—just create the automation | PR reviews, issue triage, push-triggered tasks |
+| **Built-in (GitHub)** | One-time org setup ([see above](#prerequisites-for-github-event-automations)), then create the automation | PR reviews, issue triage, push-triggered tasks |
 | **Custom Webhooks** | Register webhook first, then create automation | Linear, Stripe, Slack, and other services |
 
 ## GitHub Events (Built-In)
@@ -29000,24 +30334,29 @@ Use wildcards like `pull_request.*` to match all actions for an event type.
 
 Filters let you narrow which events trigger your automation. They use [JMESPath expressions](https://jmespath.org/) to match fields in the event payload—so you can trigger only on specific labels, users, branches, or other conditions.
 
+<Note>
+OpenHands extends standard JMESPath with custom functions including `icontains` (case-insensitive string match) and `glob` (wildcard path matching). It also supports `!` (negation), `&&` (AND), and `||` (OR) as boolean operators. These extensions are not part of the [JMESPath specification](https://jmespath.org/specification.html).
+</Note>
+
 **Common filter patterns:**
 
-```javascript
-// Match a specific label
+```
 contains(pull_request.labels[].name, 'openhands')
 
-// Case-insensitive mention in comment
 icontains(comment.body, '@openhands')
 
-// Match repos in your org
 glob(repository.full_name, 'myorg/*')
 
-// Push to main branch only
 ref == 'refs/heads/main'
 
-// Combine conditions
 glob(repository.full_name, 'myorg/*') && contains(pull_request.labels[].name, 'bug')
 ```
+
+- `contains(...)` — match a specific label
+- `icontains(...)` — case-insensitive mention in a comment body
+- `glob(...)` — match repos in your org with wildcards
+- `==` — exact match (e.g., push to main branch only)
+- `&&` — combine multiple conditions
 
 ---
 
@@ -29132,12 +30471,12 @@ When registering any custom webhook, these parameters define how OpenHands proce
 
 These are example configurations for popular services. **Always verify with each service's webhook documentation**, as signature headers and payload formats may change.
 
-| Service | Signature Header | Event Key |
-|---------|-----------------|-----------|
-| Linear | `Linear-Signature` | `type` |
-| Stripe | `Stripe-Signature` | `type` |
-| Slack | `X-Slack-Signature` | `type` |
-| Twilio | `X-Twilio-Signature` | `type` |
+| Service | Signature Header | Event Key | Notes |
+|---------|-----------------|-----------|-------|
+| Linear | `Linear-Signature` | `type` | |
+| Stripe | `Stripe-Signature` | `type` | Uses a custom `t=timestamp,v1=signature` format — verify compatibility |
+| Slack | `X-Slack-Signature` | `type` | |
+| Twilio | `X-Twilio-Signature` | `type` | Uses HMAC-SHA1 of request URL + params — verify compatibility |
 
 ---
 
@@ -29363,7 +30702,7 @@ Each use case has a ready-to-use automation prompt. Click a card to see the full
   <Card
     title="Automated QA Testing"
     icon="vial"
-    href="/openhands/usage/use-cases/qa-changes"
+    href="/openhands/usage/use-cases/qa-changes#automate-this"
   >
     Functionally test PR changes by exercising the software as a real user would.
   </Card>
@@ -30729,6 +32068,21 @@ These variables correspond to the `[security]` section in `config.toml`:
 | `LOCAL_RUNTIME_MODE` | string | `""` | Enable local runtime mode (`1` to enable) |
 
 ## Integration Variables
+
+### Git Provider Access
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `ALLOW_INSECURE_GIT_ACCESS` | boolean | `false` | Allow OpenHands to connect to git providers over plain HTTP. Set this only for trusted local or internal git providers (such as Gitea/Forgejo) where HTTPS is not available. |
+
+<Warning>
+  `ALLOW_INSECURE_GIT_ACCESS=true` permits insecure HTTP connections to git providers. Only enable it for trusted local or internal networks that you control. Do not use it for public or untrusted git providers.
+</Warning>
+
+When running OpenHands with Docker, set this on the OpenHands server container:
+
+```bash
+docker run -e ALLOW_INSECURE_GIT_ACCESS=true openhands/openhands
+```
 
 ### GitHub Integration
 | Environment Variable | Type | Default | Description |
@@ -32943,6 +34297,18 @@ Download and install the LM Studio desktop app from [lmstudio.ai](https://lmstud
 
 ![image](./screenshots/06_lm_studio_start_server.png)
 
+<Warning>
+**Linux users:** By default, LM Studio only listens on `127.0.0.1` (localhost). If OpenHands runs inside a Docker container, it cannot reach `127.0.0.1` on the host — even with `--add-host host.docker.internal:host-gateway`.
+
+To fix this, enable **"Serve on Local Network"** in LM Studio's server settings. This switches the bind address to `0.0.0.0`, making the server reachable from Docker.
+
+You can verify connectivity from inside the container:
+```bash
+docker exec -it openhands-app curl -s http://host.docker.internal:1234/v1/models
+```
+If this returns the model list, the connection is working. If it hangs or errors, LM Studio is still bound to localhost only.
+</Warning>
+
 ### 5. Start OpenHands
 
 1. Check [the installation guide](/openhands/usage/run-openhands/local-setup) and ensure all prerequisites are met before running OpenHands, then run:
@@ -35023,6 +36389,27 @@ The PR review workflow uses the OpenHands Software Agent SDK to analyze your cod
   </Step>
 </Steps>
 
+### In a Conversation
+
+You can also trigger a code review manually in any OpenHands conversation. First, install the skill:
+
+```
+/add-skill https://github.com/OpenHands/extensions/tree/main/skills/code-review
+```
+
+Then invoke it:
+
+```
+/codereview
+```
+
+The agent will ask for the PR to review, or you can provide context directly:
+
+```
+/codereview — Please review PR #123 on my-org/my-repo.
+Focus on the new authentication middleware.
+```
+
 ## Composite Action
 
 <Note>
@@ -35289,23 +36676,162 @@ See real automated reviews in action on the OpenHands Software Agent SDK reposit
 
 ## Automate This
 
-You can schedule daily code reviews using [OpenHands Automations](/openhands/usage/automations/overview).
-Copy this prompt into a new conversation to set one up:
+There are two ways to automate PR reviews with OpenHands: as a **GitHub Action** (per-repo) or as an **OpenHands Automation** (org-wide, event-driven). Choose the approach that fits your needs, or use both.
+
+### Option A: GitHub Action (Per-Repo)
+
+Use the [pr-review plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review) as a GitHub Actions workflow. Copy the [example workflow](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/workflows/pr-review-by-openhands.yml) into `.github/workflows/pr-review.yml` in your repository, add your `LLM_API_KEY` to **Settings → Secrets and variables → Actions**, and customize the trigger conditions and model as needed.
+
+See the [action.yml](https://github.com/OpenHands/extensions/blob/main/plugins/pr-review/action.yml) for all available inputs (`llm-model`, `llm-base-url`, `use-sub-agents`, `require-evidence`, and more).
+
+**When to use this:** You want per-repo control, need to integrate with existing CI checks, or want to pin specific action versions per repository.
+
+### Option B: OpenHands Automation (Org-Wide)
+
+<Warning>
+Before setting up an event-driven automation, complete the one-time [prerequisites for GitHub event automations](/openhands/usage/automations/event-automations#prerequisites-for-github-event-automations) — install the GitHub App, create a team org, and claim your GitHub organization. Without these steps, GitHub events will silently never arrive.
+</Warning>
+
+[OpenHands Automations](/openhands/usage/automations/overview) is an event-triggered automation system that replaces per-repo GitHub Actions workflows. You define the trigger once and it covers all repositories matching your filter — no per-repo workflow files needed. It also leverages the full OpenHands runtime (browser, tools, sandbox), which GitHub Actions cannot.
+
+**When to use this:** You want a single configuration that covers all repos in your org, or you need the full OpenHands runtime for more advanced review workflows.
+
+#### Prerequisites: Bot Account
+
+For org-level automations, you should create a dedicated **bot account** (a separate GitHub user) and add it to your [OpenHands organization](/openhands/usage/cloud/organizations/overview). The bot account is the identity that will approve pull requests, request changes, and post review comments — keeping automated actions separate from human activity. Team members can then request this bot as a reviewer to trigger on-demand reviews.
+
+#### Setup: Create the Automation via Prompt
+
+Log in to [OpenHands Cloud](https://app.all-hands.dev) as your bot account (or under your team org) and send the following prompt in a new conversation. Replace the placeholders with your values:
+
+- `YOUR_ORG` — your GitHub organization name (e.g., `mycompany`)
+- `YOUR_BOT_LOGIN` — the GitHub username of your bot account (e.g., `mycompany-bot`)
+
+````
+Create an OpenHands Cloud automation using the Plugin Preset with the following configuration:
+
+**Name:** PR Review: YOUR_ORG/* (ready for review, review-this, or reviewer requested)
+
+**Plugin:** github:OpenHands/extensions (repo_path: plugins/pr-review)
+
+**Trigger events:**
+- pull_request.opened
+- pull_request.ready_for_review
+- pull_request.review_requested
+- pull_request.labeled
+
+**Filter:**
+```
+glob(repository.full_name, 'YOUR_ORG/*') && (
+    label.name == 'review-this'
+    || requested_reviewer.login == 'YOUR_BOT_LOGIN'
+    || (!label && !requested_reviewer
+        && pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+        && pull_request.author_association != 'FIRST_TIMER'
+        && pull_request.author_association != 'NONE'
+        && !pull_request.draft)
+)
+```
+
+**Timeout:** 600 seconds
+
+**Prompt (use this exactly):**
+```
+Before starting the code review, complete these steps in order:
+
+Step 1 — Build the session URL.
+Run this in terminal:
+  SESSION_URL="${AUTOMATION_SESSION_URL:-${AUTOMATION_API_URL:-https://app.all-hands.dev}}"
+  echo "SESSION_URL=${SESSION_URL}"
+
+Step 2 — Extract PR info from the event payload:
+  PR_NUMBER=$(echo "$AUTOMATION_EVENT_PAYLOAD" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p['pull_request']['number'])")
+  REPO=$(echo "$AUTOMATION_EVENT_PAYLOAD" | python3 -c "import sys,json; p=json.load(sys.stdin); print(p['repository']['full_name'])")
+
+Step 3 — Post a progress comment and save the comment ID:
+  COMMENT_ID=$(curl -s -X POST \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+    -d "{\"body\": \"🔍 **Review in progress…**\\n\\nWe are performing the review through OpenHands Cloud Automation. You can log in and [view the conversation here](${SESSION_URL}).\"}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+Step 4 — /codereview and /github-pr-review
+Review the pull request using the pr-review plugin. Post a comprehensive code review on GitHub with inline comments on specific changed lines where appropriate, and a concise overall summary. Avoid duplicating existing unresolved review comments.
+
+When submitting the review, choose the appropriate event type:
+- Use "event": "APPROVE" when the PR is ready to merge with no blocking issues (minor suggestions are fine)
+- Use "event": "REQUEST_CHANGES" when there are blocking issues that must be fixed before merging
+- Use "event": "COMMENT" only when you need more information or are providing an informational review without a clear verdict
+
+At the end of the top-level review body include exactly:
+  _This review was generated by an AI agent (OpenHands) on behalf of the user through OpenHands Automation. [View conversation](${SESSION_URL})_
+
+Step 5 — After the review is posted, update the progress comment:
+  curl -s -X PATCH \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/$REPO/issues/comments/$COMMENT_ID" \
+    -d "{\"body\": \"✅ **Review complete.**\\n\\nThis review was performed through OpenHands Cloud Automation. You can log in and [view the conversation here](${SESSION_URL}).\"}"
+```
+````
+
+<Note>
+**Team review requests:** The `requested_reviewer` field is only populated for individual reviewer requests. When a *team* is requested as reviewer, GitHub uses `requested_team` instead. To also match team requests, add `|| requested_team.slug == 'YOUR_TEAM_SLUG'` to the filter.
+
+**How `!label` works:** JMESPath treats absent fields as `null`, and `!null` evaluates to `true`. This means the third branch fires for `opened` and `ready_for_review` events (which have no `label` or `requested_reviewer` in the payload), while correctly staying silent for `labeled` and `review_requested` events where those fields are set.
+</Note>
+
+#### What This Produces
+
+When the automation is created and a qualifying PR event occurs, the bot will:
+
+1. **Post a progress comment** on the PR: "🔍 Review in progress…" with a link to the live conversation
+2. **Run the pr-review plugin** which analyzes the diff and posts a structured code review with inline comments — approving clean PRs, requesting changes when there are blocking issues, or leaving an informational comment when the verdict is unclear
+3. **Update the progress comment** to "✅ Review complete." with the conversation link
+
+The automation triggers on four conditions:
+- **`opened`** — when a new non-draft PR is created (for established contributors only)
+- **`ready_for_review`** — when a draft PR is marked ready (for established contributors only)
+- **`review_requested`** — when your bot account is requested as a reviewer. This is the primary way team members trigger an on-demand review — they simply request the bot from the PR's "Reviewers" sidebar. The bot then posts its review under its own GitHub identity, so approvals and change requests come from a clear, dedicated account.
+- **`labeled`** — when the `review-this` label is added to any PR
+
+The automation does not re-run when new commits are pushed to an existing PR (`pull_request.synchronize` is intentionally excluded to avoid noisy re-reviews). To request a follow-up review after addressing feedback, re-add the `review-this` label or re-request the reviewer.
+
+<Note>
+The `$AUTOMATION_SESSION_URL` variable is injected by the automation runtime and resolves to a direct link to the conversation (e.g., `https://app.all-hands.dev/conversations/{uuid}`). The prompt includes fallbacks (`$AUTOMATION_API_URL`, then the default app URL) for environments where the variable is not yet available.
+
+The `$AUTOMATION_EVENT_PAYLOAD` variable contains the full GitHub webhook event as JSON. The `$GITHUB_TOKEN` (from the configured GitHub integration) is also automatically available. No additional configuration is needed for any of these variables.
+</Note>
+
+#### Single-Repo vs Org-Wide
+
+The prompt above uses `glob(repository.full_name, 'YOUR_ORG/*')` to cover **all repos** in your org. To target a single repo instead, replace the filter's first condition:
 
 ```
-Create an automation called "Daily Code Review" that runs every weekday at 9 AM.
-
-It should:
-1. Find all open PRs that have no reviews yet
-2. For each PR, review the diff for bugs, style issues, and security concerns
-3. Post a summary of findings as a comment on each PR
-
-Learn more at https://docs.openhands.dev/openhands/usage/use-cases/code-review
+repository.full_name == 'YOUR_ORG/YOUR_REPO' && (
+    label.name == 'review-this'
+    || requested_reviewer.login == 'YOUR_BOT_LOGIN'
+    || (!label && !requested_reviewer
+        && pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+        && pull_request.author_association != 'FIRST_TIMER'
+        && pull_request.author_association != 'NONE'
+        && !pull_request.draft)
+)
 ```
 
-For inline review comments on every push, use the
-[pr-review plugin](https://github.com/OpenHands/extensions/tree/main/plugins/pr-review)
-as a GitHub Action instead.
+<Note>
+The `review-this` label and `requested_reviewer` branches do not exclude draft PRs — labeling a draft or requesting the bot on a draft will still fire the automation. This is intentional: explicit review requests should be honored regardless of draft status.
+</Note>
+
+#### Testing
+
+After creating the automation:
+
+1. Add the `review-this` label to any open PR in a covered repo — this is the most reliable test since it works regardless of author history (you may need to [create the label](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels#creating-a-label) in your repo first if it doesn't exist)
+2. Alternatively, request your bot as a reviewer on any PR, or open a new non-draft PR (note: the auto-trigger on `opened` requires the PR author to already have contributor history in that specific repo — `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, and `NONE` associations are excluded)
+3. Watch for the "🔍 Review in progress…" comment — it should appear within a few seconds
+4. The full review will typically follow within a few minutes, depending on PR size
 
 ## Related Resources
 
@@ -36019,37 +37545,7 @@ The QA agent knows when to give up: after exhausting multiple approaches without
 
 ### GitHub Actions
 
-Create `.github/workflows/qa-changes.yml` in your repository:
-
-```yaml
-name: QA Changes
-
-on:
-  pull_request:
-    types: [opened, ready_for_review, labeled]
-
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-
-jobs:
-  qa:
-    if: |
-      (github.event.action == 'opened' && github.event.pull_request.draft == false) ||
-      github.event.action == 'ready_for_review' ||
-      github.event.label.name == 'qa-this'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run QA Changes
-        uses: OpenHands/extensions/plugins/qa-changes@main
-        with:
-          llm-model: anthropic/claude-sonnet-4-20250514
-          llm-api-key: ${{ secrets.LLM_API_KEY }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-```
-
-Add your `LLM_API_KEY` to your repository's **Settings → Secrets and variables → Actions**.
+Copy the [example workflow](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/workflows/qa-changes-by-openhands.yml) into `.github/workflows/qa-changes.yml` in your repository and add your `LLM_API_KEY` to **Settings → Secrets and variables → Actions**. See the [action.yml](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/action.yml) for all available inputs.
 
 ### In a Conversation
 
@@ -36159,6 +37655,55 @@ The QA agent is most powerful when used alongside the [code review agent](/openh
     For large PRs with many changed entry points, the agent may need more time. Consider splitting large PRs into smaller, focused changes. You can also add a custom QA guide that prioritizes the most important scenarios.
   </Accordion>
 </AccordionGroup>
+
+## Automate This
+
+There are two ways to automate QA testing with OpenHands: as a **GitHub Action** (per-repo) or as an **OpenHands Automation** (org-wide, event-driven). The pattern mirrors the [Automated Code Review](/openhands/usage/use-cases/code-review#automate-this) setup.
+
+### Option A: GitHub Action (Per-Repo)
+
+Use the [qa-changes plugin](https://github.com/OpenHands/extensions/tree/main/plugins/qa-changes) as a GitHub Actions workflow. Copy the [example workflow](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/workflows/qa-changes-by-openhands.yml) into `.github/workflows/qa-changes.yml` in your repository, add your `LLM_API_KEY` to **Settings → Secrets and variables → Actions**, and customize the trigger conditions and model as needed.
+
+See the [action.yml](https://github.com/OpenHands/extensions/blob/main/plugins/qa-changes/action.yml) for all available inputs.
+
+**When to use this:** You want per-repo control, need to integrate with existing CI checks, or want to pin specific action versions per repository.
+
+### Option B: OpenHands Automation (Org-Wide)
+
+<Warning>
+Before setting up an event-driven automation, complete the one-time [prerequisites for GitHub event automations](/openhands/usage/automations/event-automations#prerequisites-for-github-event-automations) — install the GitHub App, create a team org, and claim your GitHub organization. Without these steps, GitHub events will silently never arrive.
+</Warning>
+
+[OpenHands Automations](/openhands/usage/automations/overview) lets you define the trigger once to cover all repositories matching your filter. Log in to [OpenHands Cloud](https://app.all-hands.dev) under your team org and send the following prompt in a new conversation. Replace `YOUR_ORG` with your GitHub organization name:
+
+```
+Create an OpenHands Cloud automation using the Plugin Preset with the following configuration:
+
+**Name:** Automated QA: YOUR_ORG/*
+**Plugin:** github:OpenHands/extensions (repo_path: plugins/qa-changes)
+**Trigger events:** pull_request.opened, pull_request.ready_for_review, pull_request.labeled
+**Filter:**
+glob(repository.full_name, 'YOUR_ORG/*') && (
+    label.name == 'qa-this'
+    || (!label
+        && !pull_request.draft
+        && pull_request.author_association != 'FIRST_TIME_CONTRIBUTOR'
+        && pull_request.author_association != 'FIRST_TIMER'
+        && pull_request.author_association != 'NONE')
+)
+**Timeout:** 600 seconds
+
+The QA agent should:
+1. Check out the PR branch
+2. Exercise the changed behavior as a real user would
+3. Post a structured QA report as a PR comment with evidence (commands run, outputs, screenshots)
+```
+
+**When to use this:** You want a single configuration that covers all repos in your org, or you need the full OpenHands runtime for more advanced QA workflows.
+
+When testing, you may need to [create the `qa-this` label](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels#creating-a-label) in your repo before you can apply it.
+
+For a more detailed automation setup with progress comments and session links, see the [Automated Code Review automation guide](/openhands/usage/use-cases/code-review#option-b-openhands-automation-org-wide) — the same pattern applies to QA.
 
 ## Related Resources
 
@@ -38989,31 +40534,13 @@ Source: https://docs.openhands.dev/overview/introduction.md
 
 There are a few ways to work with OpenHands:
 
-## OpenHands Software Agent SDK
-The SDK is a composable Python library that contains all of our agentic tech. It's the engine that powers everything else below.
+## Agent Canvas
+Agent Canvas is a browser-based UI and backend server for running agents and automations. A single `agent-canvas` command starts the full stack locally. Self-host on a VM, or connect to OpenHands Cloud.
 
-Define agents in code, then run them locally, or scale to 1000s of agents in the cloud
-
-[Check out the docs](https://docs.openhands.dev/sdk) or [view the source](https://github.com/All-Hands-AI/agent-sdk/)
-
-## OpenHands CLI
-The CLI is the easiest way to start using OpenHands. The experience will be familiar to anyone who has worked
-with e.g. Claude Code or Codex. You can power it with Claude, GPT, or any other LLM.
-
-[Check out the docs](https://docs.openhands.dev/openhands/usage/run-openhands/cli-mode) or [view the source](https://github.com/OpenHands/OpenHands-CLI)
-
-## OpenHands Local GUI
-Use the Local GUI for running agents on your laptop. It comes with a REST API and a single-page React application.
-The experience will be familiar to anyone who has used Devin or Jules.
-
-[Check out the docs](https://docs.openhands.dev/openhands/usage/run-openhands/local-setup) or view the source in this repo.
+[Get started with Agent Canvas](/openhands/usage/agent-canvas/overview) or [view the source](https://github.com/OpenHands/agent-canvas)
 
 ## OpenHands Cloud
-This is a commercial deployment of OpenHands GUI, running on hosted infrastructure.
-
-You can try it with a free by [signing in with your GitHub account](https://app.all-hands.dev).
-
-OpenHands Cloud comes with source-available features and integrations:
+A fully managed version of OpenHands with source-available features and integrations:
 - Deeper integrations with GitHub, GitLab, and Bitbucket
 - Integrations with Slack, Jira, and Linear
 - Multi-user support
@@ -39021,6 +40548,8 @@ OpenHands Cloud comes with source-available features and integrations:
 - Collaboration features (e.g., conversation sharing)
 - Usage reporting
 - Budgeting enforcement
+
+Try it free by [signing in with your GitHub account](https://app.all-hands.dev).
 
 ## OpenHands Enterprise
 Large enterprises can work with us to self-host OpenHands Cloud in their own VPC, via Kubernetes.
@@ -39032,6 +40561,29 @@ but you'll need to purchase a license if you want to run it for more than one mo
 Enterprise contracts also come with extended support and access to our research team.
 
 Learn more at [openhands.dev/enterprise](https://openhands.dev/enterprise)
+
+## OpenHands Software Agent SDK
+The SDK is a composable Python library that contains all of our agentic tech. It's the engine that powers everything else.
+
+Define agents in code, then run them locally, or scale to 1000s of agents in the cloud.
+
+[Check out the docs](https://docs.openhands.dev/sdk) or [view the source](https://github.com/All-Hands-AI/agent-sdk/)
+
+## Legacy
+
+<Accordion title="OpenHands CLI and Local GUI">
+  **OpenHands CLI**
+
+  The CLI is a terminal-based interface for running OpenHands agents. You can power it with Claude, GPT, or any other LLM.
+
+  [Check out the docs](https://docs.openhands.dev/openhands/usage/run-openhands/cli-mode) or [view the source](https://github.com/OpenHands/OpenHands-CLI)
+
+  **OpenHands Local GUI**
+
+  A legacy UI requiring Docker for running agents on your laptop. It comes with a REST API and a single-page React application.
+
+  [Check out the docs](https://docs.openhands.dev/openhands/usage/run-openhands/local-setup) or view the source in this repo.
+</Accordion>
 
 ## Everything Else
 
@@ -39687,31 +41239,14 @@ For SDK developers:
 ### Quick Start
 Source: https://docs.openhands.dev/overview/quickstart.md
 
-Get started with OpenHands in minutes. Choose the option that works best for you.
+Get started with OpenHands in minutes.
 
-<CardGroup cols={3}>
+<CardGroup cols={2}>
+  <Card title="Agent Canvas" icon="desktop" href="/openhands/usage/agent-canvas/overview">
+    The recommended way to run OpenHands. Install via npm or Docker and start your first conversation in minutes.
+  </Card>
   <Card title="OpenHands Cloud" icon="cloud" href="https://app.all-hands.dev">
-    **Recommended**
-
-    The fastest way to get started. No setup required—just sign in and start coding.
-
-    - Free usage of MiniMax M2.5 for a limited time
-    - No installation needed
-    - Managed infrastructure
-  </Card>
-    <Card title="Terminal / CLI" icon="terminal" href="/openhands/usage/cli/installation">
-    Use OpenHands from your terminal. Perfect for automation and scripting.
-
-    - IDE integrations available
-    - Headless mode for CI/CD
-    - Lightweight installation
-  </Card>
-  <Card title="Local GUI" icon="desktop" href="/openhands/usage/run-openhands/local-setup#start-the-app">
-    Run OpenHands locally with a web-based interface. Bring your own LLM and API key.
-
-    - Full control over your environment
-    - Works offline
-    - Docker-based setup
+    No installation required — sign in and start coding.
   </Card>
 </CardGroup>
 
