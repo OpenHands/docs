@@ -1,0 +1,150 @@
+---
+title: Custom Sandbox Images
+description: Preload repos, dependencies, and tooling into a custom sandbox image to make your agents faster and more reliable.
+icon: box
+---
+
+Custom sandbox images let you prebake the repository, dependencies, compiled output, and test harness
+your agents need. Instead of spending minutes provisioning a workspace on every run, your agents start
+on the actual task immediately.
+
+## Why Use a Custom Image
+
+<CardGroup cols={2}>
+  <Card title="Faster Path to Useful Work" icon="bolt">
+    Agents reach the real task quickly instead of burning time on clone, install, transpile, and bootstrap steps.
+  </Card>
+  <Card title="Easier Monorepo Workflows" icon="folder-tree">
+    Repo checkout, dependencies, transpiled output, and helper tooling can already be present when the agent starts.
+  </Card>
+  <Card title="Lower Setup Variance" icon="shield-check">
+    Each run does not need to rediscover the same bootstrap steps, which reduces stalls, OOMs, and half-finished setups.
+  </Card>
+  <Card title="Complex Test Harness Support" icon="flask">
+    Native packages, headless browser support, Electron artifacts, and org-specific wrappers can be prebaked.
+  </Card>
+</CardGroup>
+
+## Benchmark Results
+
+The following benchmark ran on an Enterprise OpenHands Replicated VM and compared a stock image against
+a custom image built for a VS Code bug-fix task. The agent clones a repository, bootstraps a test harness,
+fixes a bug, and verifies the fix.
+
+| Elapsed work | Stock image | Custom image | Speedup |
+|---|---:|---:|---:|
+| Repo setup until available in workspace | `115.2s` | `13.1s` | **8.8x** |
+| Bootstrap from repo-ready to first useful test | `581.4s` | `13.5s` | **43.1x** |
+| Fix, rerun, and final response after first useful test | `152.2s` | `212.4s` | `0.7x` |
+| Full end-to-end task | `848.7s` | `238.9s` | **3.6x** |
+
+The biggest win is eliminating cold-start setup work. In the stock run, `npm install` alone took
+approximately `525s`. The custom image moved that work into Docker build time, so task time starts
+with the repo and harness already prepared.
+
+<Note>
+  The **Fix, rerun, and final response** row is conversation-dependent rather than image-dependent.
+  Both environments can run the test at that point, so the remaining time reflects agent reasoning and
+  retries. The custom image still won end-to-end because it removed most of the cold setup work.
+</Note>
+
+In this benchmark, the stock image required a **6 GB** sandbox to complete the install and test flow,
+while the custom image worked at **2 GB**.
+
+## Build Your Own Custom Image
+
+The [OpenHands agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox)
+provides full documentation on building custom sandbox images. The approach is the same for the Enterprise
+Replicated VM deployment.
+
+### Basic Pattern
+
+1. Start from the OpenHands agent-server base image.
+2. Keep the normal OpenHands entrypoint intact — **extend the image; do not replace the entrypoint**.
+3. Add your repo, docs, tools, and verification wrappers.
+4. Pre-run the expensive setup you do not want to repeat at task time.
+5. Publish the image to a registry and point the Replicated installer at it.
+
+<Warning>
+  Do not override the entrypoint or replace the runtime contract of the base image. The installer
+  expects standard OpenHands agent-server behavior. Only extend — do not replace.
+</Warning>
+
+### Base Image
+
+```dockerfile
+FROM ghcr.io/openhands/agent-server:1.23.0-python
+```
+
+Pin a specific version tag to ensure reproducible builds. Check
+[ghcr.io/openhands/agent-server](https://github.com/OpenHands/OpenHands/pkgs/container/agent-server)
+for the latest available tags.
+
+### Example: Build and Push
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  -f your-project/Dockerfile \
+  -t ghcr.io/<your-org>/openhands-custom-image:<your-tag> \
+  --push \
+  .
+```
+
+Use `--platform linux/amd64` because the Enterprise Replicated VM runs on `x86-64`.
+
+### What to Bake In
+
+Good candidates for prebaking:
+
+- Pinned repository checkouts
+- Package manager caches and installed dependencies (`node_modules`, Python virtualenvs, etc.)
+- Compiled or transpiled output
+- Native system packages (`xvfb`, `libkrb5-dev`, `pkg-config`, etc.)
+- Browser or Electron artifacts
+- Stable helper scripts such as `prepare-*` and `*-verify` wrappers
+
+### What to Keep Out
+
+<Warning>
+  Do not bake the following into your image:
+
+  - Secrets, API keys, or personal credentials
+  - Machine-specific paths or environment assumptions
+  - Uncommitted source changes or task-specific fixes
+  - Rapidly changing dependencies (use a lightweight `prepare-*` helper instead)
+</Warning>
+
+If the repository or dependencies change frequently, include a `prepare-*` script in the image
+so the agent can refresh only the parts that need updating without a full rebuild.
+
+## Configure the Replicated VM Installer
+
+Once your image is built and pushed to a registry, point the Replicated Admin Console at it.
+
+1. Open the **Admin Console** at `https://<your-base-domain>:30000`.
+2. Navigate to **Config** and find the **Sandbox Image** section.
+3. Set the following fields:
+
+| Field | Value |
+|---|---|
+| **Use a Custom Sandbox Image** | Enabled |
+| **Sandbox Image Repository** | Your image repository (e.g. `ghcr.io/your-org/openhands-custom-image`) |
+| **Sandbox Image Tag** | Your image tag (e.g. `v1.2.0`) |
+| **Registry Server** | If your registry requires authentication |
+| **Registry Username** | If your registry requires authentication |
+| **Registry Password or Credentials** | If your registry requires authentication |
+
+4. Click **Save config** and then **Deploy** to apply the change.
+
+<Note>
+  This setting applies to the **sandbox / agent-server image** only — the image that runs inside each
+  agent's isolated workspace. It does not replace the other OpenHands service images.
+</Note>
+
+## Reference
+
+- [OpenHands custom image example repo](https://github.com/rajshah4/openhands-custom-image) — benchmark Dockerfile,
+  benchmark scripts, and analysis tooling for the VS Code custom image example.
+- [Agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox) — full SDK
+  documentation on building and configuring custom sandbox images.
