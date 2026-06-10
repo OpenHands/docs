@@ -1,0 +1,919 @@
+---
+title: Settings and Secrets API
+description: Configure LLM, store secrets, and retrieve settings from the agent-server.
+---
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+The Settings and Secrets API provides server-side configuration management for agent-server deployments. This enables centralized LLM configuration, secure secret storage, and workspace-level retrieval of settings.
+
+## Overview
+
+When running agent-server in production, you often need to:
+- Store LLM configuration (model, API keys) on the server
+- Manage custom secrets securely (encrypted at rest)
+- Retrieve settings from within a workspace
+
+The Settings API provides REST endpoints for these operations:
+- `GET/PATCH /api/settings` - Read/update LLM and MCP configuration
+- `PUT/GET/DELETE /api/settings/secrets` - CRUD operations for custom secrets
+
+## 1) Settings and Secrets API
+
+> A ready-to-run example is available [here](#ready-to-run-example-settings-api)!
+
+### Key Concepts
+
+#### Storing LLM Configuration
+
+Store LLM settings via the Settings API. The API key is encrypted at rest when `OH_SECRET_KEY` is configured:
+
+```python icon="python"
+llm_config = {
+    "model": "anthropic/claude-sonnet-4-5-20250929",
+    "api_key": "your-api-key",
+    "base_url": None,  # Optional
+}
+
+response = client.patch(
+    "/api/settings",
+    json={"agent_settings_diff": {"llm": llm_config}},
+)
+```
+
+#### Storing Custom Secrets
+
+Store secrets via the Secrets API. Secrets are encrypted at rest and can be referenced in conversations via `LookupSecret`:
+
+```python icon="python"
+# Store a secret
+response = client.put(
+    "/api/settings/secrets",
+    json={
+        "name": "MY_PROJECT_TOKEN",
+        "value": "super-secret-token-12345",
+        "description": "Project token for API access",
+    },
+)
+
+# List secrets (values not exposed)
+response = client.get("/api/settings/secrets")
+
+# Delete a secret
+response = client.delete("/api/settings/secrets/MY_PROJECT_TOKEN")
+```
+
+#### Using LookupSecret References
+
+Reference stored secrets in conversations via `LookupSecret` URLs. The agent-server resolves these lazily at runtime:
+
+```python icon="python" focus={4-8}
+start_request = {
+    "agent": {...},
+    "workspace": {...},
+    "secrets": {
+        "MY_PROJECT_TOKEN": {
+            "kind": "LookupSecret",
+            "url": f"{server_url}/api/settings/secrets/MY_PROJECT_TOKEN",
+            "description": "Token resolved from secrets API",
+        }
+    },
+    "initial_message": {...},
+}
+```
+
+The agent can then access the secret as an environment variable `$MY_PROJECT_TOKEN`.
+
+### Ready-to-run Example Settings API
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/12_settings_and_secrets_api.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/12_settings_and_secrets_api.py)
+</Note>
+
+This example demonstrates the full workflow: storing LLM settings, creating secrets, using `LookupSecret` references, and cleaning up:
+
+```python icon="python" expandable examples/02_remote_agent_server/12_settings_and_secrets_api.py
+"""Example demonstrating the Settings and Secrets API.
+
+This example shows the recommended workflow for managing secrets:
+1. Store secrets via PUT /api/settings/secrets (encrypted at rest)
+2. Reference secrets in conversations via LookupSecret
+3. Agent uses secrets via environment variables ($SECRET_NAME)
+4. Clean up secrets via DELETE /api/settings/secrets/{name}
+
+This pattern enables:
+- Secure secret storage (encrypted at rest with OH_SECRET_KEY)
+- Lazy secret resolution at runtime (via LookupSecret URLs)
+- Fine-grained secret lifecycle management (CRUD operations)
+- Audit trail for secret access
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from uuid import UUID
+
+import httpx
+
+from openhands.sdk import get_logger
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+logger = get_logger(__name__)
+
+
+def _stream_output(stream, prefix, target_stream):
+    """Stream output from subprocess to target stream with prefix."""
+    try:
+        for line in iter(stream.readline, ""):
+            if line:
+                target_stream.write(f"[{prefix}] {line}")
+                target_stream.flush()
+    except Exception as e:
+        print(f"Error streaming {prefix}: {e}", file=sys.stderr)
+    finally:
+        stream.close()
+
+
+class ManagedAPIServer:
+    """Context manager for subprocess-managed OpenHands API server."""
+
+    def __init__(self, port: int = 8000, host: str = "127.0.0.1"):
+        self.port: int = port
+        self.host: str = host
+        self.process: subprocess.Popen[str] | None = None
+        self.base_url: str = f"http://{host}:{port}"
+        self.stdout_thread: threading.Thread | None = None
+        self.stderr_thread: threading.Thread | None = None
+
+    def __enter__(self):
+        """Start the API server subprocess."""
+        print(f"Starting OpenHands API server on {self.base_url}...")
+
+        # Set OH_SECRET_KEY to enable encrypted secrets feature
+        # In production, this should be a secure randomly generated key
+        # Set TMUX_TMPDIR to a short path to avoid socket path length issues on macOS
+        env = {
+            "LOG_JSON": "true",
+            "OH_SECRET_KEY": "example-secret-key-for-demo-only-32b",
+            "TMUX_TMPDIR": "/tmp/oh-tmux",
+            **os.environ,
+        }
+
+        self.process = subprocess.Popen(
+            [
+                "python",
+                "-m",
+                "openhands.agent_server",
+                "--port",
+                str(self.port),
+                "--host",
+                self.host,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        assert self.process is not None
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        self.stdout_thread = threading.Thread(
+            target=_stream_output,
+            args=(self.process.stdout, "SERVER", sys.stdout),
+            daemon=True,
+        )
+        self.stderr_thread = threading.Thread(
+            target=_stream_output,
+            args=(self.process.stderr, "SERVER", sys.stderr),
+            daemon=True,
+        )
+        self.stdout_thread.start()
+        self.stderr_thread.start()
+
+        # Wait for server to be ready
+        max_retries = 30
+        for i in range(max_retries):
+            try:
+                response = httpx.get(f"{self.base_url}/health", timeout=2.0)
+                if response.status_code == 200:
+                    print(f"✅ Server ready after {i + 1} attempts")
+                    return self
+            except httpx.RequestError:
+                pass
+            time.sleep(1)
+
+        raise RuntimeError(f"Server failed to start after {max_retries} seconds")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop the API server subprocess."""
+        if self.process:
+            print("Stopping API server...")
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            print("✅ Server stopped")
+
+
+# Get LLM configuration from environment
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+llm_model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+llm_base_url = os.getenv("LLM_BASE_URL")  # Optional custom base URL
+
+with ManagedAPIServer(port=8765) as server:
+    client = httpx.Client(base_url=server.base_url, timeout=120.0)
+
+    try:
+        # ══════════════════════════════════════════════════════════════
+        # Part 1: Store LLM Settings via Settings API
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🔧 Storing LLM configuration via Settings API")
+        logger.info("=" * 60)
+
+        # Store LLM configuration - the API key is encrypted at rest
+        llm_config: dict[str, str] = {
+            "model": llm_model,
+            "api_key": api_key,
+        }
+        if llm_base_url:
+            llm_config["base_url"] = llm_base_url
+
+        response = client.patch(
+            "/api/settings",
+            json={"agent_settings_diff": {"llm": llm_config}},
+        )
+        assert response.status_code == 200, f"PATCH settings failed: {response.text}"
+        settings = response.json()
+
+        logger.info("✅ LLM settings stored successfully")
+        logger.info(f"   - LLM model: {settings['agent_settings']['llm']['model']}")
+        if llm_base_url:
+            logger.info(f"   - Base URL: {llm_base_url}")
+        logger.info(f"   - API key set: {settings['llm_api_key_is_set']}")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 2: Store Custom Secret via Secrets API
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🔐 Storing custom secret via Secrets API")
+        logger.info("=" * 60)
+
+        # Store a custom secret - this could be an API token, database password, etc.
+        # The secret is encrypted at rest using OH_SECRET_KEY
+        secret_name = "MY_PROJECT_TOKEN"
+        secret_value = "super-secret-token-12345"
+
+        response = client.put(
+            "/api/settings/secrets",
+            json={
+                "name": secret_name,
+                "value": secret_value,
+                "description": "Example project token for demonstration",
+            },
+        )
+        assert response.status_code == 200, f"PUT secret failed: {response.text}"
+        logger.info(f"✅ Created secret: {secret_name}")
+
+        # List secrets to verify (values are not exposed)
+        response = client.get("/api/settings/secrets")
+        assert response.status_code == 200
+        secrets_list = response.json()["secrets"]
+        logger.info(f"✅ Server has {len(secrets_list)} secret(s) stored")
+        for secret in secrets_list:
+            logger.info(f"   - {secret['name']}: {secret.get('description', '')}")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 3: Start Conversation with LookupSecret Reference
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🤖 Starting conversation with secret reference")
+        logger.info("=" * 60)
+
+        # Create a workspace directory
+        temp_workspace_dir = tempfile.mkdtemp(prefix="secrets_api_demo_")
+
+        # Build the LookupSecret URL - agent server resolves this at runtime
+        # The URL points to the secrets endpoint on the same server
+        lookup_url = f"{server.base_url}/api/settings/secrets/{secret_name}"
+
+        # Start conversation with LookupSecret reference
+        # The secret will be resolved lazily when the agent needs it
+        start_request = {
+            "agent": {
+                "kind": "Agent",
+                "llm": llm_config,  # Use same LLM config (model, api_key, base_url)
+                "tools": [
+                    {"name": TerminalTool.name},
+                    {"name": FileEditorTool.name},
+                ],
+            },
+            "workspace": {"working_dir": temp_workspace_dir},
+            # Reference the stored secret via LookupSecret
+            # This creates an environment variable $MY_PROJECT_TOKEN in the agent
+            "secrets": {
+                secret_name: {
+                    "kind": "LookupSecret",
+                    "url": lookup_url,
+                    "description": "Project token resolved from secrets API",
+                }
+            },
+            "initial_message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Echo the value of the ${secret_name} environment "
+                        "variable to see if you have access. "
+                        "If so just respond `YES`, otherwise `NO`.",
+                    }
+                ],
+                "run": True,  # Auto-run after sending message
+            },
+        }
+
+        response = client.post("/api/conversations", json=start_request)
+        assert response.status_code == 201, (
+            f"Start conversation failed: {response.text}"
+        )
+        conversation_info = response.json()
+        conversation_id = UUID(conversation_info["id"])
+
+        logger.info("✅ Conversation started!")
+        logger.info(f"   - Conversation ID: {conversation_id}")
+        logger.info(f"   - Secret '{secret_name}' available as env var")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 4: Wait for Agent to Complete
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("⏳ Waiting for agent to complete task...")
+        logger.info("=" * 60)
+
+        # Poll conversation until agent finishes
+        max_wait = 120  # seconds
+        poll_interval = 2
+        elapsed = 0
+        execution_status = "unknown"
+
+        while elapsed < max_wait:
+            response = client.get(f"/api/conversations/{conversation_id}")
+            assert response.status_code == 200
+            conversation_data = response.json()
+            execution_status = conversation_data.get("execution_status", "unknown")
+
+            if execution_status in ("stopped", "paused", "error"):
+                break
+
+            logger.info(f"   Status: {execution_status} (waited {elapsed}s)")
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        logger.info(f"✅ Agent finished with status: {execution_status}")
+
+        # Get the agent's final response to verify the task was completed
+        response = client.get(
+            f"/api/conversations/{conversation_id}/agent_final_response"
+        )
+        accumulated_cost = 0.0
+        if response.status_code == 200:
+            result = response.json()
+            agent_response = result.get("response", "")
+            if agent_response:
+                # Truncate long responses for display
+                display_response = (
+                    agent_response[:200] + "..."
+                    if len(agent_response) > 200
+                    else agent_response
+                )
+                logger.info(f"   Agent response: {display_response}")
+                logger.info("   ✅ Agent completed the task using the secret!")
+
+        # Get conversation metrics from stats
+        response = client.get(f"/api/conversations/{conversation_id}")
+        if response.status_code == 200:
+            conversation_data = response.json()
+            # Metrics are tracked per-LLM usage in stats.usage_to_metrics
+            stats = conversation_data.get("stats") or {}
+            usage_to_metrics = stats.get("usage_to_metrics") or {}
+            # Sum accumulated_cost across all LLM usages
+            accumulated_cost = sum(
+                m.get("accumulated_cost", 0.0) for m in usage_to_metrics.values()
+            )
+
+        # Clean up - delete conversation
+        client.delete(f"/api/conversations/{conversation_id}")
+        logger.info("   Conversation deleted")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 5: Clean Up - Delete the Secret
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🧹 Cleaning up - deleting secret")
+        logger.info("=" * 60)
+
+        # Delete the secret after use
+        response = client.delete(f"/api/settings/secrets/{secret_name}")
+        assert response.status_code == 200, f"DELETE secret failed: {response.text}"
+        logger.info(f"✅ Deleted secret: {secret_name}")
+
+        # Verify deletion
+        response = client.get(f"/api/settings/secrets/{secret_name}")
+        assert response.status_code == 404
+        logger.info("✅ Verified deletion (secret no longer accessible)")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 6: Test Secret Name Validation
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("⚠️  Testing secret name validation")
+        logger.info("=" * 60)
+
+        # Invalid: starts with number
+        response = client.put(
+            "/api/settings/secrets",
+            json={"name": "123_invalid", "value": "test"},
+        )
+        assert response.status_code == 422
+        logger.info("✅ Rejected '123_invalid' (starts with number)")
+
+        # Invalid: contains hyphen
+        response = client.put(
+            "/api/settings/secrets",
+            json={"name": "invalid-name", "value": "test"},
+        )
+        assert response.status_code == 422
+        logger.info("✅ Rejected 'invalid-name' (contains hyphen)")
+
+        logger.info("\n" + "=" * 60)
+        logger.info("🎉 All Settings and Secrets API tests passed!")
+        logger.info("=" * 60)
+
+        print(f"EXAMPLE_COST: {accumulated_cost}")
+
+    finally:
+        client.close()
+```
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/12_settings_and_secrets_api.py"/>
+
+---
+
+## 2) Workspace Settings Methods
+
+> A ready-to-run example is available [here](#ready-to-run-example-workspace-settings)!
+
+`RemoteWorkspace` provides methods to retrieve settings from the agent-server, enabling workspaces to use centrally-configured LLM settings and secrets.
+
+### Key Concepts
+
+#### API Key Authentication
+
+When the agent-server is configured with `SESSION_API_KEY`, all requests must include the key. `RemoteWorkspace.api_key` automatically adds the `X-Session-API-Key` header:
+
+```python icon="python"
+# Agent-server requires authentication
+workspace = RemoteWorkspace(
+    host=server_url,
+    working_dir="/workspace",
+    api_key=session_api_key,  # Adds X-Session-API-Key header
+)
+```
+
+#### workspace.get_llm()
+
+Retrieve the configured LLM from agent-server settings:
+
+```python icon="python"
+# Get LLM with server-configured settings
+llm = workspace.get_llm()
+
+# Override specific settings
+llm = workspace.get_llm(model="gpt-4o", temperature=0.5)
+```
+
+The method calls `GET /api/settings` with `X-Expose-Secrets: plaintext` to retrieve the actual API key value.
+
+#### workspace.get_secrets()
+
+Retrieve `LookupSecret` references for stored secrets:
+
+```python icon="python"
+# Get all secrets as LookupSecret references
+secrets = workspace.get_secrets()
+
+# Get specific secrets
+secrets = workspace.get_secrets(names=["GITHUB_TOKEN", "API_KEY"])
+
+# Use in conversation
+conversation.update_secrets(secrets)
+```
+
+The returned `LookupSecret` objects include authentication headers so they can be resolved by the agent-server.
+
+#### workspace.get_mcp_config()
+
+Retrieve MCP (Model Context Protocol) server configuration:
+
+```python icon="python"
+mcp_config = workspace.get_mcp_config()
+# Returns dict compatible with MCPConfig.model_validate()
+```
+
+### Ready-to-run Example Workspace Settings
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/13_workspace_get_llm.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/13_workspace_get_llm.py)
+</Note>
+
+This example demonstrates secure workspace settings retrieval with API key authentication:
+
+```python icon="python" expandable examples/02_remote_agent_server/13_workspace_get_llm.py
+"""Example demonstrating workspace.get_llm() for settings-driven conversations.
+
+This example shows how to use the new RemoteWorkspace settings methods with
+API key authentication for secure access:
+
+1. Spin up an agent-server with a session API key configured
+2. Configure LLM settings via the Settings API (requires API key auth)
+3. Use workspace.get_llm() to retrieve a configured LLM (also authenticated)
+4. Start a conversation using the retrieved LLM
+
+Security Model:
+- The agent-server is configured with SESSION_API_KEY env var
+- All requests must include the X-Session-API-Key header
+- RemoteWorkspace.api_key parameter sets this header automatically
+- LookupSecrets include the API key in their headers for resolution
+
+This pattern enables:
+- Secure centralized LLM configuration on the agent-server
+- Authenticated access to settings and secrets
+- Consistent security across all workspace operations
+"""
+
+import os
+import secrets
+import subprocess
+import sys
+import threading
+import time
+
+import httpx
+
+from openhands.sdk import Conversation, get_logger
+from openhands.sdk.workspace.remote.base import RemoteWorkspace
+from openhands.tools.preset.default import get_default_agent
+
+
+logger = get_logger(__name__)
+
+
+def _stream_output(stream, prefix, target_stream):
+    """Stream output from subprocess to target stream with prefix."""
+    try:
+        for line in iter(stream.readline, ""):
+            if line:
+                target_stream.write(f"[{prefix}] {line}")
+                target_stream.flush()
+    except Exception as e:
+        print(f"Error streaming {prefix}: {e}", file=sys.stderr)
+    finally:
+        stream.close()
+
+
+class ManagedAPIServer:
+    """Context manager for subprocess-managed OpenHands API server.
+
+    Launches an agent-server with a randomly generated session API key
+    for secure access. All API requests must include this key.
+    """
+
+    def __init__(self, port: int = 8000, host: str = "127.0.0.1"):
+        self.port: int = port
+        self.host: str = host
+        self.process: subprocess.Popen[str] | None = None
+        self.base_url: str = f"http://{host}:{port}"
+        # Generate a random session API key for this server instance
+        self.session_api_key: str = secrets.token_urlsafe(32)
+        self.stdout_thread: threading.Thread | None = None
+        self.stderr_thread: threading.Thread | None = None
+
+    def __enter__(self):
+        """Start the API server subprocess with session API key auth."""
+        print(f"Starting OpenHands API server on {self.base_url}...")
+        print("🔐 Session API key configured (required for all requests)")
+
+        # Configure server with security:
+        # - OH_SECRET_KEY: enables encrypted storage of secrets
+        # - SESSION_API_KEY: requires all requests to be authenticated
+        env = {
+            "LOG_JSON": "true",
+            "OH_SECRET_KEY": "example-secret-key-for-demo-only-32b",
+            "SESSION_API_KEY": self.session_api_key,  # Enable auth!
+            "TMUX_TMPDIR": "/tmp/oh-tmux",
+            **os.environ,
+        }
+
+        self.process = subprocess.Popen(
+            [
+                "python",
+                "-m",
+                "openhands.agent_server",
+                "--port",
+                str(self.port),
+                "--host",
+                self.host,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        assert self.process is not None
+        assert self.process.stdout is not None
+        assert self.process.stderr is not None
+        self.stdout_thread = threading.Thread(
+            target=_stream_output,
+            args=(self.process.stdout, "SERVER", sys.stdout),
+            daemon=True,
+        )
+        self.stderr_thread = threading.Thread(
+            target=_stream_output,
+            args=(self.process.stderr, "SERVER", sys.stderr),
+            daemon=True,
+        )
+        self.stdout_thread.start()
+        self.stderr_thread.start()
+
+        # Wait for server to be ready
+        max_retries = 30
+        for i in range(max_retries):
+            try:
+                response = httpx.get(f"{self.base_url}/health", timeout=2.0)
+                if response.status_code == 200:
+                    print(f"✅ Server ready after {i + 1} attempts")
+                    return self
+            except httpx.RequestError:
+                pass
+            time.sleep(1)
+
+        raise RuntimeError(f"Server failed to start after {max_retries} seconds")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop the API server subprocess."""
+        if self.process:
+            print("Stopping API server...")
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
+            print("✅ Server stopped")
+
+
+# Get LLM configuration from environment
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+llm_model = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929")
+llm_base_url = os.getenv("LLM_BASE_URL")  # Optional custom base URL
+
+with ManagedAPIServer(port=8766) as server:
+    # Create HTTP client for settings API - MUST include session API key!
+    # The X-Session-API-Key header authenticates all requests
+    client = httpx.Client(
+        base_url=server.base_url,
+        timeout=120.0,
+        headers={"X-Session-API-Key": server.session_api_key},
+    )
+
+    try:
+        # ══════════════════════════════════════════════════════════════
+        # Part 0: Demonstrate Authentication Requirement
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🔐 Demonstrating API key authentication")
+        logger.info("=" * 60)
+
+        # Request WITHOUT api key should fail (401 Unauthorized)
+        unauthenticated = httpx.Client(base_url=server.base_url, timeout=10.0)
+        response = unauthenticated.get("/api/settings")
+        assert response.status_code == 401, (
+            f"Expected 401 without API key, got {response.status_code}"
+        )
+        logger.info("✅ Request without API key rejected (401 Unauthorized)")
+        unauthenticated.close()
+
+        # Request WITH api key should succeed
+        response = client.get("/api/settings")
+        assert response.status_code == 200, f"Authenticated request failed: {response}"
+        logger.info("✅ Request with API key accepted (200 OK)")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 1: Configure LLM Settings on Agent-Server
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🔧 Configuring LLM settings on agent-server")
+        logger.info("=" * 60)
+
+        # Store LLM configuration via the Settings API
+        llm_config: dict[str, str] = {
+            "model": llm_model,
+            "api_key": api_key,
+        }
+        if llm_base_url:
+            llm_config["base_url"] = llm_base_url
+
+        response = client.patch(
+            "/api/settings",
+            json={"agent_settings_diff": {"llm": llm_config}},
+        )
+        assert response.status_code == 200, f"PATCH settings failed: {response.text}"
+        settings = response.json()
+
+        logger.info("✅ LLM settings stored successfully")
+        logger.info(f"   - Model: {settings['agent_settings']['llm']['model']}")
+        logger.info(f"   - API key set: {settings['llm_api_key_is_set']}")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 2: Create Workspace and Retrieve LLM via get_llm()
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🔗 Creating workspace and retrieving LLM configuration")
+        logger.info("=" * 60)
+
+        # Create a RemoteWorkspace with API key authentication!
+        # The api_key is used for X-Session-API-Key header on all requests,
+        # including get_llm(), get_secrets(), and get_mcp_config().
+        workspace = RemoteWorkspace(
+            host=server.base_url,
+            working_dir="/tmp/workspace_get_llm_demo",
+            api_key=server.session_api_key,  # Authenticate workspace requests
+        )
+
+        logger.info("✅ Workspace created with session API key")
+
+        # Use get_llm() to retrieve LLM configured on the agent-server!
+        # This calls GET /api/settings with both:
+        # - X-Session-API-Key (authentication)
+        # - X-Expose-Secrets: plaintext (to get the actual API key value)
+        llm = workspace.get_llm()
+
+        logger.info("✅ Retrieved LLM from workspace.get_llm()")
+        logger.info(f"   - Model: {llm.model}")
+        logger.info(f"   - Base URL: {llm.base_url or '(default)'}")
+
+        # You can also override specific settings:
+        # llm_custom = workspace.get_llm(model="gpt-4o", temperature=0.5)
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 3: Create Agent and Start Conversation
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🤖 Creating agent with retrieved LLM")
+        logger.info("=" * 60)
+
+        # Create agent using the LLM from workspace settings
+        agent = get_default_agent(llm=llm, cli_mode=True)
+
+        logger.info("✅ Agent created with workspace LLM settings")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 4: Start Conversation and Run Task
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("💬 Starting conversation")
+        logger.info("=" * 60)
+
+        # Create conversation using the workspace and agent
+        conversation = Conversation(
+            agent=agent,
+            workspace=workspace,
+        )
+
+        try:
+            logger.info(f"   Conversation ID: {conversation.state.id}")
+
+            # Send a simple task
+            conversation.send_message("What is 2 + 2? Just respond with the number.")
+            logger.info("📝 Sent message, running conversation...")
+            conversation.run()
+
+            logger.info("✅ Conversation completed!")
+            logger.info(f"   Status: {conversation.state.execution_status}")
+
+            # Get cost metrics
+            cost = (
+                conversation.conversation_stats.get_combined_metrics().accumulated_cost
+            )
+            logger.info(f"   Cost: ${cost:.6f}")
+
+            print(f"EXAMPLE_COST: {cost}")
+
+        finally:
+            conversation.close()
+            logger.info("🧹 Conversation closed")
+
+        # ══════════════════════════════════════════════════════════════
+        # Part 5: Demonstrate get_secrets() with API Key Auth
+        # ══════════════════════════════════════════════════════════════
+        logger.info("\n" + "=" * 60)
+        logger.info("🔐 Demonstrating get_secrets() and get_mcp_config()")
+        logger.info("=" * 60)
+
+        # Store a test secret
+        response = client.put(
+            "/api/settings/secrets",
+            json={
+                "name": "TEST_SECRET",
+                "value": "secret-value-123",
+                "description": "Test secret for demo",
+            },
+        )
+        assert response.status_code == 200
+
+        # Retrieve secrets via workspace.get_secrets()
+        # The returned LookupSecrets include the API key in their headers
+        # so they can authenticate when resolved by the agent-server
+        workspace_secrets = workspace.get_secrets()
+        logger.info(
+            f"✅ Retrieved {len(workspace_secrets)} secret(s) via "
+            "workspace.get_secrets()"
+        )
+        for name, lookup_secret in workspace_secrets.items():
+            logger.info(f"   - {name}: LookupSecret")
+            logger.info(f"     URL: {lookup_secret.url}")
+            # The LookupSecret includes the X-Session-API-Key header
+            # so it can authenticate when resolved
+            has_auth = "X-Session-API-Key" in (lookup_secret.headers or {})
+            logger.info(f"     Has API key header: {has_auth}")
+
+        # Clean up test secret
+        client.delete("/api/settings/secrets/TEST_SECRET")
+        logger.info("   Test secret deleted")
+
+        # get_mcp_config() returns empty dict if no MCP config is set
+        mcp_config = workspace.get_mcp_config()
+        logger.info(f"✅ MCP config: {mcp_config or '(none configured)'}")
+
+        logger.info("\n" + "=" * 60)
+        logger.info("🎉 Example completed successfully!")
+        logger.info("=" * 60)
+        logger.info("""
+Key takeaways:
+1. Agent-server can be secured with SESSION_API_KEY env var
+2. RemoteWorkspace.api_key passes X-Session-API-Key header
+3. workspace.get_llm() retrieves LLM with authentication
+4. workspace.get_secrets() returns LookupSecrets with auth headers
+5. workspace.get_mcp_config() retrieves MCP config with auth
+""")
+
+    finally:
+        client.close()
+```
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/13_workspace_get_llm.py"/>
+
+---
+
+## Security Considerations
+
+### Encryption at Rest
+
+Enable encrypted storage by setting `OH_SECRET_KEY`:
+
+```bash
+export OH_SECRET_KEY="your-32-byte-secret-key"
+```
+
+When set, all secrets (including LLM API keys) are encrypted before storage.
+
+### Session API Keys
+
+Secure the agent-server with `SESSION_API_KEY`:
+
+```bash
+export SESSION_API_KEY="your-session-api-key"
+```
+
+When set, all API requests must include the `X-Session-API-Key` header.
+
+### LookupSecret Headers
+
+When using `workspace.get_secrets()`, the returned `LookupSecret` objects automatically include authentication headers, ensuring secrets can be resolved even when the agent-server requires authentication.
+
+## Next Steps
+
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)** - Architecture and implementation details
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** - Run in isolated Docker containers
+- **[Agent Settings](/sdk/guides/agent-settings)** - Configure agents with structured settings
+- **[Custom Secrets](/sdk/guides/secrets)** - Secure credential management in conversations
