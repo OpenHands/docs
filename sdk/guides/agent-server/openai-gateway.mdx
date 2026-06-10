@@ -1,5 +1,5 @@
 ---
-title: OpenAI-Compatible Gateway
+title: OpenAI-Compatible Endpoint
 description: Call an OpenHands agent-server through the OpenAI Chat Completions protocol.
 ---
 
@@ -7,24 +7,208 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 The agent-server exposes an OpenAI-compatible `/v1/chat/completions` endpoint so clients that already speak the OpenAI protocol can call an OpenHands agent.
 
-Use this when you want an existing chat UI, IDE integration, evaluation harness, or another agent to treat OpenHands as an OpenAI-style backend while still getting the full agent runtime behind the request.
+Use this when you want an existing chat UI, IDE integration, evaluation harness, voice platform, or another agent to treat OpenHands as an OpenAI-style backend while still getting the full agent runtime behind the request.
 
-## How it works
+## What to Configure
 
-1. Save an LLM profile through the agent-server profile API.
-2. List available gateway models with `GET /v1/models`.
-3. Call `POST /v1/chat/completions` with a model ID shaped like `openhands_<profile_name>`.
-4. Read `X-OpenHands-ServerConversation-ID` from the response.
-5. Pass that header back on later requests to continue the same OpenHands conversation.
+Most OpenAI-compatible clients ask for the same three fields:
+
+| Client Field | Value |
+| --- | --- |
+| Base URL | `https://YOUR_AGENT_SERVER/v1` |
+| API key | Your agent-server session API key |
+| Model | `openhands_<profile_name>` |
+
+For example, a saved LLM profile named `gateway_demo` appears as the OpenAI model `openhands_gateway_demo`.
 
 The gateway accepts the same session key in either OpenHands or OpenAI-compatible form:
 
 - `X-Session-API-Key: <key>`
 - `Authorization: Bearer <key>`
 
-<Note>
-The current gateway supports non-streaming Chat Completions requests. Requests with `stream: true` return a `400` response until streaming support is added.
-</Note>
+## Prepare a Profile
+
+OpenAI-compatible traffic is backed by an agent-server LLM profile. Create one with the native profile API first:
+
+```bash
+export AGENT_SERVER_URL="http://localhost:8000"
+export SESSION_API_KEY="your-session-api-key"
+export PROFILE_NAME="gateway_demo"
+export OPENHANDS_MODEL="openhands_${PROFILE_NAME}"
+
+curl -X POST "$AGENT_SERVER_URL/api/profiles/$PROFILE_NAME" \
+  -H "X-Session-API-Key: $SESSION_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "llm": {
+      "model": "gpt-5-nano",
+      "api_key": "YOUR_LLM_API_KEY"
+    },
+    "include_secrets": true
+  }'
+```
+
+Then confirm the profile is visible to OpenAI clients:
+
+```bash
+curl "$AGENT_SERVER_URL/v1/models" \
+  -H "Authorization: Bearer $SESSION_API_KEY"
+```
+
+## Client Recipes
+
+<Tabs>
+<Tab title="curl">
+
+```bash
+curl -i "$AGENT_SERVER_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $SESSION_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$OPENHANDS_MODEL\",
+    \"messages\": [
+      {
+        \"role\": \"system\",
+        \"content\": \"Answer directly unless you need to inspect files.\"
+      },
+      {
+        \"role\": \"user\",
+        \"content\": \"Explain what this OpenHands endpoint does in one sentence.\"
+      }
+    ]
+  }"
+```
+
+The response includes `X-OpenHands-ServerConversation-ID`. Save that header if you want a later request to continue the same agent conversation.
+
+</Tab>
+<Tab title="Python SDK">
+
+```python
+import os
+
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["SESSION_API_KEY"],
+    base_url=f"{os.environ['AGENT_SERVER_URL']}/v1",
+)
+
+response = client.chat.completions.with_raw_response.create(
+    model=os.environ["OPENHANDS_MODEL"],
+    messages=[
+        {"role": "user", "content": "Summarize this repository."},
+    ],
+)
+completion = response.parse()
+conversation_id = response.headers["X-OpenHands-ServerConversation-ID"]
+print(completion.choices[0].message.content)
+
+follow_up = client.chat.completions.create(
+    model=os.environ["OPENHANDS_MODEL"],
+    messages=[{"role": "user", "content": "Now list the main packages."}],
+    extra_headers={"X-OpenHands-ServerConversation-ID": conversation_id},
+)
+print(follow_up.choices[0].message.content)
+```
+
+</Tab>
+<Tab title="JavaScript SDK">
+
+```javascript
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: process.env.SESSION_API_KEY,
+  baseURL: `${process.env.AGENT_SERVER_URL}/v1`,
+});
+
+const first = await client.chat.completions
+  .create({
+    model: process.env.OPENHANDS_MODEL,
+    messages: [
+      { role: "user", content: "Summarize this repository." },
+    ],
+  })
+  .withResponse();
+
+const conversationId = first.response.headers.get(
+  "x-openhands-serverconversation-id",
+);
+console.log(first.data.choices[0].message.content);
+
+const followUp = await client.chat.completions.create(
+  {
+    model: process.env.OPENHANDS_MODEL,
+    messages: [{ role: "user", content: "Now list the main packages." }],
+  },
+  {
+    headers: { "X-OpenHands-ServerConversation-ID": conversationId },
+  },
+);
+console.log(followUp.choices[0].message.content);
+```
+
+</Tab>
+<Tab title="Chat UIs">
+
+For Open WebUI, LibreChat, Chatbot UI, and similar OpenAI-compatible frontends, configure a custom OpenAI provider with:
+
+- **Base URL**: `https://YOUR_AGENT_SERVER/v1`
+- **API key**: your agent-server session API key
+- **Model**: `openhands_<profile_name>`
+- **Streaming**: disabled for now
+
+If the UI can store a response header and send a custom request header, persist `X-OpenHands-ServerConversation-ID` per chat thread and send it on follow-up turns. If it cannot, each request starts a new OpenHands conversation and works best for one-shot tasks.
+
+</Tab>
+<Tab title="Voice or Webhook">
+
+Voice platforms and webhook integrations usually have their own session or call ID. Store a mapping from that external ID to the OpenHands conversation ID:
+
+```python
+import os
+
+# Initialize this once at app startup, or replace it with durable session storage.
+conversation_ids: dict[str, str] = {}
+
+conversation_id = conversation_ids.get(platform_session_id)
+headers = {}
+if conversation_id:
+    headers["X-OpenHands-ServerConversation-ID"] = conversation_id
+
+response = client.chat.completions.with_raw_response.create(
+    model=os.environ.get("OPENHANDS_MODEL", "openhands_gateway_demo"),
+    messages=[{"role": "user", "content": transcript_text}],
+    extra_headers=headers,
+)
+
+conversation_ids[platform_session_id] = response.headers[
+    "X-OpenHands-ServerConversation-ID"
+]
+reply_text = response.parse().choices[0].message.content
+```
+
+Return `reply_text` to the voice or webhook platform. Keep the mapping for as long as that external session should continue.
+
+</Tab>
+</Tabs>
+
+## Conversation State
+
+The OpenAI Chat Completions protocol usually sends full message history on every request. The OpenHands gateway does not reconstruct agent history from prior assistant messages. Instead:
+
+- Omit `X-OpenHands-ServerConversation-ID` to start a new OpenHands conversation.
+- Read `X-OpenHands-ServerConversation-ID` from the response.
+- Send that header on follow-up requests to continue the same OpenHands conversation.
+
+When reusing a conversation, send the newest user turn in `messages`. The server-side OpenHands conversation owns the previous agent state, tool activity, and workspace context.
+
+## Current Limitations
+
+- Only non-streaming Chat Completions requests are supported. Requests with `stream: true` return `400` until streaming support is added.
+- The response contains the final assistant text only. Internal OpenHands tool activity is not exposed as OpenAI tool calls.
+- OpenAI request fields that are not needed by the gateway are ignored or rejected intentionally by the server implementation.
 
 ## Ready-to-run example
 
