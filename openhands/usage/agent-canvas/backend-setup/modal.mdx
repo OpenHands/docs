@@ -76,6 +76,7 @@ Usage:
   modal run deploy.py
 """
 
+import os
 import subprocess
 
 import modal
@@ -92,6 +93,13 @@ AGENT_SERVER_PORT = 8000
 SCALEDOWN_WINDOW = 600  # seconds before an idle container is eligible for shutdown
 CONTAINER_CPU = 2.0
 CONTAINER_MEMORY_MB = 4096  # 4 GB
+
+# Always-on mode (default): keeps one container warm at all times for zero
+# cold-start latency. Costs ~$102/month (2 vCPU / 4 GB, 24/7).
+# Set MODAL_ALWAYS_ON=0 to scale to zero when idle. You only pay while
+# actively coding, but the first request after idle has a ~10-30s cold start.
+ALWAYS_ON = os.environ.get("MODAL_ALWAYS_ON", "1").lower() in ("1", "true")
+MIN_CONTAINERS = 1 if ALWAYS_ON else 0
 
 # --- Modal App ---
 
@@ -138,10 +146,10 @@ agent_server_image = (
     memory=CONTAINER_MEMORY_MB,
     scaledown_window=SCALEDOWN_WINDOW,
     timeout=3600,
-    # Pin to exactly 1 container, always warm. The agent-server is stateful
-    # (SQLite DB, tmux sessions, in-memory conversation state). Multiple
-    # containers would diverge. min_containers=1 eliminates cold starts.
-    min_containers=1,
+    # The agent-server is stateful (SQLite DB, tmux sessions, in-memory
+    # conversation state) — multiple containers would diverge.
+    # min_containers is controlled by MODAL_ALWAYS_ON (default: 1, always warm).
+    min_containers=MIN_CONTAINERS,
     max_containers=1,
 )
 @modal.concurrent(max_inputs=10)
@@ -160,13 +168,19 @@ class AgentServer:
 
 @app.local_entrypoint()
 def main():
+    mode = "always-on" if ALWAYS_ON else "scale-to-zero"
     print("OpenHands Agent Server — Modal deployment")
     print(f"  Image: ghcr.io/openhands/agent-server:{AGENT_SERVER_IMAGE_TAG}")
     print(f"  Volume: openhands-data → {VOLUME_MOUNT}")
+    print(f"  Mode: {mode} (min_containers={MIN_CONTAINERS})")
     print(f"  Scaledown: {SCALEDOWN_WINDOW}s")
     print()
     print("To deploy:")
     print("  modal deploy deploy.py")
+    if ALWAYS_ON:
+        print()
+        print("  # Or, to scale to zero when idle (saves cost, adds cold starts):")
+        print("  MODAL_ALWAYS_ON=0 modal deploy deploy.py")
     print()
     print("After deploying, add the backend in Agent Canvas:")
     print("  1. Open Agent Canvas")
@@ -189,7 +203,13 @@ Modal builds the container image on first deploy (takes a few minutes), then pri
 https://openhands-agent-server--agentserver-serve.modal.run
 ```
 
-The agent server runs on 2 vCPU / 4 GB RAM with a persistent volume for conversations and settings. The container is always warm (`min_containers=1`) so there's no cold-start latency.
+The agent server runs on 2 vCPU / 4 GB RAM with a persistent volume for conversations and settings. By default, the container is always warm (`min_containers=1`) so there's no cold-start latency. To scale to zero when idle instead (lower cost, but ~10-30s cold start on first request):
+
+```bash
+MODAL_ALWAYS_ON=0 modal deploy deploy.py
+```
+
+See [Cost](#cost) for a comparison of the two modes.
 
 ## 4. Connect Agent Canvas
 
@@ -218,15 +238,28 @@ Settings are stored server-side on the Modal volume (encrypted with `OH_SECRET_K
 
 ## Cost
 
-The deployment keeps one container running at all times (`min_containers=1`) to eliminate cold-start latency. Modal charges per-second:
+Modal charges per-second for CPU and memory. The `MODAL_ALWAYS_ON` setting controls whether the container stays warm between requests:
 
-| Resource | Rate | Daily Cost | Monthly Cost |
-|----------|------|------------|--------------|
-| 2 vCPU (1 physical core) | ~$0.096/hr | ~$2.30 | ~$69 |
-| 4 GB RAM | ~$0.046/hr | ~$1.10 | ~$33 |
-| **Total** | **~$0.14/hr** | **~$3.40** | **~$102** |
+| | Always-on (default) | Scale-to-zero (`MODAL_ALWAYS_ON=0`) |
+|---|---|---|
+| **Cold starts** | None | ~10-30s after idle period |
+| **Idle behavior** | Container stays warm 24/7 | Scales down after 10 min idle |
+| **Best for** | Daily driver, fast iteration | Occasional use, cost-sensitive |
+| **Monthly cost** | ~$102 (24/7) | Pay only for active hours |
 
-The $30/month free credit on Modal's starter tier covers about 9 days of continuous usage. To reduce costs, stop the deployment when not in use (`modal app stop openhands-agent-server`). Your data on the Modal volume persists.
+Hourly rate breakdown (2 vCPU / 4 GB):
+
+| Resource | Rate |
+|----------|------|
+| 2 vCPU (1 physical core) | ~$0.096/hr |
+| 4 GB RAM | ~$0.046/hr |
+| **Total** | **~$0.14/hr** |
+
+**Always-on** costs ~$3.40/day (~$102/month). Modal's $30/month free credit covers about 9 days.
+
+**Scale-to-zero** costs only for the hours the container is running. At 8 hours/day on workdays, that's roughly ~$1.12/day (~$25/month). The first request after an idle period takes ~10-30s while the container cold-starts; after that, the `scaledown_window` (10 min) keeps it warm between interactions.
+
+To stop the deployment entirely and avoid all charges: `modal app stop openhands-agent-server`. Your data on the Modal volume persists.
 
 ## Limitations
 
