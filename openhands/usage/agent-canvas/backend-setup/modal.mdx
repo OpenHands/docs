@@ -1,0 +1,278 @@
+---
+title: Modal Backend
+description: Deploy the agent server on Modal as a remote backend for Agent Canvas.
+---
+
+Deploy the [OpenHands](https://github.com/OpenHands/OpenHands) agent server on [Modal](https://modal.com) as a remote backend for Agent Canvas. Canvas runs locally on your machine while the agent server runs on Modal and executes code inside the container — same execution model as running `npx @openhands/agent-canvas` locally.
+
+<Warning>
+  The agent server runs with full access to the container's filesystem, environment, and network. Anyone with the API key can execute arbitrary code on your Modal container. Keep the API key secret and rotate it if it's ever exposed.
+</Warning>
+
+## When to Use It
+
+A Modal backend is a good fit when you want to:
+
+- Offload agent execution to the cloud without managing your own VM or Docker host
+- Take advantage of Modal's per-second billing and free-tier credits
+- Get a persistent, always-warm backend with minimal setup
+
+## Prerequisites
+
+- A [Modal account](https://modal.com/signup) (free tier includes $30/month credit)
+- Python 3.12+
+- Agent Canvas running locally — see [Setup](/openhands/usage/agent-canvas/setup)
+- An LLM API key (OpenAI, Anthropic, etc.)
+
+## 1. Install the Modal CLI
+
+```bash
+pip install modal
+modal setup
+```
+
+`modal setup` opens a browser to authenticate. Your credentials are saved to `~/.modal.toml`.
+
+## 2. Create a Modal Secret
+
+Generate an API key and encryption key, then store them as a Modal secret:
+
+```bash
+export API_KEY=$(openssl rand -base64 32)
+
+modal secret create openhands-server-keys \
+  OH_SESSION_API_KEYS_0="$API_KEY" \
+  OH_SECRET_KEY="$(openssl rand -base64 32)"
+
+echo "Save this — you'll need it to connect Canvas:"
+echo "  API Key: $API_KEY"
+```
+
+<Warning>
+  Copy the `API_KEY` value now. You'll paste it into Agent Canvas in step 4. The encryption key (`OH_SECRET_KEY`) stays on Modal — you don't need to save it separately.
+</Warning>
+
+This secret persists in your Modal account. You only need to create it once.
+
+## 3. Deploy
+
+Save the following as `deploy.py`:
+
+```python
+"""
+Deploy OpenHands Agent Server on Modal.
+
+Prerequisites:
+  - Modal account + CLI: pip install modal && modal setup
+  - Create a Modal secret named "openhands-server-keys" with:
+      modal secret create openhands-server-keys \
+        OH_SESSION_API_KEYS_0="$(openssl rand -base64 32)" \
+        OH_SECRET_KEY="$(openssl rand -base64 32)"
+
+Usage:
+  modal deploy deploy.py
+
+  # Dry run (validate config without deploying):
+  modal run deploy.py
+"""
+
+import subprocess
+
+import modal
+
+# --- Configuration ---
+
+# Agent-server image tag — must match a published ghcr.io/openhands/agent-server tag.
+# CI publishes the `binary` target with variant suffix: {version}-python.
+# Includes Python, Node.js 22, tmux, git, uv, and the PyInstaller-built
+# agent-server binary at /usr/local/bin/openhands-agent-server.
+AGENT_SERVER_IMAGE_TAG = "1.24.0-python"
+
+AGENT_SERVER_PORT = 8000
+SCALEDOWN_WINDOW = 600  # seconds before an idle container is eligible for shutdown
+CONTAINER_CPU = 2.0
+CONTAINER_MEMORY_MB = 4096  # 4 GB
+
+# --- Modal App ---
+
+app = modal.App("openhands-agent-server")
+
+# Persistent volume for ~/.openhands (conversations, settings, secrets, DB).
+# Survives container restarts and redeploys.
+volume = modal.Volume.from_name("openhands-data", create_if_missing=True)
+VOLUME_MOUNT = "/home/openhands/.openhands"
+
+# Secrets: OH_SESSION_API_KEYS_0 (auth) and OH_SECRET_KEY (encryption at rest).
+# Create once with: modal secret create openhands-server-keys ...
+secrets = modal.Secret.from_name("openhands-server-keys")
+
+# --- Image ---
+
+# canvas_ui_tool.py is required by the agent-server but ships with agent-canvas,
+# not the standalone server image. Fetch it from GitHub during image build.
+TOOLS_REMOTE_DIR = "/opt/canvas-tools"
+CANVAS_UI_TOOL_URL = "https://raw.githubusercontent.com/OpenHands/agent-canvas/main/tools/canvas_ui_tool.py"
+
+agent_server_image = (
+    modal.Image.from_registry(
+        f"ghcr.io/openhands/agent-server:{AGENT_SERVER_IMAGE_TAG}",
+        add_python="3.13",
+    )
+    .dockerfile_commands(
+        # Clear the image's ENTRYPOINT so Modal manages the process lifecycle.
+        ["ENTRYPOINT []"],
+    )
+    .run_commands(
+        f"mkdir -p {TOOLS_REMOTE_DIR} && curl -fsSL -o {TOOLS_REMOTE_DIR}/canvas_ui_tool.py {CANVAS_UI_TOOL_URL}",
+    )
+    .env({"OH_EXTRA_PYTHON_PATH": TOOLS_REMOTE_DIR})
+)
+
+# --- Agent Server ---
+
+@app.cls(
+    image=agent_server_image,
+    secrets=[secrets],
+    volumes={VOLUME_MOUNT: volume},
+    cpu=CONTAINER_CPU,
+    memory=CONTAINER_MEMORY_MB,
+    scaledown_window=SCALEDOWN_WINDOW,
+    timeout=3600,
+    # Pin to exactly 1 container, always warm. The agent-server is stateful
+    # (SQLite DB, tmux sessions, in-memory conversation state). Multiple
+    # containers would diverge. min_containers=1 eliminates cold starts.
+    min_containers=1,
+    max_containers=1,
+)
+@modal.concurrent(max_inputs=10)
+class AgentServer:
+    @modal.web_server(port=AGENT_SERVER_PORT, startup_timeout=300)
+    def serve(self):
+        cmd = [
+            "/usr/local/bin/openhands-agent-server",
+            "--host", "0.0.0.0",
+            "--port", str(AGENT_SERVER_PORT),
+        ]
+        print(f"Starting agent-server on port {AGENT_SERVER_PORT}...")
+        subprocess.Popen(cmd)
+
+# --- Dry-run entrypoint: modal run deploy.py ---
+
+@app.local_entrypoint()
+def main():
+    print("OpenHands Agent Server — Modal deployment")
+    print(f"  Image: ghcr.io/openhands/agent-server:{AGENT_SERVER_IMAGE_TAG}")
+    print(f"  Volume: openhands-data → {VOLUME_MOUNT}")
+    print(f"  Scaledown: {SCALEDOWN_WINDOW}s")
+    print()
+    print("To deploy:")
+    print("  modal deploy deploy.py")
+    print()
+    print("After deploying, add the backend in Agent Canvas:")
+    print("  1. Open Agent Canvas")
+    print("  2. Go to Manage backends → Add a backend")
+    print("  3. Enter:")
+    print("     Name: Modal Agent Server")
+    print("     Host: https://openhands-agent-server--agentserver-serve.modal.run")
+    print("     API Key: <your OH_SESSION_API_KEYS_0 value>")
+```
+
+Then deploy:
+
+```bash
+modal deploy deploy.py
+```
+
+Modal builds the container image on first deploy (takes a few minutes), then prints the serving URL:
+
+```
+https://openhands-agent-server--agentserver-serve.modal.run
+```
+
+The agent server runs on 2 vCPU / 4 GB RAM with a persistent volume for conversations and settings. The container is always warm (`min_containers=1`) so there's no cold-start latency.
+
+## 4. Connect Agent Canvas
+
+1. Open Agent Canvas locally (`npx @openhands/agent-canvas`).
+2. Click the backend switcher → **Manage Backends** → **Add Backend**.
+3. Fill in:
+   - **Name** — e.g. `Modal`
+   - **Host / Base URL** — the URL from step 3 (e.g. `https://openhands-agent-server--agentserver-serve.modal.run`)
+   - **API Key** — the `API_KEY` value from step 2
+4. Save and select it as the active backend.
+
+<Warning>
+  The URL **must** use `https://`, not `http://`. Modal redirects HTTP to HTTPS with a 308, which breaks CORS preflight requests.
+</Warning>
+
+## 5. Configure Your LLM
+
+The agent server doesn't come with LLM credentials — you provide them once through the Canvas UI:
+
+1. With the Modal backend selected, open **Settings**.
+2. Choose a provider (e.g. OpenAI, Anthropic).
+3. Enter your API key and select a model.
+4. Save.
+
+Settings are stored server-side on the Modal volume (encrypted with `OH_SECRET_KEY`) and persist across redeploys.
+
+## Cost
+
+The deployment keeps one container running at all times (`min_containers=1`) to eliminate cold-start latency. Modal charges per-second:
+
+| Resource | Rate | Daily Cost | Monthly Cost |
+|----------|------|------------|--------------|
+| 2 vCPU (1 physical core) | ~$0.096/hr | ~$2.30 | ~$69 |
+| 4 GB RAM | ~$0.046/hr | ~$1.10 | ~$33 |
+| **Total** | **~$0.14/hr** | **~$3.40** | **~$102** |
+
+The $30/month free credit on Modal's starter tier covers about 9 days of continuous usage. To reduce costs, stop the deployment when not in use (`modal app stop openhands-agent-server`). Your data on the Modal volume persists.
+
+## Limitations
+
+- **No Docker-in-Docker.** Modal containers don't support nested Docker. The agent executes code directly on the container filesystem (same model as running `npx @openhands/agent-canvas` locally). Tools that require Docker won't work.
+- **Single-user only.** Pinned to one container (`max_containers=1`) because the agent server uses SQLite and in-memory state that can't be shared across containers.
+- **Public URL.** The `*.modal.run` endpoint is internet-reachable. All API endpoints require the API key, but the URL itself is public.
+
+## Security
+
+The agent server is protected by the API key you created in step 2. Every REST and WebSocket request is rejected without it. Modal provides TLS on all `*.modal.run` endpoints automatically.
+
+The `*.modal.run` URL is not indexed or easily guessable, but treat it as sensitive — it appears in terminal output, browser history, and Canvas localStorage.
+
+### Rotating the API Key
+
+If you suspect the API key has been leaked:
+
+```bash
+export API_KEY=$(openssl rand -base64 32)
+modal secret create openhands-server-keys --force \
+  OH_SESSION_API_KEYS_0="$API_KEY" \
+  OH_SECRET_KEY="$(openssl rand -base64 32)"
+modal deploy deploy.py
+echo "New API Key: $API_KEY"
+```
+
+Then update the API key in Agent Canvas — click the backend switcher → **Manage Backends** → edit the Modal backend → paste the new key.
+
+## Tearing Down
+
+To stop the deployment and stop incurring costs:
+
+```bash
+modal app stop openhands-agent-server
+```
+
+Your data on the Modal volume (`openhands-data`) is preserved. Redeploy later with `modal deploy deploy.py` and everything picks up where you left off. To permanently delete the volume:
+
+```bash
+modal volume delete openhands-data
+```
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
+- [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm)
+- [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)
