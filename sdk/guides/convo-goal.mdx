@@ -34,7 +34,7 @@ Because `run_goal` drives the conversation you pass in (it does not fork or spin
 
 ## Quick Start
 
-```python icon="python" focus={2,5-7,11}
+```python icon="python" focus={2,7-8,22}
 from openhands.sdk import LLM, Agent, Conversation, Tool
 from openhands.sdk.conversation.goal import run_goal
 from openhands.tools.file_editor import FileEditorTool
@@ -105,7 +105,7 @@ The `missing` field is what the loop feeds back to the agent in the next follow-
 They compose without changes: attach a critic to the agent as usual, then drive the conversation with `run_goal`. Every inner `run()` still consults the critic; the outer loop still re-runs until the judge is satisfied.
 
 ```python icon="python" focus={1,5-7,11}
-from openhands.sdk.critic import APIBasedCritic, IterativeRefinementConfig
+from openhands.sdk.critic import APIBasedCritic
 from openhands.sdk.conversation.goal import run_goal
 
 agent = Agent(
@@ -124,14 +124,10 @@ outcome = run_goal(conversation, objective, judge_llm, max_iterations=5)
 
 ### `GoalController`
 
-`GoalController` owns the continue-vs-stop decision logic and the iteration cap. It performs **no I/O**: a driver owns sending messages and running the agent.
+`GoalController` owns the continue-vs-stop decision logic and the iteration cap. It does **no conversation transport I/O** — the driver owns sending messages and running the agent — but it *does* own the judge call: `on_run_finished()` synchronously invokes the judge LLM, so treat that call as blocking.
 
 ```python icon="python"
-from openhands.sdk.conversation.goal import (
-    GoalController,
-    GoalContinue,
-    GoalDone,
-)
+from openhands.sdk.conversation.goal import GoalController, GoalDone
 
 controller = GoalController(objective, judge_llm, max_iterations=10)
 conversation.send_message(controller.start())
@@ -150,7 +146,7 @@ That split lets a synchronous driver and an asynchronous agent-server task share
 
 ### `judge_goal`
 
-`judge_goal` is the reusable kernel: a pure `(objective, transcript) → GoalVerdict` evaluator with no dependency on the loop. Use it directly to build a `/status` command, a stop hook, or a server endpoint:
+`judge_goal` is the reusable kernel: a synchronous, LLM-backed evaluator with signature `judge_goal(judge_llm, objective, events) → GoalVerdict` and no dependency on the loop. It calls the judge LLM each time, so it is not a pure function. Use it directly to build a `/status` command, a stop hook, or a server endpoint:
 
 ```python icon="python"
 from openhands.sdk.conversation.goal import judge_goal
@@ -186,6 +182,23 @@ contents, command output, test results -- that the objective is *provably*
 complete. If something is still missing, it re-prompts the agent with the
 judge's feedback and runs again, until the goal is genuinely done or a hard
 iteration cap is reached.
+
+That makes it a good fit for verifiable objectives like "make the tests pass":
+the agent cannot finish just by claiming success; the judge has to see green
+output first.
+
+Key concepts demonstrated:
+1. ``run_goal(conversation, objective, judge_llm, max_iterations=...)`` drives
+   the conversation from the outside, re-prompting until the judge is satisfied.
+2. A second, independent "judge" LLM grades completion -- separate from the
+   agent that does the work.
+3. The returned ``GoalOutcome`` reports whether the goal ``"complete"``-d or was
+   ``"capped"``, how many audit rounds it took, and the judge's final verdict.
+
+Because ``run_goal`` drives the conversation you pass in (it does not fork or
+spin up a sidecar), every turn -- objective, agent work, judge-driven followups
+-- lands in the same ``conversation.state.events`` history. It therefore
+composes with whatever agent, tools, or critic you already have.
 """
 
 import os
