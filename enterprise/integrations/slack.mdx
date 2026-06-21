@@ -1,132 +1,52 @@
 ---
 title: Slack
-description: Configure the Slack integration for a self-hosted OpenHands Enterprise install.
+description: Configure Slack for OpenHands Enterprise.
 icon: slack
 ---
 
-This guide walks an operator through enabling the `@OpenHands` Slack integration on a
-self-hosted **OpenHands Enterprise (OHE)** installation — both the Replicated VM-based
-install (see the [Quick Start](/enterprise/quick-start)) and standalone Helm
-([Kubernetes Installation](/enterprise/k8s-install/index)).
+This guide explains how to connect Slack to an OpenHands Enterprise
+installation. The integration lets users mention `@OpenHands` in Slack to start
+or continue OpenHands conversations.
 
-Once enabled, end users can mention `@openhands` in any Slack channel or thread to start
-and follow up on conversations from Slack, exactly like they can on OpenHands Cloud.
-
-<Info>
-  If you are looking for the **OpenHands Cloud** Slack integration (no self-hosting
-  involved), see [Slack Integration](/openhands/usage/cloud/slack-installation)
-  instead — that page uses the All-Hands-managed Slack App and skips the steps below.
-</Info>
-
-## Overview
-
-Unlike OpenHands Cloud, a self-hosted install needs its **own** Slack App so that Slack
-webhooks land on *your* domain rather than `app.all-hands.dev`. The configuration involves
-four phases:
-
-1. **Create a Slack App** for your install (one-time, by a Slack workspace admin).
-2. **Configure OHE** with the Slack App's credentials (one-time, by the OHE operator).
-3. **Install the Slack App** into your workspace (one-time, by a Slack workspace admin).
-4. **Link each user's account** in OpenHands ↔ Slack (per-user, self-service).
-
-<Steps>
-  <Step title="Verify prerequisites" />
-  <Step title="Create the Slack App" />
-  <Step title="Configure OpenHands Enterprise" />
-  <Step title="Install the Slack App into your workspace" />
-  <Step title="Have users link their Slack accounts" />
-</Steps>
+<Note>
+  This page is for self-hosted OpenHands Enterprise. If you use OpenHands Cloud,
+  see [Slack Integration](/openhands/usage/cloud/slack-installation).
+</Note>
 
 ## Prerequisites
 
-Before you start, confirm:
+- An OpenHands Enterprise installation reachable at
+  `https://app.<your-base-domain>`.
+- Public inbound HTTPS access to `https://app.<your-base-domain>/slack/*`.
+  Slack must be able to reach these routes to deliver events and interactive
+  form submissions.
+- A trusted TLS certificate for `app.<your-base-domain>`.
+- Slack workspace administrator access to create and install a Slack app.
+- Access to the OpenHands Enterprise Admin Console, or Helm values for a
+  standalone Kubernetes installation.
 
-- **OHE is already installed and reachable.** You can sign in to OpenHands Enterprise at
-  `https://app.<your-base-domain>` (e.g. `https://app.mycompany.com`).
-- **Inbound HTTPS from the public internet** terminates at your OHE ingress on
-  `https://app.<your-base-domain>/slack/*`. Slack delivers webhooks from public IPs, so
-  fully air-gapped installs are **not** supported by this integration today (Slack Socket
-  Mode is disabled).
-- **Valid TLS certificate** on `app.<your-base-domain>`. Slack will reject webhook URLs
-  with untrusted certificates.
-- **A Slack workspace admin/owner** is available to install the app and generate a
-  short-lived Slack App Configuration Token.
-- **A workstation with `uv` installed** and outbound network access to `slack.com` (only
-  needed for the optional helper script in Step 2).
+<Warning>
+  Slack Socket Mode is not supported. Fully air-gapped installs cannot use the
+  Slack integration today.
+</Warning>
 
-<Note>
-  Replace `<your-base-domain>` throughout this guide with the same domain you used during
-  installation (the value behind `KOTS_HOSTNAME` or the `ingress.host` Helm value).
-</Note>
+## Create a Slack App
 
-## Step 1: Create the Slack App
+OpenHands Enterprise needs its own Slack app so Slack events are sent to your
+OpenHands domain.
 
-You can mint the Slack App either with the helper script in
-[`OpenHands-Cloud`](https://github.com/OpenHands/OpenHands-Cloud) (recommended) or by
-pasting the manifest into Slack's UI. Either path produces the same app.
+### Option A: Create the App from a Manifest
 
-### Option A: Helper script (recommended)
+In Slack, open [https://api.slack.com/apps](https://api.slack.com/apps).
 
-1. Generate a **Slack App Configuration Token**:
-
-   1. Sign in to [https://api.slack.com/apps](https://api.slack.com/apps) as a workspace
-      admin/owner.
-   2. In **Your App Configuration Tokens**, click **Generate Token**.
-   3. Select your workspace and click **Generate**.
-   4. Copy the **access token** (starts with `xoxe.xoxp-`). Treat it like a password —
-      it is short-lived but is sufficient to create apps in your workspace.
-
-2. Clone OpenHands-Cloud and run the script:
-
-   ```bash
-   git clone https://github.com/OpenHands/OpenHands-Cloud.git
-   cd OpenHands-Cloud
-
-   export SLACK_CONFIG_TOKEN=xoxe.xoxp-...
-   ./scripts/create_slack_app/create_slack_app.py \
-     --base-domain <your-base-domain>
-   ```
-
-   <Tip>
-     Pass `--dry-run` to print what would be created without calling Slack. Pass
-     `--app-name "OpenHands (Staging)"` to differentiate multiple installs in the same
-     workspace.
-   </Tip>
-
-3. The script prints three values. **Save them now** — Slack will let you retrieve them
-   again from the app's "Basic Information" page, but the script does not store them
-   anywhere:
-
-   ```
-   Slack Client ID:        ...
-   Slack Client Secret:    ...
-   Slack Signing Secret:   ...
-   ```
-
-The script registers the following URLs on the new Slack App (all rooted at
-`https://app.<your-base-domain>`):
-
-| Slack setting | URL |
-|---|---|
-| OAuth Redirect URL | `/slack/install-callback` |
-| Event Subscriptions Request URL | `/slack/on-event` |
-| Interactivity Request URL | `/slack/on-form-interaction` |
-| Options Load URL | `/slack/on-options-load` |
-
-…and requests these bot scopes (no user scopes):
-
-`app_mentions:read`, `chat:write`, `users:read`, `channels:history`,
-`groups:history`, `mpim:history`, `im:history`.
-
-Socket Mode, Org Deploy, and Token Rotation are intentionally **disabled** to match
-what the OHE backend expects today.
-
-### Option B: Paste the manifest into Slack's UI
-
-If you can't run the script (e.g. your workstation has no outbound Slack access), open
-[https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From an
-app manifest**, choose your workspace, and paste the YAML below. Replace
-`<your-base-domain>` first.
+1. Click **Create New App**.
+2. Select **From an app manifest**.
+3. Choose the Slack workspace where users will invoke OpenHands.
+4. Paste the manifest below.
+5. Replace every instance of `<your-base-domain>` with your OpenHands
+   Enterprise base domain. For example, if users sign in at
+   `https://app.openhands.example.com`, use `openhands.example.com`.
+6. Create the app.
 
 ```yaml
 display_information:
@@ -161,275 +81,210 @@ settings:
   token_rotation_enabled: false
 ```
 
-After creating the app, copy **Client ID**, **Client Secret**, and **Signing Secret**
-from the app's **Basic Information** page.
+After the app is created, open **Basic Information** and copy these values:
 
-<Warning>
-  When Slack verifies your **Event Subscriptions Request URL**, your OHE install must
-  already be reachable at `https://app.<your-base-domain>/slack/on-event`. If you create
-  the Slack App before OHE is running, Slack will mark the URL as unverified and you'll
-  need to click "Retry" after finishing Step 3.
-</Warning>
+- **Client ID**
+- **Client Secret**
+- **Signing Secret**
 
-## Step 2: Configure OpenHands Enterprise
+You will paste these values into OpenHands Enterprise.
 
-Pick the path that matches how OHE is deployed.
+### Option B: Create the App with the Helper Script
+
+The OpenHands-Cloud repository includes a helper script that creates the same
+Slack app through Slack's manifest API. Use this option if you prefer to create
+the app from the command line.
+
+First, generate a Slack app configuration token:
+
+1. Open [https://api.slack.com/apps](https://api.slack.com/apps).
+2. In **Your App Configuration Tokens**, click **Generate Token**.
+3. Select your workspace.
+4. Copy the access token. It starts with `xoxe.xoxp-`.
+
+Then run the helper:
+
+```bash
+git clone https://github.com/OpenHands/OpenHands-Cloud.git
+cd OpenHands-Cloud
+
+export SLACK_CONFIG_TOKEN=xoxe.xoxp-...
+./scripts/create_slack_app/create_slack_app.py \
+  --base-domain openhands.example.com \
+  --app-name "OpenHands"
+```
+
+<Note>
+  The helper currently uses `uv`. If you do not want to install `uv`, use the
+  manifest option above.
+</Note>
+
+The helper prints the **Client ID**, **Client Secret**, and **Signing Secret**.
+Store them securely.
+
+## Configure OpenHands Enterprise
+
+Pick the deployment type that matches your installation.
 
 <Tabs>
-  <Tab title="Replicated (VM/embedded cluster)">
-    1. Open the Replicated admin console at
-       `https://<admin-console-host>:30000` and sign in.
-    2. Navigate to **Config → Enable Slack** (or search "Slack" in the config side panel).
-    3. Set the following values:
+  <Tab title="Replicated">
+    Open the Replicated Admin Console for your OpenHands Enterprise
+    installation.
 
-       | Field | Value |
-       |---|---|
-       | **Enable Slack Integration** | ✅ on |
-       | **Slack Client ID** | from Step 1 |
-       | **Slack Client Secret** | from Step 1 |
-       | **Slack Signing Secret** | from Step 1 |
+    1. Go to the application configuration page.
+    2. Open **Enable Slack**.
+    3. Enable **Slack Integration**.
+    4. Enter the **Slack Client ID**.
+    5. Enter the **Slack Client Secret**.
+    6. Enter the **Slack Signing Secret**.
+    7. Save and deploy the updated configuration.
 
-    4. Click **Save config** and then **Deploy** the new version.
-    5. Wait for the deployment to reach **Ready** — Replicated will roll the integrations
-       pod with the new secrets and environment variables.
-
-    Behind the scenes this:
-
-    - Creates a Kubernetes `Secret/slack-auth` holding the client and signing secrets.
-    - Sets `slack.enabled=true`, `slack.clientId=<client-id>`, and
-      `ENABLE_V1_SLACK_RESOLVER=true` on the integrations service.
-    - Exposes `/slack/*` on the integrations ingress on port 3000.
-
+    Replicated creates a Kubernetes `Secret` named `slack-auth`, enables the
+    Slack integration routes, and restarts the OpenHands integrations service
+    with the Slack credentials.
   </Tab>
-  <Tab title="Standalone Helm">
-    Set the Slack values directly on the `openhands` and `openhands-secrets` charts.
 
-    In your `values.yaml` for the `openhands` chart:
+  <Tab title="Standalone Helm">
+    Configure the `openhands` chart with the Slack client ID and Slack resolver
+    flag:
 
     ```yaml
     slack:
       enabled: true
-      clientId: "<your-slack-client-id>"
+      clientId: "<slack-client-id>"
 
     env:
       ENABLE_V1_SLACK_RESOLVER: "true"
     ```
 
-    In your `values.yaml` for the `openhands-secrets` chart:
+    Configure the `openhands-secrets` chart with the Slack secrets:
 
     ```yaml
     config:
-      slack_client_id: "<your-slack-client-id>"
-      slack_client_secret: "<your-slack-client-secret>"
-      slack_signing_secret: "<your-slack-signing-secret>"
+      slack_client_id: "<slack-client-id>"
+      slack_client_secret: "<slack-client-secret>"
+      slack_signing_secret: "<slack-signing-secret>"
     ```
 
-    Then redeploy:
+    Then redeploy both charts:
 
     ```bash
     helm upgrade --install openhands-secrets ./charts/openhands-secrets \
-      -f values-secrets.yaml -n openhands
+      -f values-secrets.yaml \
+      -n openhands
 
     helm upgrade --install openhands ./charts/openhands \
-      -f values.yaml -n openhands
+      -f values.yaml \
+      -n openhands
     ```
 
-    <Tip>
-      If you manage the secret yourself, you can skip the `openhands-secrets` chart and
-      create a `Secret/slack-auth` directly with keys `client-id`, `client-secret`, and
-      `signing-secret`. The deployment reads `client-secret` and `signing-secret` from
-      that secret, and reads `client-id` from the `slack.clientId` Helm value.
-    </Tip>
-
+    If you manage Kubernetes secrets outside the `openhands-secrets` chart,
+    create a `Secret` named `slack-auth` with `client-id`, `client-secret`, and
+    `signing-secret` keys.
   </Tab>
 </Tabs>
 
-Confirm the integrations pod restarted with the new environment:
+After redeploying, confirm the integrations service has Slack enabled:
 
 ```bash
 kubectl -n openhands set env deployment/openhands-integrations --list \
   | grep '^SLACK_'
 ```
 
-You should see `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`, and
-`SLACK_WEBHOOKS_ENABLED=true`.
+You should see `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`,
+`SLACK_SIGNING_SECRET`, and `SLACK_WEBHOOKS_ENABLED=true`.
 
-## Step 3: Install the Slack App into your workspace
+## Install the Slack App
 
-With OHE configured, point your browser at:
+After OpenHands Enterprise is configured and redeployed, install the Slack app
+into your workspace.
 
-```
+Open this URL in a browser:
+
+```text
 https://app.<your-base-domain>/slack/install
 ```
 
-This redirects through Slack's OAuth v2 flow and then through OpenHands' Keycloak login.
-A workspace admin/owner should complete this step **first** — they will be granting
-the OpenHands bot permission to read mentions and post messages in your workspace.
+Approve the Slack permissions. The flow redirects through Slack and then through
+OpenHands sign-in. When it succeeds, the page shows:
 
-After approval you'll see **OpenHands Authentication Successful!** Slack will also mark
-the Event Subscriptions Request URL as verified.
+```text
+OpenHands Authentication Successful!
+```
+
+This first installation also links the installing Slack user to their OpenHands
+user.
 
 <Note>
-  If Slack reports `missing_scope` after install, the most likely cause is that the
-  manifest was edited to drop one of the `*:history` scopes. Re-run Step 1 (or fix the
-  scopes in the Slack App **OAuth & Permissions** page) and then re-install via the
-  same URL.
+  If Slack could not verify the Event Subscriptions URL while you created the
+  app, return to the Slack app's **Event Subscriptions** page and click
+  **Retry** after OpenHands is deployed.
 </Note>
 
-## Step 4: Have users link their Slack accounts
+## Link Users
 
-`@OpenHands` will only respond to users whose Slack identity has been linked to an
-OpenHands user. Every user — including the admin who installed the app — needs to do
-this once. They have two options:
+Each Slack user who wants to invoke OpenHands must link their Slack account to
+their OpenHands account once.
 
-- **From OpenHands**: sign in at `https://app.<your-base-domain>`, open
-  **Settings → Integrations**, and click **Install OpenHands Slack App**.
-- **From Slack**: the first time they mention `@openhands`, the bot will reply with a
-  one-time login link that completes the same flow.
+Users can link from either place:
 
-Either path produces the same record in the `slack_users` table, mapping the Slack user
-ID to a Keycloak (OpenHands) user. Once linked, any conversation started from Slack runs
-as that OpenHands user — using their LLM keys, provider tokens, and organization.
+- In OpenHands, go to **Settings > Integrations** and click
+  **Install OpenHands Slack App**.
+- In Slack, mention `@OpenHands`. If the user is not linked yet, the bot replies
+  with a sign-in link.
 
-## Using the integration
+The link maps the Slack user to the OpenHands user. Conversations started from
+Slack use that OpenHands user's repositories, LLM settings, organization, and
+connected integrations.
 
-Day-to-day usage is identical to OpenHands Cloud — see
-[Working With the Slack App](/openhands/usage/cloud/slack-installation#working-with-the-slack-app)
-for screenshots and the "mention `@openhands` in a thread" follow-up flow.
+## Add the Bot to Channels
 
-### What context the agent receives
+Slack only delivers channel mentions to apps that are present in the channel.
 
-When `@openhands` is mentioned, the bot does two things before starting (or
-continuing) an OpenHands conversation:
+For each channel where users should invoke OpenHands, add the app using one of
+these Slack flows:
 
-1. It strips the `<@BOT_ID>` mention out of the triggering message and uses the
-   remainder as the agent's initial user prompt.
-2. It fetches surrounding Slack history via the Slack Web API and appends those
-   messages to the agent's system prompt as additional context.
+- Type `/invite @OpenHands` in the channel.
+- Open the channel details, go to **Integrations**, and add the OpenHands app.
 
-**Channel vs. thread — different sources, never mixed.** The bot branches on
-whether the triggering Slack event has a `thread_ts`:
+For private channels, a member of the private channel must add the app.
 
-| Where `@openhands` is mentioned     | What the bot fetches                                                                | API method used         |
-| ----------------------------------- | ----------------------------------------------------------------------------------- | ----------------------- |
-| Inside a thread                     | Only that thread's replies (up to 21 — the trigger plus 20 prior)                   | `conversations.replies` |
-| At the top level of a channel       | The channel's recent message stream (up to 21 — the trigger plus 20 prior)          | `conversations.history` |
+## Test the Integration
 
-A top-level mention will **not** surface any thread the bot is not part of, and
-an in-thread mention will **not** surface broader channel discussion outside the
-thread. Where you mention the bot directly controls which Slack messages it can
-see.
+Mention the bot in a channel where it has been added:
 
-**New conversation vs. follow-up.**
+```text
+@OpenHands Please summarize this thread and tell me what the next action should be.
+```
 
-- A **top-level** mention always starts a brand-new OpenHands conversation.
-- An **in-thread** mention where the thread already has an OpenHands
-  conversation tied to it (matched on `(channel_id, thread_ts)`) appends a
-  message to that conversation instead. See "Thread ownership" below for who is
-  allowed to do this.
-- On a follow-up, **only the single triggering reply** is forwarded — the
-  agent's running memory is expected to carry the rest. Follow-ups are
-  noticeably leaner than the initial mention.
+If the prompt does not name a repository, OpenHands may show a repository picker
+in Slack. Choose a repository, or choose **No Repository** if the request does
+not need repository context.
 
-**What is dropped.** Only the `text` field of each surrounding message is
-forwarded. The integration does **not** pass message authors / display names,
-timestamps, file or image attachments, reactions, edits, permalinks, or Slack
-canvases. There is also no summarization or condensation today — once the
-21-message window is full, older messages are simply not included.
+When the conversation starts, OpenHands replies in Slack with a link to the
+OpenHands conversation.
 
-<Tip>
-  Practical guidance for end users:
-  - For broad channel context, mention `@openhands` at the channel's top level.
-  - For focused work on a specific discussion, mention it **inside** the
-    relevant thread.
-  - Do not expect attached files, images, or canvases to be visible to the
-    agent — only message text is forwarded. If a screenshot or document is
-    important, describe its contents in the message you send.
-</Tip>
+## How Slack Context Works
 
-### Self-hosted specifics
+When a user mentions `@OpenHands`, OpenHands starts from the text in that Slack
+message. It also includes nearby Slack message text as context:
 
-- **Repo selection.** When a user starts a new conversation without an obvious repo in
-  the message, OpenHands posts an ephemeral repo picker. The picker calls back to
-  `/slack/on-options-load` on your domain and lists repositories the user can access
-  through their linked Git provider.
-- **Thread ownership.** Only the user who started a thread conversation can `@openhands`
-  in follow-up replies — other workspace members mentioning the bot in the same thread
-  will get an "not authorized to send messages to this conversation" response. This is
-  intentional until per-org access lands.
-- **Conversation links.** The bot's "I'm on it!" reply links to
-  `https://app.<your-base-domain>/conversations/<id>`. Users must be signed in to OHE
-  to view it.
+- A top-level channel mention includes recent top-level channel messages.
+- A thread mention includes recent replies from that thread.
+- Attachments, images, files, reactions, and Slack canvases are not included.
 
-## Limitations
-
-- **No Slack Socket Mode.** Your OHE install must be reachable from the public internet
-  on `https://app.<your-base-domain>/slack/*`. Air-gapped installs cannot use this
-  integration today.
-- **No token rotation.** The bot uses a long-lived `xoxb-` token issued at install time.
-  If you regenerate the Slack App's credentials, re-run Steps 2 and 3.
-- **Single Slack App per install.** The OHE backend assumes one Slack App per
-  deployment. To support multiple workspaces, install the **same** Slack App into each
-  workspace via Step 3 — do not create separate apps.
-- **Slack Connect / externally shared channels** are not supported for posting from the
-  bot.
+Follow-up messages in an existing OpenHands Slack thread continue the same
+OpenHands conversation.
 
 ## Troubleshooting
 
-<AccordionGroup>
-  <Accordion title="Slack reports 'Your URL didn't respond with the value of the challenge parameter'">
-    Slack could not reach `https://app.<your-base-domain>/slack/on-event` from the
-    public internet, or the TLS certificate isn't trusted. Verify from a machine outside
-    your network:
-
-    ```bash
-    curl -i https://app.<your-base-domain>/slack/on-event
-    ```
-
-    You should get an HTTP response (a 403 is expected and fine — it means the route
-    exists). If the request times out or the certificate is rejected, fix DNS / firewall
-    / TLS before clicking **Retry** in Slack's Event Subscriptions panel.
-  </Accordion>
-
-  <Accordion title="`@openhands` mentions are ignored">
-    1. Check that `SLACK_WEBHOOKS_ENABLED=true` is set on the integrations pod. If it is
-       missing, your OHE deployment did not re-roll after Step 2 — redeploy.
-    2. Tail the integrations pod logs and mention `@openhands` again. You should see a
-       `slack_on_event` log line. If you don't, Slack isn't reaching your install.
-    3. If you see `slack_on_event` followed by `slack_is_duplicate`, Slack is retrying
-       an old delivery — wait 60 seconds and try a fresh message.
-  </Accordion>
-
-  <Accordion title="Users get a login link every time they mention @openhands">
-    The user's Slack ID is not linked to an OpenHands user. Have them complete Step 4
-    once. If they have already linked but still see the login prompt, check that their
-    Keycloak user is active and that the `slack_users` row exists:
-
-    ```bash
-    kubectl -n openhands exec -it deployment/openhands-postgres -- \
-      psql -U postgres -d openhands -c \
-      "SELECT slack_user_id, keycloak_user_id FROM slack_users;"
-    ```
-  </Accordion>
-
-  <Accordion title="`missing_scope` error in pod logs">
-    The Slack App is missing one of the bot scopes listed in Step 1. Open the app's
-    **OAuth & Permissions** page in Slack, add the missing scope, then re-install via
-    `https://app.<your-base-domain>/slack/install`. Users do **not** need to re-link.
-  </Accordion>
-
-  <Accordion title="Re-installing after rotating Slack credentials">
-    1. Regenerate the Slack App's Client Secret / Signing Secret on Slack's app config
-       page.
-    2. Update them in Step 2 (Replicated admin console **or** the Helm secret).
-    3. Redeploy OHE so the integrations pod picks up the new values.
-    4. Existing user account links remain valid — no need to re-run Step 4.
-  </Accordion>
-</AccordionGroup>
-
-## Reference
-
-- Helper script: [`scripts/create_slack_app/`](https://github.com/OpenHands/OpenHands-Cloud/tree/main/scripts/create_slack_app) in `OpenHands-Cloud`
-- Replicated config group: [`replicated/config.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/replicated/config.yaml) (`slack_configuration`)
-- Helm chart values: [`charts/openhands/values.yaml`](https://github.com/OpenHands/OpenHands-Cloud/blob/main/charts/openhands/values.yaml) (`slack.*`)
-- Cloud-hosted Slack flow (for end-user UX reference): [Slack Integration](/openhands/usage/cloud/slack-installation)
+| Symptom | Check |
+| --- | --- |
+| The Slack app cannot verify the Event Subscriptions URL | Confirm `https://app.<your-base-domain>/slack/on-event` is reachable from the public internet with trusted TLS, then retry verification in Slack. |
+| The Slack card is not visible in OpenHands | Confirm Slack is enabled in the Admin Console or Helm values and the updated deployment has been applied. |
+| `/slack/install` fails during Slack OAuth | Confirm the Slack app's redirect URL exactly matches `https://app.<your-base-domain>/slack/install-callback`. |
+| Users get a login link every time they mention `@OpenHands` | Have the user complete the link flow from **Settings > Integrations** or the bot's sign-in link. |
+| Mentions are ignored | Confirm the bot has been added to the channel and `SLACK_WEBHOOKS_ENABLED=true` is set on the integrations deployment. |
+| Repository selection does not load | Confirm the Slack app has the Options Load URL set to `https://app.<your-base-domain>/slack/on-options-load`. |
+| Slack logs show `missing_scope` | Confirm the Slack app has all bot scopes from the manifest, then reinstall the app from `/slack/install`. |
+| Slack events reach OpenHands but no conversation starts | Confirm the Slack user is linked to OpenHands and has access to the selected repository, if one was selected. |
