@@ -11464,6 +11464,85 @@ The remote agent-server examples also include end-to-end scripts for settings-ba
 - **[Local Agent Server](/sdk/guides/agent-server/local-server)** - Development without containers
 - **[Agent Server Overview](/sdk/guides/agent-server/overview)** - Architecture and implementation details
 
+### Conversation Goals
+Source: https://docs.openhands.dev/sdk/guides/agent-server/conversation-goals.md
+
+A goal is an optional strategy on a normal remote conversation. It does **not** create a special conversation type, a fork, or a separate history. The agent-server keeps using the same conversation events and adds a background driver that audits progress toward the objective.
+
+Use this for UI flows such as a `/goal` command: the user sets an objective, the agent keeps working toward it, and the UI can show progress with stop/resume controls.
+
+## Behavior
+
+When a client starts a goal, the agent-server:
+
+1. Finds the live conversation `EventService`.
+2. Rejects the request if the conversation or another goal is already running.
+3. Creates a `GoalController` from the objective and `max_iterations`.
+4. Starts a background task and returns immediately.
+5. Emits `ConversationStateUpdateEvent` with `key="goal"` and `status="running"`.
+6. Sends the objective as a normal user message into the same conversation history.
+7. Runs the agent, judges the resulting events, and either emits `complete` / `capped` or sends a follow-up prompt and loops.
+
+A normal user message interrupts the active goal before that new user input is appended. This lets the user take control without losing the goal state.
+
+## Endpoints
+
+All endpoints are under the agent-server API prefix.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/conversations/{conversation_id}/goal` | Set a goal and start the background driver. |
+| `POST /api/conversations/{conversation_id}/goal/stop` | Stop the active goal and record it as resumable. |
+| `POST /api/conversations/{conversation_id}/goal/resume` | Resume the most recent interrupted goal. |
+
+Start requests include the objective and an optional iteration cap:
+
+```json
+{
+  "objective": "Refactor the authentication flow and verify tests pass",
+  "max_iterations": 10
+}
+```
+
+`max_iterations` defaults to `10` and must be at least `1`.
+
+## Status Events
+
+Clients should render goal progress from streamed `ConversationStateUpdateEvent` events where `key == "goal"`. The `value` includes:
+
+| Field | Meaning |
+| --- | --- |
+| `active` | Whether the goal driver is still active. |
+| `status` | `running`, `complete`, `capped`, or `interrupted`. |
+| `iteration` | Current audit round. |
+| `max_iterations` | Iteration cap for this goal. |
+| `objective` | Original objective. |
+| `verdict` | Optional judge feedback for the latest round. |
+
+These status events are persisted with the conversation events, so resume can work after a server restart.
+
+## Stop and Resume
+
+`POST /goal/stop` cancels the background goal driver if one is running. The cancel path records a `status="interrupted"` goal event, so the UI can stop showing the goal as active and the goal can be resumed later. It does not delete conversation history.
+
+`POST /goal/resume` reads the last persisted goal status. It only resumes statuses that are not terminal; a goal with `status="complete"` or `status="capped"` is not resumable. Resume rebuilds the controller with the same objective and stored iteration, then continues with a resume prompt.
+
+<Note>
+Stopping is graceful. If a model call is already in flight, it may finish before the conversation becomes idle.
+</Note>
+
+## Error Handling
+
+| Case | Result |
+| --- | --- |
+| Conversation not found | `404` |
+| Conversation already running | `409` |
+| Another goal already running | `409` |
+| No resumable goal | `400` |
+| Invalid objective or iteration cap | `400` / validation error |
+
+There is no dedicated `GET /goal` endpoint. To restore UI state on load, read the conversation events and use the latest `ConversationStateUpdateEvent` with `key="goal"`.
+
 ### Custom Tools with Remote Agent Server
 Source: https://docs.openhands.dev/sdk/guides/agent-server/custom-tools.md
 
@@ -11972,6 +12051,134 @@ uv run python custom_tool_example.py
 
 - **[Custom Tools (Standalone)](/sdk/guides/custom-tools)** - For local execution without remote server
 - **[Agent Server Overview](/sdk/guides/agent-server/overview)** - Understanding remote agent servers
+
+### Deferred Init (Warm-Pool)
+Source: https://docs.openhands.dev/sdk/guides/agent-server/deferred-init.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+In **warm-pool deployments** server pods are booted before a user is matched to
+one. The pod starts in a *dormant* state — stateless services (tool preload,
+VSCode, etc.) come up normally, but all `/api/*` routes return `503` until
+`POST /api/init` delivers the per-user runtime configuration (credentials,
+workspace paths, session keys).
+
+This pattern reduces cold-start latency for users while keeping per-user data
+out of the image.
+
+## State Machine
+
+```
+dormant ──(POST /api/init)──▶ initializing ──▶ ready
+   ▲                               │
+   └───────────(on error)──────────┘
+```
+
+| State | `/health`, `/ready` | `GET /api/init` | `POST /api/init` | `/api/*` |
+|---|---|---|---|---|
+| `dormant` | `200` | `200` `state: dormant` | `200` → starts init | `503` |
+| `initializing` | `200` | `200` `state: initializing` | `400` (already running) | `503` |
+| `ready` | `200` | `200` `state: ready` | `400` (already done) | live |
+
+When `deferred_init` is `false` (the default), the `/api/init` endpoints return
+`404` and all `/api/*` routes are live immediately.
+
+## Enabling Dormant Mode
+
+Set the `OH_DEFERRED_INIT` environment variable when starting the server:
+
+```bash
+OH_DEFERRED_INIT=true OH_SECRET_KEY=<bootstrap-secret> python -m openhands.agent_server
+```
+
+The `OH_SECRET_KEY` value is used to authenticate `POST /api/init` via the
+`X-Init-API-Key` request header. The orchestrator already holds this key for
+encryption purposes, so no additional secret distribution is required.
+
+## Checking the Init State
+
+`GET /api/init` is unauthenticated and returns the current state at any time:
+
+```bash
+curl http://localhost:8000/api/init
+# {"state":"dormant","error":null}
+```
+
+## Activating the Server
+
+Send `POST /api/init` with the `X-Init-API-Key` header set to the bootstrap
+secret. The body is an `InitRequest` and all fields are optional — only the
+values you provide override the dormant configuration:
+
+```python icon="python"
+import httpx
+
+client = httpx.Client(base_url="http://localhost:8000")
+
+resp = client.post(
+    "/api/init",
+    json={
+        # Credentials that should not be baked into the warm image arrive here.
+        "env": {"LLM_API_KEY": user_api_key},
+        # Point at the user's mounted workspace.
+        "conversations_path": "/mnt/user-workspace/conversations",
+        # Lock down the API to this user's session key.
+        "session_api_keys": [user_session_key],
+    },
+    headers={"X-Init-API-Key": BOOTSTRAP_SECRET_KEY},
+)
+assert resp.json()["state"] == "ready"
+```
+
+`InitRequest` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `session_api_keys` | `list[str]` | Per-user API keys for subsequent `/api/*` calls |
+| `secret_key` | `str` | Encryption secret (defaults to first `session_api_key`) |
+| `conversations_path` | `path` | Where conversations are persisted |
+| `bash_events_dir` | `path` | Where bash events are persisted |
+| `env` | `dict[str, str]` | Process env vars set before services start (e.g. credentials) |
+| `webhooks` | `list` | Per-user webhooks for event streaming |
+| `web_url` | `str` | External server URL for root-path calculation |
+| `allow_cors_origins` | `list[str]` | CORS origins added to the localhost allowlist |
+| `max_concurrent_runs` | `int` | Override conversation-step concurrency limit |
+
+## Error Handling
+
+If initialization fails, the state rolls back to `dormant` and the error is
+stored in `GET /api/init` response's `error` field. The orchestrator can then
+retry `POST /api/init`:
+
+```bash
+curl http://localhost:8000/api/init
+# {"state":"dormant","error":"ConversationService failed to start: ..."}
+```
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/16_deferred_init.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/16_deferred_init.py)
+</Note>
+
+This example walks through the full warm-pool lifecycle: starting a dormant
+server, verifying the `503` gate, activating it via `POST /api/init`, and
+running a conversation on the ready server.
+
+```python icon="python" expandable examples/02_remote_agent_server/16_deferred_init.py
+<placeholder — auto-synced from agent-sdk>
+```
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/16_deferred_init.py"/>
+
+## Next Steps
+
+- **[Local Agent Server](/sdk/guides/agent-server/local-server)** — Run a server in the same process
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** — Isolated Docker-based deployment
+- **[Settings & Secrets API](/sdk/guides/secrets)** — Manage per-user secrets securely
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)** — Architecture and deployment options
 
 ### Docker Sandbox
 Source: https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox.md
@@ -15426,6 +15633,264 @@ print(f"EXAMPLE_COST: {cost}")
 - **[Persistence](/sdk/guides/convo-persistence)** — Save and restore conversation state
 - **[Pause and Resume](/sdk/guides/convo-pause-and-resume)** — Control execution flow
 - **[Agent Server](/sdk/guides/agent-server/overview)** — Deploy agents with the REST API
+
+### Goal Completion Loop
+Source: https://docs.openhands.dev/sdk/guides/convo-goal.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+A plain `conversation.run()` stops as soon as the agent *thinks* it is done. The `/goal` command is stricter: after each run it asks a second **judge LLM** to audit the transcript for authoritative evidence — file contents, command output, test results — that the objective is *provably* complete. If something is still missing, the loop re-prompts the agent with the judge's feedback and runs again, until the goal is genuinely done or a hard iteration cap is reached.
+
+That makes it a good fit for **verifiable objectives** like "make the tests pass", "produce a working CLI", or "publish a passing migration": the agent cannot finish just by claiming success — the judge has to see the green output first.
+
+**Use cases:**
+- **Test-driven objectives** — finish only when `pytest` (or any command) actually passes
+- **Multi-step deliverables** — keep the agent going until every requirement is verified
+- **Long-running tasks** — combine with a critic and stop hooks for full control over termination
+
+Like the [Critic](/sdk/guides/critic), `/goal` is an **extension applied to a conversation**: it composes with whatever agent, tools, or critic you already have. The critic governs each inner `run()`; the `/goal` loop governs the overall objective.
+
+## How It Works
+
+```
+1. send objective                  →  agent runs, calls FinishAction
+2. judge LLM audits the transcript →  produces { score, complete, missing }
+3. if complete                     →  stop, return GoalOutcome(status="complete")
+   else if max_iterations reached  →  stop, return GoalOutcome(status="capped")
+   else                            →  send a follow-up with `missing`, run again
+```
+
+Because `run_goal` drives the conversation you pass in (it does not fork or spin up a sidecar), every turn — objective, agent work, judge-driven follow-ups — lands in the same `conversation.state.events` history.
+
+## Quick Start
+
+```python icon="python" focus={2,7-8,22}
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.conversation.goal import run_goal
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+# Two LLMs: one does the work, one independently judges completion.
+agent_llm = LLM(usage_id="agent",      model="gpt-5.5", api_key=api_key)
+judge_llm = LLM(usage_id="goal-judge", model="gpt-5.5", api_key=api_key)
+
+agent = Agent(
+    llm=agent_llm,
+    tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
+)
+conversation = Conversation(agent=agent, workspace=workspace)
+
+objective = (
+    "Create mathx.py with an add(a, b) function and test_mathx.py with a "
+    "pytest test for it. The goal is complete only when "
+    "`python -m pytest -q` passes."
+)
+
+outcome = run_goal(conversation, objective, judge_llm, max_iterations=3)
+
+print(f"Goal {outcome.status} after {outcome.iterations} audit round(s).")
+print(f"Judge score: {outcome.verdict.score:.2f}")
+```
+
+<Note>
+Use a **separate `LLM` instance** (distinct `usage_id`) for the judge, even if you reuse the same model. Keeping the judge isolated from the agent's LLM lets you account for its cost separately and avoids accidentally sharing streaming or callback state.
+</Note>
+
+## Understanding the Result
+
+`run_goal` returns a `GoalOutcome` that reports whether the loop ended cleanly or was capped, plus the judge's final verdict.
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `"complete"` \| `"capped"` | Whether the judge confirmed completion, or the loop hit `max_iterations`. |
+| `iterations` | `int` | Number of audit rounds performed (≥ 1). |
+| `verdict` | `GoalVerdict` | The judge's last verdict. |
+
+The `GoalVerdict` is what the judge LLM produces every round:
+
+| Field | Type | Description |
+|---|---|---|
+| `score` | `float` (0.0–1.0) | Probability that the full objective is **provably** done. |
+| `complete` | `bool` | Whether the judge considers the objective complete. |
+| `missing` | `str` | Concise description of what remains, or empty if complete. |
+
+The `missing` field is what the loop feeds back to the agent in the next follow-up turn, so the agent knows exactly which requirements still need verifiable evidence.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `conversation` | `BaseConversation` | — | The conversation to drive. Any agent/tools/critic config is supported. |
+| `objective` | `str` | — | The goal to pursue and audit against. Must be non-empty. |
+| `judge_llm` | `LLM` | — | The second LLM that grades completion. Should be independent from the agent's LLM. |
+| `max_iterations` | `int` | `10` | Hard cap on audit rounds before the loop returns `status="capped"`. |
+
+## Composing With a Critic
+
+`/goal` and a [Critic](/sdk/guides/critic) operate at different layers:
+
+- A **critic** governs each inner `run()` — it can refine the agent's work mid-run via iterative refinement.
+- The **`/goal` loop** governs the overall objective — it decides whether to re-prompt the agent at all.
+
+They compose without changes: attach a critic to the agent as usual, then drive the conversation with `run_goal`. Every inner `run()` still consults the critic; the outer loop still re-runs until the judge is satisfied.
+
+```python icon="python" focus={1,5-7,11}
+from openhands.sdk.critic import APIBasedCritic
+from openhands.sdk.conversation.goal import run_goal
+
+agent = Agent(
+    llm=agent_llm,
+    tools=[...],
+    critic=APIBasedCritic(...),  # governs each run()
+)
+conversation = Conversation(agent=agent, workspace=workspace)
+
+outcome = run_goal(conversation, objective, judge_llm, max_iterations=5)
+```
+
+## Lower-Level Building Blocks
+
+`run_goal` is a thin synchronous driver over a transport-agnostic controller. If you need to integrate the loop into a custom driver (async, agent-server, UI progress reporting), reach for the building blocks directly.
+
+### `GoalController`
+
+`GoalController` owns the continue-vs-stop decision logic and the iteration cap. It does **no conversation transport I/O** — the driver owns sending messages and running the agent — but it *does* own the judge call: `on_run_finished()` synchronously invokes the judge LLM, so treat that call as blocking.
+
+```python icon="python"
+from openhands.sdk.conversation.goal import GoalController, GoalDone
+
+controller = GoalController(objective, judge_llm, max_iterations=10)
+conversation.send_message(controller.start())
+
+while True:
+    conversation.run()
+    step = controller.on_run_finished(conversation.state.events)
+    if isinstance(step, GoalDone):
+        outcome = step.outcome
+        break
+    # step is GoalContinue — feed the follow-up back to the agent
+    conversation.send_message(step.followup)
+```
+
+That split lets a synchronous driver and an asynchronous agent-server task share the **exact same decision logic** — only the I/O loop differs.
+
+### `judge_goal`
+
+`judge_goal` is the reusable kernel: a synchronous, LLM-backed evaluator with signature `judge_goal(judge_llm, objective, events) → GoalVerdict` and no dependency on the loop. It calls the judge LLM each time, so it is not a pure function. Use it directly to build a `/status` command, a stop hook, or a server endpoint:
+
+```python icon="python"
+from openhands.sdk.conversation.goal import judge_goal
+
+verdict = judge_goal(judge_llm, objective, conversation.state.events)
+if verdict.complete:
+    print("Done!")
+else:
+    print(f"Still missing: {verdict.missing}")
+```
+
+The judge renders the conversation as a plain `role: text` transcript and asks the LLM for a strict-JSON verdict. The agent's system prompt is intentionally excluded from the transcript to keep judge token cost low — it carries no goal-specific evidence.
+
+## Notes
+
+- **Goal vs. Critic.** A critic scores each `run()` and triggers refinement turns inside one run. The `/goal` loop drives the *overall* objective from the outside. The two compose: the critic improves each turn; the goal loop ensures the right number of turns happen.
+- **No fork.** `run_goal` drives the conversation you pass in — it does **not** create a sidecar conversation. All goal-related events land in the same `conversation.state.events` history.
+- **Conservative parsing.** If the judge response cannot be parsed as JSON, the verdict falls back to `score=0.0, complete=False` so the loop keeps working rather than falsely finishing.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/54_goal_completion_loop.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/54_goal_completion_loop.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/54_goal_completion_loop.py
+"""The /goal command: pursue an objective until a judge LLM confirms it is done.
+
+A plain ``conversation.run()`` stops as soon as the agent *thinks* it is
+finished. The ``/goal`` loop is stricter: after each run it asks a second
+"judge" LLM to audit the transcript for authoritative evidence -- file
+contents, command output, test results -- that the objective is *provably*
+complete. If something is still missing, it re-prompts the agent with the
+judge's feedback and runs again, until the goal is genuinely done or a hard
+iteration cap is reached.
+
+That makes it a good fit for verifiable objectives like "make the tests pass":
+the agent cannot finish just by claiming success; the judge has to see green
+output first.
+
+Key concepts demonstrated:
+1. ``run_goal(conversation, objective, judge_llm, max_iterations=...)`` drives
+   the conversation from the outside, re-prompting until the judge is satisfied.
+2. A second, independent "judge" LLM grades completion -- separate from the
+   agent that does the work.
+3. The returned ``GoalOutcome`` reports whether the goal ``"complete"``-d or was
+   ``"capped"``, how many audit rounds it took, and the judge's final verdict.
+
+Because ``run_goal`` drives the conversation you pass in (it does not fork or
+spin up a sidecar), every turn -- objective, agent work, judge-driven followups
+-- lands in the same ``conversation.state.events`` history. It therefore
+composes with whatever agent, tools, or critic you already have.
+"""
+
+import os
+import tempfile
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.conversation.goal import run_goal
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# The agent LLM does the work; the judge LLM independently grades completion.
+# Two separate instances (same model, distinct usage_id) keep their costs apart.
+model = os.getenv("LLM_MODEL", "gpt-5.5")
+api_key = os.getenv("LLM_API_KEY")
+base_url = os.getenv("LLM_BASE_URL")
+agent_llm = LLM(usage_id="agent", model=model, api_key=api_key, base_url=base_url)
+judge_llm = LLM(usage_id="goal-judge", model=model, api_key=api_key, base_url=base_url)
+
+agent = Agent(
+    llm=agent_llm,
+    tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
+)
+
+workspace = tempfile.mkdtemp(prefix="goal_demo_")
+conversation = Conversation(agent=agent, workspace=workspace)
+
+# A verifiable objective: the judge can only call it done once it has seen
+# pytest actually pass -- not merely the agent asserting that it did.
+objective = (
+    "Create mathx.py with an add(a, b) function and test_mathx.py with a pytest "
+    "test for it. The goal is complete only when `python -m pytest -q` passes."
+)
+
+# Drive the conversation toward the objective, re-judging after each run.
+outcome = run_goal(conversation, objective, judge_llm, max_iterations=3)
+
+print("\n" + "=" * 70)
+print(f"Goal {outcome.status} after {outcome.iterations} audit round(s).")
+print(f"Judge score: {outcome.verdict.score:.2f}")
+if outcome.verdict.missing:
+    print(f"Still missing: {outcome.verdict.missing}")
+print(f"Workspace: {workspace}")
+print("=" * 70)
+
+# Report cost (agent work + judge audits).
+cost = agent_llm.metrics.accumulated_cost + judge_llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/54_goal_completion_loop.py"/>
+
+## Next Steps
+
+- **[Critic](/sdk/guides/critic)** — Score and refine individual agent runs in real time
+- **[Iterative Refinement](/sdk/guides/iterative-refinement)** — Multi-agent feedback loop for quality-bound tasks
+- **[Hooks](/sdk/guides/hooks)** — Customize start/stop semantics on every run
+- **[Persistence](/sdk/guides/convo-persistence)** — Save and restore conversation state across goal runs
 
 ### Pause and Resume
 Source: https://docs.openhands.dev/sdk/guides/convo-pause-and-resume.md
@@ -28539,6 +29004,354 @@ Switch between them from the backend selector depending on what you're working o
 - [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) — backend-only or full Canvas on a remote machine
 - [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker) — run in a container
 
+### Modal Backend
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/modal.md
+
+Deploy the [OpenHands](https://github.com/OpenHands/OpenHands) agent server on [Modal](https://modal.com) as a remote backend for Agent Canvas. Canvas runs locally on your machine while the agent server runs on Modal and executes code inside the container — same execution model as running `npx @openhands/agent-canvas` locally.
+
+<Warning>
+  The agent server runs with full access to the container's filesystem, environment, and network. Anyone with the API key can execute arbitrary code on your Modal container. Keep the API key secret and rotate it if it's ever exposed.
+</Warning>
+
+## When to Use It
+
+A Modal backend is a good fit when you want to:
+
+- Offload agent execution to the cloud without managing your own VM or Docker host
+- Take advantage of Modal's per-second billing and free-tier credits
+- Get a persistent, always-warm backend with minimal setup — or scale to zero when idle to reduce costs
+
+## Prerequisites
+
+- A [Modal account](https://modal.com/signup) (free tier includes \$30/month credit)
+- Python 3.12+
+- Agent Canvas running locally — see [Setup](/openhands/usage/agent-canvas/setup)
+- An LLM API key (OpenAI, Anthropic, etc.)
+
+## 1. Install the Modal CLI
+
+```bash
+pip install modal
+modal setup
+```
+
+`modal setup` opens a browser to authenticate. Your credentials are saved to `\~/.modal.toml`.
+
+## 2. Create a Modal Secret
+
+Generate an API key and encryption key, then store them as a Modal secret:
+
+```bash
+export API_KEY=$(openssl rand -base64 32)
+
+modal secret create openhands-server-keys \
+  OH_SESSION_API_KEYS_0="$API_KEY" \
+  OH_SECRET_KEY="$(openssl rand -base64 32)"
+
+echo "Save this — you'll need it to connect Canvas:"
+echo "  API Key: $API_KEY"
+```
+
+<Warning>
+  Copy the `API_KEY` value now. You'll paste it into Agent Canvas in step 4. The encryption key (`OH_SECRET_KEY`) stays on Modal — you don't need to save it separately.
+</Warning>
+
+This secret persists in your Modal account. You only need to create it once.
+
+## 3. Deploy
+
+Save the following as `deploy.py`:
+
+```python
+"""
+Deploy OpenHands Agent Server on Modal.
+
+Prerequisites:
+  - Modal account + CLI: pip install modal && modal setup
+  - Create a Modal secret named "openhands-server-keys" with:
+      modal secret create openhands-server-keys \
+        OH_SESSION_API_KEYS_0="$(openssl rand -base64 32)" \
+        OH_SECRET_KEY="$(openssl rand -base64 32)"
+
+Usage:
+  modal deploy deploy.py
+
+  # Dry run (validate config without deploying):
+  modal run deploy.py
+"""
+
+import os
+import subprocess
+
+import modal
+
+# --- Configuration ---
+
+# Agent-server image tag — must match a published ghcr.io/openhands/agent-server tag.
+# CI publishes the `binary` target with variant suffix: {version}-python.
+# Includes Python, Node.js 22, tmux, git, uv, and the PyInstaller-built
+# agent-server binary at /usr/local/bin/openhands-agent-server.
+AGENT_SERVER_IMAGE_TAG = "1.24.0-python"
+
+AGENT_SERVER_PORT = 8000
+SCALEDOWN_WINDOW = 600  # seconds before an idle container is eligible for shutdown
+CONTAINER_CPU = 2.0
+CONTAINER_MEMORY_MB = 4096  # 4 GB
+
+# Always-on mode (default): keeps one container warm at all times for zero
+# cold-start latency. Costs ~$102/month (2 vCPU / 4 GB, 24/7).
+# Set MODAL_ALWAYS_ON=0 to scale to zero when idle. You only pay while
+# actively coding, but the first request after idle has a ~10-30s cold start.
+ALWAYS_ON = os.environ.get("MODAL_ALWAYS_ON", "1").lower() in ("1", "true")
+MIN_CONTAINERS = 1 if ALWAYS_ON else 0
+
+# --- Modal App ---
+
+app = modal.App("openhands-agent-server")
+
+# Persistent volume for ~/.openhands (conversations, settings, secrets, DB).
+# Survives container restarts and redeploys.
+volume = modal.Volume.from_name("openhands-data", create_if_missing=True)
+VOLUME_MOUNT = "/home/openhands/.openhands"
+
+# Secrets: OH_SESSION_API_KEYS_0 (auth) and OH_SECRET_KEY (encryption at rest).
+# Create once with: modal secret create openhands-server-keys ...
+secrets = modal.Secret.from_name("openhands-server-keys")
+
+# --- Image ---
+
+# canvas_ui_tool.py is required by the agent-server but ships with agent-canvas,
+# not the standalone server image. Fetch it from GitHub during image build.
+TOOLS_REMOTE_DIR = "/opt/canvas-tools"
+CANVAS_UI_TOOL_URL = "https://raw.githubusercontent.com/OpenHands/agent-canvas/main/tools/canvas_ui_tool.py"
+
+agent_server_image = (
+    modal.Image.from_registry(
+        f"ghcr.io/openhands/agent-server:{AGENT_SERVER_IMAGE_TAG}",
+        add_python="3.13",
+    )
+    .dockerfile_commands(
+        # Clear the image's ENTRYPOINT so Modal manages the process lifecycle.
+        ["ENTRYPOINT []"],
+    )
+    .run_commands(
+        f"mkdir -p {TOOLS_REMOTE_DIR} && curl -fsSL -o {TOOLS_REMOTE_DIR}/canvas_ui_tool.py {CANVAS_UI_TOOL_URL}",
+    )
+    .env({"OH_EXTRA_PYTHON_PATH": TOOLS_REMOTE_DIR})
+)
+
+# --- Agent Server ---
+
+@app.cls(
+    image=agent_server_image,
+    secrets=[secrets],
+    volumes={VOLUME_MOUNT: volume},
+    cpu=CONTAINER_CPU,
+    memory=CONTAINER_MEMORY_MB,
+    scaledown_window=SCALEDOWN_WINDOW,
+    timeout=3600,
+    # The agent-server is stateful (SQLite DB, tmux sessions, in-memory
+    # conversation state) — multiple containers would diverge.
+    # min_containers is controlled by MODAL_ALWAYS_ON (default: 1, always warm).
+    min_containers=MIN_CONTAINERS,
+    max_containers=1,
+)
+@modal.concurrent(max_inputs=10)
+class AgentServer:
+    @modal.web_server(port=AGENT_SERVER_PORT, startup_timeout=300)
+    def serve(self):
+        cmd = [
+            "/usr/local/bin/openhands-agent-server",
+            "--host", "0.0.0.0",
+            "--port", str(AGENT_SERVER_PORT),
+        ]
+        print(f"Starting agent-server on port {AGENT_SERVER_PORT}...")
+        subprocess.Popen(cmd)
+
+# --- Dry-run entrypoint: modal run deploy.py ---
+
+@app.local_entrypoint()
+def main():
+    mode = "always-on" if ALWAYS_ON else "scale-to-zero"
+    print("OpenHands Agent Server — Modal deployment")
+    print(f"  Image: ghcr.io/openhands/agent-server:{AGENT_SERVER_IMAGE_TAG}")
+    print(f"  Volume: openhands-data → {VOLUME_MOUNT}")
+    print(f"  Mode: {mode} (min_containers={MIN_CONTAINERS})")
+    print(f"  Scaledown: {SCALEDOWN_WINDOW}s")
+    print()
+    print("To deploy:")
+    print("  modal deploy deploy.py")
+    if ALWAYS_ON:
+        print()
+        print("  # Or, to scale to zero when idle (saves cost, adds cold starts):")
+        print("  MODAL_ALWAYS_ON=0 modal deploy deploy.py")
+    print()
+    print("After deploying, add the backend in Agent Canvas:")
+    print("  1. Open Agent Canvas")
+    print("  2. Go to Manage backends → Add a backend")
+    print("  3. Enter:")
+    print("     Name: Modal Agent Server")
+    print("     Host: https://openhands-agent-server--agentserver-serve.modal.run")
+    print("     API Key: <your OH_SESSION_API_KEYS_0 value>")
+```
+
+Then deploy:
+
+```bash
+modal deploy deploy.py
+```
+
+Modal builds the container image on first deploy (takes a few minutes), then prints the serving URL:
+
+```
+https://openhands-agent-server--agentserver-serve.modal.run
+```
+
+The agent server runs on 2 vCPU / 4 GB RAM with a persistent volume for conversations and settings. By default, the container is always warm (`min_containers=1`) so there's no cold-start latency. To scale to zero when idle instead (lower cost, but \~10-30s cold start on first request):
+
+```bash
+MODAL_ALWAYS_ON=0 modal deploy deploy.py
+```
+
+See [Cost](#cost) for a comparison of the two modes.
+
+## 4. Connect Agent Canvas
+
+1. Open Agent Canvas locally (`npx @openhands/agent-canvas`).
+2. Click the backend switcher → **Manage Backends** → **Add Backend**.
+3. Fill in:
+   - **Name** — e.g. `Modal`
+   - **Host / Base URL** — the URL from step 3 (e.g. `https://openhands-agent-server--agentserver-serve.modal.run`)
+   - **API Key** — the `API_KEY` value from step 2
+4. Save and select it as the active backend.
+
+<Warning>
+  The URL **must** use `https://`, not `http://`. Modal redirects HTTP to HTTPS with a 308, which breaks CORS preflight requests.
+</Warning>
+
+## 5. Configure Your LLM
+
+The agent server doesn't come with LLM credentials — you provide them once through the Canvas UI:
+
+1. With the Modal backend selected, open **Settings**.
+2. Choose a provider (e.g. OpenAI, Anthropic).
+3. Enter your API key and select a model.
+4. Save.
+
+Settings are stored server-side on the Modal volume (encrypted with `OH_SECRET_KEY`) and persist across redeploys.
+
+## Cost
+
+Modal charges per-second for CPU and memory. The `MODAL_ALWAYS_ON` setting controls whether the container stays warm between requests:
+
+| | Always-on (default) | Scale-to-zero (`MODAL_ALWAYS_ON=0`) |
+|---|---|---|
+| **Cold starts** | None | \~10-30s after idle period |
+| **Idle behavior** | Container stays warm 24/7 | Scales down after 10 min idle |
+| **Best for** | Daily driver, fast iteration | Occasional use, cost-sensitive |
+| **Monthly cost** | \~\$102 (24/7) | Pay only for active hours |
+
+Hourly rate breakdown (2 vCPU / 4 GB):
+
+| Resource | Rate |
+|----------|------|
+| 2 vCPU (1 physical core) | \~\$0.096/hr |
+| 4 GB RAM | \~\$0.046/hr |
+| **Total** | **\~\$0.14/hr** |
+
+**Always-on** costs \~\$3.40/day (\~\$102/month). Modal's \$30/month free credit covers about 9 days.
+
+**Scale-to-zero** costs only for the hours the container is running. At 8 hours/day on workdays, that's roughly \~\$1.12/day (\~\$25/month). The first request after an idle period takes \~10-30s while the container cold-starts; after that, the `scaledown_window` (10 min) keeps it warm between interactions.
+
+To stop the deployment entirely and avoid all charges: `modal app stop openhands-agent-server`. Your data on the Modal volume persists.
+
+<Tip>
+  If you're using scale-to-zero and find the container scaling down too quickly between interactions, increase `SCALEDOWN_WINDOW` in `deploy.py`. The default is 600 seconds (10 minutes); setting it to 1800 (30 minutes) keeps the container warm during longer breaks without paying for overnight idle time.
+</Tip>
+
+## Limitations
+
+- **No Docker-in-Docker.** Modal containers don't support nested Docker. The agent executes code directly on the container filesystem (same model as running `npx @openhands/agent-canvas` locally). Tools that require Docker won't work.
+- **Single-user only.** Pinned to one container (`max_containers=1`) because the agent server uses SQLite and in-memory state that can't be shared across containers.
+- **Public URL.** The `*.modal.run` endpoint is internet-reachable. All API endpoints require the API key, but the URL itself is public.
+
+## Security
+
+The agent server is protected by the API key you created in step 2. Every REST and WebSocket request is rejected without it. Modal provides TLS on all `*.modal.run` endpoints automatically.
+
+The `*.modal.run` URL is not indexed or easily guessable, but treat it as sensitive — it appears in terminal output, browser history, and Canvas localStorage.
+
+### Rotating the API Key
+
+If you suspect the API key has been leaked:
+
+```bash
+export API_KEY=$(openssl rand -base64 32)
+modal secret create openhands-server-keys --force \
+  OH_SESSION_API_KEYS_0="$API_KEY" \
+  OH_SECRET_KEY="$(openssl rand -base64 32)"
+modal deploy deploy.py
+echo "New API Key: $API_KEY"
+```
+
+Then update the API key in Agent Canvas — click the backend switcher → **Manage Backends** → edit the Modal backend → paste the new key.
+
+## Upgrading
+
+To update to a newer agent-server version, change `AGENT_SERVER_IMAGE_TAG` in `deploy.py` to the desired tag (e.g. `1.25.0-python`) and redeploy:
+
+```bash
+modal deploy deploy.py
+```
+
+Modal rebuilds the container image with the new version. Your data on the Modal volume (conversations, settings, LLM credentials) is preserved.
+
+Available tags are listed at [`ghcr.io/openhands/agent-server`](https://github.com/OpenHands/OpenHands/pkgs/container/agent-server). Use the `-python` variant.
+
+## Troubleshooting
+
+Check the server logs:
+
+```bash
+modal app logs openhands-agent-server
+```
+
+List running apps to confirm the deployment is active:
+
+```bash
+modal app list
+```
+
+If the container is crashing or unresponsive, redeploy to force a fresh start:
+
+```bash
+modal deploy deploy.py
+```
+
+Your data on the Modal volume persists across redeploys.
+
+## Tearing Down
+
+To stop the deployment and stop incurring costs:
+
+```bash
+modal app stop openhands-agent-server
+```
+
+Your data on the Modal volume (`openhands-data`) is preserved. Redeploy later with `modal deploy deploy.py` and everything picks up where you left off. To permanently delete the volume:
+
+```bash
+modal volume delete openhands-data
+```
+
+## Related Guides
+
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
+- [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm)
+- [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)
+
 ### VM / Self-Hosted Installation
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/vm.md
 
@@ -28555,7 +29368,7 @@ Agent Canvas supports two VM runtime modes and several ways to reach them:
 | Setup | Start Command | How You Use It |
 |-------|---------------|----------------|
 | **Backend only** | `agent-canvas --backend-only --public` | Run only the agent server on the VM. Start `agent-canvas --frontend-only` on your laptop and add the VM URL in **Manage Backends**. |
-| **Backend only + ngrok** | `agent-canvas --backend-only --public` and `ngrok http 8000` | Use an ngrok URL as the backend URL. Do not add ngrok OAuth for this mode; rely on `LOCAL_BACKEND_API_KEY` plus a private or temporary URL. |
+| **Backend only + ngrok** | `agent-canvas --backend-only --public` and `ngrok http 8000` | Use your ngrok domain as the backend URL. Do not add ngrok OAuth for this mode; rely on `LOCAL_BACKEND_API_KEY`. |
 | **Full Canvas** | `agent-canvas --public` | Serve both the Agent Canvas UI and the backend from the VM. Open the VM, reverse proxy, or ngrok URL in a browser. |
 | **Full Canvas + ngrok OAuth** | `agent-canvas --public` and `ngrok http 8000 --traffic-policy-file ~/policy.yml` | Protect the full Canvas URL with an ngrok login policy before users reach Agent Canvas. |
 
@@ -28580,7 +29393,7 @@ Agent Canvas requires:
 - [Node.js](https://nodejs.org/en/download) 22.12 or later, including `npm`.
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for the agent server runtime.
 - `git` and `curl`.
-- Optional: [`ngrok`](https://ngrok.com/download) for a temporary public URL.
+- Optional: [`ngrok`](https://ngrok.com/download) for a public URL on a free ngrok domain or your own custom domain.
 - Optional: `tmux` to keep Agent Canvas and ngrok running after disconnecting from SSH.
 
 ### Ubuntu 22.04 / 24.04
@@ -28674,7 +29487,7 @@ Use a high-entropy secret. You will enter this key in Agent Canvas when connecti
     3. Enter a name, such as `my-vm`.
     4. Enter the **Host / Base URL**:
        - `http://localhost:8000` if you use an SSH tunnel.
-       - The `https://...ngrok-free.app` URL if you use ngrok.
+       - Your ngrok domain (for example `https://your-domain.ngrok-free.app`) if you use ngrok.
        - Your reverse proxy URL if you use nginx or another proxy.
     5. Enter the `LOCAL_BACKEND_API_KEY` from the VM.
     6. Save and select the backend.
@@ -28730,7 +29543,9 @@ Then use `http://localhost:8000` as the backend URL in **Manage Backends**.
 
 ### Option B: ngrok Without OAuth
 
-Use ngrok without OAuth only for temporary testing or personal access. Keep `--public` enabled and use a strong `LOCAL_BACKEND_API_KEY`.
+Use ngrok without OAuth for personal access or a small, trusted backend. Keep `--public` enabled and use a strong `LOCAL_BACKEND_API_KEY`.
+
+Every ngrok account—including the free plan—comes with a free static domain that looks like `your-domain.ngrok-free.app`. It stays the same across restarts, so `ngrok http 8000` starts on it by default and you can save the URL once and keep reusing it. You can view your domain on the [**Domains**](https://dashboard.ngrok.com/domains) page of the ngrok dashboard.
 
 On the VM, in a second terminal or tmux pane:
 
@@ -28738,10 +29553,23 @@ On the VM, in a second terminal or tmux pane:
 ngrok http 8000
 ```
 
-Use the `https://...ngrok-free.app` forwarding URL:
+Use the forwarding URL:
 
 - Backend-only mode: enter it as the **Host / Base URL** in **Manage Backends**.
 - Full Canvas mode: open it directly in your browser.
+
+#### Use Your Own Domain
+
+To run on a domain you choose instead of the default, pass it with `--url`:
+
+```bash
+ngrok http 8000 --url https://your-canvas.ngrok.app
+```
+
+What you can use depends on your ngrok plan:
+
+- **Hobbyist plan:** an ngrok-branded domain such as `your-canvas.ngrok.app`.
+- **Pay-as-you-go plan:** your own custom domain such as `canvas.acme.com`.
 
 ### Option C: ngrok With Google OAuth
 
@@ -28773,6 +29601,10 @@ Start ngrok with the traffic policy:
 ```bash
 ngrok http 8000 --traffic-policy-file ~/policy.yml
 ```
+
+<Note>
+  To run OAuth on a domain you choose, add `--url` as shown in [Use Your Own Domain](#use-your-own-domain).
+</Note>
 
 To run full Canvas and ngrok side by side in tmux:
 
@@ -28877,6 +29709,7 @@ Settings, LLM configuration, MCP servers, and automations are all scoped to the 
 | **Backend-only (local)** | Multiple projects, or separate frontend and backend processes | Run `agent-canvas --backend-only` (optionally on different ports), connect with `--frontend-only`. See [Local Backend](/openhands/usage/agent-canvas/backend-setup/local). |
 | **Self-hosted VM** | Always-on server, more powerful hardware, team-shared access, or a full self-hosted Canvas | Run `agent-canvas --backend-only --public` for backend-only mode, or `agent-canvas --public` for the full UI and backend. Expose it with SSH, ngrok, or a reverse proxy. See [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm). |
 | **Cloud** | Managed sandboxes without local resources | Connect to [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) from **Manage Backends**. See [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud). |
+| **Modal** | Cloud backend with per-second billing, no VM management | Deploy the agent server on [Modal](https://modal.com) with a single command. See [Modal Backend](/openhands/usage/agent-canvas/backend-setup/modal). |
 
 ### Critic
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/critic.md
@@ -29206,10 +30039,6 @@ Agent Canvas also shows model-switch events in the conversation timeline so you 
 
 ### Agent Canvas Overview
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/overview.md
-
-<Note>
-  Agent Canvas is in Beta. Expect the install path, packaging, and some UI details to keep evolving.
-</Note>
 
 ## Why Agent Canvas
 
@@ -34187,7 +35016,7 @@ then switch back to a stronger model for planning, debugging, and review.
 |--------|-------------------|--------------|-------------------------|
 | Claude | [claude-opus-4-8](https://github.com/OpenHands/openhands-index-results/tree/main/results/claude-opus-4-8) | Not yet listed | 71.9 |
 | GPT | [GPT-5.5](https://github.com/OpenHands/openhands-index-results/tree/main/results/GPT-5.5) | `openai/gpt-5.5` | 65.9 |
-| Gemini | [Gemini-3.1-Pro](https://github.com/OpenHands/openhands-index-results/tree/main/results/Gemini-3.1-Pro) | `gemini/gemini-3.1-pro-preview` | 57.0 |
+| Gemini | [Gemini-3.5-Flash](https://github.com/OpenHands/openhands-index-results/tree/main/results/Gemini-3.5-Flash) | Not yet listed | 62.6 |
 
 ### Strong Open / Open-Weight Models
 
@@ -34196,10 +35025,10 @@ These open or open-weight models have good OpenHands Index scores or are recomme
 | Model | Suggested Model String | OpenHands Index Average |
 |-------|------------------------|-------------------------|
 | [GLM-5.1](https://github.com/OpenHands/openhands-index-results/tree/main/results/GLM-5.1) | `openrouter/z-ai/glm-5.1` | 58.2 |
+| [MiniMax-M3](https://github.com/OpenHands/openhands-index-results/tree/main/results/MiniMax-M3) | `openrouter/minimax/minimax-m3` | 57.2 |
 | [Kimi-K2.6](https://github.com/OpenHands/openhands-index-results/tree/main/results/Kimi-K2.6) | `openrouter/moonshotai/kimi-k2.6` | 57.1 |
 | [GLM-5](https://github.com/OpenHands/openhands-index-results/tree/main/results/GLM-5) | `openrouter/z-ai/glm-5` | 49.4 |
 | [Kimi-K2.5](https://github.com/OpenHands/openhands-index-results/tree/main/results/Kimi-K2.5) | `openrouter/moonshotai/kimi-k2.5` | 49.2 |
-| [DeepSeek-V3.2-Reasoner](https://github.com/OpenHands/openhands-index-results/tree/main/results/DeepSeek-V3.2-Reasoner) | `openrouter/deepseek/deepseek-v3.2-reasoner` | 45.7 |
 
 <Note>
 Hosted model strings can vary by provider and region. If a model string is not accepted, check the provider console and
@@ -42859,22 +43688,38 @@ This page describes the key differences between **OpenHands Agent Canvas** (open
 
 ## Feature Comparison
 
-The table below highlights the key differences between the OpenHands Agent Canvas and OpenHands Enterprise offerings:
+The table below highlights the key differences between the OpenHands Agent Canvas and OpenHands Cloud / Enterprise offerings.
 
-| Feature | Agent Canvas | OpenHands Enterprise |
-|---------|-------------------|----------------------|
-| **Full breadth of agent functionality (sub-agents, MCP, skills, model agnosticism)** | ✅ | ✅ |
-| **Where does the agent run?** | Locally or on a custom backend | Scalable, Kubernetes runtimes |
-| **Automations** <br /> *Create scheduled and event-based workflows* | ✅  | ✅ |
-| **'@OpenHands' in Slack and Jira** <br /> *Important for real-time resolution of bugs and feedback* | Requires custom [Automation](/openhands/usage/automations/overview) | Native integration |
-| **'@OpenHands' in GitHub, GitLab, Bitbucket** <br /> *Important for real-time resolution of PR comments and failing tests* | Requires custom [Automation](/openhands/usage/automations/overview) | Native integration |
-| **Share conversations** <br /> *Unlock collaboration use cases* | ❌ | ✅ |
-| **Multi-user Organizations and RBAC** <br /> *Roll out to several users and teams* | ❌ | ✅ |
-| **User and Organization Budgets** <br /> *Monitor and control costs* | ❌ | ✅ |
-| **Agent Observability Integrations** <br /> *Centralized logging of conversations* | ❌ | ✅ Uses Laminar|
-| **Private Plugin Marketplace** <br /> *Publish reusable plugins for teams to use* | ❌ | ✅ |
-| **SAML** | ❌ | ✅ |
-| **REST APIs** | ❌ | ✅ |
+
+
+| Feature | Agent Canvas (Local Backend) | Agent Canvas (VM Backend) | OpenHands Cloud (Hosted) | OpenHands Enterprise (Self-hosted) |
+| ----- | ----- | ----- | ----- | ----- |
+| **CORE** |  |  |  |  |
+| Works on your local projects | ✓ | — | — | — |
+| One-off agents | ✓ | ✓ | ✓ | ✓ |
+| Secrets, MCP, skills | ✓ | ✓ | ✓ | ✓ |
+| LLM Profiles | ✓ | ✓ | ✓ | ✓ |
+| [**AUTOMATIONS**](/openhands/usage/automations/overview) |  |  |  |  |
+| Scheduled automations | ✓ | ✓ | ✓ | ✓ |
+| Polling automations (w/ conditional logic) | ✓ | ✓ | ✓ | ✓ |
+| Event-driven automations | — | ✓ VM must be reachable | ✓ | ✓ |
+| **SANDBOXING & SCALE** |  |  |  |  |
+| Isolated sandboxes | — | On Roadmap | ✓ | ✓ |
+| Scalable, always-on agents | — | — | ✓ | ✓ |
+| **INTEGRATIONS & ADMIN** |  |  |  |  |
+| Use OpenHands in Slack, GitHub, GitLab | ✓ | ✓ | ✓ | ✓ |
+| One-click integrations | — | — | ✓ | ✓ |
+| Authentication & authorization | — | — | ✓ | ✓ |
+| Role-based access control | — | — | ✓ | ✓ Keycloak |
+| [Multi-user organizations](/openhands/usage/cloud/organizations/overview) | — | — | ✓ | ✓ |
+| Enforce default LLMs | — | — | ✓ | ✓ |
+| **ENTERPRISE** |  |  |  |  |
+| SAML | — | — | — | ✓ |
+| Custom runtime images | — | — | — | ✓ |
+| LLM gateway & budgeting | — | — | — | ✓ LiteLLM |
+| [Observability](/enterprise/analytics) | — | — | — | ✓ Laminar |
+| [Plugin marketplace](/enterprise/plugin-marketplace) | — | — | — | ✓ |
+| **License** | Open Source | Open Source | Commercial SaaS | Commercial |
 
 ## When to Choose Each Option
 
