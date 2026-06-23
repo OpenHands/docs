@@ -1,0 +1,138 @@
+name: Sync agent-sdk OpenAPI
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # nightly catch-up
+  workflow_dispatch:
+    inputs:
+      agent_sdk_ref:
+        description: 'Agent SDK branch/tag/commit to generate from'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-agent-sdk-openapi
+  cancel-in-progress: true
+
+jobs:
+  sync-openapi:
+    runs-on: ubuntu-latest
+    # Avoid infinite loops on our own commits
+    if: github.actor != 'github-actions[bot]'
+
+    env:
+      # GITHUB_TOKEN is fine.
+      GH_CLONE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # For workflow_dispatch this will be set; for push/schedule it will fall back to main.
+      AGENT_SDK_REF: ${{ github.event.inputs.agent_sdk_ref || 'main' }}
+
+    steps:
+      - name: Checkout docs repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout agent-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: OpenHands/software-agent-sdk
+          path: agent-sdk
+          ref: ${{ env.AGENT_SDK_REF }}
+          fetch-depth: 0
+          # If private, uncomment:
+          # token: ${{ env.GH_CLONE_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "all-hands-bot"
+          git config user.email "contact@all-hands.dev"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Generate OpenAPI spec
+        working-directory: agent-sdk
+        env:
+          SCHEMA_PATH: ${{ github.workspace }}/openapi/agent-sdk.json
+        run: |
+          set -euo pipefail
+          make build
+          mkdir -p "$(dirname "$SCHEMA_PATH")"
+          uv run python openhands-agent-server/openhands/agent_server/openapi.py
+
+      - name: Detect changes
+        id: detect_changes
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get commit info
+        if: steps.detect_changes.outputs.changes == 'true'
+        id: commit_info
+        run: |
+          SHA_SHORT="$(git -C agent-sdk rev-parse --short=7 HEAD || echo manual)"
+          BRANCH="${AGENT_SDK_REF:-main}"
+          echo "sha_short=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.detect_changes.outputs.changes == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: openapi/agent-sdk.json
+          # Use github.token to create PR as github-actions[bot]
+          token: ${{ github.token }}
+          branch-token: ${{ github.token }}
+          commit-message: "sync(openapi): agent-sdk/${{ steps.commit_info.outputs.branch }} ${{ steps.commit_info.outputs.sha_short }}"
+          branch: sync-openapi
+          branch-suffix: timestamp
+          delete-branch: true
+          title: "sync(openapi): agent-sdk/${{ steps.commit_info.outputs.branch }} ${{ steps.commit_info.outputs.sha_short }}"
+          body: |
+            ## Summary of changes
+
+            This PR automatically syncs the OpenAPI specification from the agent-sdk repository.
+
+            **Agent SDK Reference**: `${{ steps.commit_info.outputs.branch }}` (commit: `${{ steps.commit_info.outputs.sha_short }}`)
+
+            ### Changes Made
+            - Updated `openapi/agent-sdk.json` with the latest OpenAPI spec from agent-sdk
+            - This is an automated sync performed by the `sync-agent-sdk-openapi` workflow
+
+            ### Checklist
+            - [x] I have read and reviewed the documentation changes to the best of my ability.
+            - [x] If the change is significant, I have run the documentation site locally and confirmed it renders as expected.
+
+            **Note**: This is an automated pull request. Please review the changes to ensure they are correct before merging.
+
+      # Auto-approve using OPENHANDS_BOT_GITHUB_PAT_PUBLIC (all-hands-bot). PR is created by
+      # github-actions[bot], so a different identity (all-hands-bot) can approve it.
+      - name: Auto-approve PR
+        if: steps.cpr.outputs.pull-request-url && secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC != ''
+        env:
+          GH_TOKEN: ${{ secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC }}
+        run: |
+          gh pr review "${{ steps.cpr.outputs.pull-request-url }}" \
+            --approve \
+            --body "Auto-approving automated OpenAPI sync PR."
+
+      - name: Enable auto-merge (squash)
+        if: steps.cpr.outputs.pull-request-url && secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC != ''
+        env:
+          GH_TOKEN: ${{ secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC }}
+        run: |
+          PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
+
+          # Prefer auto-merge (merges when required checks finish).
+          # If auto-merge isn't enabled for the repo, fall back to attempting an immediate merge.
+          gh pr merge "$PR_URL" --auto --delete-branch --squash \
+            || gh pr merge "$PR_URL" --delete-branch --squash

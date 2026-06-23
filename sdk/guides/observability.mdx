@@ -1,0 +1,433 @@
+---
+title: Observability & Tracing
+description: Enable OpenTelemetry tracing to monitor and debug your agent's execution with tools like Laminar, MLflow, Honeycomb, or any OTLP-compatible backend.
+---
+
+> A full setup example is available [below](#example-full-setup).
+
+## Overview
+
+The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowing you to monitor and debug your agent's execution in real time. You can send traces to any OTLP-compatible observability platform including:
+
+- **[Laminar](https://laminar.sh/)** - AI-focused observability with trace inspection, signals, and browser session replay
+- **[MLflow](https://mlflow.org/)** - Open-source AI platform with tracing, evaluation, and LLM governance
+- **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
+- **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
+
+The SDK automatically traces:
+- Agent execution steps
+- Tool calls and executions
+- LLM API calls (via LiteLLM integration)
+- Browser automation sessions (when using browser-use)
+- Conversation lifecycle events
+
+## Quick Start
+
+Tracing is automatically enabled when you set the appropriate environment variables. The SDK detects the configuration on startup and initializes tracing without requiring code changes.
+
+### Using Laminar
+
+[Laminar](https://laminar.sh/) provides specialized AI observability features for OpenHands, including full conversation traces, browser session replay, and higher-level analysis features like signals.
+
+```bash icon="terminal" wrap
+# Set your Laminar project API key
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+```
+
+That's it. Run your agent code normally and traces will be sent to Laminar automatically.
+
+<Note>
+For Laminar-specific walkthroughs, see the official docs for [OpenHands SDK tracing](https://laminar.sh/docs/tracing/integrations/openhands-sdk), [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability), [viewing traces](https://laminar.sh/docs/platform/viewing-traces), and [signals](https://laminar.sh/docs/signals/introduction).
+</Note>
+
+For **self-hosted Laminar** deployments, you can also configure custom ports:
+
+```bash icon="terminal" wrap
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_HTTP_PORT=8000
+export LMNR_GRPC_PORT=8001
+```
+
+If you need help deciding between Laminar Cloud and self-hosted Laminar, see Laminar's official [hosting options](https://laminar.sh/docs/hosting-options).
+
+### Why use Laminar with OpenHands?
+
+Laminar is especially useful when you want to understand how an agent behaved across one run or across many runs:
+
+- Inspect a single run in transcript, tree, or timeline views to see prompts, tool calls, outputs, and nested agent activity. See Laminar's guide to [viewing traces](https://laminar.sh/docs/platform/viewing-traces).
+- Watch browser automation alongside trace spans with [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability).
+- Define [signals](https://laminar.sh/docs/signals/introduction) to classify failures, user friction, or success patterns across many traces.
+- Keep each OpenHands conversation grouped under a single session ID so multi-turn debugging is easier.
+
+### Using OpenTelemetry (OTLP) Backends
+
+For OpenTelemetry (OTLP) compatible backends, set the following environment variables:
+
+```bash icon="terminal" wrap
+# Required: Set the OTLP endpoint
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://your-otlp-backend/v1/traces"
+
+# Required: Set additional headers required by your backend (format: comma-separated key=value pairs, URL-encoded)
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="key=value,key2=value2"
+
+# Recommended: Explicitly set the protocol (most OTLP backends require HTTP)
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"  # use "grpc" only if your backend supports it
+```
+
+View the platform-specific configuration sections below for which values to use.
+
+- **[MLflow](#mlflow-setup)** - Open-source AI platform with tracing, evaluation, and governance
+- **[Honeycomb](#honeycomb-setup)** - High-performance distributed tracing
+- **[Jaeger](#jaeger-setup)** - Open-source distributed tracing
+- **[Generic OTLP Collector](#generic-otlp-collector)** - For other backends
+
+### Alternative Configuration Methods
+
+You can also use these alternative environment variable formats:
+
+```bash icon="terminal" wrap
+# Short form for endpoint
+export OTEL_ENDPOINT="http://localhost:4317"
+
+# Alternative header format
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20<KEY>"
+
+# Alternative protocol specification
+export OTEL_EXPORTER="otlp_http"  # or "otlp_grpc"
+```
+
+## How It Works
+
+The OpenHands SDK uses Laminar as its OpenTelemetry instrumentation layer for built-in tracing support. When you set the environment variables, the SDK:
+
+1. **Detects configuration**: Checks for OTEL environment variables on startup
+2. **Initializes tracing**: Configures OpenTelemetry with the appropriate exporter
+3. **Instruments code**: Automatically wraps key functions with tracing decorators
+4. **Captures context**: Associates traces with conversation IDs for session grouping
+5. **Exports spans**: Sends trace data to your configured backend
+
+For Laminar-specific behavior and examples, see the official [OpenHands SDK integration guide](https://laminar.sh/docs/tracing/integrations/openhands-sdk).
+
+### What Gets Traced
+
+The SDK automatically instruments these components:
+
+- **`agent.step`** - Each iteration of the agent's execution loop
+- **Tool executions** - Individual tool calls with input/output capture
+- **LLM calls** - API requests to language models via LiteLLM
+- **Conversation lifecycle** - Message sending, conversation runs, and title generation
+- **Browser sessions** - When using browser-use, captures session replays (Laminar only)
+
+### Trace Hierarchy
+
+Traces are organized hierarchically:
+
+<Tree>
+  <Tree.Folder name="conversation" defaultOpen>
+    <Tree.Folder name="conversation.run" defaultOpen>
+      <Tree.Folder name="agent.step" defaultOpen>
+        <Tree.File name="llm.completion" />
+        <Tree.File name="tool.execute" />
+      </Tree.Folder>
+      <Tree.Folder name="agent.step" defaultOpen>
+        <Tree.File name="llm.completion" />
+      </Tree.Folder>
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
+
+Each conversation gets its own session ID (the conversation UUID), allowing you to group all traces from a single conversation together in your observability platform.
+
+In `tool.execute`, the tool calls are traced individually, such as `bash`, `file_editor`, or `task_tracker`.
+
+## Configuration Reference
+
+### Environment Variables
+
+The SDK checks for these environment variables (in order of precedence):
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `LMNR_PROJECT_API_KEY` | Laminar project API key | `your-laminar-api-key` |
+| `LMNR_HTTP_PORT` | HTTP port for self-hosted Laminar | `8000` |
+| `LMNR_GRPC_PORT` | gRPC port for self-hosted Laminar | `8001` |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL | `https://api.honeycomb.io:443/v1/traces` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint (traces path appended) | `http://localhost:4317` |
+| `OTEL_ENDPOINT` | Short form endpoint | `http://localhost:4317` |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Authentication headers for traces | `x-honeycomb-team=YOUR_API_KEY` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | General authentication headers | `Authorization=Bearer%20TOKEN` |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | Protocol for traces endpoint | `http/protobuf`, `grpc` |
+| `OTEL_EXPORTER` | Short form protocol | `otlp_http`, `otlp_grpc` |
+
+### Header Format
+
+Headers should be comma-separated `key=value` pairs with URL encoding for special characters:
+
+```bash icon="terminal" wrap
+# Single header
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=abc123"
+
+# Multiple headers
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20abc123,X-Custom-Header=value"
+```
+
+### Protocol Options
+
+The SDK supports both HTTP and gRPC protocols:
+
+- **`http/protobuf`** or **`otlp_http`** - HTTP with protobuf encoding (recommended for most backends)
+- **`grpc`** or **`otlp_grpc`** - gRPC with protobuf encoding (use only if your backend supports gRPC)
+
+## Platform-Specific Configuration
+
+### Laminar Setup
+
+1. Sign up at [laminar.sh](https://laminar.sh/)
+2. Create a project and copy your API key
+3. Set the environment variable:
+
+```bash icon="terminal" wrap
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+```
+
+**Self-hosted Laminar**: If you are running a self-hosted Laminar instance, you can configure the HTTP and gRPC ports via environment variables:
+
+```bash icon="terminal" wrap
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_HTTP_PORT=8000
+export LMNR_GRPC_PORT=8001
+```
+
+**Browser session replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
+
+### OpenHands Enterprise Setup
+
+If you are running OpenHands Enterprise (OHE), you can use the same Laminar integration without changing application code:
+
+1. Complete the [OpenHands Enterprise quick start](/enterprise/quick-start).
+2. Enable analytics in the Admin Console.
+3. Deploy OHE and wait for the analytics service to become ready.
+4. Open the Laminar UI at `https://analytics.app.<your-base-domain>`.
+5. Create a Laminar project and an ingest-only API key.
+6. Save that key as the **Laminar Project API Key** in the Admin Console.
+7. Redeploy, then start a conversation in OpenHands.
+
+In OHE, environment variables with `LMNR_` and `LLM_` prefixes are automatically forwarded to the SDK runtime. That makes it possible to configure Laminar endpoint settings such as `LMNR_BASE_URL`, `LMNR_PROJECT_API_KEY`, and `LMNR_FORCE_HTTP`, as well as the LLM that powers Laminar's own AI features (chat-with-trace, SQL-with-AI, and [signals](https://laminar.sh/docs/signals/introduction)) via `LLM_PROVIDER`, `LLM_BASE_URL`, and `LLM_MODEL_SMALL|MEDIUM|LARGE`.
+
+`LLM_PROVIDER` accepts `gemini` (Laminar's default), `openai`, or `bedrock`. Set it to `openai` whenever you point `LLM_BASE_URL` at an OpenAI-compatible gateway (for example LiteLLM, OpenRouter, or vLLM), not just the public OpenAI API. For the full list of supported values, see Laminar's official [self-hosting configuration reference](https://laminar.sh/docs/self-hosting/configuration).
+
+For the full OHE flow with screenshots and configuration examples, see [Analytics in OpenHands Enterprise](/enterprise/analytics).
+
+### MLflow Setup
+
+[MLflow](https://mlflow.org/) is an open-source AI platform that accepts OpenTelemetry traces out of the box, alongside evaluation and LLM governance capabilities.
+
+1. Start your MLflow tracking server:
+
+```bash icon="terminal" wrap
+uvx mlflow server
+```
+
+<Note>
+For other deployment options (pip, Docker Compose, etc.), see [Set Up MLflow Server](https://mlflow.org/docs/latest/genai/getting-started/connect-environment/).
+</Note>
+
+2. Configure the environment variables:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:5000"
+export OTEL_EXPORTER_OTLP_HEADERS="x-mlflow-experiment-id=123"  # Replace "123" with your MLflow experiment ID
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+Navigate to the MLflow UI (for example, `http://localhost:5000`), select the experiment, and open the **Traces** tab to view the recorded traces.
+
+### Honeycomb Setup
+
+1. Sign up at [honeycomb.io](https://www.honeycomb.io/)
+2. Get your API key from the account settings
+3. Configure the environment:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=YOUR_API_KEY"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+### Jaeger Setup
+
+For local development with Jaeger:
+
+```bash icon="terminal" wrap
+# Start Jaeger all-in-one container
+docker run -d --name jaeger \
+  -p 4317:4317 \
+  -p 16686:16686 \
+  jaegertracing/all-in-one:latest
+
+# Configure SDK
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://localhost:4317"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="grpc"
+```
+
+Access the Jaeger UI at `http://localhost:16686`.
+
+### Generic OTLP Collector
+
+For other backends, use their OTLP endpoint:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://your-otlp-collector:4317/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20YOUR_TOKEN"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+## Advanced Usage
+
+### Disabling Observability
+
+To disable tracing, simply unset all OTEL environment variables:
+
+```bash icon="terminal" wrap
+unset LMNR_PROJECT_API_KEY
+unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+unset OTEL_EXPORTER_OTLP_ENDPOINT
+unset OTEL_ENDPOINT
+```
+
+The SDK will automatically skip all tracing instrumentation with minimal overhead.
+
+### Custom Span Attributes
+
+The SDK automatically adds these attributes to spans:
+
+- **`conversation_id`** - UUID of the conversation
+- **`tool_name`** - Name of the tool being executed
+- **`action.kind`** - Type of action being performed
+- **`session_id`** - Groups all traces from one conversation
+
+### Debugging Tracing Issues
+
+If traces are not appearing in your observability platform:
+
+1. **Verify environment variables**:
+   ```python icon="python" wrap
+   import os
+
+   otel_endpoint = os.getenv('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT')
+   otel_headers = os.getenv('OTEL_EXPORTER_OTLP_TRACES_HEADERS')
+
+   print(f"OTEL Endpoint: {otel_endpoint}")
+   print(f"OTEL Headers: {otel_headers}")
+   ```
+
+2. **Check SDK logs**: The SDK logs observability initialization at debug level:
+   ```python icon="python" wrap
+   import logging
+
+   logging.basicConfig(level=logging.DEBUG)
+   ```
+
+3. **Test connectivity**: Ensure your application can reach the OTLP endpoint:
+   ```bash icon="terminal" wrap
+   curl -v https://api.honeycomb.io:443/v1/traces
+   ```
+
+4. **Validate headers**: Check that authentication headers are properly URL-encoded.
+
+For Laminar-specific troubleshooting, see Laminar's official [tracing troubleshooting guide](https://laminar.sh/docs/tracing/troubleshooting).
+
+## Troubleshooting
+
+### Traces Not Appearing
+
+**Problem**: No traces showing up in your observability platform.
+
+**Solutions**:
+- Verify environment variables are set correctly
+- Check network connectivity to the OTLP endpoint
+- Ensure authentication headers are valid
+- Look for SDK initialization logs at debug level
+
+### High Trace Volume
+
+**Problem**: Too many spans being generated.
+
+**Solutions**:
+- Configure sampling at the collector level
+- For Laminar with non-browser tools, browser instrumentation is automatically disabled
+- Use backend-specific filtering rules
+
+### Performance Impact
+
+**Problem**: Concerned about tracing overhead.
+
+**Solutions**:
+- Tracing has minimal overhead when properly configured
+- Disable tracing in development by unsetting environment variables
+- Use asynchronous exporters (default in most OTLP configurations)
+
+## Example: Full Setup
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/27_observability_laminar.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/27_observability_laminar.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/27_observability_laminar.py
+"""
+Observability & Laminar example
+
+This example demonstrates enabling OpenTelemetry tracing with Laminar in the
+OpenHands SDK. Set LMNR_PROJECT_API_KEY and run the script to see traces.
+"""
+
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.terminal import TerminalTool
+
+
+# Tip: Set LMNR_PROJECT_API_KEY in your environment before running, e.g.:
+#   export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+# For non-Laminar OTLP backends, set OTEL_* variables instead.
+
+# Configure LLM and Agent
+api_key = os.getenv("LLM_API_KEY")
+model = os.getenv("LLM_MODEL", "openhands/claude-sonnet-4-5-20250929")
+base_url = os.getenv("LLM_BASE_URL")
+llm = LLM(
+    model=model,
+    api_key=SecretStr(api_key) if api_key else None,
+    base_url=base_url,
+    usage_id="agent",
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=TerminalTool.name)],
+)
+
+# Create conversation and run a simple task
+conversation = Conversation(agent=agent, workspace=".")
+conversation.send_message("List the files in the current directory and print them.")
+conversation.run()
+print(
+    "All done! Check your Laminar dashboard for traces "
+    "(session is the conversation UUID)."
+)
+```
+
+```bash Running the Example
+export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+cd software-agent-sdk
+uv run python examples/01_standalone_sdk/27_observability_laminar.py
+```
+
+## Next Steps
+
+- **[Analytics in OpenHands Enterprise](/enterprise/analytics)** - Deploy Laminar inside OHE and send conversation traces automatically
+- **[Metrics Tracking](/sdk/guides/metrics)** - Monitor token usage and costs alongside traces
+- **[LLM Registry](/sdk/guides/llm-registry)** - Track multiple LLMs used in your application
+- **[Security](/sdk/guides/security)** - Add security validation to your traced agent executions

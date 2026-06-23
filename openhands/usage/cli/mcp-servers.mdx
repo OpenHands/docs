@@ -1,0 +1,260 @@
+---
+title: MCP Servers
+description: Manage Model Context Protocol servers to extend OpenHands capabilities
+---
+
+## Overview
+
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers provide additional tools and context to OpenHands agents. You can add HTTP/SSE servers with authentication or stdio-based local servers to extend what OpenHands can do.
+
+The CLI provides two ways to manage MCP servers:
+1. **CLI commands** (`openhands mcp`) - Manage servers from the command line
+2. **Interactive command** (`/mcp`) - View server status within a conversation
+
+<Note>
+If you're upgrading from a version before release 1.0.0, you'll need to redo your MCP server configuration as the format has changed from TOML to JSON.
+</Note>
+
+## MCP Commands
+
+### List Servers
+
+View all configured MCP servers:
+
+```bash
+openhands mcp list
+```
+
+### Get Server Details
+
+View details for a specific server:
+
+```bash
+openhands mcp get <server-name>
+```
+
+### Remove a Server
+
+Remove a server configuration:
+
+```bash
+openhands mcp remove <server-name>
+```
+
+### Enable/Disable Servers
+
+Control which servers are active:
+
+```bash
+# Enable a server
+openhands mcp enable <server-name>
+
+# Disable a server
+openhands mcp disable <server-name>
+```
+
+## Adding Servers
+
+### HTTP/SSE Servers
+
+Add remote servers with HTTP or SSE transport:
+
+```bash
+openhands mcp add <name> --transport http <url>
+```
+
+#### With Bearer Token Authentication
+
+```bash
+openhands mcp add my-api --transport http \
+  --header "Authorization: Bearer your-token" \
+  https://api.example.com/mcp
+```
+
+#### With API Key Authentication
+
+```bash
+openhands mcp add weather-api --transport http \
+  --header "X-API-Key: your-api-key" \
+  https://weather.api.com
+```
+
+#### With Multiple Headers
+
+```bash
+openhands mcp add secure-api --transport http \
+  --header "Authorization: Bearer token123" \
+  --header "X-Client-ID: client456" \
+  https://api.example.com
+```
+
+#### With OAuth Authentication
+
+```bash
+openhands mcp add notion-server --transport http \
+  --auth oauth \
+  https://mcp.notion.com/mcp
+```
+
+### Stdio Servers
+
+Add local servers that communicate via stdio:
+
+```bash
+openhands mcp add <name> --transport stdio <command> -- [args...]
+```
+
+#### Basic Example
+
+```bash
+openhands mcp add local-server --transport stdio \
+  python -- -m my_mcp_server
+```
+
+#### With Environment Variables
+
+```bash
+openhands mcp add local-server --transport stdio \
+  --env "API_KEY=secret123" \
+  --env "DATABASE_URL=postgresql://localhost/mydb" \
+  python -- -m my_mcp_server --config config.json
+```
+
+#### Add in Disabled State
+
+```bash
+openhands mcp add my-server --transport stdio --disabled \
+  node -- my-server.js
+```
+
+### Command Reference
+
+```bash
+openhands mcp add <name> --transport <type> [options] <target> [-- args...]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--transport` | Transport type: `http`, `sse`, or `stdio` (required) |
+| `--header` | HTTP header for http/sse (format: `"Key: Value"`, repeatable) |
+| `--env` | Environment variable for stdio (format: `KEY=value`, repeatable) |
+| `--auth` | Authentication method (e.g., `oauth`) |
+| `--enabled` | Enable immediately (default) |
+| `--disabled` | Add in disabled state |
+
+## Example: Web Search with Tavily
+
+Add web search capability using [Tavily's MCP server](https://docs.tavily.com/documentation/mcp):
+
+```bash
+openhands mcp add tavily --transport stdio \
+  npx -- -y mcp-remote "https://mcp.tavily.com/mcp/?tavilyApiKey=<your-api-key>"
+```
+
+## Manual Configuration
+
+You can also manually edit the MCP configuration file at `~/.openhands/mcp.json`.
+
+### Configuration Format
+
+The file uses the [MCP configuration format](https://gofastmcp.com/clients/client#configuration-format):
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "command": "command-to-run",
+      "args": ["arg1", "arg2"],
+      "env": {
+        "ENV_VAR": "value"
+      }
+    }
+  }
+}
+```
+
+### Example Configuration
+
+```json
+{
+  "mcpServers": {
+    "tavily-remote": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.tavily.com/mcp/?tavilyApiKey=your-api-key"
+      ]
+    },
+    "local-tools": {
+      "command": "python",
+      "args": ["-m", "my_mcp_tools"],
+      "env": {
+        "DEBUG": "true"
+      }
+    }
+  }
+}
+```
+
+## Interactive `/mcp` Command
+
+Within an OpenHands conversation, use `/mcp` to view server status:
+
+- **View active servers**: Shows which MCP servers are currently active in the conversation
+- **View pending changes**: If `mcp.json` has been modified, shows which servers will be mounted when the conversation restarts
+
+<Note>
+The `/mcp` command is read-only. Use `openhands mcp` commands to modify server configurations.
+</Note>
+
+## Workflow
+
+1. **Add servers** using `openhands mcp add`
+2. **Start a conversation** with `openhands`
+3. **Check status** with `/mcp` inside the conversation
+4. **Use the tools** provided by your MCP servers
+
+The agent will automatically have access to tools provided by enabled MCP servers.
+
+## Troubleshooting
+
+### Server Not Appearing
+
+1. Verify the server is enabled:
+   ```bash
+   openhands mcp list
+   ```
+
+2. Check the configuration:
+   ```bash
+   openhands mcp get <server-name>
+   ```
+
+3. Restart the conversation to load new configurations
+
+### Server Fails to Start
+
+1. Test the command manually:
+   ```bash
+   # For stdio servers
+   python -m my_mcp_server
+   
+   # For HTTP servers, check the URL is reachable
+   curl https://api.example.com/mcp
+   ```
+
+2. Check environment variables and credentials
+
+3. Review error messages in the CLI output
+
+### Configuration File Location
+
+The MCP configuration is stored at:
+- **Config file**: `~/.openhands/mcp.json`
+
+## See Also
+
+- [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP documentation
+- [MCP Server Settings](/openhands/usage/settings/mcp-settings) - GUI MCP configuration
+- [Command Reference](/openhands/usage/cli/command-reference) - Full CLI command reference

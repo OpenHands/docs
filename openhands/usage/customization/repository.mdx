@@ -1,0 +1,70 @@
+---
+title: Repository Customization
+description: You can customize how OpenHands interacts with your repository by creating a `.openhands` directory at the root level.
+---
+
+## Skills (formerly Microagents)
+
+Skills allow you to extend OpenHands prompts with information specific to your project and define how OpenHands
+should function. See [Skills Overview](/overview/skills) for more information.
+
+
+## Setup Script
+You can add a `.openhands/setup.sh` file, which will run every time OpenHands begins working with your repository.
+This is an ideal location for installing dependencies, setting environment variables, and performing other setup tasks.
+
+For example:
+```bash
+#!/bin/bash
+export MY_ENV_VAR="my value"
+sudo apt-get update
+sudo apt-get install -y lsof
+cd frontend && npm install ; cd ..
+```
+
+## Hooks
+
+You can add a `.openhands/hooks.json` file to run custom shell scripts at key moments during agent execution — such as
+blocking dangerous commands, enforcing linting before the agent finishes, or logging tool usage.
+
+See the dedicated [Hooks](/openhands/usage/customization/hooks) page for the full guide.
+
+## Repository-Specific Stop Hooks
+
+For repository-specific quality gates, use a [Stop hook](/openhands/usage/customization/hooks) in `.openhands/hooks.json`.
+Stop hooks run when OpenHands tries to finish a task and can block completion until formatting, linting, tests, or other
+repo-specific checks pass. They work across current agent-server-backed OpenHands flows.
+
+For example, create `.openhands/hooks/quality_gate.sh`:
+
+```bash .openhands/hooks/quality_gate.sh
+#!/bin/bash
+cd "${OPENHANDS_PROJECT_DIR:-$PWD}"
+
+# Replace this with your repo's checks, such as npm run lint, pytest, or make test.
+if ! make test 2>&1; then
+  echo '{"decision":"deny","reason":"Quality checks failed. Fix them before finishing."}'
+  exit 2
+fi
+
+exit 0
+```
+
+Then register it in `.openhands/hooks.json`:
+
+```json .openhands/hooks.json
+{
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "command": ".openhands/hooks/quality_gate.sh", "timeout": 120 }
+      ]
+    }
+  ]
+}
+```
+
+If you currently use `.openhands/pre-commit.sh`, migrate those checks to Stop hooks when you want quality gates to apply
+to current agent-server-backed OpenHands flows. Move the check commands into a Stop hook script like the one above. See the
+[Hooks](/openhands/usage/customization/hooks) guide for complete behavior and JSON response details.

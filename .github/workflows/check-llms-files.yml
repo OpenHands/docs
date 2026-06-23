@@ -1,0 +1,61 @@
+name: Sync llms context files
+
+on:
+  schedule:
+    # Run weekly at 3 AM UTC on Mondays
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-llms-files
+  cancel-in-progress: true
+
+jobs:
+  sync-llms-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout docs repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Regenerate llms.txt and llms-full.txt
+        run: python3 scripts/generate-llms-files.py
+
+      - name: Check for changes
+        id: detect_changes
+        shell: bash
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Pull Request
+        if: steps.detect_changes.outputs.changes == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          branch-token: ${{ github.token }}
+          commit-message: "docs: sync llms context files"
+          branch: sync-llms-files
+          branch-suffix: timestamp
+          delete-branch: true
+          title: "docs: sync llms context files"
+          body: |
+            ## Summary of changes
+
+            This PR updates `llms.txt` and `llms-full.txt` using `scripts/generate-llms-files.py`.
+
+            ### Changes Made
+            - Regenerated llms context files from the latest documentation
+            - This is an automated sync from the `sync-llms-files` workflow
+
+            ### Checklist
+            - [x] I have read and reviewed the documentation changes to the best of my ability.
+            - [x] If the change is significant, I have run the documentation site locally and confirmed it renders as expected.

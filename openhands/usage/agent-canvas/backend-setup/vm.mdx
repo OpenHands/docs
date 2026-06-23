@@ -1,0 +1,339 @@
+---
+title: VM / Self-Hosted Installation
+description: Install Agent Canvas on a VM as a backend-only service or full self-hosted Canvas.
+---
+
+Run Agent Canvas on a VM or dedicated machine when you want an always-on backend, more compute, or a self-hosted Canvas that you can reach from other devices.
+
+<Warning>
+  The agent server can read and write the host filesystem, execute shell commands, access the network, and store secrets. Treat the VM as trusted infrastructure. Use `--public`, a strong `LOCAL_BACKEND_API_KEY`, and a network access control layer before exposing it to the internet.
+</Warning>
+
+## Choose a Deployment Shape
+
+Agent Canvas supports two VM runtime modes and several ways to reach them:
+
+| Setup | Start Command | How You Use It |
+|-------|---------------|----------------|
+| **Backend only** | `agent-canvas --backend-only --public` | Run only the agent server on the VM. Start `agent-canvas --frontend-only` on your laptop and add the VM URL in **Manage Backends**. |
+| **Backend only + ngrok** | `agent-canvas --backend-only --public` and `ngrok http 8000` | Use your ngrok domain as the backend URL. Do not add ngrok OAuth for this mode; rely on `LOCAL_BACKEND_API_KEY`. |
+| **Full Canvas** | `agent-canvas --public` | Serve both the Agent Canvas UI and the backend from the VM. Open the VM, reverse proxy, or ngrok URL in a browser. |
+| **Full Canvas + ngrok OAuth** | `agent-canvas --public` and `ngrok http 8000 --traffic-policy-file ~/policy.yml` | Protect the full Canvas URL with an ngrok login policy before users reach Agent Canvas. |
+
+<Tip>
+  Use **backend only** when you want to keep the UI on your laptop and switch between backends. Use **full Canvas** when the VM should serve the browser UI too.
+</Tip>
+
+## 1. Provision and Secure the VM
+
+Use any always-on Linux or macOS host. Ubuntu 24.04 LTS with 2 vCPU and 4 GB RAM is enough for a single user.
+
+Before starting Agent Canvas, restrict inbound traffic:
+
+- **SSH (`22`)** — allow only your IP address or VPN CIDR.
+- **Agent Canvas (`8000`)** — keep closed unless you are using an SSH tunnel. If you expose it through ngrok, nginx, or another proxy, expose only that proxy.
+- **HTTP/HTTPS (`80`, `443`)** — open only if you configure a reverse proxy and TLS.
+
+## 2. Install Prerequisites
+
+Agent Canvas requires:
+
+- [Node.js](https://nodejs.org/en/download) 22.12 or later, including `npm`.
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for the agent server runtime.
+- `git` and `curl`.
+- Optional: [`ngrok`](https://ngrok.com/download) for a public URL on a free ngrok domain or your own custom domain.
+- Optional: `tmux` to keep Agent Canvas and ngrok running after disconnecting from SSH.
+
+### Ubuntu 22.04 / 24.04
+
+Install Node.js 22.x, `uv`, and Agent Canvas:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg git
+
+# Node.js 22.x from NodeSource.
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# uv for the agent server runtime.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+
+# Agent Canvas CLI.
+sudo npm install -g @openhands/agent-canvas
+
+node --version
+uv --version
+agent-canvas --version
+```
+
+<Note>
+  If your `npm` global prefix is user-writable, omit `sudo` from `npm install -g`. For macOS or other Linux distributions, use the official Node.js, `uv`, and ngrok installation links above instead of the Ubuntu-specific commands.
+</Note>
+
+Install optional runtime helpers if needed:
+
+```bash
+sudo apt-get install -y tmux
+```
+
+Install ngrok only if you plan to expose the VM through ngrok:
+
+```bash
+curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+  | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+  | sudo tee /etc/apt/sources.list.d/ngrok.list
+
+sudo apt-get update
+sudo apt-get install -y ngrok
+
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+Get the authtoken from the [ngrok dashboard](https://dashboard.ngrok.com/get-started/your-authtoken).
+
+## 3. Set the Backend API Key
+
+Remote and shared deployments should always run in public mode. Public mode requires `LOCAL_BACKEND_API_KEY`.
+
+Create a local environment file on the VM:
+
+```bash
+cat > ~/.agent-canvas.env <<'EOF_ENV'
+export LOCAL_BACKEND_API_KEY="<choose-a-strong-secret>"
+EOF_ENV
+chmod 600 ~/.agent-canvas.env
+source ~/.agent-canvas.env
+```
+
+Use a high-entropy secret. You will enter this key in Agent Canvas when connecting to the VM backend or opening the full Canvas UI.
+
+## 4. Start Agent Canvas
+
+<Tabs>
+  <Tab title="Backend Only">
+    Start only the backend on the VM:
+
+    ```bash
+    source ~/.agent-canvas.env
+    agent-canvas --backend-only --public
+    ```
+
+    Then start the frontend on your laptop:
+
+    ```bash
+    agent-canvas --frontend-only
+    ```
+
+    Add the VM backend in Agent Canvas:
+
+    1. Click the backend switcher, then select `Manage Backends`.
+    2. Click `Add Backend`.
+    3. Enter a name, such as `my-vm`.
+    4. Enter the **Host / Base URL**:
+       - `http://localhost:8000` if you use an SSH tunnel.
+       - Your ngrok domain (for example `https://your-domain.ngrok-free.app`) if you use ngrok.
+       - Your reverse proxy URL if you use nginx or another proxy.
+    5. Enter the `LOCAL_BACKEND_API_KEY` from the VM.
+    6. Save and select the backend.
+  </Tab>
+  <Tab title="Full Canvas">
+    Start the full UI and backend on the VM:
+
+    ```bash
+    source ~/.agent-canvas.env
+    agent-canvas --public
+    ```
+
+    Open the VM, reverse proxy, or ngrok URL in a browser. Agent Canvas prompts for the `LOCAL_BACKEND_API_KEY` before allowing backend access.
+  </Tab>
+</Tabs>
+
+### Keep It Running with tmux
+
+Use `tmux` when you want Agent Canvas to keep running after your SSH session disconnects.
+
+<Tabs>
+  <Tab title="Backend Only">
+    ```bash
+    tmux new-session -d -s canvas
+    tmux send-keys -t canvas 'source ~/.agent-canvas.env && agent-canvas --backend-only --public' Enter
+    tmux attach-session -t canvas
+    ```
+  </Tab>
+  <Tab title="Full Canvas">
+    ```bash
+    tmux new-session -d -s canvas
+    tmux send-keys -t canvas 'source ~/.agent-canvas.env && agent-canvas --public' Enter
+    tmux attach-session -t canvas
+    ```
+  </Tab>
+</Tabs>
+
+Detach from tmux with `Ctrl-b`, then `d`. Reattach later with `tmux attach-session -t canvas`.
+
+## 5. Choose an Access Method
+
+### Option A: SSH Tunnel
+
+Use an SSH tunnel when you only need personal access and do not want to expose a public URL.
+
+On your laptop:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 user@your-vm
+```
+
+Then use `http://localhost:8000` as the backend URL in **Manage Backends**.
+
+### Option B: ngrok Without OAuth
+
+Use ngrok without OAuth for personal access or a small, trusted backend. Keep `--public` enabled and use a strong `LOCAL_BACKEND_API_KEY`.
+
+Every ngrok account—including the free plan—comes with a free static domain that looks like `your-domain.ngrok-free.app`. It stays the same across restarts, so `ngrok http 8000` starts on it by default and you can save the URL once and keep reusing it. You can view your domain on the [**Domains**](https://dashboard.ngrok.com/domains) page of the ngrok dashboard.
+
+On the VM, in a second terminal or tmux pane:
+
+```bash
+ngrok http 8000
+```
+
+Use the forwarding URL:
+
+- Backend-only mode: enter it as the **Host / Base URL** in **Manage Backends**.
+- Full Canvas mode: open it directly in your browser.
+
+#### Use Your Own Domain
+
+To run on a domain you choose instead of the default, pass it with `--url`:
+
+```bash
+ngrok http 8000 --url https://your-canvas.ngrok.app
+```
+
+What you can use depends on your ngrok plan:
+
+- **Hobbyist plan:** an ngrok-branded domain such as `your-canvas.ngrok.app`.
+- **Pay-as-you-go plan:** your own custom domain such as `canvas.acme.com`.
+
+### Option C: ngrok With Google OAuth
+
+Use ngrok OAuth with **full Canvas** deployments when the ngrok URL may be reachable by a team or a broader audience. OAuth is an additional gate in front of Agent Canvas; it does not replace `LOCAL_BACKEND_API_KEY`.
+
+For backend-only deployments, use ngrok without OAuth and keep `--public` enabled. OAuth is best suited to the full Canvas URL where the UI and backend share the same origin.
+
+Create `~/policy.yml`, replacing `openhands.dev` with your allowed Google Workspace domain:
+
+```yaml
+on_http_request:
+  # Require Google OAuth login.
+  - actions:
+      - type: oauth
+        config:
+          provider: google
+
+  # Deny anyone outside the allowed domain.
+  - expressions:
+      - "!actions.ngrok.oauth.identity.email.endsWith('@openhands.dev')"
+    actions:
+      - type: deny
+        config:
+          status_code: 403
+```
+
+Start ngrok with the traffic policy:
+
+```bash
+ngrok http 8000 --traffic-policy-file ~/policy.yml
+```
+
+<Note>
+  To run OAuth on a domain you choose, add `--url` as shown in [Use Your Own Domain](#use-your-own-domain).
+</Note>
+
+To run full Canvas and ngrok side by side in tmux:
+
+```bash
+tmux new-session -d -s canvas
+tmux send-keys -t canvas 'source ~/.agent-canvas.env && agent-canvas --public' Enter
+tmux split-window -h -t canvas
+tmux send-keys -t canvas 'ngrok http 8000 --traffic-policy-file ~/policy.yml' Enter
+tmux attach-session -t canvas
+```
+
+### Option D: Reverse Proxy With TLS
+
+Use a reverse proxy when you need a stable domain instead of an ngrok URL. Point a domain at the VM, proxy it to `127.0.0.1:8000`, and terminate TLS at the proxy.
+
+On Ubuntu, install nginx and Certbot:
+
+```bash
+sudo apt-get install -y nginx certbot python3-certbot-nginx
+```
+
+Create `/etc/nginx/sites-available/canvas.example.com`, replacing `canvas.example.com` with your domain:
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name canvas.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket / SSE support for live agent events.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+Enable the site and issue a certificate:
+
+```bash
+sudo ln -sf /etc/nginx/sites-available/canvas.example.com \
+  /etc/nginx/sites-enabled/canvas.example.com
+sudo nginx -t
+sudo systemctl reload nginx
+
+sudo certbot --nginx -d canvas.example.com \
+  --non-interactive --agree-tos \
+  --email you@example.com \
+  --redirect
+```
+
+Use `https://canvas.example.com` as the URL for either the remote backend entry or the full Canvas UI.
+
+## Security Checklist
+
+Before exposing Agent Canvas beyond an SSH tunnel:
+
+1. **Run with `--public`** and set a strong `LOCAL_BACKEND_API_KEY`.
+2. **Restrict network access** with a firewall, VPN, ngrok OAuth, or an identity-aware proxy.
+3. **Use HTTPS** for any internet-reachable URL.
+4. **Limit who can SSH to the VM** and keep the OS patched.
+5. **Protect the VM filesystem** because it stores settings, secrets, conversations, and working copies.
+6. **Rotate keys** if an ngrok URL, API key, or VM login is shared too broadly.
+
+## Related Guides
+
+- [Install](/openhands/usage/agent-canvas/setup)
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
+- [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)

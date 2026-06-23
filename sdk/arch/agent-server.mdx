@@ -1,0 +1,184 @@
+---
+title: Agent Server Package
+description: Install, run, and secure the OpenHands Agent Server for remote agent execution.
+---
+
+import InstallAgentServer from "/sdk/shared-snippets/install-agent-server.mdx";
+
+The Agent Server package (`openhands-agent-server`) runs the OpenHands Software Agent SDK behind an HTTP and WebSocket API. Use it when another service, such as an Agent Canvas backend, needs to start conversations, stream events, and run file or command operations in a workspace without embedding the SDK directly in the same process.
+
+## When to Use It
+
+Use the Agent Server when you need:
+
+- A backend process that clients can reach over HTTP/WebSocket.
+- A long-running service for conversations and workspace files.
+- A server API that can be protected with a session API key.
+- A clean boundary between your application backend and the agent runtime.
+
+For a single local script, the standalone SDK is usually simpler. For a backend service, web UI, automation system, or Agent Canvas-style deployment, run an Agent Server and connect to it from the client service.
+
+## Install
+
+Install the server package and its SDK dependencies into a Python environment:
+
+<InstallAgentServer />
+
+If you are working from the `OpenHands/software-agent-sdk` repository, use the repository's normal `uv` setup instead:
+
+```bash
+git clone https://github.com/OpenHands/software-agent-sdk.git
+cd software-agent-sdk
+uv sync
+```
+
+## Start a Local Server
+
+For local-only use, bind to `127.0.0.1`:
+
+```bash
+python -m openhands.agent_server --host 127.0.0.1 --port 8000
+```
+
+If you are working from the SDK repository, run the module through `uv` instead:
+
+```bash
+uv run python -m openhands.agent_server --host 127.0.0.1 --port 8000
+```
+
+Check that the server is alive:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+The interactive API docs are available at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+If `SESSION_API_KEY` (legacy alias) or `OH_SESSION_API_KEYS_*` is already set in your shell, the server will require that key for `/api/*` requests. Unset those variables for unauthenticated local-only testing.
+
+## Secure the Server
+
+By default, the Agent Server starts without API authentication. Before exposing it to another process, container, host, or user, set at least one session API key.
+
+```bash
+export OH_SESSION_API_KEYS_0="$(openssl rand -hex 32)"
+export OH_SECRET_KEY="$(openssl rand -hex 32)"
+
+python -m openhands.agent_server --host 127.0.0.1 --port 8000
+```
+
+Clients must send the session key in the `X-Session-API-Key` header. This request returns the conversation count when the key is accepted:
+
+```bash
+curl \
+  -H "X-Session-API-Key: $OH_SESSION_API_KEYS_0" \
+  http://127.0.0.1:8000/api/conversations/count
+```
+
+Use additional indexed variables when you need key rotation:
+
+```bash
+export OH_SESSION_API_KEYS_0="current-key"
+export OH_SESSION_API_KEYS_1="next-key"
+```
+
+<Note>
+  `OH_SECRET_KEY` encrypts sensitive values stored with conversations, including LLM API keys and secrets. Keep it stable across restarts. If it changes, previously encrypted values cannot be restored.
+</Note>
+
+## Connect From Python
+
+Pass the server URL and API key to `Workspace`. The SDK sends the key as `X-Session-API-Key` and uses remote HTTP/WebSocket calls for workspace and conversation operations.
+
+```python
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import Conversation, LLM, Workspace
+from openhands.tools.preset.default import get_default_agent
+
+
+llm = LLM(
+    model=os.environ.get("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    api_key=SecretStr(os.environ["LLM_API_KEY"]),
+)
+agent = get_default_agent(llm=llm, cli_mode=True)  # disable browser-automation tools
+
+workspace = Workspace(
+    host="http://127.0.0.1:8000",
+    api_key=os.environ["OH_SESSION_API_KEYS_0"],
+    working_dir="workspace/project",
+)
+
+conversation = Conversation(agent=agent, workspace=workspace)
+conversation.send_message("Create a NOTES.md file with three facts about this project.")
+conversation.run()
+conversation.close()
+```
+
+If the server was started without `OH_SESSION_API_KEYS_0`, remove the `api_key=...` argument.
+
+## Expose It Safely
+
+If another service runs on the same machine, keep the server bound to `127.0.0.1` and let that service connect locally.
+
+If another host must connect to the server:
+
+1. Set `OH_SESSION_API_KEYS_0` and `OH_SECRET_KEY`.
+2. Bind the server to a reachable interface, for example `--host 0.0.0.0`.
+3. Put the server behind TLS, a private network, or a trusted reverse proxy.
+4. Restrict firewall access to only the services that need it.
+5. Configure CORS only for browser clients that must call the server directly.
+
+```bash
+export OH_SESSION_API_KEYS_0="$(openssl rand -hex 32)"
+export OH_SECRET_KEY="$(openssl rand -hex 32)"
+export OH_ALLOW_CORS_ORIGINS_0="https://your-frontend.example.com"
+
+python -m openhands.agent_server --host 0.0.0.0 --port 8000
+```
+
+<Warning>
+  Do not expose an unauthenticated Agent Server on a public network. It can execute commands and read or write files in its configured workspace.
+</Warning>
+
+## Runtime Files
+
+By default, the server stores conversation and workspace data under `workspace/` relative to the process working directory:
+
+```text
+workspace/
+|-- bash_events/
+|-- conversations/
+`-- project/
+```
+
+Run the server from a directory with enough disk space and with permissions appropriate for the files the agent should access.
+
+## Useful Endpoints
+
+- `GET /health` - Basic health check.
+- `GET /ready` - Readiness check after startup initialization.
+- `GET /server_info` - Version, uptime, and available tool information.
+- `GET /docs` - Interactive OpenAPI documentation.
+- `/api/*` - Authenticated conversation, workspace, file, command, and settings APIs when session API keys are configured.
+
+## Troubleshooting
+
+- **401 responses**: Send `X-Session-API-Key` with one of the configured `OH_SESSION_API_KEYS_*` values.
+- **Secrets disappear after restart**: Set a stable `OH_SECRET_KEY` before starting the server.
+- **Port already in use**: Change the port with `--port`.
+- **Browser CORS errors**: Add the browser origin with `OH_ALLOW_CORS_ORIGINS_0`.
+- **Cannot reach the server from another host**: Check `--host`, firewall rules, reverse proxy routing, and TLS configuration.
+
+## Next Steps
+
+- [Local Agent Server](/sdk/guides/agent-server/local-server) - Run and connect to a local server.
+- [Docker Sandboxed Server](/sdk/guides/agent-server/docker-sandbox) - Run the server in an isolated Docker workspace.
+- [API Sandboxed Server](/sdk/guides/agent-server/api-sandbox) - Start agent servers through a hosted runtime API.
+- [Agent Server API Reference](/sdk/guides/agent-server/api-reference/server-details/alive) - Browse the generated REST API docs.

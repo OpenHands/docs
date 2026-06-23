@@ -1,0 +1,130 @@
+---
+title: External PostgreSQL
+description: Configure OpenHands Enterprise to use your own PostgreSQL database
+icon: database
+---
+
+OpenHands Enterprise can connect to an external PostgreSQL instance instead of using
+the bundled database. This is useful when you have existing database infrastructure,
+need specific backup/recovery procedures, or require high availability configurations.
+
+## PostgreSQL Version
+
+OpenHands Enterprise requires **PostgreSQL 16.4.0 or above**. PostgreSQL 17 is also supported.
+
+## Database Encoding Requirement
+
+<Warning>
+  All databases used by OpenHands Enterprise **must use UTF8 encoding**. Using other encodings
+  (such as LATIN1) will cause database migrations to fail during installation or upgrades.
+</Warning>
+
+When creating databases manually or configuring your PostgreSQL instance, ensure UTF8 encoding
+is set:
+
+```sql
+-- Check current database encoding
+SELECT datname, pg_encoding_to_char(encoding) AS encoding FROM pg_database;
+
+-- Create databases with explicit UTF8 encoding
+CREATE DATABASE openhands WITH ENCODING 'UTF8';
+```
+
+If your PostgreSQL server's default encoding is not UTF8, you may need to specify the encoding
+explicitly when creating each database, or configure the server's default encoding.
+
+## Required Databases
+
+OpenHands Enterprise uses the following databases:
+
+| Database | Purpose |
+|----------|---------|
+| `openhands` | Core application data |
+| `bitnami_keycloak` | Identity and access management |
+| `litellm` | LLM proxy configuration and usage tracking |
+| `runtime_api_db` | Runtime/sandbox management |
+| `automations` | Scheduled tasks and automation workflows |
+
+## Database User Requirements
+
+The PostgreSQL user provided to OpenHands Enterprise needs specific privileges depending
+on your preferred setup approach.
+
+### Option 1: Automatic Database Creation (Recommended)
+
+If you provide a database user with the `CREATEDB` privilege, OpenHands Enterprise will
+automatically create all required databases during installation.
+
+```sql
+-- Create user with CREATEDB privilege
+CREATE USER openhands_user WITH PASSWORD 'your-secure-password' CREATEDB;
+```
+
+When the user creates its own databases, it will automatically have all necessary privileges
+on them including the ability to manage the `public` schema.
+
+### Option 2: Manual Database Creation
+
+If your security policies prevent granting `CREATEDB`, you must manually create all
+databases before installation:
+
+```sql
+-- Create the databases with UTF8 encoding
+CREATE DATABASE openhands WITH ENCODING 'UTF8';
+CREATE DATABASE bitnami_keycloak WITH ENCODING 'UTF8';
+CREATE DATABASE litellm WITH ENCODING 'UTF8';
+CREATE DATABASE runtime_api_db WITH ENCODING 'UTF8';
+CREATE DATABASE automations WITH ENCODING 'UTF8';
+
+-- Create user without CREATEDB
+CREATE USER openhands_user WITH PASSWORD 'your-secure-password';
+
+-- Grant privileges on each database
+GRANT ALL PRIVILEGES ON DATABASE openhands TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE bitnami_keycloak TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE litellm TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE runtime_api_db TO openhands_user;
+GRANT ALL PRIVILEGES ON DATABASE automations TO openhands_user;
+
+-- Connect to each database and grant schema privileges
+\c openhands
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c bitnami_keycloak
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c litellm
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c runtime_api_db
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+
+\c automations
+GRANT USAGE, CREATE ON SCHEMA public TO openhands_user;
+```
+
+## Network Requirements
+
+Ensure your PostgreSQL instance is accessible from:
+
+- The OpenHands application pods/services
+- The Keycloak service
+- The LiteLLM proxy service
+- The Runtime API service
+
+If using network policies or firewalls, allow connections on the PostgreSQL port (default: 5432)
+from the OpenHands deployment.
+
+## Configuration
+
+When configuring OpenHands Enterprise, provide your external PostgreSQL connection details
+in the Admin Console or Helm values:
+
+- **Host**: Your PostgreSQL server hostname or IP
+- **Port**: PostgreSQL port (default: 5432)
+- **Username**: The database user created above
+- **Password**: The user's password
+
+<Note>
+  For production deployments, we recommend enabling SSL/TLS for database connections.
+</Note>

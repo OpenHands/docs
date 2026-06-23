@@ -1,0 +1,279 @@
+---
+title: Event-Based Automations
+description: Trigger automations from GitHub events or custom webhooks instead of cron schedules.
+---
+
+Event-based automations run when something happens—a PR is opened, an issue is commented on, or a webhook fires—instead of on a schedule. This is ideal for responsive workflows like auto-reviewing PRs, triaging issues, or reacting to external service events.
+
+## Prerequisites for GitHub Event Automations
+
+GitHub event automations require some one-time setup before events will flow. If any step is missing, automations will appear to work (manual triggers succeed) but GitHub events will silently never arrive.
+
+### 1. Install the OpenHands GitHub App
+
+The OpenHands GitHub App must be installed on the GitHub organization that owns the repositories you want to monitor. Install it from your [GitHub integration settings](/openhands/usage/cloud/github-installation). The app needs access to the repositories that will generate events.
+
+### 2. Create an OpenHands Team Organization
+
+If you're working with repositories owned by a GitHub organization (e.g., `myorg/my-repo`), you need an OpenHands **team organization** — not just a personal account. GitHub events for org repos are routed to team orgs, not personal orgs.
+
+If you don't already have one, create a team organization — see [What Are Organizations](/openhands/usage/cloud/organizations/overview#what-are-organizations) for details and how to get started.
+
+### 3. Claim Your GitHub Organization
+
+<Warning>
+**This is the most commonly missed step.** Without it, GitHub events have nowhere to be routed and will be silently dropped.
+</Warning>
+
+Your OpenHands team org must **claim** the GitHub organization to establish the link between GitHub webhooks and your OpenHands org. Claiming tells the event router: _"Events for repos in this GitHub org should go to this OpenHands team org."_
+
+To claim a GitHub org:
+
+1. Switch to your team org using the org switcher in the sidebar
+2. Go to **Organization Settings**
+3. In the **Git Conversation Routing** section, find your GitHub org
+4. Click **Claim**
+
+You must be an **Owner** of the OpenHands team org and have **admin access** to the GitHub org to complete the claim. See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations) for full details.
+
+<Tip>
+Each GitHub organization can only be claimed by one OpenHands team org. If another team has already claimed it, coordinate with them or contact support.
+</Tip>
+
+### 4. Create the Automation Under the Team Org
+
+Make sure you are switched to the **team org** (not your personal org) when creating the automation. The automation must live in the same org that claimed the GitHub organization — otherwise events won't match.
+
+### 5. (Optional) Add Service Accounts to the Team Org
+
+If you're using a service account (like a bot account) to create or own automations, that account must be a **member of the team org**. Invite them from the [Organization Members](/openhands/usage/cloud/organizations/managing-members) page.
+
+### Troubleshooting
+
+If your automation doesn't trigger on GitHub events:
+
+<AccordionGroup>
+  <Accordion title="GitHub App not installed on the org">
+    The OpenHands GitHub App must be installed on the GitHub organization that owns your repositories. Go to [GitHub integration settings](/openhands/usage/cloud/github-installation) and verify it is installed with access to the relevant repos. Without this, no webhook events are sent to OpenHands.
+  </Accordion>
+  <Accordion title="GitHub org not claimed">
+    The most common cause. Go to **Organization Settings → Git Conversation Routing** and check if your GitHub org shows as claimed. If not, click **Claim**. See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations).
+  </Accordion>
+  <Accordion title="Automation in personal org instead of team org">
+    GitHub events for org repos are routed to the **team org** that claimed the GitHub org. If you created the automation under your personal org, events will never reach it. Switch to the team org and recreate the automation.
+  </Accordion>
+  <Accordion title="Event type or filter mismatch">
+    Double-check that the event type (e.g., `pull_request.labeled`) and filter expression match the action you're testing. Use wildcards like `pull_request.*` to match all actions during debugging.
+  </Accordion>
+  <Accordion title="Automation is disabled">
+    Verify the automation is enabled. You can check via the automations list or by asking OpenHands to list your automations.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Built-In vs. Custom Integrations
+
+| Type | Setup | Best For |
+|------|-------|----------|
+| **Built-in (GitHub)** | One-time org setup ([see above](#prerequisites-for-github-event-automations)), then create the automation | PR reviews, issue triage, push-triggered tasks |
+| **Custom Webhooks** | Register webhook first, then create automation | Linear, Stripe, Slack, and other services |
+
+## GitHub Events (Built-In)
+
+GitHub is a built-in integration. Create automations that respond to GitHub events without any webhook setup.
+
+### Example: Auto-Review PRs with a Specific Label
+
+When a PR is labeled with `openhands`, automatically review it:
+
+```
+Create an event-based automation called "Auto Review PRs" that triggers
+when a pull request is labeled with "openhands" in any of my repos.
+
+It should review the PR for code quality and best practices, then post
+the review as a comment.
+```
+
+The agent will create an automation with:
+- **Trigger type**: `event`
+- **Source**: `github`
+- **Event**: `pull_request.labeled`
+- **Filter**: Matches PRs labeled `openhands`
+
+### Example: Respond to @openhands Mentions
+
+```
+Create an automation that responds when someone mentions @openhands
+in an issue comment. It should analyze the issue context and provide
+a helpful response.
+```
+
+### Available GitHub Events
+
+| Event | Common Actions | Use Case |
+|-------|---------------|----------|
+| `pull_request` | `opened`, `labeled`, `synchronize`, `ready_for_review` | PR automation |
+| `issues` | `opened`, `labeled`, `assigned` | Issue triage |
+| `issue_comment` | `created` | Mention responses |
+| `push` | — | Branch-based triggers |
+| `release` | `published` | Release workflows |
+
+Use wildcards like `pull_request.*` to match all actions for an event type.
+
+### Filtering Events
+
+Filters let you narrow which events trigger your automation. They use [JMESPath expressions](https://jmespath.org/) to match fields in the event payload—so you can trigger only on specific labels, users, branches, or other conditions.
+
+<Note>
+OpenHands extends standard JMESPath with custom functions including `icontains` (case-insensitive string match) and `glob` (wildcard path matching). It also supports `!` (negation), `&&` (AND), and `||` (OR) as boolean operators. These extensions are not part of the [JMESPath specification](https://jmespath.org/specification.html).
+</Note>
+
+**Common filter patterns:**
+
+```
+contains(pull_request.labels[].name, 'openhands')
+
+icontains(comment.body, '@openhands')
+
+glob(repository.full_name, 'myorg/*')
+
+ref == 'refs/heads/main'
+
+glob(repository.full_name, 'myorg/*') && contains(pull_request.labels[].name, 'bug')
+```
+
+- `contains(...)` — match a specific label
+- `icontains(...)` — case-insensitive mention in a comment body
+- `glob(...)` — match repos in your org with wildcards
+- `==` — exact match (e.g., push to main branch only)
+- `&&` — combine multiple conditions
+
+---
+
+## Custom Webhooks
+
+For services beyond GitHub—like Linear, Stripe, or Slack—register a custom webhook first, then create automations that use it.
+
+<Note>
+**Two-phase workflow for custom webhooks:**
+
+1. **Webhook registration (one-time setup)**: You execute the curl command yourself to register the webhook. This keeps your signing secrets secure—the agent provides the command but never handles your credentials directly.
+
+2. **Automation creation (repeatable)**: Once the webhook is registered, the agent can create, update, and manage automations for that webhook source conversationally—no manual curl commands needed.
+</Note>
+
+### Walkthrough: Linear Integration
+
+<Note>
+This example walks through setting up a Linear webhook to auto-triage new issues using Automations in **[OpenHands Cloud](https://app.all-hands.dev)**.
+</Note>
+
+#### Step 1: Get Your Webhook Secret from Linear
+
+Linear provides the webhook signing secret—you cannot configure your own.
+
+1. Go to **Linear Settings → API → Webhooks**
+2. Click **New webhook**
+3. Copy the **signing secret** that Linear displays (you'll need this in the next step)
+4. Leave the webhook URL blank for now—you'll get it from OpenHands
+
+#### Step 2: Register the Webhook with OpenHands
+
+First, set up your environment variables:
+
+1. Create an OpenHands API key at [app.all-hands.dev/settings/api-keys](https://app.all-hands.dev/settings/api-keys)
+2. Export the API key and the webhook secret from Step 1:
+
+```bash
+export OPENHANDS_API_KEY="your-openhands-api-key"
+export LINEAR_WEBHOOK_SECRET="your-linear-signing-secret-from-step-1"
+```
+
+Then run the following command to register the webhook:
+
+```bash
+curl -X POST "https://app.all-hands.dev/api/automation/v1/webhooks" \
+  -H "Authorization: Bearer ${OPENHANDS_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Linear Issues",
+    "source": "linear",
+    "event_key_expr": "type",
+    "signature_header": "Linear-Signature",
+    "webhook_secret": "'"${LINEAR_WEBHOOK_SECRET}"'"
+  }'
+```
+
+The response includes a `webhook_url` that you'll configure in Linear.
+
+<Accordion title="Understanding event_key_expr">
+The `event_key_expr` is a JMESPath expression that extracts the event type from incoming webhook payloads. This extracted value is what you match against in the automation's `on` field.
+
+For example, Linear sends payloads like:
+```json
+{"type": "Issue", "action": "create", "data": {...}}
+```
+
+With `event_key_expr: "type"`, the system extracts `"Issue"` as the event type. Then in your automation, you set `on: "Issue"` to match it.
+</Accordion>
+
+<Tip>
+If you're integrating a service that lets you configure the signing secret (unlike Linear), you can omit `webhook_secret` from the request. The automation service will generate one and return it in the response—store it securely, as it's shown only once.
+</Tip>
+
+#### Step 3: Complete the Linear Webhook Configuration
+
+1. Return to the Linear webhook you started in Step 1
+2. Paste the `webhook_url` from the previous step
+3. Select which events to send (e.g., Issues, Comments)
+4. Save the webhook
+
+#### Step 4: Create the Automation
+
+Now the webhook is registered, the agent can create automations for you end-to-end. Just describe what you want:
+
+```
+Create an event-based automation called "Triage Linear Issues" that triggers
+when a new issue is created in Linear.
+
+It should analyze the issue title and description, suggest appropriate labels,
+and add a comment with initial triage notes.
+```
+
+The agent creates the automation with:
+- **Source**: `linear` (your registered webhook)
+- **Event**: `Issue` (Linear's event type)
+- **Filter**: `action == 'create'`
+
+### Custom Webhook Parameters
+
+When registering any custom webhook, these parameters define how OpenHands processes incoming events:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Human-readable name |
+| `source` | Yes | Unique identifier (lowercase, alphanumeric with hyphens) |
+| `event_key_expr` | No | JMESPath to extract event type (default: `type`) |
+| `signature_header` | No | Header containing HMAC signature (default: `X-Signature-256`) |
+| `webhook_secret` | No | Signing secret—provide yours or let the system generate one |
+
+### Common Services
+
+These are example configurations for popular services. **Always verify with each service's webhook documentation**, as signature headers and payload formats may change.
+
+| Service | Signature Header | Event Key | Notes |
+|---------|-----------------|-----------|-------|
+| Linear | `Linear-Signature` | `type` | |
+| Stripe | `Stripe-Signature` | `type` | Uses a custom `t=timestamp,v1=signature` format — verify compatibility |
+| Slack | `X-Slack-Signature` | `type` | |
+| Twilio | `X-Twilio-Signature` | `type` | Uses HMAC-SHA1 of request URL + params — verify compatibility |
+
+---
+
+## Next Steps
+
+New to automations? Start with the [Automations Overview](/openhands/usage/automations/overview) for the bigger picture, including cron-based scheduling and general concepts.
+
+- [Automations Overview](/openhands/usage/automations/overview) — Cron-based automations and general concepts
+- [Managing Automations](/openhands/usage/automations/managing-automations) — Update, disable, or delete automations
