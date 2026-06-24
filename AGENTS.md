@@ -165,7 +165,7 @@ SDK guide files under `sdk/guides/` use a **category prefix** to group related p
 | Prefix | Category | Examples |
 |--------|----------|----------|
 | `llm-` | LLM features (model configuration, providers, streaming, presets) | `llm-reasoning.mdx`, `llm-gpt5-preset.mdx` |
-| `agent-` | Agent features (customization, delegation, browser, settings) | `agent-custom.mdx`, `agent-delegation.mdx` |
+| `agent-` | Agent features (customization, browser, settings) | `agent-custom.mdx`, `agent-settings.mdx` |
 | `convo-` | Conversation features (async, persistence, pause/resume) | `convo-async.mdx`, `convo-persistence.mdx` |
 
 When adding a new SDK guide, always use the appropriate prefix so that related files sort together and the sidebar grouping in `docs.json` stays consistent.
