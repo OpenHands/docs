@@ -28,25 +28,82 @@ Before you begin, complete the [Quick Start guide](/enterprise/quick-start).
 
 ## Enable Analytics
 
-You should see an **Analytics Configuration** section on the application configuration page.
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    You should see an **Analytics Configuration** section on the application configuration page.
 
-Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+    Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
 
-![Configure Analytics](./images/laminar-configure-analytics.png)
+    ![Configure Analytics](./images/laminar-configure-analytics.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    If you deployed OpenHands Enterprise into your own Kubernetes cluster using Helm, enable Laminar in your `values.yaml` override file.
+
+    ```yaml
+    laminar:
+      enabled: true
+      global:
+        # Set to "aws" or "gcp" to match your cluster.
+        cloudProvider: "aws"
+
+      frontend:
+        ingress:
+          enabled: true
+          hostname: "analytics.app.<your-base-domain>"
+          tls:
+            enabled: true
+            secretName: "laminar-frontend-tls"
+
+      appServer:
+        # Use an app-server ingress on GCP or other L7 ingress setups.
+        ingress:
+          enabled: true
+          hostname: "laminar-api.<your-base-domain>"
+          tls:
+            enabled: true
+            secretName: "laminar-app-server-tls"
+
+        # On AWS, use a Network Load Balancer instead of appServer.ingress
+        # if your runtimes send traces directly over TCP.
+        loadBalancer:
+          enabled: false
+    ```
+
+    Keep `laminar.enabled: false` until your ingress, TLS, and storage class settings match your cluster.
+  </Tab>
+</Tabs>
 
 ## Deploy
 
-OpenHands will begin deploying. You can expect the deployment status to transition from **Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    OpenHands will begin deploying. You can expect the deployment status to transition from **Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
 
-![Deployment in progress](./images/laminar-deploy-in-progress.png)
+    ![Deployment in progress](./images/laminar-deploy-in-progress.png)
 
-Click **Details** next to the deployment status to monitor individual resources. Resources shown in orange are still deploying, so wait until all resources are ready.
+    Click **Details** next to the deployment status to monitor individual resources. Resources shown in orange are still deploying, so wait until all resources are ready.
 
-![Deployment status details](./images/laminar-deployment-status-details.png)
+    ![Deployment status details](./images/laminar-deployment-status-details.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Apply your updated `values.yaml` override file:
+
+    ```bash
+    helm upgrade openhands oci://ghcr.io/openhands/helm-charts/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
+
+    Wait for the Laminar workloads, ingress, and TLS resources to become ready.
+  </Tab>
+</Tabs>
 
 ## Access the Laminar UI
 
-Once the deployment status shows **Ready**, navigate to `https://analytics.app.<your-base-domain>`.
+Once the deployment status shows **Ready**, navigate to the Laminar frontend URL:
+
+- VM install: `https://analytics.app.<your-base-domain>`
+- Kubernetes install: the hostname configured in `laminar.frontend.ingress.hostname`
 
 Click the **Continue with Keycloak** button:
 
@@ -74,15 +131,54 @@ Ingest-only keys are recommended because OHE only needs permission to write trac
 
 ## Set the Laminar Project API Key
 
-Set the ingest-only key as the **Laminar Project API Key** in the Admin Console configuration. This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guide](/sdk/guides/observability).
+This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guide](/sdk/guides/observability).
 
-![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Set the ingest-only key as the **Laminar Project API Key** in the Admin Console configuration.
 
-Click **Save config**.
+    ![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+
+    Click **Save config**.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Create a Kubernetes Secret for the ingest-only project key:
+
+    ```bash
+    kubectl create secret generic lmnr-project-api-key \
+      --namespace openhands \
+      --from-literal=LMNR_PROJECT_API_KEY=<your-ingest-only-key>
+    ```
+
+    Create a Secret for the Laminar app-server base URL:
+
+    ```bash
+    kubectl create secret generic lmnr-base-url \
+      --namespace openhands \
+      --from-literal=LMNR_BASE_URL=https://laminar-api.<your-base-domain>
+    ```
+
+    Then reference those Secrets from your `values.yaml` override file:
+
+    ```yaml
+    laminar:
+      enabled: true
+      apiKeyFromSecret:
+        name: lmnr-project-api-key
+        key: LMNR_PROJECT_API_KEY
+      baseUrlFromSecret:
+        name: lmnr-base-url
+        key: LMNR_BASE_URL
+      forceHttp: true
+    ```
+
+    If your self-hosted Laminar app server exposes a non-default HTTP port, set `laminar.httpPort`.
+  </Tab>
+</Tabs>
 
 ## Forward `LMNR_` and `LLM_` Environment Variables
 
-In OHE, environment variables whose names start with `LMNR_` or `LLM_` are automatically forwarded to the SDK runtime. This lets you configure Laminar ingestion settings and the LLM settings used for Laminar-backed workflows from the Admin Console.
+In OHE, environment variables whose names start with `LMNR_` or `LLM_` are forwarded to the SDK runtime. This lets you configure Laminar ingestion settings and the LLM settings used for Laminar-backed workflows.
 
 For example, you can point the runtime at the managed Laminar endpoint and use an ingest-only project key:
 
@@ -92,6 +188,8 @@ LMNR_BASE_URL: "https://laminar-api.<your-base-domain>"
 LMNR_PROJECT_API_KEY: ""
 LMNR_FORCE_HTTP: "true"
 ```
+
+For Helm installs, the chart sets `LMNR_PROJECT_API_KEY`, `LMNR_BASE_URL`, `LMNR_FORCE_HTTP`, and `LMNR_HTTP_PORT` from the `laminar` values above. If you need to override one of them directly, set it under the top-level `env` values in your `values.yaml`.
 
 You can also control which LLM Laminar uses for its AI features — chat-with-trace, SQL-with-AI, and [signals](https://laminar.sh/docs/signals/introduction) — by forwarding the standard `LLM_*` variables:
 
@@ -103,15 +201,41 @@ LLM_MODEL_MEDIUM: "gpt-5.4-mini"
 LLM_MODEL_LARGE: "gpt-5.5"
 ```
 
+For Helm installs, add these `LLM_*` values under the top-level `env` values:
+
+```yaml
+env:
+  LLM_PROVIDER: "openai"
+  LLM_BASE_URL: "https://llm-proxy.<your-base-domain>"
+  LLM_MODEL_SMALL: "gpt-5.4-mini"
+  LLM_MODEL_MEDIUM: "gpt-5.4-mini"
+  LLM_MODEL_LARGE: "gpt-5.5"
+```
+
 `LLM_PROVIDER` accepts `gemini` (Laminar's default), `openai`, or `bedrock`, and `LLM_MODEL_SMALL` / `LLM_MODEL_MEDIUM` / `LLM_MODEL_LARGE` are optional per-tier model overrides. Set `LLM_PROVIDER` to `openai` whenever you point `LLM_BASE_URL` at an OpenAI-compatible gateway (for example LiteLLM, OpenRouter, or vLLM), not just the public OpenAI API.
 
 For the full set of supported values, see Laminar's official [self-hosting configuration reference](https://laminar.sh/docs/self-hosting/configuration).
 
 ## Deploy Updated Configuration
 
-Deploy the configuration change after setting the Laminar Project API Key in the Admin Console.
+Deploy the configuration change after setting the Laminar Project API Key.
 
-![Laminar Deploy Again](./images/laminar-deploy-again.png)
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Click **Deploy** in the Admin Console.
+
+    ![Laminar Deploy Again](./images/laminar-deploy-again.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Apply your updated `values.yaml` override file:
+
+    ```bash
+    helm upgrade openhands oci://ghcr.io/openhands/helm-charts/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
+  </Tab>
+</Tabs>
 
 Wait for the deployment to complete.
 
