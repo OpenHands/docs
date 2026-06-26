@@ -1,0 +1,200 @@
+---
+title: Azure DevOps
+description: Configure Azure DevOps authentication and automation triggers for OpenHands Enterprise.
+icon: code-branch
+---
+
+This guide explains how to connect Azure DevOps Services to an OpenHands
+Enterprise installation. The integration lets users sign in with Microsoft
+Entra ID, open Azure Repos, create branches and pull requests, and use Azure
+Boards work items or pull request comments as context for OpenHands workflows.
+
+<Note>
+  This guide covers Azure DevOps Services at `https://dev.azure.com`. Azure
+  DevOps Server is not covered by this integration.
+</Note>
+
+## Prerequisites
+
+- An OpenHands Enterprise installation using Replicated or standalone Helm.
+- A Microsoft Entra administrator who can register an application and create a
+  client secret.
+- An Azure DevOps Services organization, project, and repository.
+- Azure DevOps users with access to the projects and repositories they will use
+  with OpenHands.
+- Network access from OpenHands to `login.microsoftonline.com` and
+  `dev.azure.com`.
+- If you plan to trigger automations from Azure DevOps Service Hooks, network
+  access from Azure DevOps back to the OpenHands app URL or automation webhook
+  URL.
+
+## Register a Microsoft Entra Application
+
+In the Azure portal, create a Microsoft Entra app registration for OpenHands.
+
+1. Go to **Microsoft Entra ID > App registrations**.
+2. Click **New registration**.
+3. Enter a name such as `OpenHands Azure DevOps`.
+4. Select the supported account type for your organization.
+5. Add a **Web** redirect URI:
+
+   ```text
+   https://auth.app.<your-openhands-domain>/realms/allhands/broker/azure_devops/endpoint
+   ```
+
+   Replace `<your-openhands-domain>` with the domain for your OpenHands
+   Enterprise installation. If you configured a custom authentication hostname,
+   use that hostname instead of `auth.app.<your-openhands-domain>`.
+
+6. Click **Register**.
+7. Copy the **Directory (tenant) ID** and **Application (client) ID**.
+8. Go to **Certificates & secrets** and create a client secret. Copy the secret
+   value before leaving the page.
+9. If your tenant requires explicit API permissions, add the Azure DevOps
+   delegated permission required for user access and grant admin consent.
+
+OpenHands requests the following Microsoft identity scopes during sign-in:
+
+```text
+openid email profile offline_access https://app.vssps.visualstudio.com/.default
+```
+
+## Configure Azure DevOps Access
+
+Make sure the users who will sign in to OpenHands have access to the Azure
+DevOps organization, projects, and repositories they need. OpenHands uses the
+signed-in user's Azure DevOps access token for repository discovery and Git
+operations.
+
+Repository names in OpenHands use this format:
+
+```text
+organization/project/repository
+```
+
+For example:
+
+```text
+contoso/web/PetStore
+```
+
+## Configure the Admin Console
+
+Pick the path that matches how OpenHands Enterprise is deployed.
+
+<Tabs>
+  <Tab title="Replicated">
+    Open the Replicated Admin Console for your OpenHands Enterprise installation
+    and go to the application configuration page.
+
+    In **Azure DevOps Authentication**:
+
+    1. Enable **Azure DevOps Authentication**.
+    2. Enter the **Microsoft Entra Tenant ID**.
+    3. Enter the **Azure DevOps Organization** if you want to set a default
+       organization.
+    4. Enter the **Azure DevOps Client ID**.
+    5. Enter the **Azure DevOps Client Secret**.
+    6. Save and deploy the updated configuration.
+
+    <Note>
+      The Azure DevOps Organization field is the organization name only, for
+      example `contoso` for `https://dev.azure.com/contoso`. Do not include
+      `https://dev.azure.com/`.
+    </Note>
+  </Tab>
+
+  <Tab title="Standalone Helm">
+    Set Azure DevOps values on the `openhands` and `openhands-secrets` charts.
+
+    In your `values.yaml` for the `openhands` chart:
+
+    ```yaml
+    azureDevOps:
+      enabled: true
+      tenantId: "<your-microsoft-entra-tenant-id>"
+      organization: "<your-azure-devops-organization>"
+      auth:
+        existingSecret: azure-devops-app
+    ```
+
+    In your `values.yaml` for the `openhands-secrets` chart:
+
+    ```yaml
+    config:
+      azure_devops_client_id: "<your-azure-devops-client-id>"
+      azure_devops_client_secret: "<your-azure-devops-client-secret>"
+    ```
+
+    Then redeploy the charts. The `openhands` deployment reads the client ID and
+    client secret from the Kubernetes secret named in
+    `azureDevOps.auth.existingSecret`.
+  </Tab>
+</Tabs>
+
+## Sign In with Azure DevOps
+
+After the deployment is completed, users choose **Sign in with Azure DevOps** on
+your app's login page.
+
+On first sign-in, Microsoft may ask the user to consent to the requested
+permissions. After sign-in, OpenHands stores the user's Azure DevOps token
+through the authentication provider so it can list repositories and run Git
+operations as that user.
+
+## Use Azure DevOps Repositories
+
+After signing in, users can select Azure DevOps repositories from the OpenHands
+repository picker. OpenHands can:
+
+- List Azure DevOps projects and repositories available to the signed-in user.
+- Clone Azure Repos using the signed-in user's OAuth token.
+- Read branch and pull request context.
+- Create branches and pull requests.
+- Read and post Azure Repos pull request comments.
+- Read and post Azure Boards work item comments.
+
+OpenHands does not require users to paste a personal access token for Azure
+DevOps repository access when Microsoft Entra sign-in is configured.
+
+## Trigger OpenHands from Azure DevOps
+
+Azure DevOps events can be connected to OpenHands automations through Azure
+DevOps Service Hooks and OpenHands custom webhooks. Use this pattern for
+workflows such as:
+
+- A work item comment that asks OpenHands to create an implementation pull
+  request.
+- A pull request comment that asks OpenHands to review the change.
+- A pull request comment that asks OpenHands to generate tests or validation
+  evidence.
+- A pipeline or incident event that asks OpenHands to inspect logs and propose a
+  fix.
+
+To configure this pattern:
+
+1. Register a custom webhook in OpenHands. See
+   [Event-Based Automations](/openhands/usage/automations/event-automations#custom-webhooks).
+2. Create an Azure DevOps Service Hook that sends the selected event to the
+   webhook URL.
+3. Create an OpenHands automation that filters for the event type, repository,
+   project, or trigger phrase you want to support.
+4. Test with a non-production repository or project before enabling the
+   automation broadly.
+
+<Note>
+  GitHub has built-in event routing in OpenHands. Azure DevOps event routing is
+  configured through service hooks or custom webhooks.
+</Note>
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| The Azure DevOps login option is not visible | Confirm **Azure DevOps Authentication** is enabled in the Admin Console or Helm values and the deployment has been applied. |
+| OAuth redirects fail | Confirm the Entra redirect URI exactly matches `https://auth.app.<your-openhands-domain>/realms/allhands/broker/azure_devops/endpoint`. |
+| Microsoft sign-in shows an invalid client or secret error | Confirm the Azure DevOps Client ID and Client Secret match the Microsoft Entra app registration. If the secret expired, create a new one and redeploy. |
+| Microsoft sign-in succeeds but no repositories are listed | Confirm the user has access to the Azure DevOps organization, project, and repositories. Also confirm the default organization value is the organization name only. |
+| Consent fails or Azure DevOps API calls are denied | Confirm the Entra application has the required Azure DevOps delegated permission and that admin consent has been granted if your tenant requires it. |
+| Repository selection or Git operations fail | Confirm OpenHands can reach `dev.azure.com` and that the repository is referenced as `organization/project/repository`. |
+| Azure DevOps Service Hook deliveries do not trigger an automation | Confirm the custom webhook is registered, the Service Hook URL is correct, the event type matches the automation, and the automation is enabled. |
