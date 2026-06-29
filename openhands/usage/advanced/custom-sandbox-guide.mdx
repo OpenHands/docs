@@ -1,105 +1,105 @@
 ---
 title: Custom Sandbox
-description: This guide is for users that would like to use their own custom Docker image for the runtime.
-  For example, with certain tools or programming languages pre-installed.
+description: Build and use your own agent-server image when you need extra tools, system
+  packages, or language runtimes pre-installed in the sandbox.
 ---
 
 <Note>
   These settings are only available in [Local GUI](/openhands/usage/run-openhands/local-setup). OpenHands Cloud uses managed sandbox environments.
 </Note>
 
+<Note>
+  Looking for the legacy `SANDBOX_BASE_CONTAINER_IMAGE` / `base_container_image`
+  workflow? That only applies to OpenHands V0. See the
+  [V0 Custom Sandbox reference](/openhands/usage/v0/advanced/V0_custom-sandbox-guide).
+</Note>
+
 The sandbox is where the agent performs its tasks. Instead of running commands directly on your computer
 (which could be risky), the agent runs them inside a Docker container.
 
-The default OpenHands sandbox (`python-nodejs:python3.12-nodejs22`
-from [nikolaik/python-nodejs](https://hub.docker.com/r/nikolaik/python-nodejs)) comes with some packages installed such
-as python and Node.js but may need other software installed by default.
+## How the sandbox works in V1
 
-You have two options for customization:
+In OpenHands V1 the sandbox container **is** the OpenHands agent-server. By default OpenHands runs
+`ghcr.io/openhands/agent-server:<release>-python`, which already includes Python and Node.js. The image is
+resolved from two environment variables:
 
-- Use an existing image with the required software.
-- Create your own custom Docker image.
+- `AGENT_SERVER_IMAGE_REPOSITORY` (default `ghcr.io/openhands/agent-server`)
+- `AGENT_SERVER_IMAGE_TAG` (default `<release>-python`)
 
-If you choose the first option, you can skip the `Create Your Docker Image` section.
+Because the sandbox is the agent-server, you can't just swap in an arbitrary base image — the container has
+to keep running the agent-server. To add custom tooling you build a **custom agent-server image** on top of
+your chosen base image, then point OpenHands at it.
 
-## Create Your Docker Image
+## Building a custom agent-server image
 
-To create a custom Docker image, it must be Debian based.
+The agent-server is built from a [Dockerfile in the OpenHands SDK](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile)
+that accepts a `BASE_IMAGE` build argument. Any Debian-based image works as the base.
 
-For example, if you want OpenHands to have `ruby` installed, you could create a `Dockerfile` with the following content:
+For example, to layer the agent-server onto an image that has `ruby` installed, first build (or pick) your base
+image. To build one:
 
 ```dockerfile
+# Dockerfile.base
 FROM nikolaik/python-nodejs:python3.12-nodejs22
 
 # Install required packages
 RUN apt-get update && apt-get install -y ruby
 ```
 
-Or you could use a Ruby-specific base image:
-
-```dockerfile
-FROM ruby:latest
-```
-
-Save this file in a folder. Then, build your Docker image (e.g., named custom-image) by navigating to the folder in
-the terminal and running::
 ```bash
-docker build -t custom-image .
+docker build -t my-base:latest -f Dockerfile.base .
 ```
 
-This will produce a new image called `custom-image`, which will be available in Docker.
+Then build the agent-server image on top of it. Clone the
+[OpenHands SDK](https://github.com/OpenHands/software-agent-sdk) and, from the repository root, run:
 
-## Using the Docker Command
+```bash
+docker buildx build \
+  --build-arg BASE_IMAGE=my-base:latest \
+  --target source \
+  -f openhands-agent-server/openhands/agent_server/docker/Dockerfile \
+  -t my-agent-server:custom \
+  --load \
+  .
+```
 
-When running OpenHands using [the docker command](/openhands/usage/run-openhands/local-setup#start-the-app), replace
-the `AGENT_SERVER_IMAGE_REPOSITORY` and `AGENT_SERVER_IMAGE_TAG` environment variables with `-e SANDBOX_BASE_CONTAINER_IMAGE=<custom image name>`:
+- `--build-arg BASE_IMAGE=` selects the base image to layer the agent-server onto.
+- `--target source` matches the default `-python` image (it includes VSCode and VNC and runs from a Python
+  virtual environment). Use `--target binary` for a self-contained build with no Python venv.
+- `--load` makes the resulting image available to your local Docker daemon.
 
-```commandline
+This produces a local image called `my-agent-server:custom`.
+
+## Pointing OpenHands at your image
+
+Set both environment variables so OpenHands launches your image as the sandbox. They must be set together —
+if either is missing, OpenHands falls back to the default image:
+
+```bash
 docker run -it --rm --pull=always \
-    -e SANDBOX_BASE_CONTAINER_IMAGE=custom-image \
+    -e AGENT_SERVER_IMAGE_REPOSITORY=my-agent-server \
+    -e AGENT_SERVER_IMAGE_TAG=custom \
     ...
 ```
 
-## Using the Development Workflow
+If you start OpenHands with Docker Compose, set the same variables there:
 
-### Setup
-
-First, ensure you can run OpenHands by following the instructions in [Development.md](https://github.com/OpenHands/OpenHands/blob/main/Development.md).
-
-### Specify the Base Sandbox Image
-
-In the `config.toml` file within the OpenHands directory, set the `base_container_image` to the image you want to use.
-This can be an image you’ve already pulled or one you’ve built:
-
-```bash
-[core]
-...
-[sandbox]
-base_container_image="custom-image"
+```yaml
+environment:
+  - AGENT_SERVER_IMAGE_REPOSITORY=my-agent-server
+  - AGENT_SERVER_IMAGE_TAG=custom
 ```
 
-### Additional Configuration Options
+When the sandbox starts, OpenHands launches your image on port `8000` and polls `/health` until the
+agent-server is ready.
 
-The `config.toml` file supports several other options for customizing your sandbox:
+<Note>
+  When you publish your image to a registry, set `AGENT_SERVER_IMAGE_REPOSITORY` to the fully qualified
+  repository (e.g. `ghcr.io/your-org/my-agent-server`) and make sure the host running OpenHands can pull it.
+</Note>
 
-```toml
-[core]
-# Install additional dependencies when the runtime is built
-# Can contain any valid shell commands
-# If you need the path to the Python interpreter in any of these commands, you can use the $OH_INTERPRETER_PATH variable
-runtime_extra_deps = """
-pip install numpy pandas
-apt-get update && apt-get install -y ffmpeg
-"""
+## Related
 
-# Set environment variables for the runtime
-# Useful for configuration that needs to be available at runtime
-runtime_startup_env_vars = { DATABASE_URL = "postgresql://user:pass@localhost/db" }
-
-# Specify platform for multi-architecture builds (e.g., "linux/amd64" or "linux/arm64")
-platform = "linux/amd64"
-```
-
-### Run
-
-Run OpenHands by running ```make run``` in the top level directory.
+- [Docker Sandbox](/openhands/usage/sandboxes/docker) — the default sandbox provider for Local GUI.
+- [Agent Server in Docker (SDK)](/sdk/guides/agent-server/docker-sandbox) — deeper details on the
+  agent-server image and how it is built.
