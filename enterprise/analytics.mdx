@@ -1,65 +1,123 @@
 ---
 title: Analytics
-description: Get started with LLM observability and tracing in OpenHands Enterprise.
+description: Deploy Laminar for trace analysis in OpenHands Enterprise.
 icon: rocket
 ---
 
-This guide walks you through setting up and using Laminar for Analytics in OpenHands Enterprise.
-You'll opt into Analytics and configure conversations to automatically send traces to Laminar.
+This guide walks you through enabling Laminar in OpenHands Enterprise (OHE) so conversations automatically send traces for observability and analysis.
+
+For SDK-level tracing concepts, OTEL environment variables, and non-Laminar backends, see [Observability & Tracing](/sdk/guides/observability).
 
 ## Who This Is For
 
-This guide is for users who want to explore analytics on their OpenHands Enterprise conversations.
+This guide is for users who want to deploy Laminar alongside OpenHands Enterprise and inspect traces from Enterprise conversations.
 
-### Why Laminar?
+## Why Laminar in OHE?
 
-[Laminar](https://laminar.sh/) is an open source observability platform for AI agents like OpenHands.
+Laminar helps you understand what your OpenHands deployment is doing in production:
 
-Use Laminar to view your conversation traces including prompts, tool calls, and answers. A trace is a record of what your agent did.
-
-Laminar can help you see where the agent went wrong. From traces, you can create signals. A signal is a natural language instruction to extract structured data from traces. Use signals to analyze recurring behavior across traces. You can then create better situations for prompting and measure them in Laminar. You can also analyze and improve your skills.
-
-For example, you can view all conversation traces related to a specific skill.
-
-Laminar can help you answer the following questions:
-- On a trace, did the agent do a good job using the skill?
-- On another trace, did the agent do a bad job?
+- Inspect prompts, tool calls, answers, and nested agent behavior in Laminar's [trace views](https://laminar.sh/docs/platform/viewing-traces).
+- Use [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability) when conversations drive browser automation.
+- For Helm installs, define [signals](https://laminar.sh/docs/signals/introduction) to classify failures, measure outcomes, and monitor recurring patterns across many traces.
 
 For more information on evaluating skills, see [Evaluating Agent Skills](https://www.openhands.dev/blog/evaluating-agent-skills).
 
-### Prerequisites
+## Prerequisites
 
-Before you begin, make sure you completed the [Quick Start guide](/enterprise/quick-start).
+Before you begin, complete the [Quick Start guide](/enterprise/quick-start).
 
 ## Enable Analytics
 
-You should see an **Analytics Configuration** section on the application configuration page.
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    <Info>
+      VM installs currently support trace collection, but do not support Laminar signals. The Admin Console configures the Laminar Project API Key only; the installer sets the remaining Laminar connection values automatically.
+    </Info>
 
-Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+    You should see an **Analytics Configuration** section on the application configuration page.
 
-![Configure Analytics](./images/laminar-configure-analytics.png)
+    Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+
+    ![Configure Analytics](./images/laminar-configure-analytics.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    If you deployed OpenHands Enterprise into your own Kubernetes cluster using Helm, enable Laminar in your `values.yaml` override file.
+
+    ```yaml
+    laminar:
+      enabled: true
+      global:
+        # Set to "aws" or "gcp" to match your cluster.
+        cloudProvider: "aws"
+
+      frontend:
+        ingress:
+          enabled: true
+          hostname: "analytics.app.<your-base-domain>"
+          tls:
+            enabled: true
+            secretName: "laminar-frontend-tls"
+
+      appServer:
+        # Use an app-server ingress on GCP or other L7 ingress setups.
+        ingress:
+          enabled: true
+          hostname: "laminar-api.<your-base-domain>"
+          tls:
+            enabled: true
+            secretName: "laminar-app-server-tls"
+
+        # On AWS, use a Network Load Balancer instead of appServer.ingress
+        # if your runtimes send traces directly over TCP.
+        loadBalancer:
+          enabled: false
+    ```
+
+    Keep `laminar.enabled: false` until your ingress, TLS, and storage class settings match your cluster.
+  </Tab>
+</Tabs>
 
 ## Deploy
 
-OpenHands will begin deploying. You can expect the deployment status to transition from
-**Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    OpenHands will begin deploying. You can expect the deployment status to transition from **Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
 
-![Deployment in progress](./images/laminar-deploy-in-progress.png)
+    ![Deployment in progress](./images/laminar-deploy-in-progress.png)
 
-Click **Details** next to the deployment status to monitor individual resources. Resources
-shown in orange are still deploying -- wait until all resources are ready.
+    Click **Details** next to the deployment status to monitor individual resources. Resources shown in orange are still deploying, so wait until all resources are ready.
 
-![Deployment status details](./images/laminar-deployment-status-details.png)
+    ![Deployment status details](./images/laminar-deployment-status-details.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Apply your updated `values.yaml` override file:
 
-## Access Laminar UI
+    ```bash
+    helm upgrade openhands oci://ghcr.io/openhands/helm-charts/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
 
-Once the deployment status shows **Ready**, navigate to `https://analytics.app.<your-base-domain>`.
+    Wait for the Laminar workloads, ingress, and TLS resources to become ready.
+  </Tab>
+</Tabs>
+
+## Access the Laminar UI
+
+Once the deployment status shows **Ready**, navigate to the Laminar frontend URL:
+
+- VM install: `https://analytics.app.<your-base-domain>`
+- Kubernetes install: the hostname configured in `laminar.frontend.ingress.hostname`
 
 Click the **Continue with Keycloak** button:
 
 ![Laminar Keycloak Auth](./images/laminar-keycloak-auth.png)
 
-## Create a Laminar project
+If you want more background on Laminar Cloud versus self-hosting outside OHE, see Laminar's official [hosting options](https://laminar.sh/docs/hosting-options).
+
+## Create a Laminar Project
+
+Create a project in the Laminar UI:
 
 ![Laminar Create Project](./images/laminar-create-project.png)
 
@@ -67,56 +125,168 @@ Once a project has been created, Laminar is ready to listen for traces.
 
 ![Laminar Listen Traces](./images/laminar-listen-traces.png)
 
-## Create an ingest only API Key
+## Create an Ingest-Only API Key
 
-Important: Always use ingest API keys when deploying.
+Always use ingest-only API keys when deploying OHE.
 
-Create a key with the right permissions. Ingest only keys are recommended as they only have write access to write traces. They cannot be used to read data.
+Ingest-only keys are recommended because OHE only needs permission to write traces. They cannot be used to read trace data.
 
 ![Configure Laminar Ingest Only Key](./images/laminar-ingest-only-key.png)
 
-## Set Laminar Project API Key to enable automatic conversation traces
+## Set the Laminar Project API Key
 
-Set the ingest only key as the Laminar Project API Key in the Admin Console configuration:
+This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guide](/sdk/guides/observability).
 
-![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Set the ingest-only key as the **Laminar Project API Key** in the Admin Console configuration.
 
-Click **Save config**.
+    ![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+
+    Click **Save config**.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Create a Kubernetes Secret for the ingest-only project key:
+
+    ```bash
+    kubectl create secret generic lmnr-project-api-key \
+      --namespace openhands \
+      --from-literal=LMNR_PROJECT_API_KEY=<your-ingest-only-key>
+    ```
+
+    Create a Secret for the Laminar app-server base URL:
+
+    ```bash
+    kubectl create secret generic lmnr-base-url \
+      --namespace openhands \
+      --from-literal=LMNR_BASE_URL=https://laminar-api.<your-base-domain>
+    ```
+
+    Then reference those Secrets from your `values.yaml` override file:
+
+    ```yaml
+    laminar:
+      enabled: true
+      apiKeyFromSecret:
+        name: lmnr-project-api-key
+        key: LMNR_PROJECT_API_KEY
+      baseUrlFromSecret:
+        name: lmnr-base-url
+        key: LMNR_BASE_URL
+      forceHttp: true
+    ```
+
+    If your self-hosted Laminar app server exposes a non-default HTTP port, set `laminar.httpPort`.
+  </Tab>
+</Tabs>
+
+## Configure Runtime Environment Variables
+
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    VM installs configure analytics through the Admin Console. After analytics is enabled and the Laminar Project API Key is saved, the installer automatically configures:
+
+    ```yaml
+    LMNR_BASE_URL: "http://laminar-app-server-service"
+    LMNR_PROJECT_API_KEY: "<your-ingest-only-key>"
+    LMNR_FORCE_HTTP: "true"
+    LMNR_HTTP_PORT: "8000"
+    ```
+
+    The Admin Console does not currently expose `LLM_*` settings for Laminar AI features. VM installs currently send traces to Laminar, but do not support Laminar signals.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    In OHE, environment variables whose names start with `LMNR_` or `LLM_` are forwarded to the SDK runtime. This lets you configure Laminar ingestion settings and the LLM settings used for Laminar-backed workflows.
+
+    For example, you can point the runtime at the managed Laminar endpoint and use an ingest-only project key:
+
+    ```yaml
+    LMNR_BASE_URL: "https://laminar-api.<your-base-domain>"
+    # Ingest-only API key, not a read-capable secret:
+    LMNR_PROJECT_API_KEY: ""
+    LMNR_FORCE_HTTP: "true"
+    ```
+
+    The chart sets `LMNR_PROJECT_API_KEY`, `LMNR_BASE_URL`, `LMNR_FORCE_HTTP`, and `LMNR_HTTP_PORT` from the `laminar` values above. If you need to override one of them directly, set it under the top-level `env` values in your `values.yaml`.
+
+    You can also control which LLM Laminar uses for its AI features — chat-with-trace, SQL-with-AI, and [signals](https://laminar.sh/docs/signals/introduction) — by forwarding the standard `LLM_*` variables. Add these values under the top-level `env` values:
+
+    ```yaml
+    env:
+      LLM_PROVIDER: "openai"
+      LLM_API_KEY: "<your-openai-or-gateway-key>"
+      LLM_BASE_URL: "https://llm-proxy.<your-base-domain>"
+      LLM_MODEL_SMALL: "gpt-5.4-mini"
+      LLM_MODEL_MEDIUM: "gpt-5.4-mini"
+      LLM_MODEL_LARGE: "gpt-5.5"
+    ```
+
+    `LLM_PROVIDER` accepts `gemini` (Laminar's default), `openai`, or `bedrock`, and `LLM_MODEL_SMALL` / `LLM_MODEL_MEDIUM` / `LLM_MODEL_LARGE` are optional per-tier model overrides. Set `LLM_PROVIDER` to `openai` whenever you point `LLM_BASE_URL` at an OpenAI-compatible gateway (for example LiteLLM, OpenRouter, or vLLM), not just the public OpenAI API. Set `LLM_API_KEY` for `gemini`, `openai`, and OpenAI-compatible gateways; use AWS credentials instead for `bedrock`.
+
+    For the full set of supported values, see Laminar's official [self-hosting configuration reference](https://laminar.sh/docs/self-hosting/configuration).
+  </Tab>
+</Tabs>
 
 ## Deploy Updated Configuration
 
-Deploy the config change after setting the Laminar Project API Key in the Admin Console.
+Deploy the configuration change after setting the Laminar Project API Key.
 
-![Laminar Deploy Again](./images/laminar-deploy-again.png)
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Click **Deploy** in the Admin Console.
+
+    ![Laminar Deploy Again](./images/laminar-deploy-again.png)
+
+    For a VM install walkthrough, watch the recap:
+
+    <video
+      controls
+      className="w-full aspect-video"
+      src="https://github.com/user-attachments/assets/0cdf1625-3246-4388-a989-765f00d33ffb"
+    ></video>
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Apply your updated `values.yaml` override file:
+
+    ```bash
+    helm upgrade openhands oci://ghcr.io/openhands/helm-charts/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
+  </Tab>
+</Tabs>
 
 Wait for the deployment to complete.
 
-## Start a conversation
+## Start a Conversation
 
 Navigate to the OpenHands UI at `https://app.<your-base-domain>`. Start a new conversation and try a prompt.
 
 ![Start a Conversation](./images/laminar-openhands-conversation.png)
 
-Your conversations will now automatically send a trace to Laminar.
+Your conversations will now automatically send traces to Laminar.
 
 ![Laminar Trace](./images/laminar-trace.png)
 
-<video
-  controls
-  className="w-full aspect-video"
-  src="https://github.com/user-attachments/assets/0cdf1625-3246-4388-a989-765f00d33ffb"
-></video>
+## What to Do Next in Laminar
+
+Once traces are flowing, use Laminar's official docs to go deeper:
+
+- [Viewing Traces](https://laminar.sh/docs/platform/viewing-traces) to inspect a single conversation in transcript, tree, or timeline views.
+- For Helm installs, [Signals](https://laminar.sh/docs/signals/introduction) to extract structured outcomes or failure modes across many traces.
+- [Session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability) to debug browser-based automations.
+- [Observability for OpenHands Software Agent SDK](https://laminar.sh/docs/tracing/integrations/openhands-sdk) for the OpenHands-specific tracing model.
 
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Observability & Tracing" icon="activity" href="/sdk/guides/observability">
+    Learn the full OpenHands tracing model, OTEL configuration options, and non-Laminar backends.
+  </Card>
   <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
-    Get the most out of your AI coding agents with effective prompting techniques.
+    Get more reliable traces by improving the prompts you give your agents.
   </Card>
   <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
     Reach out to the OpenHands team for deployment assistance or questions.
-  </Card>
-  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
-    Explore the full OpenHands documentation for usage guides and features.
   </Card>
 </CardGroup>

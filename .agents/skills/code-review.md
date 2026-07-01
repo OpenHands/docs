@@ -141,7 +141,7 @@ Match the event to the severity of your findings:
 SDK guide files under `sdk/guides/` **must** use a category prefix:
 
 - `llm-` for LLM-related guides (e.g., `llm-reasoning.mdx`, `llm-gpt5-preset.mdx`)
-- `agent-` for Agent-related guides (e.g., `agent-custom.mdx`, `agent-delegation.mdx`)
+- `agent-` for Agent-related guides (e.g., `agent-custom.mdx`, `agent-settings.mdx`)
 - `convo-` for Conversation-related guides (e.g., `convo-async.mdx`, `convo-persistence.mdx`)
 
 Flag any new SDK guide that does not follow this naming convention.
