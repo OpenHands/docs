@@ -1,0 +1,85 @@
+---
+title: Path-Triggered Rules
+description: Path-triggered rules are skills that OpenHands injects deterministically whenever the agent reads, edits, or creates a file whose path matches a glob pattern. They behave like Claude Code "rules" — guaranteed to load for the files they scope, with no reliance on the model choosing them.
+---
+
+## Usage
+
+A path-triggered rule is an ordinary skill with a `paths:` glob in its frontmatter. Whenever the
+agent **touches** a file (reads, edits, or creates it) whose workspace-relative path matches one of
+those globs, the rule's content is folded into the tool result the agent reads next — so the guidance
+is guaranteed to be present exactly when the agent is working on the matching file.
+
+Unlike [keyword-triggered skills](/overview/skills/keyword), rules are **not** advertised in
+`<available_skills>` and cannot be invoked by the model. They add **zero baseline cost** to the
+context window: nothing is loaded until a matching file is actually touched, and each rule is injected
+only once per conversation.
+
+<Info>
+Use path-triggered rules for scoped conventions that should apply automatically when specific files
+are edited — e.g. "validate all request inputs with zod" for `src/api/**/*.ts`, or "keep migrations
+reversible" for `db/migrations/**`.
+</Info>
+
+## Frontmatter Syntax
+
+Frontmatter is required for path-triggered rules. Enclose it in triple dashes (`---`) at the top of
+the file, above the guidelines.
+
+| Field   | Description                                                        | Required | Default |
+|---------|--------------------------------------------------------------------|----------|---------|
+| `paths` | Glob patterns (YAML list or comma-separated string) that scope the rule. | Yes      | None    |
+
+A file that declares both `paths:` and `triggers:` becomes a path-triggered rule — `paths:` wins.
+This keeps rules deterministic and out of the model-invocable catalog.
+
+### Glob Semantics
+
+Patterns use gitignore-style matching against the workspace-relative POSIX path (matching is
+case-sensitive):
+
+| Pattern            | Matches                                                                 |
+|--------------------|-------------------------------------------------------------------------|
+| `**`               | Any number of path segments, including zero (crosses `/`).              |
+| `*`                | Any run of characters **within a single** path segment.                 |
+| `?`                | A single non-separator character.                                       |
+| `*.ts` (no slash)  | The basename at **any depth** — equivalent to `**/*.ts`.                 |
+
+`*` also matches leading-dot files (e.g. `src/*` matches `src/.env`).
+
+## Example
+
+Here's a rule located at `.agents/skills/api-validation.md`:
+
+```markdown
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.route.ts"
+---
+
+API RULE: validate all request inputs with zod before using them.
+Reject unknown fields and return a 400 with the validation error.
+```
+
+When the agent creates or edits `src/api/users.ts`, the rule content is appended to that tool result
+inside an `<EXTRA_INFO>` block:
+
+```xml
+<EXTRA_INFO>
+The following rule applies because a file you touched matches "src/api/**/*.ts". Follow it when working with matching files.
+Rule location: /repo/.agents/skills/api-validation.md
+
+API RULE: validate all request inputs with zod before using them.
+Reject unknown fields and return a 400 with the validation error.
+</EXTRA_INFO>
+```
+
+<Note>
+Path-triggered rules load from the same skills directories as other skills (`.agents/skills/`,
+`.openhands/skills/`, …). They are repo-scoped: touching a file outside the workspace never fires a
+rule. Injection is available for local conversations; ACP-backed conversations do not inject path
+rules because the ACP server owns tool execution.
+</Note>
+
+[See the SDK guide for the programmatic `PathTrigger` API](/sdk/guides/skill#path-triggered-rules).
