@@ -19,6 +19,7 @@ Understanding where skill content appears in the prompt is critical. The behavio
 | **AgentSkills** (`SKILL.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
 | **Legacy** (inline/`*.md`) | `None` | **`<REPO_CONTEXT>` (full content in the initial system prompt; included in LLM context for each turn)** | ❌ No |
 | **Legacy** (inline/`*.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+| **Rule** (inline/`*.md`) | `PathTrigger` (`paths:` globs) | Injected into the **tool result** (`<EXTRA_INFO>`) when a matching file is touched; never in `<available_skills>` or `<REPO_CONTEXT>` | ❌ No — deterministic on file-touch |
 
 <Warning>
 **Token Usage Warning**: Legacy skills with `trigger=None` add their **full content** to `<REPO_CONTEXT>` in the initial `SystemPromptEvent`. That system message remains part of the conversation context for subsequent LLM calls, so the content still affects token usage on each turn. Consider using AgentSkills format (`SKILL.md`) for progressive disclosure instead.
@@ -66,6 +67,7 @@ Skill location: /path/to/skill
 |--------|-------------------|----------|
 | **Always-loaded** | At conversation start | Repository rules, coding standards |
 | **Trigger-loaded** | When keywords match | Specialized tasks, domain knowledge |
+| **Path-triggered** | When the agent touches a matching file | File-scoped rules (e.g. API validation, migration conventions) |
 | **Progressive disclosure** | Agent reads on demand | Large reference docs (AgentSkills) |
 
 ## Always-Loaded Context
@@ -129,6 +131,70 @@ Skill location: /path/to/encryption-helper
 Use the encrypt.sh script to encrypt messages.
 </EXTRA_INFO>
 ```
+
+## Path-Triggered Rules
+
+A **rule** is a skill with a `PathTrigger` (`paths:` glob frontmatter). Its content is injected
+**deterministically** when the agent reads, edits, or creates a file whose workspace-relative path
+matches one of the globs — no reliance on the model choosing a skill. See [Path-Triggered Rules](/overview/skills/path)
+for the conceptual overview.
+
+Rules add **zero baseline cost**: they are excluded from `<available_skills>` and `<REPO_CONTEXT>`
+and are never model-invocable (`disable_model_invocation` is forced on). Nothing is loaded until a
+matching file is touched, and each rule is injected only once per conversation.
+
+```python icon="python" focus={6}
+from openhands.sdk.skills import PathTrigger, Skill
+
+Skill(
+    name="api-validation",
+    content="API RULE: validate all request inputs with zod before using them.",
+    trigger=PathTrigger(paths=["src/api/**/*.ts", "**/*.route.ts"]),
+)
+```
+
+As a file-based skill, this is just a `*.md` file with `paths:` frontmatter in a skills directory
+(e.g. `.agents/skills/api-validation.md`):
+
+```markdown icon="markdown"
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.route.ts"
+---
+
+API RULE: validate all request inputs with zod before using them.
+```
+
+When the agent creates or edits `src/api/users.ts`, the rule content is appended to that **tool
+result** (not the user message) inside an `<EXTRA_INFO>` block, so the agent reads it on its next step:
+
+```xml icon="file"
+<EXTRA_INFO>
+The following rule applies because a file you touched matches "src/api/**/*.ts".
+Follow it when working with matching files.
+Rule location: /repo/.agents/skills/api-validation.md
+
+API RULE: validate all request inputs with zod before using them.
+</EXTRA_INFO>
+```
+
+### Glob Semantics
+
+Patterns use gitignore-style matching against the workspace-relative POSIX path (case-sensitive):
+
+| Pattern           | Matches                                                       |
+|-------------------|---------------------------------------------------------------|
+| `**`              | Any number of path segments, including zero (crosses `/`).    |
+| `*`               | Any run of characters **within a single** path segment.       |
+| `?`               | A single non-separator character.                             |
+| `*.ts` (no slash) | The basename at **any depth** — equivalent to `**/*.ts`.      |
+
+<Note>
+- A skill is **either** path-triggered **or** model-invocable, not both: if a file declares both `paths:` and `triggers:`, `paths:` wins.
+- Rules are repo-scoped — touching a file outside the workspace never fires a rule.
+- Injection is available for local conversations. ACP-backed conversations do not inject path rules, because the ACP server owns tool execution.
+</Note>
 
 ## Progressive Disclosure (AgentSkills Standard)
 

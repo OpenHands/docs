@@ -12,7 +12,7 @@ The **Skill** system provides a mechanism for injecting reusable, specialized kn
 The Skill system has five primary responsibilities:
 
 1. **Context Injection** - Add specialized prompts to agent context based on triggers
-2. **Trigger Evaluation** - Determine when skills should activate (always, keyword, task)
+2. **Trigger Evaluation** - Determine when skills should activate (always, keyword, task, path)
 3. **Dynamic Content Rendering** - Execute inline shell commands for dynamic context injection
 4. **MCP Integration** - Load MCP tools associated with repository skills
 5. **Third-Party Support** - Parse `.cursorrules`, `agents.md`, and other skill formats
@@ -26,12 +26,14 @@ flowchart TB
         Repo["Repository Skill<br><i>trigger: None</i>"]
         Knowledge["Knowledge Skill<br><i>trigger: KeywordTrigger</i>"]
         Task["Task Skill<br><i>trigger: TaskTrigger</i>"]
+        Rule["Path Rule<br><i>trigger: PathTrigger</i>"]
     end
     
     subgraph Triggers["Trigger Evaluation"]
         Always["Always Active<br><i>Repository guidelines</i>"]
         Keyword["Keyword Match<br><i>String matching on user messages</i>"]
         TaskMatch["Keyword Match + Inputs<br><i>Same as KeywordTrigger + user inputs</i>"]
+        PathMatch["File-Touch Match<br><i>Glob match on touched file path</i>"]
     end
     
     subgraph Content["Skill Content"]
@@ -49,10 +51,12 @@ flowchart TB
     Repo --> Always
     Knowledge --> Keyword
     Task --> TaskMatch
+    Rule --> PathMatch
     
     Always --> Markdown
     Keyword --> Markdown
     TaskMatch --> Markdown
+    PathMatch --> Markdown
     
     Markdown -.->|Optional| Dynamic
     Repo -.->|Optional| MCPTools
@@ -68,8 +72,8 @@ flowchart TB
     classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
     classDef dynamic fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
     
-    class Repo,Knowledge,Task primary
-    class Always,Keyword,TaskMatch secondary
+    class Repo,Knowledge,Task,Rule primary
+    class Always,Keyword,TaskMatch,PathMatch secondary
     class Context tertiary
     class Dynamic dynamic
 ```
@@ -81,6 +85,7 @@ flowchart TB
 | **[`Skill`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/skill.py)** | Core skill model | Pydantic model with name, content, trigger |
 | **[`KeywordTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Keyword-based activation | String matching on user messages |
 | **[`TaskTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Task-based activation | Special type of KeywordTrigger for skills with user inputs |
+| **[`PathTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/skills/trigger.py)** | Path-based activation ("rules") | Glob match on a touched file path; injected into the tool result, not model-invocable |
 | **[`InputMetadata`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/types.py)** | Task input parameters | Defines user inputs for task skills |
 | **[`render_content_with_commands`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/execute.py)** | Dynamic content | Executes inline `!`command`` patterns |
 | **Skill Loader** | File parsing | Reads markdown with frontmatter, validates schema |
@@ -209,6 +214,47 @@ inputs:
 
 **Note:** TaskTrigger uses the same keyword matching mechanism as KeywordTrigger. The distinction is semantic - TaskTrigger is used for skills that require structured user inputs, while KeywordTrigger is for knowledge-based skills.
 
+### Path Skills (Rules)
+
+Skills that are injected **deterministically** when the agent touches a matching file, modeled on Claude Code "rules":
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    Touch["Agent Reads/Edits/Creates File"]
+    Match{"Path Matches<br>Glob?"}
+    Inject["Inject into Tool Result"]
+    Skip["Skip Rule"]
+    Dedup["Dedup: once per conversation"]
+
+    Touch --> Match
+    Match -->|Yes| Dedup
+    Match -->|No| Skip
+    Dedup --> Inject
+
+    style Match fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Inject fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Characteristics:**
+- **Trigger:** `PathTrigger` with gitignore-style `paths` globs (matched against the workspace-relative POSIX path)
+- **Activation:** The agent reads, edits, or creates a file whose path matches a glob (fires on `create` too)
+- **Injection point:** Folded into the `ObservationEvent` tool result (`extended_content`) as an `<EXTRA_INFO>` block — **not** the user message
+- **Baseline cost:** Zero — excluded from `<available_skills>` and `<REPO_CONTEXT>`; `disable_model_invocation` is forced, so rules are never model-invocable
+- **Dedup:** Each rule is injected only once per conversation (tracked via `ConversationState.activated_path_rules`)
+- **Location:** Any skills directory (e.g. `.agents/skills/*.md`) — a rule is just a skill with `paths:` frontmatter
+
+**Trigger Example:**
+```yaml
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.route.ts"
+---
+```
+
+**Note:** A skill is either path-triggered or model-invocable, not both — if a file declares both `paths:` and `triggers:`, `paths:` wins. Path-rule injection applies to local conversations; ACP-backed conversations do not inject rules because the ACP server owns tool execution.
+
 ## Trigger Evaluation
 
 Skills are evaluated at different points in the agent lifecycle:
@@ -258,6 +304,7 @@ flowchart TB
 | **None** | Every step | Always active |
 | **KeywordTrigger** | On user message | Keyword/string match in message |
 | **TaskTrigger** | On user message | Keyword/string match in message (same as KeywordTrigger) |
+| **PathTrigger** | On tool observation | Glob match on the touched file's path (read/edit/create) |
 
 **Note:** Both KeywordTrigger and TaskTrigger use identical string matching logic. TaskTrigger is simply a semantic variant used for skills that include user input parameters.
 
@@ -349,6 +396,7 @@ Dynamic values: !`git branch --show-current`
 |-------|----------|-------------|
 | **name** | Yes | Unique skill identifier |
 | **trigger** | Yes* | Activation trigger (`null` for always active) |
+| **paths** | No | Glob patterns that make the skill a path-triggered rule (`PathTrigger`); takes precedence over `triggers` |
 | **mcp_tools** | No | MCP server configuration (repo skills only) |
 | **inputs** | No | User input metadata (task skills only) |
 
