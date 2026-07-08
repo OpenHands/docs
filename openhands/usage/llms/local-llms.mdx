@@ -144,7 +144,7 @@ If you're experiencing issues, try switching to one of these models before assum
 
 ## Advanced: Alternative LLM Backends
 
-This section describes how to run local LLMs with OpenHands using alternative backends like Ollama, SGLang, or vLLM — without relying on LM Studio.
+This section describes how to run local LLMs with OpenHands using alternative backends like Ollama, [Atomic Chat](https://atomic.chat/), SGLang, or vLLM — without relying on LM Studio.
 
 ### Create an OpenAI-Compatible Endpoint with Ollama
 
@@ -158,6 +158,48 @@ This section describes how to run local LLMs with OpenHands using alternative ba
 OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_HOST=0.0.0.0:11434 OLLAMA_KEEP_ALIVE=-1 nohup ollama serve &
 ollama pull qwen3.6:35b-a3b
 ```
+
+### Create an OpenAI-Compatible Endpoint with Atomic Chat
+
+[Atomic Chat](https://atomic.chat/) is an open-source desktop app for running local models (and optional cloud providers). It exposes a **single OpenAI-compatible HTTP API** on your machine, typically at `http://127.0.0.1:1337/v1`. See the upstream [README](https://github.com/AtomicBot-ai/Atomic-Chat/blob/main/README.md) for downloads, system requirements, and release notes.
+
+#### 1. Install and start Atomic Chat
+
+1. Download Atomic Chat from [atomic.chat](https://atomic.chat/) or [GitHub Releases](https://github.com/AtomicBot-ai/Atomic-Chat/releases).
+2. Open Atomic Chat and **enable the local API server** in the app settings (defaults may vary by version; the API is usually served on **port 1337**).
+3. **Download and load a coding-capable model** with a **large context window**. OpenHands needs enough context for the system prompt and tools — use at least **~22k tokens**, and **32k+** when your hardware allows (same guidance as LM Studio on this page).
+
+<Note>
+  Atomic Chat binds the local API to **loopback (`127.0.0.1`) by default**, so the OpenAI-compatible endpoint is not exposed on your LAN unless you explicitly change the server host and set an API key. For Docker on the host, use `host.docker.internal:1337/v1` as described below.
+</Note>
+
+#### 2. Discover the model id OpenHands must use
+
+Atomic Chat lists served models via the OpenAI-compatible `GET /v1/models` endpoint. From the same machine:
+
+```bash
+curl -s http://127.0.0.1:1337/v1/models | head
+```
+
+Use the `id` field of the model you have loaded as the suffix after `openai/` in OpenHands (see [Configure OpenHands (Alternative Backends)](#configure-openhands-alternative-backends) below).
+
+#### 3. Point OpenHands at Atomic Chat
+
+Follow [Run OpenHands (Alternative Backends)](#run-openhands-alternative-backends) and [Configure OpenHands (Alternative Backends)](#configure-openhands-alternative-backends) below. When OpenHands runs **inside Docker** and Atomic Chat runs on the **host**, use:
+
+- **Base URL**: `http://host.docker.internal:1337/v1`
+- **Custom Model**: `openai/<model-id-from-/v1/models>` (prefix required, same convention as LM Studio on this page)
+- **API Key**: any placeholder string (for example `local-llm`) unless your Atomic Chat build requires a real key
+
+If OpenHands and Atomic Chat run on the **same host without Docker** for the web UI, you can use `http://127.0.0.1:1337/v1` instead.
+
+Atomic Chat also ships a **Launch → OpenHands** integration that can configure `LLM_BASE_URL`, `LLM_MODEL`, and `LLM_API_KEY` for the OpenHands CLI automatically.
+
+#### Troubleshooting
+
+- **Connection refused from Docker**: confirm Atomic Chat is running, the local server is enabled, and your `docker run` includes `--add-host host.docker.internal:host-gateway` as in [local setup](/openhands/usage/run-openhands/local-setup).
+- **Wrong model errors**: the Custom Model string must match an `id` returned by `GET /v1/models` after the `openai/` prefix.
+- **Agent ignores tools or acts like a chatbot**: try a stronger coding model or a larger context window; see [Community-Reported Notes and Troubleshooting](#community-reported-notes-and-troubleshooting) on this page.
 
 ### Create an OpenAI-Compatible Endpoint with vLLM or SGLang
 
@@ -239,8 +281,9 @@ Once OpenHands is running, open the Settings page in the UI and go to the `LLM` 
    - **Custom Model**: `openai/<served-model-name>`
      - For **Ollama**: `openai/qwen3.6:35b-a3b`
      - For **SGLang/vLLM**: `openai/Qwen3.6-35B-A3B`
+     - For **Atomic Chat**: `openai/<model-id-from-/v1/models>` (see [Atomic Chat](#create-an-openai-compatible-endpoint-with-atomic-chat) above)
    - **Base URL**: `http://host.docker.internal:<port>/v1`
-     Use port `11434` for Ollama, or `8000` for SGLang and vLLM.
+     Use port `11434` for Ollama, `1337` for Atomic Chat (default), or `8000` for SGLang and vLLM.
    - **API Key**:
-     - For **Ollama**: any placeholder value (e.g. `dummy`, `local-llm`)
+     - For **Ollama** or **Atomic Chat**: any placeholder value (e.g. `dummy`, `local-llm`) unless your server requires a real key
      - For **SGLang** or **vLLM**: use the same key provided when starting the server (e.g. `mykey`)
