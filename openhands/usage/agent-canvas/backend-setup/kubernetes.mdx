@@ -1,0 +1,299 @@
+---
+title: Kubernetes (Helm)
+description: Install Agent Canvas into a Kubernetes cluster with the official Helm chart.
+---
+
+The official Helm chart deploys the all-in-one Agent Canvas image (frontend + agent-server + automation) on Kubernetes as a `StatefulSet` with a `PersistentVolumeClaim` for durable state, a `Service`, and an optional `Ingress` and RBAC layer. It's the recommended way to run Agent Canvas as a shared, always-on backend that survives pod restarts and image upgrades.
+
+<Warning>
+  The agent server can read and write the pod filesystem, execute shell commands, and — when RBAC is enabled — mutate the Kubernetes cluster it runs in. Treat the release namespace as trusted infrastructure, put it behind an authenticated ingress before exposing it to the internet, and only turn on `rbac.clusterAdmin` when you truly need cluster-wide access.
+</Warning>
+
+## Prerequisites
+
+- Kubernetes **1.24 or later** (required by the chart's `kubeVersion` constraint).
+- [Helm **3.x**](https://helm.sh/docs/intro/install/).
+- A working `kubectl` context with permission to create resources in the target namespace.
+- A `StorageClass` that supports `ReadWriteOnce` volumes. On GKE this is usually `standard-rwo` on older node pools or `hyperdisk-balanced` on `c4` / `n4` node pools. On EKS it's `gp3`. On DigitalOcean/Linode it's `do-block-storage` / `linode-block-storage`.
+- An ingress controller (nginx, Traefik, cloud-provider ingress, etc.) if you want to reach Agent Canvas from outside the cluster.
+
+## Get the Chart
+
+The chart lives alongside the source in the `OpenHands/agent-canvas` repo. Clone it and install from the local path:
+
+```bash
+git clone https://github.com/OpenHands/agent-canvas.git
+cd agent-canvas
+helm install agent-canvas ./helm/agent-canvas \
+  --namespace agent-canvas --create-namespace
+```
+
+That single command deploys everything below. Agent Canvas is now reachable inside the cluster at `http://agent-canvas.agent-canvas.svc.cluster.local:8000`. See [Access It](#access-it) for how to reach it from a browser.
+
+## What Gets Deployed
+
+| Resource | Purpose |
+|---|---|
+| `StatefulSet` | Single-replica pod running the all-in-one image. |
+| `PersistentVolumeClaim` (per pod) | Backs `$HOME/.openhands` — settings, encrypted secrets, conversation history, automation SQLite DB, workspaces, generated keys. |
+| `Service` (`ClusterIP`) | Cluster-internal endpoint on port 8000. |
+| `Service` (headless) | Required by the `StatefulSet` for stable pod DNS. |
+| `ServiceAccount` | Stable identity the pod runs under. |
+| `Ingress` (optional) | External HTTP(S) entry point. |
+| `RoleBinding` (per namespace) | Created when `rbac.enabled=true`, one per entry in `rbac.namespaces`. |
+| `ClusterRoleBinding` (optional) | Created when `rbac.clusterAdmin=true`. |
+
+## Persistence
+
+Everything durable that Agent Canvas writes lives under `$HOME/.openhands` inside the container. The chart mounts a PVC there so state survives pod restarts and image upgrades. That includes:
+
+- agent-server settings and encrypted secrets
+- conversation history and event stores
+- automation SQLite database (unless you point at external Postgres — see [External Database](#external-database))
+- user workspaces (cloned repos, worktrees, generated files)
+- the `OH_SECRET_KEY` and session API key that the entrypoint auto-generates on first boot
+
+Defaults:
+
+```yaml
+persistence:
+  enabled: true
+  mountPath: /home/openhands/.openhands   # matches HOME for UID 1000 in the image
+  size: 20Gi
+  # storageClassName: ""                  # empty → cluster default
+  accessModes:
+    - ReadWriteOnce
+```
+
+<Tip>
+  On GKE clusters using `c4` or `n4` node pools, the default `standard-rwo` StorageClass will fail to attach because those machine types require `hyperdisk-balanced`. Set `persistence.storageClassName: hyperdisk-balanced` explicitly.
+</Tip>
+
+### Bring Your Own PVC
+
+If you already manage the volume out of band, point the chart at it and it will skip the `volumeClaimTemplates` path:
+
+```yaml
+persistence:
+  enabled: true
+  existingClaim: my-agent-canvas-pvc
+```
+
+## Ingress
+
+Ingress is off by default. Enable it and provide the standard knobs — the chart supports `className`, `annotations`, multiple `hosts` with per-path routing, and TLS.
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: agent-canvas.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - agent-canvas.example.com
+      secretName: agent-canvas-tls
+```
+
+<Note>
+  The read/send timeout annotations matter — Agent Canvas holds long-lived WebSocket connections for streaming agent events. Without generous timeouts, the ingress controller will close idle streams and the UI will drop reconnects mid-turn. Nginx defaults to 60 seconds.
+</Note>
+
+## RBAC
+
+RBAC is **off by default**. The pod runs under its own ServiceAccount but has no in-cluster permissions. Turn it on when the agent needs to inspect or mutate Kubernetes resources (e.g. to deploy things it builds).
+
+Two independent switches:
+
+```yaml
+rbac:
+  enabled: true
+  # Full access to all resources in these namespaces (bound to the
+  # built-in `admin` ClusterRole via one RoleBinding per namespace).
+  # Each namespace must already exist in the cluster.
+  namespaces:
+    - default
+    - agent-sandbox
+  # Optionally grant cluster-admin. OFF by default. Very broad — enable
+  # only when the agent truly needs to manage the whole cluster.
+  clusterAdmin: false
+```
+
+<Warning>
+  `rbac.clusterAdmin: true` grants `cluster-admin` — the highest privilege level in Kubernetes. An agent with a compromised prompt (or a bad LLM response) could delete every resource in the cluster. Prefer scoping to specific namespaces with `rbac.namespaces` whenever possible.
+</Warning>
+
+## Common Configurations
+
+### Minimal (defaults + ingress)
+
+```yaml
+# values.yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: agent-canvas.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts: [agent-canvas.example.com]
+      secretName: agent-canvas-tls
+```
+
+### With LLM Credentials from a Secret
+
+Rather than typing your LLM key into the UI on every reinstall, pass it in through the chart. Create the secret separately, then reference it via `config.extraEnv`:
+
+```bash
+kubectl -n agent-canvas create secret generic llm \
+  --from-literal=api-key=sk-...
+```
+
+```yaml
+# values.yaml
+config:
+  extraEnv:
+    - name: LLM_MODEL
+      value: "openhands/claude-sonnet-4-5-20250929"
+    - name: LLM_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: llm
+          key: api-key
+```
+
+### Agent That Manages a Sandbox Namespace
+
+```yaml
+# values.yaml
+rbac:
+  enabled: true
+  namespaces:
+    - agent-sandbox
+```
+
+Create the sandbox namespace before installing (`kubectl create namespace agent-sandbox`). Then the pod can `kubectl apply` / `kubectl delete` anything inside `agent-sandbox` but nothing else.
+
+### External Database
+
+The automation subsystem uses a SQLite database on the PVC by default. For higher-volume deployments, point it at Postgres:
+
+```yaml
+# values.yaml
+config:
+  automationDbUrl: "postgresql+asyncpg://user:pass@postgres.databases.svc.cluster.local/agent_canvas"
+```
+
+Store the actual credentials in a Kubernetes Secret and reference them via `config.extraEnv` rather than putting the password in `values.yaml`.
+
+## Install and Upgrade
+
+```bash
+# First install
+helm install agent-canvas ./helm/agent-canvas \
+  --namespace agent-canvas --create-namespace \
+  -f values.yaml
+
+# Later upgrades
+helm upgrade agent-canvas ./helm/agent-canvas \
+  -n agent-canvas -f values.yaml
+
+# Check rollout
+kubectl -n agent-canvas rollout status statefulset/agent-canvas
+kubectl -n agent-canvas get pvc,pod,svc,ingress
+```
+
+To pin a specific image (e.g. a PR preview or a build newer than the chart's `appVersion`):
+
+```bash
+helm upgrade agent-canvas ./helm/agent-canvas \
+  -n agent-canvas -f values.yaml \
+  --set image.tag=sha-<git-sha>
+```
+
+## Access It
+
+The chart's default `Service` is `ClusterIP`. Three common ways to reach the UI:
+
+1. **Ingress** — configure the `ingress:` block as shown above. This is the production path.
+2. **Port-forward** — for quick access from your laptop without touching DNS or ingress:
+
+    ```bash
+    kubectl -n agent-canvas port-forward svc/agent-canvas 8000:8000
+    ```
+
+    Then open `http://localhost:8000`.
+3. **LoadBalancer** — set `service.type: LoadBalancer` if your cloud provisions cloud load balancers for you. Cheaper than ingress for one-off installs, but skips TLS and auth.
+
+<Warning>
+  The agent server accepts any request with the right `LOCAL_BACKEND_API_KEY`, so exposing it via a bare LoadBalancer means anyone on the internet who can guess the key can drive the agent. Prefer the Ingress path with an authenticated proxy (oauth2-proxy, Cloudflare Access, tailscale-serve, ngrok OAuth, etc.) in front of it.
+</Warning>
+
+## Uninstall
+
+```bash
+helm uninstall agent-canvas -n agent-canvas
+```
+
+The PVC created by the `StatefulSet` is **retained** on uninstall so a reinstall picks up where you left off. Delete it explicitly if you want a fully clean slate:
+
+```bash
+kubectl -n agent-canvas delete pvc -l app.kubernetes.io/instance=agent-canvas
+```
+
+## Troubleshooting
+
+### `FailedAttachVolume: pd-balanced disk type cannot be used by c4-standard-8 machine type`
+
+The default StorageClass on your cluster is provisioning a disk type your nodes can't attach. On GKE `c4` / `n4` node pools, use `hyperdisk-balanced`:
+
+```yaml
+persistence:
+  storageClassName: hyperdisk-balanced
+```
+
+Because `volumeClaimTemplates` on an existing `StatefulSet` are immutable, changing the StorageClass requires deleting the STS and PVC first:
+
+```bash
+kubectl -n agent-canvas delete statefulset agent-canvas
+kubectl -n agent-canvas delete pvc -l app.kubernetes.io/instance=agent-canvas
+helm upgrade agent-canvas ./helm/agent-canvas -n agent-canvas -f values.yaml
+```
+
+### `ErrImagePull` on `ghcr.io/openhands/agent-canvas:<tag>`
+
+Verify the tag exists on GHCR — the chart's `appVersion` pins the default. To pull an image built from a specific commit, use `--set image.tag=sha-<short-sha>`. See [GHCR](https://github.com/OpenHands/agent-canvas/pkgs/container/agent-canvas) for the tag list.
+
+### WebSocket disconnects every minute
+
+Your ingress is closing idle streams. Bump the timeout annotations on the `Ingress`:
+
+```yaml
+ingress:
+  annotations:
+    # nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Traefik
+    traefik.ingress.kubernetes.io/router.middlewares: ""  # keep this in mind if you also add auth middlewares
+```
+
+### Pod stuck in `Pending` — `no persistent volumes available`
+
+Either no `StorageClass` exists on the cluster, or the one you set doesn't provision on demand. Run `kubectl get storageclass` and set `persistence.storageClassName` to one that shows `VOLUMEBINDINGMODE=WaitForFirstConsumer` (Immediate is fine too).
+
+## Related Guides
+
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker) — single-container equivalent for laptops and single-host VMs.
+- [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) — install directly on a Linux VM without Kubernetes.
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends) — point a local Agent Canvas UI at a remote backend.
