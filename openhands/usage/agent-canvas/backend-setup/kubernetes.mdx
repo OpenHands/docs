@@ -5,6 +5,12 @@ description: Install Agent Canvas into a Kubernetes cluster with the official He
 
 The official Helm chart deploys the all-in-one Agent Canvas image (frontend + agent-server + automation) on Kubernetes as a `StatefulSet` with a `PersistentVolumeClaim` for durable state, a `Service`, and an optional `Ingress` and RBAC layer. It's the recommended way to run Agent Canvas as a shared, always-on backend that survives pod restarts and image upgrades.
 
+<Tip>
+  **Turn this into an internal vibecoding platform.** Once Agent Canvas runs in your cluster with [RBAC enabled](#rbac), you can give it a skill that teaches the agent how to deploy the small web apps it builds straight into the cluster. From that point on, **anyone with access to the Agent Canvas UI can build and ship code into the cluster — and save it to GitHub — with just a prompt.** No pipelines, no manual `kubectl`, no hand-written manifests: the agent scaffolds the app, applies the manifests, and gives back a live URL.
+
+  The "save to GitHub" half of that loop requires the **GitHub MCP server** to be enabled so the agent can create repos and push commits on the user's behalf. See the [generic app-deployment skill](#skill-deploying-apps-into-the-cluster) below for a ready-to-adapt version, and [RBAC](#rbac) for the permissions it needs.
+</Tip>
+
 <Warning>
   The agent server can read and write the pod filesystem, execute shell commands, and — when RBAC is enabled — mutate the Kubernetes cluster it runs in. Treat the release namespace as trusted infrastructure, put it behind an authenticated ingress before exposing it to the internet, and only turn on `rbac.clusterAdmin` when you truly need cluster-wide access.
 </Warning>
@@ -137,6 +143,209 @@ rbac:
 <Warning>
   `rbac.clusterAdmin: true` grants `cluster-admin` — the highest privilege level in Kubernetes. An agent with a compromised prompt (or a bad LLM response) could delete every resource in the cluster. Prefer scoping to specific namespaces with `rbac.namespaces` whenever possible.
 </Warning>
+
+## Skill: Deploying Apps Into the Cluster
+
+To unlock the internal vibecoding platform described at the top of this page, give the agent a [skill](/overview/skills/creating) that teaches it the conventions for shipping the apps it builds into a namespace of your cluster. Drop the markdown below into `.openhands/skills/deploy-app/SKILL.md` (or your workspace's skills directory), adjust the placeholders (`<namespace>`, `<domain>`, GitHub org), and the agent will scaffold, deploy, and — with the **GitHub MCP server enabled** — push each app to its own repo on request.
+
+This is a generic version of the skill the OpenHands team runs internally. It assumes the backend was installed with [`rbac.enabled=true`](#rbac) and a `rbac.namespaces` entry for the target namespace, so the pod's ServiceAccount can `kubectl apply` there directly.
+
+````markdown
+# Deploy apps into the cluster
+
+Use this skill to create and manage the small web apps you build, serving each
+one at `https://<name>.<domain>` from the `<namespace>` namespace of the
+cluster Agent Canvas runs in.
+
+## Platform conventions
+
+Every app follows the same pattern:
+
+- **Namespace:** `<namespace>`. The agent runs under a ServiceAccount that has
+  admin in this namespace (granted via the Helm chart's `rbac.namespaces`), so
+  `kubectl apply` works directly with no extra credentials.
+- **Content:** static files (HTML/JS/CSS) served by an `nginx:*-alpine` pod.
+  The files live in a **ConfigMap** (`<name>-web`) mounted at
+  `/usr/share/nginx/html`. Apps that need a backend add their own container.
+- **Objects per app:** `Deployment` + `Service` (ClusterIP, port 80) +
+  `Ingress`. Apps that need scheduled work add a `CronJob`.
+- **Host:** `<name>.<domain>`.
+- **TLS:** if cert-manager is installed, add the
+  `cert-manager.io/cluster-issuer: <issuer>` annotation and a `tls` block with
+  `secretName: <name>-tls`; the cert is issued automatically.
+- **Auth:** put shared apps behind your ingress's authentication (oauth2-proxy,
+  a forward-auth middleware, Cloudflare Access, etc.) so they aren't exposed
+  unauthenticated. Reference your cluster's auth middleware/annotation here.
+- **Resources:** keep them tiny (requests `10m`/`16Mi`, limits `100m`/`64Mi`).
+
+### Ingress template
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: <name>
+  namespace: <namespace>
+  labels:
+    app: <name>
+  annotations:
+    cert-manager.io/cluster-issuer: <issuer>
+    # Add your cluster's auth middleware/annotation here so the app is
+    # not exposed unauthenticated.
+spec:
+  ingressClassName: <ingress-class>   # e.g. nginx or traefik
+  rules:
+    - host: <name>.<domain>
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: <name>
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - <name>.<domain>
+      secretName: <name>-tls
+```
+
+### Deployment + Service template
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: <name>
+  namespace: <namespace>
+  labels:
+    app: <name>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: <name>
+  template:
+    metadata:
+      labels:
+        app: <name>
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: web
+              mountPath: /usr/share/nginx/html
+      volumes:
+        - name: web
+          configMap:
+            name: <name>-web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: <name>
+  namespace: <namespace>
+  labels:
+    app: <name>
+spec:
+  selector:
+    app: <name>
+  ports:
+    - port: 80
+      targetPort: 80
+```
+
+## Secrets (never commit them)
+
+If an app needs credentials at runtime, store them in a Kubernetes `Secret`
+created out of band — never in a ConfigMap, the git repo, or the manifest, and
+never print their values. Create the Secret from environment variables so the
+plaintext never appears in a command line or file:
+
+```bash
+kubectl create secret generic <name>-<purpose> -n <namespace> \
+  --from-literal=<key>="$SOME_ENV_VAR" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Consume it in the Deployment via `env` + `secretKeyRef`. Document the one-off
+`kubectl create secret ...` command in the app's `README.md` — keep it out of
+`deploy.sh` and the committed manifest.
+
+## Source layout & GitHub
+
+- Keep each app's source under `~/workspace/<project>`.
+- Give each app its own GitHub repo (e.g. `<github-org>/app-<project>`).
+  **This requires the GitHub MCP server to be enabled** so the agent can create
+  the repo and push commits. Create it if it doesn't exist, then push.
+- Standard repo layout:
+  - `README.md` — what the app is, its URL, how to deploy, any one-off secrets.
+  - `k8s/<project>.yaml` — all Kubernetes objects (Deployment+Service+Ingress).
+  - `web/` — static assets served via the ConfigMap.
+  - `deploy.sh` — regenerates the ConfigMap from `web/`, applies `k8s/`, and
+    rolls the Deployment.
+
+### Typical `deploy.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+NS=<namespace>
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+kubectl create configmap <name>-web --namespace "$NS" \
+  --from-file="$DIR/web/" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl apply -f "$DIR/k8s/<name>.yaml"
+kubectl rollout restart deployment/<name> -n "$NS"
+kubectl rollout status deployment/<name> -n "$NS"
+```
+
+## Creating a new app
+
+1. `mkdir -p ~/workspace/<project>/{k8s,web}` and add `web/index.html`,
+   `k8s/<project>.yaml` (from the templates above), `deploy.sh`, and a
+   `README.md`.
+2. If GitHub MCP is enabled, create/verify `<github-org>/app-<project>`,
+   commit, and push.
+3. Deploy: `./deploy.sh`.
+4. If cert-manager is used, wait for the cert:
+   `kubectl get certificate <name>-tls -n <namespace>` should become
+   `READY=True`. Confirm the Ingress has an address.
+5. Report the live URL back to the user.
+
+## Updating an app
+
+Edit files under `~/workspace/<project>`, commit + push (via GitHub MCP), then
+re-run `./deploy.sh` (which restarts the Deployment so nginx reloads the
+ConfigMap).
+
+## Deleting an app
+
+1. `kubectl delete -f ~/workspace/<project>/k8s/<project>.yaml` and delete the
+   `<name>-web` ConfigMap. Deleting the Ingress lets cert-manager clean up the
+   TLS secret; delete any credential secrets explicitly.
+2. Optionally archive/delete the GitHub repo and remove
+   `~/workspace/<project>`.
+
+## Verifying access
+
+```bash
+kubectl get deploy,svc,ingress,certificate -n <namespace> -l app=<name>
+```
+````
 
 ## Common Configurations
 
