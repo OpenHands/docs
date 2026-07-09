@@ -35,7 +35,7 @@ That single command deploys everything below. Agent Canvas is now reachable insi
 | Resource | Purpose |
 |---|---|
 | `StatefulSet` | Single-replica pod running the all-in-one image. |
-| `PersistentVolumeClaim` (per pod) | Backs `$HOME/.openhands` — settings, encrypted secrets, conversation history, automation SQLite DB, workspaces, generated keys. |
+| `PersistentVolumeClaim` (per pod) | Backs the openhands user's `$HOME` — settings, encrypted secrets, conversation history, automation SQLite DB, cloned repos under `~/workspace`, generated keys, dotfiles. |
 | `Service` (`ClusterIP`) | Cluster-internal endpoint on port 8000. |
 | `Service` (headless) | Required by the `StatefulSet` for stable pod DNS. |
 | `ServiceAccount` | Stable identity the pod runs under. |
@@ -45,22 +45,22 @@ That single command deploys everything below. Agent Canvas is now reachable insi
 
 ## Persistence
 
-Everything durable that Agent Canvas writes lives under `$HOME/.openhands` inside the container. The chart mounts a PVC there so state survives pod restarts and image upgrades. That includes:
+The chart mounts the PVC at the openhands user's HOME (`/home/openhands`) so every piece of durable state the container writes survives pod restarts, rescheduling, and image upgrades. That covers:
 
-- agent-server settings and encrypted secrets
-- conversation history and event stores
-- automation SQLite database (unless you point at external Postgres — see [External Database](#external-database))
-- user workspaces (cloned repos, worktrees, generated files)
-- the `OH_SECRET_KEY` and session API key that the entrypoint auto-generates on first boot
+- `~/.openhands` — agent-server settings and encrypted secrets, conversation history and event stores, automation SQLite database (unless you point at external Postgres — see [External Database](#external-database)), the `OH_SECRET_KEY` and session API key auto-generated on first boot
+- `~/workspace` — the agent's default working directory: cloned repos, worktrees, anything the agent writes when it treats `~` as the workspace
+- any other dotfiles the running user creates (`~/.gitconfig`, `~/.cache`, `~/.local`, etc.)
+
+Mounting the whole HOME (rather than just `~/.openhands`) is deliberate: the upstream image doesn't ship any dotfiles or Python venvs under `/home/openhands` — everything is `--system`-installed under `/opt/agent-canvas` — so an empty PVC on first boot doesn't shadow anything, and the entrypoint re-creates the `.openhands` subtree it needs.
 
 Defaults:
 
 ```yaml
 persistence:
   enabled: true
-  mountPath: /home/openhands/.openhands   # matches HOME for UID 1000 in the image
+  mountPath: /home/openhands   # HOME for UID 1000 in the image
   size: 20Gi
-  # storageClassName: ""                  # empty → cluster default
+  # storageClassName: ""       # empty → cluster default
   accessModes:
     - ReadWriteOnce
 ```
