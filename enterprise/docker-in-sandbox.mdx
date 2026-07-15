@@ -1,0 +1,190 @@
+---
+title: Running Docker in the Agent Sandbox
+description: Let agents run containers, Docker Compose, and image builds inside their isolated sandbox—safely, without privileged access to your cluster.
+icon: docker
+---
+
+Agents in OpenHands Enterprise can run a Docker daemon **inside** their own sandbox. This means an
+agent can pull and run containers, bring up a multi-service stack with Docker Compose, and build and
+run its own images—all from within the isolated workspace where it already edits code and runs commands.
+
+Because everything happens inside the sandbox, the agent never touches your host's Docker daemon,
+your cluster, or other tenants. You get the convenience of containers in the loop without giving up
+the isolation that makes autonomous agents safe to run.
+
+<Note>
+  This capability has been available in OpenHands Cloud for some time. It is now supported on
+  self-hosted OpenHands Enterprise as well.
+</Note>
+
+## Why Run Containers Inside the Sandbox
+
+Many real-world projects assume Docker is part of the development workflow. When the agent can use
+Docker itself, it can work on those projects end to end instead of stopping at the point where a
+container is required.
+
+- **Run a containerized app to test it.** If your application ships as a set of containers—for
+  example, a `docker compose` stack—the agent can start it and interact with it for QA, reproduction,
+  and verification.
+- **Prove a Dockerfile actually works.** When a task involves creating or modifying a `Dockerfile`,
+  the agent can build the image and run it to confirm the change is correct, rather than editing the
+  file blind.
+- **Distribute components to the sandbox as images.** Teams building on top of OpenHands can package
+  their own tools and services as containers and have the agent run them inside the sandbox.
+- **Use containerized build and test tooling.** Toolchains that are only published as images become
+  usable in the agent's normal workflow.
+
+## Security Posture
+
+Running a Docker daemon inside a workload is normally a red flag: the traditional approaches
+("Docker-in-Docker" with a privileged container, or mounting the host's Docker socket) either weaken
+isolation or hand the workload effective control of the host. OpenHands Enterprise takes neither of
+those approaches.
+
+Instead, each sandbox runs under a **hardened container runtime that provides kernel-level isolation
+between the agent's workload and the host node.** Within that boundary, nested containers run
+**unprivileged**, using **user-namespace remapping** so that "root" inside the sandbox maps to an
+ordinary, unprivileged user on the host.
+
+Concretely, this design gives you the following guarantees:
+
+- **No privileged mode.** Enabling Docker inside the sandbox does **not** require running the sandbox
+  as a privileged container.
+- **No host Docker socket.** The in-sandbox Docker daemon is the sandbox's own daemon. The host's
+  Docker socket is never mounted into the sandbox, so the agent cannot reach the host's containers or
+  images.
+- **Unprivileged by construction.** Sandbox processes run as a **non-root user**, and nested
+  containers are confined by user namespaces. Root inside a nested container is not root on the node.
+- **Per-workload isolation.** Each sandbox is a separate, isolated environment running as its own
+  Kubernetes workload (one pod per sandbox). Containers an agent starts live and die inside that
+  sandbox and are not shared with other agents, other users, or the cluster.
+- **No cluster credentials in the sandbox.** Sandbox pods do not mount a Kubernetes service-account
+  token, so a sandbox cannot use one to reach the cluster's API.
+- **No host networking.** Sandbox pods run on the cluster pod network—not the host network
+  namespace—so the containers an agent starts cannot bind to or observe the node's network interfaces
+  directly.
+- **Enforced at the platform level.** The isolation runtime is chosen by the operator through a
+  Kubernetes [`RuntimeClass`](https://kubernetes.io/docs/concepts/containers/runtime-class/), and the
+  stronger-isolation runtime is the default. The security boundary is a property of the deployment—not
+  something an agent or an end user can turn off.
+
+This is a core value of running OpenHands on Kubernetes with Enterprise: agents get a full,
+container-capable Linux environment while the blast radius of anything they do stays contained to a
+single disposable sandbox.
+
+### Controlling Network Access
+
+The guarantees above isolate the sandbox from the host and from other tenants. Controlling where a
+sandbox can reach on *your* network is a separate concern that you own. Because each sandbox is an
+ordinary Kubernetes pod, you can apply your normal cluster controls to it—for example, a
+[`NetworkPolicy`](https://kubernetes.io/docs/concepts/services-networking/network-policies/) (or your
+CNI's equivalent) to restrict egress, or node/VPC-level firewall rules to block access to internal
+services and cloud metadata endpoints. If your environment has specific egress requirements, apply
+those policies to the sandbox namespace as you would for any other workload.
+
+<Note>
+  To learn more about the sandbox itself—including how to prebake dependencies and tools—see
+  [Custom Sandbox Images](/enterprise/custom-sandbox-image).
+</Note>
+
+## Tutorial: Using Docker From an Agent
+
+The examples below are things you can ask an agent to do in a normal conversation. Docker is already
+installed in the standard Enterprise sandbox image, and the agent will start the Docker daemon the
+first time it needs it. You don't have to run anything yourself—just give the agent the task.
+
+<Note>
+  Inside the sandbox, the agent runs Docker with `sudo` and starts the daemon
+  (`sudo dockerd`) on first use. You will see it do this in the conversation; that is expected and
+  safe given the isolation described above.
+</Note>
+
+<Steps>
+  <Step title="Confirm Docker is available">
+    Ask the agent to verify the daemon is up:
+
+    ```text
+    Start the Docker daemon if it isn't running, then show me `docker version`
+    and confirm the daemon is reachable.
+    ```
+
+    The agent starts `dockerd`, then runs `docker version`, reporting both a Client and a Server
+    section—confirming a working daemon inside the sandbox.
+  </Step>
+
+  <Step title="Pull and run a container">
+    Ask the agent to run a throwaway container:
+
+    ```text
+    Run the hello-world container and show me the output.
+    ```
+
+    This pulls `hello-world` from the registry and runs it, printing Docker's
+    "Hello from Docker!" confirmation message.
+  </Step>
+
+  <Step title="Bring up a stack with Docker Compose">
+    Ask the agent to stand up a service and check that it responds:
+
+    ```text
+    Create a docker-compose.yml with a single nginx service mapping host port 8080
+    to container port 80. Run `docker compose up -d`, then curl http://localhost:8080
+    and show me the HTTP status code. When you're done, run `docker compose down`.
+    ```
+
+    The agent writes a compose file like this:
+
+    ```yaml
+    services:
+      web:
+        image: nginx:alpine
+        ports:
+          - "8080:80"
+    ```
+
+    It then starts the stack, curls the service (which returns `200`), and tears the stack back down.
+  </Step>
+
+  <Step title="Build a custom image and run it">
+    This is the workflow that was impossible before—actually building and running an image to prove a
+    `Dockerfile` works:
+
+    ```text
+    Create a Dockerfile based on alpine whose command prints "hello-from-built-image".
+    Build it as demo:latest, then run it and show me the output.
+    ```
+
+    The agent writes a `Dockerfile`:
+
+    ```dockerfile
+    FROM alpine
+    CMD ["echo", "hello-from-built-image"]
+    ```
+
+    builds it with `docker build -t demo:latest .`, and runs it—printing
+    `hello-from-built-image`. If you're modifying an existing `Dockerfile` in your repository, the
+    same loop lets the agent verify its change instead of guessing.
+  </Step>
+</Steps>
+
+<Tip>
+  You don't need to spell out every command. A high-level request like *"our app runs with Docker
+  Compose—bring it up and check the homepage loads"* is usually enough; the agent will start the
+  daemon, run the stack, and verify it.
+</Tip>
+
+## Requirements
+
+- Docker-in-sandbox relies on the stronger sandbox isolation runtime, which is the **default** for
+  OpenHands Enterprise (configured under **Sandbox Isolation** in the installer). This runtime
+  requires nodes running **Linux kernel 6.3 or newer** (for example, Ubuntu 24.04); the installer's
+  pre-flight checks verify this before deploying. The alternative standard runtime does not support
+  running Docker inside the sandbox.
+- The standard Enterprise sandbox image ships with Docker, Buildx, and the Compose plugin
+  preinstalled. If you use a [custom sandbox image](/enterprise/custom-sandbox-image), extend the
+  standard base image so this tooling remains available.
+
+<Card title="Custom Sandbox Images" icon="box" href="/enterprise/custom-sandbox-image">
+  Prebake repositories, dependencies, and tooling—including your own container images—into the
+  sandbox your agents start from.
+</Card>
