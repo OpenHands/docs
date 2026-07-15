@@ -165,7 +165,7 @@ SDK guide files under `sdk/guides/` use a **category prefix** to group related p
 | Prefix | Category | Examples |
 |--------|----------|----------|
 | `llm-` | LLM features (model configuration, providers, streaming, presets) | `llm-reasoning.mdx`, `llm-gpt5-preset.mdx` |
-| `agent-` | Agent features (customization, delegation, browser, settings) | `agent-custom.mdx`, `agent-delegation.mdx` |
+| `agent-` | Agent features (customization, browser, settings) | `agent-custom.mdx`, `agent-settings.mdx` |
 | `convo-` | Conversation features (async, persistence, pause/resume) | `convo-async.mdx`, `convo-persistence.mdx` |
 
 When adding a new SDK guide, always use the appropriate prefix so that related files sort together and the sidebar grouping in `docs.json` stays consistent.
@@ -182,6 +182,12 @@ When documenting LLM setup or examples, ensure all three options are mentioned w
 - `sdk/getting-started.mdx` - Main getting started page with AccordionGroup
 - `sdk/shared-snippets/how-to-run-example.mdx` - Shared snippet for running examples
 - `sdk/guides/llm-subscriptions.mdx` - Dedicated guide for subscription login
+
+
+## Documentation ownership patterns
+
+- Keep `sdk/guides/observability.mdx` as the canonical tracing and OTEL reference for OpenHands SDK users, including Laminar links and generic backend configuration.
+- Keep `enterprise/analytics.mdx` focused on OpenHands Enterprise deployment and admin-console setup, and link back to the SDK observability guide instead of duplicating OTEL reference material.
 
 ## Validation
 

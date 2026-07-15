@@ -1,0 +1,259 @@
+---
+title: Goal Completion Loop
+description: Drive a conversation toward a verifiable objective with a judge-driven, self-continuing completion loop.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+## Overview
+
+A plain `conversation.run()` stops as soon as the agent *thinks* it is done. The `/goal` command is stricter: after each run it asks a second **judge LLM** to audit the transcript for authoritative evidence — file contents, command output, test results — that the objective is *provably* complete. If something is still missing, the loop re-prompts the agent with the judge's feedback and runs again, until the goal is genuinely done or a hard iteration cap is reached.
+
+That makes it a good fit for **verifiable objectives** like "make the tests pass", "produce a working CLI", or "publish a passing migration": the agent cannot finish just by claiming success — the judge has to see the green output first.
+
+**Use cases:**
+- **Test-driven objectives** — finish only when `pytest` (or any command) actually passes
+- **Multi-step deliverables** — keep the agent going until every requirement is verified
+- **Long-running tasks** — combine with a critic and stop hooks for full control over termination
+
+Like the [Critic](/sdk/guides/critic), `/goal` is an **extension applied to a conversation**: it composes with whatever agent, tools, or critic you already have. The critic governs each inner `run()`; the `/goal` loop governs the overall objective.
+
+## How It Works
+
+```
+1. send objective                  →  agent runs, calls FinishAction
+2. judge LLM audits the transcript →  produces { score, complete, missing }
+3. if complete                     →  stop, return GoalOutcome(status="complete")
+   else if max_iterations reached  →  stop, return GoalOutcome(status="capped")
+   else                            →  send a follow-up with `missing`, run again
+```
+
+Because `run_goal` drives the conversation you pass in (it does not fork or spin up a sidecar), every turn — objective, agent work, judge-driven follow-ups — lands in the same `conversation.state.events` history.
+
+## Quick Start
+
+```python icon="python" focus={2,7-8,22}
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.conversation.goal import run_goal
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+# Two LLMs: one does the work, one independently judges completion.
+agent_llm = LLM(usage_id="agent",      model="gpt-5.5", api_key=api_key)
+judge_llm = LLM(usage_id="goal-judge", model="gpt-5.5", api_key=api_key)
+
+agent = Agent(
+    llm=agent_llm,
+    tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
+)
+conversation = Conversation(agent=agent, workspace=workspace)
+
+objective = (
+    "Create mathx.py with an add(a, b) function and test_mathx.py with a "
+    "pytest test for it. The goal is complete only when "
+    "`python -m pytest -q` passes."
+)
+
+outcome = run_goal(conversation, objective, judge_llm, max_iterations=3)
+
+print(f"Goal {outcome.status} after {outcome.iterations} audit round(s).")
+print(f"Judge score: {outcome.verdict.score:.2f}")
+```
+
+<Note>
+Use a **separate `LLM` instance** (distinct `usage_id`) for the judge, even if you reuse the same model. Keeping the judge isolated from the agent's LLM lets you account for its cost separately and avoids accidentally sharing streaming or callback state.
+</Note>
+
+## Understanding the Result
+
+`run_goal` returns a `GoalOutcome` that reports whether the loop ended cleanly or was capped, plus the judge's final verdict.
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `"complete"` \| `"capped"` | Whether the judge confirmed completion, or the loop hit `max_iterations`. |
+| `iterations` | `int` | Number of audit rounds performed (≥ 1). |
+| `verdict` | `GoalVerdict` | The judge's last verdict. |
+
+The `GoalVerdict` is what the judge LLM produces every round:
+
+| Field | Type | Description |
+|---|---|---|
+| `score` | `float` (0.0–1.0) | Probability that the full objective is **provably** done. |
+| `complete` | `bool` | Whether the judge considers the objective complete. |
+| `missing` | `str` | Concise description of what remains, or empty if complete. |
+
+The `missing` field is what the loop feeds back to the agent in the next follow-up turn, so the agent knows exactly which requirements still need verifiable evidence.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `conversation` | `BaseConversation` | — | The conversation to drive. Any agent/tools/critic config is supported. |
+| `objective` | `str` | — | The goal to pursue and audit against. Must be non-empty. |
+| `judge_llm` | `LLM` | — | The second LLM that grades completion. Should be independent from the agent's LLM. |
+| `max_iterations` | `int` | `10` | Hard cap on audit rounds before the loop returns `status="capped"`. |
+
+## Composing With a Critic
+
+`/goal` and a [Critic](/sdk/guides/critic) operate at different layers:
+
+- A **critic** governs each inner `run()` — it can refine the agent's work mid-run via iterative refinement.
+- The **`/goal` loop** governs the overall objective — it decides whether to re-prompt the agent at all.
+
+They compose without changes: attach a critic to the agent as usual, then drive the conversation with `run_goal`. Every inner `run()` still consults the critic; the outer loop still re-runs until the judge is satisfied.
+
+```python icon="python" focus={1,5-7,11}
+from openhands.sdk.critic import APIBasedCritic
+from openhands.sdk.conversation.goal import run_goal
+
+agent = Agent(
+    llm=agent_llm,
+    tools=[...],
+    critic=APIBasedCritic(...),  # governs each run()
+)
+conversation = Conversation(agent=agent, workspace=workspace)
+
+outcome = run_goal(conversation, objective, judge_llm, max_iterations=5)
+```
+
+## Lower-Level Building Blocks
+
+`run_goal` is a thin synchronous driver over a transport-agnostic controller. If you need to integrate the loop into a custom driver (async, agent-server, UI progress reporting), reach for the building blocks directly.
+
+### `GoalController`
+
+`GoalController` owns the continue-vs-stop decision logic and the iteration cap. It does **no conversation transport I/O** — the driver owns sending messages and running the agent — but it *does* own the judge call: `on_run_finished()` synchronously invokes the judge LLM, so treat that call as blocking.
+
+```python icon="python"
+from openhands.sdk.conversation.goal import GoalController, GoalDone
+
+controller = GoalController(objective, judge_llm, max_iterations=10)
+conversation.send_message(controller.start())
+
+while True:
+    conversation.run()
+    step = controller.on_run_finished(conversation.state.events)
+    if isinstance(step, GoalDone):
+        outcome = step.outcome
+        break
+    # step is GoalContinue — feed the follow-up back to the agent
+    conversation.send_message(step.followup)
+```
+
+That split lets a synchronous driver and an asynchronous agent-server task share the **exact same decision logic** — only the I/O loop differs.
+
+### `judge_goal`
+
+`judge_goal` is the reusable kernel: a synchronous, LLM-backed evaluator with signature `judge_goal(judge_llm, objective, events) → GoalVerdict` and no dependency on the loop. It calls the judge LLM each time, so it is not a pure function. Use it directly to build a `/status` command, a stop hook, or a server endpoint:
+
+```python icon="python"
+from openhands.sdk.conversation.goal import judge_goal
+
+verdict = judge_goal(judge_llm, objective, conversation.state.events)
+if verdict.complete:
+    print("Done!")
+else:
+    print(f"Still missing: {verdict.missing}")
+```
+
+The judge renders the conversation as a plain `role: text` transcript and asks the LLM for a strict-JSON verdict. The agent's system prompt is intentionally excluded from the transcript to keep judge token cost low — it carries no goal-specific evidence.
+
+## Notes
+
+- **Goal vs. Critic.** A critic scores each `run()` and triggers refinement turns inside one run. The `/goal` loop drives the *overall* objective from the outside. The two compose: the critic improves each turn; the goal loop ensures the right number of turns happen.
+- **No fork.** `run_goal` drives the conversation you pass in — it does **not** create a sidecar conversation. All goal-related events land in the same `conversation.state.events` history.
+- **Conservative parsing.** If the judge response cannot be parsed as JSON, the verdict falls back to `score=0.0, complete=False` so the loop keeps working rather than falsely finishing.
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/54_goal_completion_loop.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/54_goal_completion_loop.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/54_goal_completion_loop.py
+"""The /goal command: pursue an objective until a judge LLM confirms it is done.
+
+A plain ``conversation.run()`` stops as soon as the agent *thinks* it is
+finished. The ``/goal`` loop is stricter: after each run it asks a second
+"judge" LLM to audit the transcript for authoritative evidence -- file
+contents, command output, test results -- that the objective is *provably*
+complete. If something is still missing, it re-prompts the agent with the
+judge's feedback and runs again, until the goal is genuinely done or a hard
+iteration cap is reached.
+
+That makes it a good fit for verifiable objectives like "make the tests pass":
+the agent cannot finish just by claiming success; the judge has to see green
+output first.
+
+Key concepts demonstrated:
+1. ``run_goal(conversation, objective, judge_llm, max_iterations=...)`` drives
+   the conversation from the outside, re-prompting until the judge is satisfied.
+2. A second, independent "judge" LLM grades completion -- separate from the
+   agent that does the work.
+3. The returned ``GoalOutcome`` reports whether the goal ``"complete"``-d or was
+   ``"capped"``, how many audit rounds it took, and the judge's final verdict.
+
+Because ``run_goal`` drives the conversation you pass in (it does not fork or
+spin up a sidecar), every turn -- objective, agent work, judge-driven followups
+-- lands in the same ``conversation.state.events`` history. It therefore
+composes with whatever agent, tools, or critic you already have.
+"""
+
+import os
+import tempfile
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.conversation.goal import run_goal
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+# The agent LLM does the work; the judge LLM independently grades completion.
+# Two separate instances (same model, distinct usage_id) keep their costs apart.
+model = os.getenv("LLM_MODEL", "gpt-5.5")
+api_key = os.getenv("LLM_API_KEY")
+base_url = os.getenv("LLM_BASE_URL")
+agent_llm = LLM(usage_id="agent", model=model, api_key=api_key, base_url=base_url)
+judge_llm = LLM(usage_id="goal-judge", model=model, api_key=api_key, base_url=base_url)
+
+agent = Agent(
+    llm=agent_llm,
+    tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
+)
+
+workspace = tempfile.mkdtemp(prefix="goal_demo_")
+conversation = Conversation(agent=agent, workspace=workspace)
+
+# A verifiable objective: the judge can only call it done once it has seen
+# pytest actually pass -- not merely the agent asserting that it did.
+objective = (
+    "Create mathx.py with an add(a, b) function and test_mathx.py with a pytest "
+    "test for it. The goal is complete only when `python -m pytest -q` passes."
+)
+
+# Drive the conversation toward the objective, re-judging after each run.
+outcome = run_goal(conversation, objective, judge_llm, max_iterations=3)
+
+print("\n" + "=" * 70)
+print(f"Goal {outcome.status} after {outcome.iterations} audit round(s).")
+print(f"Judge score: {outcome.verdict.score:.2f}")
+if outcome.verdict.missing:
+    print(f"Still missing: {outcome.verdict.missing}")
+print(f"Workspace: {workspace}")
+print("=" * 70)
+
+# Report cost (agent work + judge audits).
+cost = agent_llm.metrics.accumulated_cost + judge_llm.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/54_goal_completion_loop.py"/>
+
+## Next Steps
+
+- **[Critic](/sdk/guides/critic)** — Score and refine individual agent runs in real time
+- **[Iterative Refinement](/sdk/guides/iterative-refinement)** — Multi-agent feedback loop for quality-bound tasks
+- **[Hooks](/sdk/guides/hooks)** — Customize start/stop semantics on every run
+- **[Persistence](/sdk/guides/convo-persistence)** — Save and restore conversation state across goal runs
