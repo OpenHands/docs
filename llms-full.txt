@@ -46269,7 +46269,12 @@ license automatically at install time — no separate license file to manage.
   (both provided by our team)
 - **LLM credentials** from your chosen provider, for example an Anthropic API key
   from the [Anthropic Console](https://console.anthropic.com/)
-- A DNS hostname for the application and a TLS strategy (cert-manager or your own certificates)
+- DNS records you control: a hostname for the application, a hostname for the
+  runtime API, and a **wildcard** record for runtime sandboxes
+  (e.g. `*.runtime.openhands.example.com`), plus a TLS strategy
+  (cert-manager or your own certificates)
+- A **GitHub App or GitLab OAuth application** for user authentication — see the
+  [Quick Start](/enterprise/quick-start) for how to create one
 
 ## Step 1: Log in to the registry
 
@@ -46327,6 +46332,29 @@ kubectl -n openhands create secret generic litellm-env-secrets \
   --from-literal=ANTHROPIC_API_KEY=<your-llm-api-key>
 ```
 
+Then create the secret for your authentication provider:
+
+<Tabs>
+  <Tab title="GitHub">
+    ```bash
+    kubectl -n openhands create secret generic github-app \
+      --from-literal=app-id=<github-app-id> \
+      --from-literal=app-slug=<github-app-slug> \
+      --from-literal=client-id=<github-app-client-id> \
+      --from-literal=client-secret=<github-app-client-secret> \
+      --from-literal=private-key="$(cat <github-app-private-key>.pem)" \
+      --from-literal=webhook-secret=<github-app-webhook-secret>
+    ```
+  </Tab>
+  <Tab title="GitLab">
+    ```bash
+    kubectl -n openhands create secret generic gitlab-app \
+      --from-literal=client-id=<gitlab-oauth-application-id> \
+      --from-literal=client-secret=<gitlab-oauth-application-secret>
+    ```
+  </Tab>
+</Tabs>
+
 <Tip>
   Generate strong random values (for example with `openssl rand -hex 32`) for each
   `<random-string>` placeholder, and store them in your secret manager. To use an
@@ -46336,17 +46364,53 @@ kubectl -n openhands create secret generic litellm-env-secrets \
 
 ## Step 3: Configure values
 
-Create a `values.yaml` with your environment-specific configuration. A minimal
-starting point:
+Create a `values.yaml` with your environment-specific configuration. The
+minimum for a working installation covers five areas: application ingress and
+TLS, user authentication, the runtime (sandbox) endpoints, conversation
+storage, and your LLM provider. PostgreSQL and Redis run embedded in the
+cluster by default — no configuration needed (to bring your own database, see
+[External PostgreSQL](/enterprise/external-postgres)).
+
+The example below uses Traefik, the chart's default ingress class; set
+`ingress.class` and the annotations to match your controller.
 
 ```yaml
 ingress:
   enabled: true
   host: openhands.example.com
+  class: traefik
 
 tls:
   enabled: true
   email: admin@example.com
+
+# Enable the authentication provider matching the secret you created in Step 2
+github:
+  enabled: true
+# gitlab:
+#   enabled: true
+#   host: gitlab.example.com   # only for self-hosted GitLab
+
+# Where agent sandboxes run. The runtime API needs its own hostname, and each
+# sandbox gets a subdomain under your wildcard DNS record.
+sandbox:
+  apiHostname: https://runtime-api.openhands.example.com
+
+env:
+  RUNTIME_URL_PATTERN: "https://{runtime_id}.runtime.openhands.example.com"
+  LITELLM_DEFAULT_MODEL: litellm_proxy/claude-sonnet-4-5
+
+runtime-api:
+  ingress:
+    enabled: true
+    host: runtime-api.openhands.example.com
+
+# Store conversation data in the bundled MinIO, persisted to a volume
+filestore:
+  ephemeral: true
+minio:
+  persistence:
+    enabled: true
 
 litellm-helm:
   proxy_config:
@@ -46355,10 +46419,15 @@ litellm-helm:
         litellm_params:
           model: anthropic/claude-sonnet-4-5
           api_key: os.environ/ANTHROPIC_API_KEY
-
-env:
-  LITELLM_DEFAULT_MODEL: litellm_proxy/claude-sonnet-4-5
 ```
+
+<Warning>
+  Without an authentication provider (`github` or `gitlab`) users cannot log in,
+  and without the `sandbox`/runtime configuration agents cannot start. These
+  sections are not optional. The bundled MinIO ships with development
+  credentials — override `minio.svcaccts` (and the matching
+  `runtime-api.runtimeFileArchive.s3` keys) for production use.
+</Warning>
 
 ## Step 4: Install
 
