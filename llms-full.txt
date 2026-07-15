@@ -7198,7 +7198,7 @@ The **Skill** system provides a mechanism for injecting reusable, specialized kn
 The Skill system has five primary responsibilities:
 
 1. **Context Injection** - Add specialized prompts to agent context based on triggers
-2. **Trigger Evaluation** - Determine when skills should activate (always, keyword, task)
+2. **Trigger Evaluation** - Determine when skills should activate (always, keyword, task, path)
 3. **Dynamic Content Rendering** - Execute inline shell commands for dynamic context injection
 4. **MCP Integration** - Load MCP tools associated with repository skills
 5. **Third-Party Support** - Parse `.cursorrules`, `agents.md`, and other skill formats
@@ -7212,12 +7212,14 @@ flowchart TB
         Repo["Repository Skill<br><i>trigger: None</i>"]
         Knowledge["Knowledge Skill<br><i>trigger: KeywordTrigger</i>"]
         Task["Task Skill<br><i>trigger: TaskTrigger</i>"]
+        Rule["Path Rule<br><i>trigger: PathTrigger</i>"]
     end
     
     subgraph Triggers["Trigger Evaluation"]
         Always["Always Active<br><i>Repository guidelines</i>"]
         Keyword["Keyword Match<br><i>String matching on user messages</i>"]
         TaskMatch["Keyword Match + Inputs<br><i>Same as KeywordTrigger + user inputs</i>"]
+        PathMatch["File-Touch Match<br><i>Glob match on touched file path</i>"]
     end
     
     subgraph Content["Skill Content"]
@@ -7230,15 +7232,18 @@ flowchart TB
     subgraph Integration["Agent Integration"]
         Context["Agent Context"]
         Prompt["System Prompt"]
+        ToolResult["Tool Result<br><i>Rules injected on file-touch</i>"]
     end
     
     Repo --> Always
     Knowledge --> Keyword
     Task --> TaskMatch
+    Rule --> PathMatch
     
     Always --> Markdown
     Keyword --> Markdown
     TaskMatch --> Markdown
+    PathMatch --> ToolResult
     
     Markdown -.->|Optional| Dynamic
     Repo -.->|Optional| MCPTools
@@ -7254,9 +7259,9 @@ flowchart TB
     classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
     classDef dynamic fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
     
-    class Repo,Knowledge,Task primary
-    class Always,Keyword,TaskMatch secondary
-    class Context tertiary
+    class Repo,Knowledge,Task,Rule primary
+    class Always,Keyword,TaskMatch,PathMatch secondary
+    class Context,ToolResult tertiary
     class Dynamic dynamic
 ```
 
@@ -7267,6 +7272,7 @@ flowchart TB
 | **[`Skill`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/skill.py)** | Core skill model | Pydantic model with name, content, trigger |
 | **[`KeywordTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Keyword-based activation | String matching on user messages |
 | **[`TaskTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/trigger.py)** | Task-based activation | Special type of KeywordTrigger for skills with user inputs |
+| **[`PathTrigger`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/skills/trigger.py)** | Path-based activation ("rules") | Glob match on a touched file path; injected into the tool result, not model-invocable |
 | **[`InputMetadata`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/types.py)** | Task input parameters | Defines user inputs for task skills |
 | **[`render_content_with_commands`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/skills/execute.py)** | Dynamic content | Executes inline `!`command`` patterns |
 | **Skill Loader** | File parsing | Reads markdown with frontmatter, validates schema |
@@ -7395,6 +7401,47 @@ inputs:
 
 **Note:** TaskTrigger uses the same keyword matching mechanism as KeywordTrigger. The distinction is semantic - TaskTrigger is used for skills that require structured user inputs, while KeywordTrigger is for knowledge-based skills.
 
+### Path Skills (Rules)
+
+Skills that are injected **deterministically** when the agent touches a matching file, modeled on Claude Code "rules":
+
+```mermaid
+%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
+flowchart TB
+    Touch["Agent Reads/Edits/Creates File"]
+    Match{"Path Matches<br>Glob?"}
+    Inject["Inject into Tool Result"]
+    Skip["Skip Rule"]
+    Dedup["Dedup: once per conversation"]
+
+    Touch --> Match
+    Match -->|Yes| Dedup
+    Match -->|No| Skip
+    Dedup --> Inject
+
+    style Match fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    style Inject fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+```
+
+**Characteristics:**
+- **Trigger:** `PathTrigger` with gitignore-style `paths` globs (matched against the workspace-relative POSIX path)
+- **Activation:** The agent reads, edits, or creates a file whose path matches a glob (fires on `create` too)
+- **Injection point:** Folded into the `ObservationEvent` tool result (`extended_content`) as an `<EXTRA_INFO>` block — **not** the user message
+- **Baseline cost:** Zero — excluded from `<available_skills>` and `<REPO_CONTEXT>`; `disable_model_invocation` is forced, so rules are never model-invocable
+- **Dedup:** Each rule is injected only once per conversation (tracked via `ConversationState.activated_path_rules`)
+- **Location:** Any skills directory (e.g. `.agents/skills/*.md`) — a rule is just a skill with `paths:` frontmatter
+
+**Trigger Example:**
+```yaml
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.route.ts"
+---
+```
+
+**Note:** A skill is either path-triggered or model-invocable, not both — if a file declares both `paths:` and `triggers:`, `paths:` wins. Path-rule injection applies to local conversations; ACP-backed conversations do not inject rules because the ACP server owns tool execution.
+
 ## Trigger Evaluation
 
 Skills are evaluated at different points in the agent lifecycle:
@@ -7444,6 +7491,7 @@ flowchart TB
 | **None** | Every step | Always active |
 | **KeywordTrigger** | On user message | Keyword/string match in message |
 | **TaskTrigger** | On user message | Keyword/string match in message (same as KeywordTrigger) |
+| **PathTrigger** | On tool observation | Glob match on the touched file's path (read/edit/create) |
 
 **Note:** Both KeywordTrigger and TaskTrigger use identical string matching logic. TaskTrigger is simply a semantic variant used for skills that include user input parameters.
 
@@ -7535,6 +7583,7 @@ Dynamic values: !`git branch --show-current`
 |-------|----------|-------------|
 | **name** | Yes | Unique skill identifier |
 | **trigger** | Yes* | Activation trigger (`null` for always active) |
+| **paths** | No | Glob patterns that make the skill a path-triggered rule (`PathTrigger`); takes precedence over `triggers` |
 | **mcp_tools** | No | MCP server configuration (repo skills only) |
 | **inputs** | No | User input metadata (task skills only) |
 
@@ -21747,13 +21796,13 @@ for usage_id, metrics in conversation.conversation_stats.usage_to_metrics.items(
 ### Observability & Tracing
 Source: https://docs.openhands.dev/sdk/guides/observability.md
 
-> A full setup example is available [here](#example:-full-setup)!
+> A full setup example is available [below](#example-full-setup).
 
 ## Overview
 
-The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowing you to monitor and debug your agent's execution in real-time. You can send traces to any OTLP-compatible observability platform including:
+The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowing you to monitor and debug your agent's execution in real time. You can send traces to any OTLP-compatible observability platform including:
 
-- **[Laminar](https://laminar.sh/)** - AI-focused observability with browser session replay support
+- **[Laminar](https://laminar.sh/)** - AI-focused observability with trace inspection, signals, and browser session replay
 - **[MLflow](https://mlflow.org/)** - Open-source AI platform with tracing, evaluation, and LLM governance
 - **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
 - **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
@@ -21771,22 +21820,38 @@ Tracing is automatically enabled when you set the appropriate environment variab
 
 ### Using Laminar
 
-[Laminar](https://laminar.sh/) provides specialized AI observability features including browser session replays when using browser-use tools:
+[Laminar](https://laminar.sh/) provides specialized AI observability features for OpenHands, including full conversation traces, browser session replay, and higher-level analysis features like signals.
 
 ```bash icon="terminal" wrap
 # Set your Laminar project API key
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 ```
 
-That's it! Run your agent code normally and traces will be sent to Laminar automatically.
+That's it. Run your agent code normally and traces will be sent to Laminar automatically.
 
-For **self-hosted Laminar** deployments, you can also configure custom ports:
+<Note>
+For Laminar-specific walkthroughs, see the official docs for [OpenHands SDK tracing](https://laminar.sh/docs/tracing/integrations/openhands-sdk), [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability), [viewing traces](https://laminar.sh/docs/platform/viewing-traces), and [signals](https://laminar.sh/docs/signals/introduction).
+</Note>
+
+For **self-hosted Laminar** deployments, configure the instance base URL and ports:
 
 ```bash icon="terminal" wrap
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_BASE_URL=http://localhost
 export LMNR_HTTP_PORT=8000
 export LMNR_GRPC_PORT=8001
 ```
+
+If you need help deciding between Laminar Cloud and self-hosted Laminar, see Laminar's official [hosting options](https://laminar.sh/docs/hosting-options).
+
+### Why use Laminar with OpenHands?
+
+Laminar is especially useful when you want to understand how an agent behaved across one run or across many runs:
+
+- Inspect a single run in transcript, tree, or timeline views to see prompts, tool calls, outputs, and nested agent activity. See Laminar's guide to [viewing traces](https://laminar.sh/docs/platform/viewing-traces).
+- Watch browser automation alongside trace spans with [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability).
+- Define [signals](https://laminar.sh/docs/signals/introduction) to classify failures, user friction, or success patterns across many traces.
+- Keep each OpenHands conversation grouped under a single session ID so multi-turn debugging is easier.
 
 ### Using OpenTelemetry (OTLP) Backends
 
@@ -21827,23 +21892,25 @@ export OTEL_EXPORTER="otlp_http"  # or "otlp_grpc"
 
 ## How It Works
 
-The OpenHands SDK uses the [Laminar SDK](https://docs.lmnr.ai/) as its OpenTelemetry instrumentation layer. When you set the environment variables, the SDK:
+The OpenHands SDK uses Laminar as its OpenTelemetry instrumentation layer for built-in tracing support. When you set the environment variables, the SDK:
 
-1. **Detects Configuration**: Checks for OTEL environment variables on startup
-2. **Initializes Tracing**: Configures OpenTelemetry with the appropriate exporter
-3. **Instruments Code**: Automatically wraps key functions with tracing decorators
-4. **Captures Context**: Associates traces with conversation IDs for session grouping
-5. **Exports Spans**: Sends trace data to your configured backend
+1. **Detects configuration**: Checks for OTEL environment variables on startup
+2. **Initializes tracing**: Configures OpenTelemetry with the appropriate exporter
+3. **Instruments code**: Automatically wraps key functions with tracing decorators
+4. **Captures context**: Associates traces with conversation IDs for session grouping
+5. **Exports spans**: Sends trace data to your configured backend
+
+For Laminar-specific behavior and examples, see the official [OpenHands SDK integration guide](https://laminar.sh/docs/tracing/integrations/openhands-sdk).
 
 ### What Gets Traced
 
 The SDK automatically instruments these components:
 
 - **`agent.step`** - Each iteration of the agent's execution loop
-- **Tool Executions** - Individual tool calls with input/output capture
-- **LLM Calls** - API requests to language models via LiteLLM
-- **Conversation Lifecycle** - Message sending, conversation runs, and title generation
-- **Browser Sessions** - When using browser-use, captures session replays (Laminar only)
+- **Tool executions** - Individual tool calls with input/output capture
+- **LLM calls** - API requests to language models via LiteLLM
+- **Conversation lifecycle** - Message sending, conversation runs, and title generation
+- **Browser sessions** - When using browser-use, captures session replays (Laminar only)
 
 ### Trace Hierarchy
 
@@ -21863,10 +21930,9 @@ Traces are organized hierarchically:
   </Tree.Folder>
 </Tree>
 
-Each conversation gets its own session ID (the conversation UUID), allowing you to group all traces from a single
-conversation together in your observability platform.
+Each conversation gets its own session ID (the conversation UUID), allowing you to group all traces from a single conversation together in your observability platform.
 
-Note that in `tool.execute` the tool calls are traced, e.g., `bash`, `file_editor`.
+In `tool.execute`, the tool calls are traced individually, such as `bash`, `file_editor`, or `task_tracker`.
 
 ## Configuration Reference
 
@@ -21877,6 +21943,7 @@ The SDK checks for these environment variables (in order of precedence):
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `LMNR_PROJECT_API_KEY` | Laminar project API key | `your-laminar-api-key` |
+| `LMNR_BASE_URL` | Base URL for self-hosted Laminar | `http://localhost` |
 | `LMNR_HTTP_PORT` | HTTP port for self-hosted Laminar | `8000` |
 | `LMNR_GRPC_PORT` | gRPC port for self-hosted Laminar | `8001` |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL | `https://api.honeycomb.io:443/v1/traces` |
@@ -21918,15 +21985,34 @@ The SDK supports both HTTP and gRPC protocols:
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 ```
 
-**Self-Hosted Laminar**: If you are running a self-hosted Laminar instance, you can configure the HTTP and gRPC ports via environment variables:
+**Self-hosted Laminar**: If you are running a self-hosted Laminar instance, configure its base URL and the HTTP and gRPC ports via environment variables:
 
 ```bash icon="terminal" wrap
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_BASE_URL=http://localhost
 export LMNR_HTTP_PORT=8000
 export LMNR_GRPC_PORT=8001
 ```
 
-**Browser Session Replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
+**Browser session replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
+
+### OpenHands Enterprise Setup
+
+If you are running OpenHands Enterprise (OHE), you can use the same Laminar integration without changing application code:
+
+1. Complete the [OpenHands Enterprise quick start](/enterprise/quick-start).
+2. Enable analytics in the Admin Console.
+3. Deploy OHE and wait for the analytics service to become ready.
+4. Open the Laminar UI at `https://analytics.app.<your-base-domain>`.
+5. Create a Laminar project and an ingest-only API key.
+6. Save that key as the **Laminar Project API Key** in the Admin Console.
+7. Redeploy, then start a conversation in OpenHands.
+
+In OHE, environment variables with `LMNR_` and `LLM_` prefixes are automatically forwarded to the SDK runtime. That makes it possible to configure Laminar endpoint settings such as `LMNR_BASE_URL`, `LMNR_PROJECT_API_KEY`, and `LMNR_FORCE_HTTP`, as well as the LLM that powers Laminar's own AI features (chat-with-trace, SQL-with-AI, and [signals](https://laminar.sh/docs/signals/introduction)) via `LLM_PROVIDER`, `LLM_BASE_URL`, and `LLM_MODEL_SMALL|MEDIUM|LARGE`.
+
+`LLM_PROVIDER` accepts `gemini` (Laminar's default), `openai`, or `bedrock`. Set it to `openai` whenever you point `LLM_BASE_URL` at an OpenAI-compatible gateway (for example LiteLLM, OpenRouter, or vLLM), not just the public OpenAI API. For the full list of supported values, see Laminar's official [self-hosting configuration reference](https://laminar.sh/docs/self-hosting/configuration).
+
+For the full OHE flow with screenshots and configuration examples, see [Analytics in OpenHands Enterprise](/enterprise/analytics).
 
 ### MLflow Setup
 
@@ -21950,7 +22036,7 @@ export OTEL_EXPORTER_OTLP_HEADERS="x-mlflow-experiment-id=123"  # Replace "123" 
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
 ```
 
-Navigate to the MLflow UI (e.g., `http://localhost:5000`), select the experiment, and open the **Traces** tab to view the recorded traces.
+Navigate to the MLflow UI (for example, `http://localhost:5000`), select the experiment, and open the **Traces** tab to view the recorded traces.
 
 ### Honeycomb Setup
 
@@ -21980,7 +22066,7 @@ export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://localhost:4317"
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="grpc"
 ```
 
-Access the Jaeger UI at http://localhost:16686
+Access the Jaeger UI at `http://localhost:16686`.
 
 ### Generic OTLP Collector
 
@@ -22018,9 +22104,9 @@ The SDK automatically adds these attributes to spans:
 
 ### Debugging Tracing Issues
 
-If traces aren't appearing in your observability platform:
+If traces are not appearing in your observability platform:
 
-1. **Verify Environment Variables**:
+1. **Verify environment variables**:
    ```python icon="python" wrap
    import os
 
@@ -22031,35 +22117,37 @@ If traces aren't appearing in your observability platform:
    print(f"OTEL Headers: {otel_headers}")
    ```
 
-2. **Check SDK Logs**: The SDK logs observability initialization at debug level:
+2. **Check SDK logs**: The SDK logs observability initialization at debug level:
    ```python icon="python" wrap
    import logging
 
    logging.basicConfig(level=logging.DEBUG)
    ```
 
-3. **Test Connectivity**: Ensure your application can reach the OTLP endpoint:
+3. **Test connectivity**: Ensure your application can reach the OTLP endpoint:
    ```bash icon="terminal" wrap
    curl -v https://api.honeycomb.io:443/v1/traces
    ```
 
-4. **Validate Headers**: Check that authentication headers are properly URL-encoded
+4. **Validate headers**: Check that authentication headers are properly URL-encoded.
+
+For Laminar-specific troubleshooting, see Laminar's official [tracing troubleshooting guide](https://laminar.sh/docs/tracing/troubleshooting).
 
 ## Troubleshooting
 
 ### Traces Not Appearing
 
-**Problem**: No traces showing up in observability platform
+**Problem**: No traces showing up in your observability platform.
 
 **Solutions**:
 - Verify environment variables are set correctly
-- Check network connectivity to OTLP endpoint
+- Check network connectivity to the OTLP endpoint
 - Ensure authentication headers are valid
 - Look for SDK initialization logs at debug level
 
 ### High Trace Volume
 
-**Problem**: Too many spans being generated
+**Problem**: Too many spans being generated.
 
 **Solutions**:
 - Configure sampling at the collector level
@@ -22068,7 +22156,7 @@ If traces aren't appearing in your observability platform:
 
 ### Performance Impact
 
-**Problem**: Concerned about tracing overhead
+**Problem**: Concerned about tracing overhead.
 
 **Solutions**:
 - Tracing has minimal overhead when properly configured
@@ -22135,6 +22223,7 @@ uv run python examples/01_standalone_sdk/27_observability_laminar.py
 
 ## Next Steps
 
+- **[Analytics in OpenHands Enterprise](/enterprise/analytics)** - Deploy Laminar inside OHE and send conversation traces automatically
 - **[Metrics Tracking](/sdk/guides/metrics)** - Monitor token usage and costs alongside traces
 - **[LLM Registry](/sdk/guides/llm-registry)** - Track multiple LLMs used in your application
 - **[Security](/sdk/guides/security)** - Add security validation to your traced agent executions
@@ -22998,6 +23087,149 @@ if __name__ == "__main__":
 
 <RunExampleCode path_to_script="examples/05_skills_and_plugins/02_loading_plugins/main.py"/>
 
+## Registered Marketplace Plugins
+
+Registered marketplaces let an agent context name one or more plugin catalogs once
+and then load plugins by marketplace-qualified names like
+`incident-bot@specialists`. Use `auto_load="all"` when every plugin in a
+marketplace should load at conversation startup, and call
+`conversation.load_plugin()` when you want to add a specific plugin later.
+
+The example below builds local marketplace catalogs so it can run without network
+access or credentials.
+
+<Note>
+This example is available on GitHub: [examples/05_skills_and_plugins/05_registered_marketplace_plugins/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/05_skills_and_plugins/05_registered_marketplace_plugins/main.py)
+</Note>
+
+```python icon="python" expandable examples/05_skills_and_plugins/05_registered_marketplace_plugins/main.py
+"""Example: Registered Marketplaces and Runtime Plugin Loading
+
+This example demonstrates the registered marketplace flow:
+
+1. Register multiple marketplace catalogs on AgentContext.
+2. Auto-load plugins from a marketplace with ``auto_load='all'``.
+3. Load an additional plugin at runtime by marketplace-qualified name.
+
+The example builds two temporary local marketplaces so it can run without network
+access or external credentials.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
+from openhands.sdk import Agent, AgentContext, Conversation
+from openhands.sdk.marketplace import MarketplaceRegistration
+from openhands.sdk.testing import TestLLM
+
+
+def write_plugin(plugin_dir: Path, plugin_name: str, skill_name: str) -> None:
+    manifest_dir = plugin_dir / ".plugin"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "plugin.json").write_text(
+        json.dumps(
+            {
+                "name": plugin_name,
+                "version": "1.0.0",
+                "description": f"Example plugin {plugin_name}",
+            }
+        )
+    )
+
+    skills_dir = plugin_dir / "skills"
+    skills_dir.mkdir()
+    (skills_dir / f"{skill_name}.md").write_text(
+        f"---\nname: {skill_name}\ndescription: Example skill\n---\n"
+        f"Use {skill_name} when demonstrating registered marketplace plugins."
+    )
+
+
+def write_marketplace(marketplace_dir: Path, plugin_name: str, skill_name: str) -> None:
+    write_plugin(marketplace_dir / "plugins" / plugin_name, plugin_name, skill_name)
+    manifest_dir = marketplace_dir / ".plugin"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": marketplace_dir.name,
+                "owner": {"name": "Example Team"},
+                "plugins": [
+                    {
+                        "name": plugin_name,
+                        "source": f"./plugins/{plugin_name}",
+                        "description": f"Example marketplace plugin {plugin_name}",
+                    }
+                ],
+            }
+        )
+    )
+
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    tmp_path = Path(tmpdir)
+    team_marketplace = tmp_path / "team-marketplace"
+    specialists_marketplace = tmp_path / "specialists-marketplace"
+    write_marketplace(team_marketplace, "review-bot", "review-checklist")
+    write_marketplace(specialists_marketplace, "incident-bot", "incident-brief")
+
+    agent = Agent(
+        llm=TestLLM.from_messages([]),
+        tools=[],
+        agent_context=AgentContext(
+            registered_marketplaces=[
+                MarketplaceRegistration(
+                    name="team",
+                    source=str(team_marketplace),
+                    auto_load="all",
+                ),
+                MarketplaceRegistration(
+                    name="specialists",
+                    source=str(specialists_marketplace),
+                ),
+            ]
+        ),
+    )
+
+    conversation = Conversation(
+        agent=agent,
+        workspace=str(tmp_path / "workspace"),
+    )
+
+    conversation.load_plugin("incident-bot@specialists")
+
+    agent_context = conversation.agent.agent_context
+    assert agent_context is not None
+    skill_names = sorted(skill.name for skill in agent_context.skills or [])
+    resolved_sources = [plugin.source for plugin in conversation.resolved_plugins or []]
+
+    print("Registered marketplaces:")
+    for registration in agent_context.registered_marketplaces:
+        print(f"  - {registration.name}: auto_load={registration.auto_load}")
+
+    print("Loaded skills:")
+    for skill_name in skill_names:
+        print(f"  - {skill_name}")
+
+    print("Resolved plugins:")
+    for source in resolved_sources:
+        print(f"  - {source}")
+
+    assert skill_names == ["incident-brief", "review-checklist"]
+    assert any(
+        source.endswith("team-marketplace/plugins/review-bot")
+        for source in resolved_sources
+    )
+    assert any(
+        source.endswith("specialists-marketplace/plugins/incident-bot")
+        for source in resolved_sources
+    )
+
+print("EXAMPLE_COST: 0")
+```
+
+<RunExampleCode path_to_script="examples/05_skills_and_plugins/05_registered_marketplace_plugins/main.py"/>
+
 ## Installing Plugins to Persistent Storage
 
 The SDK provides utilities to install plugins to a local directory
@@ -23381,17 +23613,24 @@ The **LLMSecurityAnalyzer** is the default implementation provided in the agent-
 
 Create an LLM-based security analyzer to review actions before execution:
 
-```python icon="python" focus={9}
-from openhands.sdk import LLM
+```python icon="python"
+from openhands.sdk import LLM, Agent, Conversation
+from openhands.sdk.security.confirmation_policy import ConfirmRisky
 from openhands.sdk.security.llm_analyzer import LLMSecurityAnalyzer
+
 llm = LLM(
     usage_id="security-analyzer",
     model=model,
     base_url=base_url,
     api_key=SecretStr(api_key),
 )
-security_analyzer = LLMSecurityAnalyzer(llm=security_llm)
-agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+security_analyzer = LLMSecurityAnalyzer(llm=llm)
+
+# Attach the analyzer on the conversation, not the Agent constructor.
+agent = Agent(llm=llm, tools=tools)
+conversation = Conversation(agent=agent, workspace=".")
+conversation.set_security_analyzer(security_analyzer)
+conversation.set_confirmation_policy(ConfirmRisky())
 ```
 
 The security analyzer:
@@ -23586,7 +23825,7 @@ class CustomSecurityAnalyzer(SecurityAnalyzerBase):
 
 # Use your custom analyzer
 security_analyzer = CustomSecurityAnalyzer()
-agent = Agent(llm=llm, tools=tools, security_analyzer=security_analyzer)
+conversation.set_security_analyzer(security_analyzer)
 ```
 
 <Tip>
@@ -24015,6 +24254,7 @@ Understanding where skill content appears in the prompt is critical. The behavio
 | **AgentSkills** (`SKILL.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
 | **Legacy** (inline/`*.md`) | `None` | **`<REPO_CONTEXT>` (full content in the initial system prompt; included in LLM context for each turn)** | ❌ No |
 | **Legacy** (inline/`*.md`) | Has triggers | `<available_skills>` + auto-inject on match | ✅ Yes |
+| **Rule** (inline/`*.md`) | `PathTrigger` (`paths:` globs) | Injected into the **tool result** (`<EXTRA_INFO>`) when a matching file is touched; never in `<available_skills>` or `<REPO_CONTEXT>` | ❌ No — deterministic on file-touch |
 
 <Warning>
 **Token Usage Warning**: Legacy skills with `trigger=None` add their **full content** to `<REPO_CONTEXT>` in the initial `SystemPromptEvent`. That system message remains part of the conversation context for subsequent LLM calls, so the content still affects token usage on each turn. Consider using AgentSkills format (`SKILL.md`) for progressive disclosure instead.
@@ -24062,6 +24302,7 @@ Skill location: /path/to/skill
 |--------|-------------------|----------|
 | **Always-loaded** | At conversation start | Repository rules, coding standards |
 | **Trigger-loaded** | When keywords match | Specialized tasks, domain knowledge |
+| **Path-triggered** | When the agent touches a matching file | File-scoped rules (e.g. API validation, migration conventions) |
 | **Progressive disclosure** | Agent reads on demand | Large reference docs (AgentSkills) |
 
 ## Always-Loaded Context
@@ -24073,7 +24314,7 @@ Content that's always in the system prompt.
 Place `AGENTS.md` at your repo root - it's loaded automatically. See [Permanent Context](/overview/skills/repo).
 
 ```python icon="python" focus={3, 4}
-from openhands.sdk.context.skills import load_project_skills
+from openhands.sdk.skills import load_project_skills
 
 # Automatically finds AGENTS.md, CLAUDE.md, GEMINI.md at workspace root
 skills = load_project_skills(workspace_dir="/path/to/repo")
@@ -24126,12 +24367,75 @@ Use the encrypt.sh script to encrypt messages.
 </EXTRA_INFO>
 ```
 
+## Path-Triggered Rules
+
+A **rule** is a skill with a `PathTrigger` (`paths:` glob frontmatter). Its content is injected
+**deterministically** when the agent reads, edits, or creates a file whose workspace-relative path
+matches one of the globs — no reliance on the model choosing a skill. See [Path-Triggered Rules](/overview/skills/path)
+for the conceptual overview.
+
+Rules add **zero baseline cost**: they are excluded from `<available_skills>` and `<REPO_CONTEXT>`
+and are never model-invocable (`disable_model_invocation` is forced on). Nothing is loaded until a
+matching file is touched, and each rule is injected only once per conversation.
+
+```python icon="python" focus={6}
+from openhands.sdk.skills import PathTrigger, Skill
+
+Skill(
+    name="api-validation",
+    content="API RULE: validate all request inputs with zod before using them.",
+    trigger=PathTrigger(paths=["src/api/**/*.ts", "**/*.route.ts"]),
+)
+```
+
+As a file-based skill, this is just a `*.md` file with `paths:` frontmatter in a skills directory
+(e.g. `.agents/skills/api-validation.md`):
+
+```markdown icon="markdown"
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.route.ts"
+---
+
+API RULE: validate all request inputs with zod before using them.
+```
+
+When the agent creates or edits `src/api/users.ts`, the rule content is appended to that **tool
+result** (not the user message) inside an `<EXTRA_INFO>` block, so the agent reads it on its next step:
+
+```xml icon="file"
+<EXTRA_INFO>
+The following rule applies because a file you touched matches "src/api/**/*.ts". Follow it when working with matching files.
+Rule location: /repo/.agents/skills/api-validation.md
+
+API RULE: validate all request inputs with zod before using them.
+</EXTRA_INFO>
+```
+
+### Glob Semantics
+
+Patterns use gitignore-style matching against the workspace-relative POSIX path (case-sensitive):
+
+| Pattern           | Matches                                                       |
+|-------------------|---------------------------------------------------------------|
+| `**`              | Any number of path segments, including zero (crosses `/`).    |
+| `*`               | Any run of characters **within a single** path segment.       |
+| `?`               | A single non-separator character.                             |
+| `*.ts` (no slash) | The basename at **any depth** — equivalent to `**/*.ts`.      |
+
+<Note>
+- A skill is **either** path-triggered **or** model-invocable, not both: if a file declares both `paths:` and `triggers:`, `paths:` wins.
+- Rules are repo-scoped — touching a file outside the workspace never fires a rule.
+- Injection is available for local conversations. ACP-backed conversations do not inject path rules, because the ACP server owns tool execution.
+</Note>
+
 ## Progressive Disclosure (AgentSkills Standard)
 
 For the agent to trigger skills, use the [AgentSkills standard](https://agentskills.io/specification) `SKILL.md` format. The agent sees a summary and reads full content on demand.
 
 ```python icon="python"
-from openhands.sdk.context.skills import load_skills_from_dir
+from openhands.sdk.skills import load_skills_from_dir
 
 # Load SKILL.md files from a directory
 _, _, agent_skills = load_skills_from_dir("/path/to/skills")
@@ -24765,7 +25069,7 @@ from pathlib import Path
 from pydantic import SecretStr
 
 from openhands.sdk import LLM, Agent, AgentContext, Conversation
-from openhands.sdk.context.skills import (
+from openhands.sdk.skills import (
     discover_skill_resources,
     load_skills_from_dir,
 )
@@ -24882,7 +25186,7 @@ print(f"EXAMPLE_COST: {llm.metrics.accumulated_cost:.4f}")
 Loads all skills from a directory, returning three dictionaries:
 
 ```python icon="python" focus={3}
-from openhands.sdk.context.skills import load_skills_from_dir
+from openhands.sdk.skills import load_skills_from_dir
 
 repo_skills, knowledge_skills, agent_skills = load_skills_from_dir(skills_dir)
 ```
@@ -24902,7 +25206,7 @@ When passing to `AgentContext(skills=...)`, all three types are accepted. The in
 Discovers resource files in a skill directory:
 
 ```python icon="python" focus={3}
-from openhands.sdk.context.skills import discover_skill_resources
+from openhands.sdk.skills import discover_skill_resources
 
 resources = discover_skill_resources(skill_dir)
 print(resources.scripts)     # List of script files
@@ -25012,7 +25316,7 @@ agent_context = AgentContext(
 You can also load public skills manually and have more control:
 
 ```python icon="python"
-from openhands.sdk.context.skills import load_public_skills
+from openhands.sdk.skills import load_public_skills
 
 # Load all public skills
 public_skills = load_public_skills()
@@ -25032,7 +25336,7 @@ agent_context = AgentContext(skills=my_skills + public_skills)
 You can load skills from your own repository:
 
 ```python icon="python" focus={3-7}
-from openhands.sdk.context.skills import load_public_skills
+from openhands.sdk.skills import load_public_skills
 
 # Load from a custom repository
 custom_skills = load_public_skills(
@@ -28161,101 +28465,104 @@ Source: https://docs.openhands.dev/openhands/usage/advanced/custom-sandbox-guide
   These settings are only available in [Local GUI](/openhands/usage/run-openhands/local-setup). OpenHands Cloud uses managed sandbox environments.
 </Note>
 
+<Note>
+  Looking for the legacy `SANDBOX_BASE_CONTAINER_IMAGE` / `base_container_image`
+  workflow? That only applies to OpenHands V0. See the
+  [V0 Custom Sandbox reference](/openhands/usage/v0/advanced/V0_custom-sandbox-guide).
+</Note>
+
 The sandbox is where the agent performs its tasks. Instead of running commands directly on your computer
 (which could be risky), the agent runs them inside a Docker container.
 
-The default OpenHands sandbox (`python-nodejs:python3.12-nodejs22`
-from [nikolaik/python-nodejs](https://hub.docker.com/r/nikolaik/python-nodejs)) comes with some packages installed such
-as python and Node.js but may need other software installed by default.
+## How the sandbox works in V1
 
-You have two options for customization:
+In OpenHands V1 the sandbox container **is** the OpenHands agent-server. By default OpenHands runs
+`ghcr.io/openhands/agent-server:<release>-python`, which already includes Python and Node.js. The image is
+resolved from two environment variables:
 
-- Use an existing image with the required software.
-- Create your own custom Docker image.
+- `AGENT_SERVER_IMAGE_REPOSITORY` (default `ghcr.io/openhands/agent-server`)
+- `AGENT_SERVER_IMAGE_TAG` (default `<release>-python`)
 
-If you choose the first option, you can skip the `Create Your Docker Image` section.
+Because the sandbox is the agent-server, you can't just swap in an arbitrary base image — the container has
+to keep running the agent-server. To add custom tooling you build a **custom agent-server image** on top of
+your chosen base image, then point OpenHands at it.
 
-## Create Your Docker Image
+## Building a custom agent-server image
 
-To create a custom Docker image, it must be Debian based.
+The agent-server is built from a [Dockerfile in the OpenHands SDK](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile)
+that accepts a `BASE_IMAGE` build argument. Any Debian-based image works as the base.
 
-For example, if you want OpenHands to have `ruby` installed, you could create a `Dockerfile` with the following content:
+For example, to layer the agent-server onto an image that has `ruby` installed, first build (or pick) your base
+image. To build one:
 
 ```dockerfile
+# Dockerfile.base
 FROM nikolaik/python-nodejs:python3.12-nodejs22
 
 # Install required packages
 RUN apt-get update && apt-get install -y ruby
 ```
 
-Or you could use a Ruby-specific base image:
-
-```dockerfile
-FROM ruby:latest
-```
-
-Save this file in a folder. Then, build your Docker image (e.g., named custom-image) by navigating to the folder in
-the terminal and running::
 ```bash
-docker build -t custom-image .
+docker build -t my-base:latest -f Dockerfile.base .
 ```
 
-This will produce a new image called `custom-image`, which will be available in Docker.
+Then build the agent-server image on top of it. Clone the
+[OpenHands SDK](https://github.com/OpenHands/software-agent-sdk) and, from the repository root, run:
 
-## Using the Docker Command
+```bash
+docker buildx build \
+  --build-arg BASE_IMAGE=my-base:latest \
+  --target binary \
+  -f openhands-agent-server/openhands/agent_server/docker/Dockerfile \
+  -t my-agent-server:custom \
+  --load \
+  .
+```
 
-When running OpenHands using [the docker command](/openhands/usage/run-openhands/local-setup#start-the-app), replace
-the `AGENT_SERVER_IMAGE_REPOSITORY` and `AGENT_SERVER_IMAGE_TAG` environment variables with `-e SANDBOX_BASE_CONTAINER_IMAGE=<custom image name>`:
+- `--build-arg BASE_IMAGE=` selects the base image to layer the agent-server onto.
+- `--target binary` matches how the default published `-python` image is built — it bundles a self-contained
+  agent-server binary (no Python virtual environment at runtime) and includes VSCode and VNC. Other targets
+  are available if you need them: `source` runs the agent-server from a Python virtual environment (handy for
+  development and debugging), and the `binary-minimal` / `source-minimal` targets drop VSCode and VNC for a
+  smaller image.
+- `--load` makes the resulting image available to your local Docker daemon.
 
-```commandline
+This produces a local image called `my-agent-server:custom`.
+
+## Pointing OpenHands at your image
+
+Set both environment variables so OpenHands launches your image as the sandbox. They must be set together —
+if either is missing, OpenHands falls back to the default image:
+
+```bash
 docker run -it --rm --pull=always \
-    -e SANDBOX_BASE_CONTAINER_IMAGE=custom-image \
+    -e AGENT_SERVER_IMAGE_REPOSITORY=my-agent-server \
+    -e AGENT_SERVER_IMAGE_TAG=custom \
     ...
 ```
 
-## Using the Development Workflow
+If you start OpenHands with Docker Compose, set the same variables there:
 
-### Setup
-
-First, ensure you can run OpenHands by following the instructions in [Development.md](https://github.com/OpenHands/OpenHands/blob/main/Development.md).
-
-### Specify the Base Sandbox Image
-
-In the `config.toml` file within the OpenHands directory, set the `base_container_image` to the image you want to use.
-This can be an image you’ve already pulled or one you’ve built:
-
-```bash
-[core]
-...
-[sandbox]
-base_container_image="custom-image"
+```yaml
+environment:
+  - AGENT_SERVER_IMAGE_REPOSITORY=my-agent-server
+  - AGENT_SERVER_IMAGE_TAG=custom
 ```
 
-### Additional Configuration Options
+When the sandbox starts, OpenHands launches your image on port `8000` and polls `/health` until the
+agent-server is ready.
 
-The `config.toml` file supports several other options for customizing your sandbox:
+<Note>
+  When you publish your image to a registry, set `AGENT_SERVER_IMAGE_REPOSITORY` to the fully qualified
+  repository (e.g. `ghcr.io/your-org/my-agent-server`) and make sure the host running OpenHands can pull it.
+</Note>
 
-```toml
-[core]
-# Install additional dependencies when the runtime is built
-# Can contain any valid shell commands
-# If you need the path to the Python interpreter in any of these commands, you can use the $OH_INTERPRETER_PATH variable
-runtime_extra_deps = """
-pip install numpy pandas
-apt-get update && apt-get install -y ffmpeg
-"""
+## Related
 
-# Set environment variables for the runtime
-# Useful for configuration that needs to be available at runtime
-runtime_startup_env_vars = { DATABASE_URL = "postgresql://user:pass@localhost/db" }
-
-# Specify platform for multi-architecture builds (e.g., "linux/amd64" or "linux/arm64")
-platform = "linux/amd64"
-```
-
-### Run
-
-Run OpenHands by running ```make run``` in the top level directory.
+- [Docker Sandbox](/openhands/usage/sandboxes/docker) — the default sandbox provider for Local GUI.
+- [Agent Server in Docker (SDK)](/sdk/guides/agent-server/docker-sandbox) — deeper details on the
+  agent-server image and how it is built.
 
 ### Search Engine Setup
 Source: https://docs.openhands.dev/openhands/usage/advanced/search-engine-setup.md
@@ -28421,6 +28728,75 @@ Any stdio ACP server works: choose **Custom** in Settings → Agent and enter it
 - [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
 - [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
 - [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+
+### Agent Profiles
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/agent-profiles.md
+
+Agent Profiles define which agent a new Agent Canvas conversation runs with. A profile can use the built-in OpenHands agent or an ACP agent such as Claude Code, Codex, or Gemini CLI.
+
+The active Agent Profile is the default agent for new conversations. You can also choose a different profile from the chat launcher before starting a conversation.
+
+## Agent Profiles vs LLM Profiles
+
+Agent Profiles and LLM profiles control different layers:
+
+| Profile Type | Controls | Where to Manage |
+|--------------|----------|-----------------|
+| **Agent Profile** | Which agent runs the conversation and the agent-specific configuration | `Settings > Agent` |
+| **LLM Profile** | Which LLM provider, model, and credentials an OpenHands agent uses | `Settings > LLM` |
+
+OpenHands Agent Profiles reference an LLM profile. ACP Agent Profiles use the external agent's own model and authentication flow instead.
+
+## Manage Agent Profiles
+
+Open `Settings > Agent` to manage the Agent Profile library.
+
+From this page, you can:
+
+- Create an OpenHands or ACP Agent Profile
+- Rename a profile
+- Edit profile settings
+- Set a profile as active
+- Delete profiles you no longer need
+
+When you set a profile as active, new conversations use that profile by default.
+
+## Choose a Profile for a Conversation
+
+On the home screen, use the agent profile picker in the chat launcher to choose the profile for the next conversation.
+
+This selection affects the conversation you are about to start. Existing conversations keep the agent profile they were launched with.
+
+## OpenHands Profiles
+
+Use an OpenHands profile when you want Agent Canvas to run the built-in OpenHands agent.
+
+An OpenHands profile references an LLM profile, so model and credential changes are managed in `Settings > LLM`. Use this when you want Agent Canvas to own both the agent behavior and the model configuration.
+
+## ACP Profiles
+
+Use an ACP profile when you want Agent Canvas to drive an external coding agent through the Agent Client Protocol.
+
+ACP profiles are useful for agents such as:
+
+- Claude Code
+- Codex
+- Gemini CLI
+- a custom ACP server
+
+The external ACP agent owns its own model and tool behavior. Agent Canvas starts the agent process and renders the conversation.
+
+## First-Time Setup
+
+During first-time setup, the agent you choose becomes the initial active Agent Profile.
+
+If you choose OpenHands, the setup flow also configures the LLM profile that the Agent Profile uses. If you choose an ACP agent, the setup flow creates an ACP Agent Profile and uses that provider's authentication path.
+
+## Related Guides
+
+- [First Time Setup](/openhands/usage/agent-canvas/first-time-setup)
+- [ACP Agents](/openhands/usage/agent-canvas/acp-agents)
+- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
 
 ### Cloud Backend
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/cloud.md
@@ -29304,6 +29680,132 @@ Settings, LLM configuration, MCP servers, and automations are all scoped to the 
 | **Cloud** | Managed sandboxes without local resources | Connect to [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) from **Manage Backends**. See [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud). |
 | **Modal** | Cloud backend with per-second billing, no VM management | Deploy the agent server on [Modal](https://modal.com) with a single command. See [Modal Backend](/openhands/usage/agent-canvas/backend-setup/modal). |
 
+### Conversations
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md
+
+A conversation is a single agent session on the active backend. It has its own message history, tool calls, file changes, selected agent profile, and conversation-specific plugins.
+
+## Branch From a Message
+
+Use `Branch from here` on a message when you want to explore a different path without changing the original conversation.
+
+Branching creates a new conversation from the selected point in the current conversation. The original conversation remains available in the sidebar.
+
+<Note>
+  Conversation branching is available on local agent-server backends that support conversation forks.
+</Note>
+
+## Branching User Messages
+
+Branching from one of your own messages works like edit-and-resend:
+
+1. Hover over the message.
+2. Select `Branch from here`.
+3. Agent Canvas opens a new branched conversation.
+4. The selected message appears in the composer so you can edit it before sending.
+
+The new branch starts from the parent of that message. This lets you rewrite the prompt and continue from the earlier state.
+
+## Branching Assistant Messages
+
+Branching from an assistant message creates a new conversation that includes history through that assistant response.
+
+Use this when the agent reached a useful point and you want to try a different next step without changing the original thread.
+
+## What Branching Preserves
+
+The branch keeps the relevant conversation history, agent configuration, workspace context, and backend-managed state needed to continue from the branch point.
+
+The branch is independent after creation:
+
+- messages you send in the branch do not modify the original conversation
+- the original conversation stays in the sidebar
+- branches can be branched again
+- the branch gets its own conversation title
+
+## Branching vs Starting Fresh
+
+Start a fresh conversation when you want no prior context.
+
+Branch a conversation when you want the agent to remember what happened up to a specific message, but you want to test a different instruction, correction, or follow-up.
+
+## Run a Goal
+
+Use the `/goal` command when you want the agent to keep working until a specific objective is complete or the goal reaches its iteration limit.
+
+```text
+/goal [--max N] <objective>
+```
+
+For example:
+
+```text
+/goal --max 3 add unit tests for the parser and verify they pass
+```
+
+When you start a goal, Agent Canvas runs the agent and uses a judge LLM to check whether the objective is complete after each round. If the judge finds missing work, Agent Canvas sends that feedback back to the agent and continues until the goal is complete or the maximum number of rounds is reached.
+
+While a goal is running, Agent Canvas shows a status banner with the objective, current round, status, judge score, and any missing work. When the goal finishes, the final status appears inline in the conversation history.
+
+Goal statuses include:
+
+| Status | Meaning |
+|--------|---------|
+| `running` | The goal loop is active |
+| `complete` | The judge confirmed the objective is done |
+| `capped` | The goal reached its maximum number of rounds |
+| `interrupted` | A normal user message interrupted the active goal |
+
+Sending a normal message while a goal is running interrupts the goal and gives control back to you.
+
+<Note>
+  The `/goal` command requires a backend that supports conversation goal routes. It uses both the agent LLM and a judge LLM, so goal runs may make additional model calls beyond the agent's normal work.
+</Note>
+
+## Export a transcript as Markdown or HTML
+
+You can download any conversation as a self-contained file to share, archive, or review outside Agent Canvas.
+
+**To export a transcript:**
+
+1. Open the conversation you want to export.
+2. Click the kebab menu (⋮) next to the conversation title.
+3. Select **Export transcript**.
+4. Choose a format and adjust the options, then click **Download**.
+
+### Format options
+
+| Format | File extension | Use it when |
+|--------|---------------|-------------|
+| Markdown document | `.md` | You want a plain-text file that renders in any Markdown viewer or editor |
+| Self-contained HTML | `.html` | You want a single file that opens formatted in any browser |
+
+The downloaded file is named `conversation-<conversation-id>.md` or `conversation-<conversation-id>.html`.
+
+### Export options
+
+| Option | Default | What it includes |
+|--------|---------|-----------------|
+| Include tool details | On | The full inputs and outputs of every tool call the agent made |
+| Include timestamps | On | The time of each event, inline |
+
+Turn off either option before downloading if you want a shorter or cleaner transcript.
+
+### Privacy
+
+The export is generated locally in your browser from the events Agent Canvas already has for that conversation. No conversation data is sent to a third party to produce the file.
+
+<Note>
+  For very large conversations, Agent Canvas loads the full event history before generating the file. This may take a moment. On cloud backends, the export uses the events the app currently has loaded.
+</Note>
+
+## Related Guides
+
+- [Fork a Conversation](/sdk/guides/convo-fork)
+- [Goal Completion Loop](/sdk/guides/convo-goal)
+- [Agent Profiles](/openhands/usage/agent-canvas/agent-profiles)
+- [Plugins in Agent Canvas](/openhands/usage/agent-canvas/plugins)
+
 ### Critic
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/critic.md
 
@@ -29463,7 +29965,7 @@ The `Settings` area currently includes the following sections:
 
 | Section | Purpose |
 |---------|---------|
-| `Agent` | Agent behavior and agent-specific capabilities |
+| `Agent` | Agent Profile library and agent-specific capabilities |
 | `LLM` | Provider, model, API key, and profile configuration |
 | `Condenser` | Context compression and summarization behavior |
 | `Verification` | Approval, critic evaluation, and verification-related behavior |
@@ -29471,6 +29973,8 @@ The `Settings` area currently includes the following sections:
 | `Secrets` | Stored secrets used by the active backend |
 
 On local backends, the `LLM` page also includes an `Available Profiles` area for saved profiles.
+
+Use `Settings > Agent` to choose the active Agent Profile for new conversations. OpenHands profiles reference LLM profiles from `Settings > LLM`; ACP profiles use the external agent's own model configuration.
 
 ## Configuration Is Per Backend
 
@@ -29492,6 +29996,8 @@ You might use this split like this:
 ## Related Guides
 
 - [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Agent Profiles](/openhands/usage/agent-canvas/agent-profiles)
+- [Plugins in Agent Canvas](/openhands/usage/agent-canvas/plugins)
 - [Configure the Critic](/openhands/usage/agent-canvas/critic)
 - [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations)
 
@@ -29532,7 +30038,7 @@ Agent Canvas uses the **Agent-Client Protocol (ACP)** to communicate with agents
 
 Choosing a third-party agent lets you interact with it through the Agent Canvas interface and bring your existing subscriptions from those providers.
 
-You can change your agent at any time from `Settings`.
+Your choice creates the initial active [Agent Profile](/openhands/usage/agent-canvas/agent-profiles). You can change your active profile or create additional profiles later from `Settings > Agent`.
 
 ## Step 2: Check Your Backend
 
@@ -29564,6 +30070,8 @@ Available options:
 - **OpenHands Cloud** — use an [OpenHands Cloud](https://app.all-hands.dev) API key to access verified models without managing provider accounts directly. Find your API key in the `API Keys` tab of OpenHands Cloud.
 
 The setup screen defaults to `OpenHands` as the provider and pre-selects a recommended model. Switch the `LLM Provider` dropdown to choose a different provider.
+
+For OpenHands Agent Profiles, this LLM setup becomes the model profile the agent uses. ACP agents such as Claude Code, Codex, and Gemini CLI use their own authentication and model configuration.
 
 ## Step 4: Start From a Proven Workflow
 
@@ -29604,6 +30112,8 @@ LLM profiles are useful when you want different model setups for different tasks
 - a stronger profile for planning or review
 - a local model profile for offline experiments
 
+LLM profiles are separate from [Agent Profiles](/openhands/usage/agent-canvas/agent-profiles). Agent Profiles choose which agent runs a new conversation. OpenHands Agent Profiles reference an LLM profile to decide which model configuration that agent uses.
+
 ## Switching Profiles in a Conversation
 
 You can switch profiles from the chat input with the `/model` command:
@@ -29621,48 +30131,323 @@ Agent Canvas also shows model-switch events in the conversation timeline so you 
 
 1. Configure a default profile in `Settings > LLM`.
 2. Create additional profiles for specific tasks or cost levels.
-3. Start a conversation.
-4. Use `/model` when you want to switch profiles without leaving the chat.
+3. Open `Settings > Agent` and choose which LLM profile an OpenHands Agent Profile should use.
+4. Start a conversation.
+5. Use `/model` when you want to switch profiles without leaving the chat.
 
 ## Related Guides
 
 - [Setup](/openhands/usage/agent-canvas/setup)
 - [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+- [Agent Profiles](/openhands/usage/agent-canvas/agent-profiles)
 - [LLM Settings](/openhands/usage/settings/llm-settings)
+
+### Managing automations
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/managing-automations.md
+
+The **Automate** view in Agent Canvas is the in-app control center for your automations. From here you can see all automations on the active backend, inspect their configuration and run history, and manage their lifecycle without leaving the app.
+
+<Note>
+  Automations run on the active backend. Switch backends from [Connect and Manage Backends](/openhands/usage/agent-canvas/backends) to see automations on a different backend.
+</Note>
+
+## Browse and inspect automations
+
+Open the **Automate** tab in the sidebar to see all automations on the active backend. Each row shows the automation name, trigger type, and enabled state.
+
+Click an automation to open its detail view. The detail view shows:
+
+- The full prompt the automation runs
+- Trigger configuration (schedule, webhook, or event)
+- LLM profile used for runs
+- Recent run history and status
+
+## Enable and disable automations
+
+Toggle an automation on or off from the kebab menu (⋮) on the automation row, or from the detail view. Disabled automations do not fire on their scheduled trigger or in response to events, but their configuration is preserved.
+
+## Run an automation manually
+
+Select **Run now** from the automation's kebab menu to trigger an immediate run outside the normal schedule. Useful for testing or for one-off executions.
+
+## Export an automation
+
+Agent Canvas can export any automation as a portable JSON file. Use this to:
+
+- Share a reusable automation with teammates
+- Back up automation configuration in version control
+- Move an automation between backends or accounts
+
+**To export:**
+
+1. Open the **Automate** view.
+2. Click the kebab menu (⋮) on the automation you want to export.
+3. Select **Export**.
+
+The file downloads as `<slug>.automation.json`, where `<slug>` is derived from the automation's name.
+
+### Exported file format
+
+The file contains a versioned JSON document with the automation's full configuration:
+
+```json
+{
+  "version": 1,
+  "kind": "automation",
+  "spec": {
+    "name": "Daily GitHub Summary",
+    "trigger": {
+      "type": "schedule",
+      "schedule": "0 9 * * 1-5",
+      "schedule_human": "Weekdays at 9:00 AM",
+      "timezone": "America/New_York"
+    },
+    "enabled": true,
+    "prompt": "Summarize the previous day's PRs and post to #engineering.",
+    "repository": "openhands/docs",
+    "model": "anthropic/claude-sonnet-4-5"
+  }
+}
+```
+
+The `spec` object includes the automation's name, prompt, trigger, schedule, repository, model, plugins, and notification settings. You can hand-author, diff, or version-control this file using any standard tool.
+
+## Import an automation
+
+You can import an automation from a JSON file previously exported by Agent Canvas, or from a hand-authored file that follows the same versioned schema.
+
+**To import:**
+
+1. Open the **Automate** view.
+2. Click **Import automation** at the top of the list.
+3. Pick the `.json` file to import.
+4. Review the preview — it shows the automation's name, trigger type, and prompt.
+5. Confirm to create the automation.
+
+Imported automations are created **disabled**. After importing, open the automation from the list, review its configuration, and enable it when ready.
+
+## Related guides
+
+- [Creating automations](/openhands/usage/automations/creating-automations)
+- [Managing automations (CLI-style)](/openhands/usage/automations/managing-automations)
+- [Pre-built automations](/openhands/usage/agent-canvas/prebuilt-automations)
+- [Automations overview](/openhands/usage/automations/overview)
+
+### Phone & Tablet Access
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/mobile-access.md
+
+If Agent Canvas is running on your computer, you can access it from a phone, tablet, or another device without exposing it to the public internet.
+
+## Tailscale (Recommended)
+
+[Tailscale](https://tailscale.com/) creates a private network between your devices. No port forwarding, DNS, or firewall rules are required.
+
+### Setup
+
+1. Install [Tailscale](https://tailscale.com/download) on both your computer and your phone or tablet.
+2. Sign in with the same account on both devices.
+3. Find your computer's Tailscale IP in the Tailscale app. It usually looks like `100.x.y.z`.
+4. Start Agent Canvas on your computer:
+
+   ```bash
+   agent-canvas
+   ```
+
+5. Open `http://<tailscale-ip>:8000/` in your phone or tablet browser.
+
+That's it. The connection is encrypted and only devices in your Tailscale network can reach it.
+
+<Tip>
+  If the mobile browser still points at `127.0.0.1` or `localhost`, open `Manage Backends` and edit the local backend's `Host / Base URL` to `http://<tailscale-ip>:8000`. If it keeps reverting, clear site data for the Agent Canvas URL in your browser settings and reload the page.
+</Tip>
+
+## ngrok (Remote / Public Access)
+
+Use [ngrok](https://ngrok.com/) when Tailscale is not an option or when you need a temporary public URL. Because the URL is reachable from the internet, run Agent Canvas in public mode with a strong backend API key first:
+
+```bash
+export LOCAL_BACKEND_API_KEY="<choose-a-strong-secret>"
+agent-canvas --public
+```
+
+Then start ngrok in a second terminal:
+
+```bash
+ngrok http 8000
+```
+
+Open the ngrok forwarding URL in your phone or tablet browser.
+
+<Warning>
+  Do not expose Agent Canvas over the internet without authentication. Public mode requires users to enter `LOCAL_BACKEND_API_KEY` before the backend can be used. Without authentication, anyone with the URL can use your instance and the LLM API keys configured in it. See [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm) for the full remote-access setup.
+</Warning>
+
+ngrok also supports OAuth, IP allowlists, and other access controls for additional protection.
 
 ### Agent Canvas Overview
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/overview.md
 
-## Why Agent Canvas
+Agent Canvas is an open-source control surface for agentic work. It gives you one browser UI for conversations, files, terminal output, model configuration, backends, and automations.
 
-- **One UI to drive any agent**: run conversations with OpenHands, Claude Code, Codex, or Gemini CLI through the same browser interface.
-- **Bring your own LLM**: connect Anthropic, OpenAI, Google, or any OpenAI-compatible provider. Switch models per conversation.
-- **Built-in automations**: schedule cron jobs or wire up event-driven workflows against GitHub, Linear, Slack, and custom webhooks.
-- **Run it anywhere**: a single `agent-canvas` command starts the full stack locally. Self-host on a VM, or connect to OpenHands Cloud.
+By default, Agent Canvas runs on your own machine. You can also connect the same UI to backends running in Docker, on a VM, on Modal, or in [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud).
 
-## Key Concepts
+## When To Use Agent Canvas
 
-| Concept | What It Means |
-|---------|----------------|
-| **Agent Canvas** | A UI and backend server for running agents and automations. The `agent-canvas` command starts both together. |
-| **Backend** | Any Canvas UI can securely connect to any Canvas backend: running locally, on a remote machine, or on [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud). Register multiple and switch between them. |
-| **Conversation** | A single agent session tied to a backend. Each conversation has its own message history, tool calls, and file changes. |
-| **Automation** | A workflow that runs on a cron schedule or in response to events from GitHub, Linear, Slack, or custom webhooks. Automations may start agent conversations as needed. |
+Use Agent Canvas when you want a self-hosted or local browser UI for agents that can work with real files, terminals, tools, and automations.
 
-## How It Fits with Other OpenHands Products
+| If you want to... | Start here |
+|-------------------|------------|
+| Run OpenHands locally in a browser | [Install Agent Canvas](/openhands/usage/agent-canvas/setup) |
+| Use a sandboxed local environment | [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker) |
+| Run agents on an always-on machine | [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) |
+| Connect to managed cloud sandboxes | [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud) |
+| Use Claude Code, Codex, Gemini CLI, or another ACP agent | [ACP Agents](/openhands/usage/agent-canvas/acp-agents) |
+| Create scheduled or event-driven workflows | [Pre-built Automations](/openhands/usage/agent-canvas/prebuilt-automations) |
 
-- **Agent Canvas**: the recommended browser-based UI for running OpenHands locally or self-hosted.
-- **Local GUI (Legacy)**: legacy UI requiring Docker.
-- **OpenHands Cloud**: a fully managed version of OpenHands.
-- **OpenHands SDK**: the Python framework behind the agent system.
+## How Agent Canvas Works
 
-## Where to Start
+Agent Canvas has four pieces to understand:
 
-- [Install](/openhands/usage/agent-canvas/setup) — Use the published npm package to run Agent Canvas from your terminal.
-- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends) — Switch between local and remote backends.
-- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings) — Configure skills, MCP servers, and backend-synced settings.
-- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations) — Get started with a ready-made automation workflow.
-- [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) — Run backend-only or full Canvas on a VM and connect remotely.
+| Concept | What It Means | Why It Matters |
+|-------|---------------|----------------|
+| **Browser UI** | The web interface you open in your browser. | This is where you chat, inspect files, manage settings, and configure automations. |
+| **Backend** | The agent server that runs conversations, tools, settings, secrets, and automations. | This determines where the agent runs and what machine or sandbox it can access. |
+| **Workspace** | The folder, repository, container mount, or cloud sandbox the agent works in. | This determines which files the agent can read and write. |
+| **Agent and model** | The OpenHands agent or an ACP agent, plus the model credentials it uses. | This determines which LLM or provider receives conversation context and powers the agent. |
+
+<Note>
+  Settings, secrets, LLM configuration, MCP servers, skills, conversations, and automations are scoped to the active backend. Switching backends switches the environment the agent is using.
+</Note>
+
+## Choosing A Trust Boundary
+
+Before installing, decide where you want the agent to run and what files it should be able to access.
+
+| Setup | Trust Boundary | Best For |
+|-------|----------------|----------|
+| **npm local install** | Runs directly on your machine. The agent server can operate on the local filesystem. | Fastest local setup when you trust the machine and understand the file access. |
+| **Docker** | Runs inside a container and only sees the directories you mount. | Local sandboxing and clearer file boundaries. |
+| **VM or dedicated machine** | Runs on the remote host you control. | Always-on agents, heavier compute, team-shared backends, or personal/work separation. |
+| **OpenHands Cloud** | Runs in managed OpenHands Cloud sandboxes. | Cloud execution without maintaining your own machine or VM backend. |
+
+<Warning>
+  Agent Canvas can run agents that execute shell commands, read files, write files, and use connected tools. Only connect a backend to files, secrets, and networks that you are willing to let the agent use.
+</Warning>
+
+## Model Access
+
+Agent Canvas supports several model access patterns:
+
+- **Direct provider key** — enter an API key from Anthropic, OpenAI, Google, or another supported provider.
+- **OpenHands Cloud key** — use an OpenHands Cloud API key for verified hosted models.
+- **ACP agent subscription login** — use a signed-in provider, such as Claude Code, Codex, or Gemini, when the backend runs on the same machine as that login.
+- **Local or OpenAI-compatible provider** — connect providers such as Ollama, LM Studio, LiteLLM, or a compatible gateway through model settings.
+
+See [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles) and [ACP Agents](/openhands/usage/agent-canvas/acp-agents) for details.
+
+## How It Fits With Other OpenHands Products
+
+| Product | Use It When |
+|---------|-------------|
+| **Agent Canvas** | You want a self-hosted browser UI for local, remote, or cloud-backed agents and automations. |
+| **OpenHands Cloud** | You want a fully managed hosted experience with no local installation. |
+| **OpenHands SDK** | You want to build agents or agent-powered applications in Python. |
+| **Local GUI (Legacy)** | You are following older Docker-based Local GUI documentation. New local browser workflows should use Agent Canvas. |
+
+## Before You Start
+
+For the normal local setup, you need:
+
+- Node.js 22.12 or later
+- `npm`
+- A model access path, such as a provider API key, OpenHands Cloud LLM key, ACP subscription login, or local model server
+- A folder, repository, or project workspace for the agent to work in
+
+For a sandboxed local setup, use Docker instead of the direct npm backend path.
+
+## Where To Go Next
+
+- [Install Agent Canvas](/openhands/usage/agent-canvas/setup)
+- [First Time Setup](/openhands/usage/agent-canvas/first-time-setup)
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
+- [Troubleshooting](/openhands/usage/agent-canvas/troubleshooting)
+
+### Plugins in Agent Canvas
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/plugins.md
+
+Plugins bundle related agent capabilities, such as skills, MCP servers, hooks, commands, and agent definitions. Agent Canvas gives local backends a UI for browsing the plugin catalog, installing plugins, enabling or disabling installed plugins, and attaching plugins when you start a conversation.
+
+<Note>
+  The Plugins management page is available for local backends. Cloud backends may show an empty plugin catalog or disable plugin management actions until plugin management is available for that backend.
+</Note>
+
+## Open the Plugins Area
+
+Open `Plugins` from the sidebar to manage plugins for the active backend.
+
+From the Plugins page, you can:
+
+- Search the plugin catalog
+- Inspect plugin details
+- Install a plugin from the catalog or source
+- Enable or disable installed plugins
+- Uninstall plugins that are managed by Agent Canvas
+- Confirm locally discovered plugins
+
+Plugin management is backend-scoped. Switching backends changes which installed and local plugins you see.
+
+## Installed and Local Plugins
+
+Agent Canvas shows plugin status in the Plugins page:
+
+| Status | Meaning |
+|--------|---------|
+| `Installed` | The plugin is managed by Agent Canvas and can be enabled, disabled, or uninstalled |
+| `Available` | The plugin is visible in the catalog but not installed |
+| `Local` | The plugin was discovered from a local plugin directory and is shown as read-only |
+
+Local plugins are discovered from user-level plugin directories such as `~/.agents/plugins` and `~/.openhands/plugins`. They can load into conversations, but Agent Canvas does not manage their lifecycle from the UI.
+
+<Note>
+  Local plugins are read-only in the Plugins page. To change or remove a local plugin, edit the files in the local plugin directory.
+</Note>
+
+## Enable or Disable Installed Plugins
+
+Enabled installed plugins are automatically available to new conversations on that backend. Disabled plugins remain installed, but they are not loaded into new conversations.
+
+Use this when you want to keep a plugin available without making it part of every new conversation.
+
+## Attach Plugins to a New Conversation
+
+When you start a new conversation, use the `Plugins` picker in the chat launcher to attach catalog plugins explicitly.
+
+Attached plugins are opt-in for that conversation. If you start another conversation without selecting plugins, Agent Canvas does not attach any conversation-specific plugins.
+
+Installed and enabled plugins may still load automatically for new conversations, depending on the active backend configuration.
+
+## View Attached Plugins During a Conversation
+
+When a conversation has explicitly attached plugins, open the conversation tools menu and select `Show Plugins` to see them.
+
+This view lists plugins attached when the conversation was created. It is display-only and does not include every ambient or installed plugin that might also be available to the backend.
+
+## Trust and Backend Scope
+
+Plugins can add instructions, tools, hooks, and external integrations. Install plugins only from sources you trust, and review what a plugin contains before enabling it.
+
+Because plugins are managed by the active backend:
+
+- A local backend can discover local plugin directories on that machine
+- A remote backend uses its own plugin state, not your laptop's plugin directories
+- Switching backends can change which plugins are installed, enabled, or local
+
+## Related Guides
+
+- [Plugins](/overview/plugins)
+- [SDK Plugins](/sdk/guides/plugins)
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
 
 ### Setup a Pre-built Automation
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt-automations.md
@@ -29688,6 +30473,7 @@ In the `Automate` view, you can:
 - Browse existing automations
 - Inspect automation configuration and activity
 - Enable or disable automations
+- Edit an automation's LLM profile for future runs
 - Work with recommended automation flows
 
 ## How Creation Flows Usually Start
@@ -29699,9 +30485,15 @@ In practice, new automation setup often starts in one of two ways:
 - From a conversation, where you ask OpenHands to create an automation for you
 - From a recommended automation flow in the `Automations` view
 
-Visit the Automations Docs have a more [detailed guide on creating automations](/openhands/usage/automations/creating-automations).
+For a detailed walkthrough, see [Creating Automations](/openhands/usage/automations/creating-automations).
 
 Automations run against the active backend. Use [Manage Backends](/openhands/usage/agent-canvas/backends) to see and switch which backend your automations run on.
+
+## Edit an Automation's LLM Profile
+
+Open an automation, select `Edit`, and use the `LLM profile` dropdown to change which saved profile future runs use. If an automation already has a profile, the edit dialog pre-selects it.
+
+Changing the LLM profile affects future automation runs. It does not rewrite previous run history.
 
 ### GitHub PR Review Assistant
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/prebuilt/github-pr-review.md
@@ -30057,54 +30849,96 @@ After the automation is created:
 ### Install
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md
 
+Agent Canvas can run directly on your machine or inside Docker. Start with the simplest setup that matches the trust boundary you want.
+
 <Warning>
-  Agent Canvas starts an agent server on the machine where you run it. Treat that machine as trusted infrastructure and review the guidance in [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) before exposing it to a network you do not control.
+  Agent Canvas starts an agent server that can run shell commands, read files, write files, and use connected tools. Treat the machine or container where the backend runs as trusted infrastructure. Before exposing Agent Canvas to a network you do not control, review [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm).
 </Warning>
 
-<Tabs>
-  <Tab title="npm">
-    **Prerequisites:** [Node.js](https://nodejs.org/en/download) 22.12 or later, `npm`, and [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
+## Choose An Install Method
 
-    **Install:**
+| Method | Use It When | What The Agent Can Access |
+|--------|-------------|---------------------------|
+| **npm local install** | You want the quickest local browser setup. | Runs directly on your machine and can work in local workspaces you open. |
+| **Docker** | You want a local sandbox with clearer file boundaries. | Runs inside a container and can access mounted project directories. |
+| **npx** | You want to try Agent Canvas without installing the package globally. | Runs directly on your machine and can work in local workspaces you open. |
+| **VM / self-hosted** | You want an always-on backend, stronger hardware, or a team-accessible server. | Runs on the VM or dedicated host you configure. |
+| **From source** | You are contributing to Agent Canvas or changing the frontend/backend stack. | Runs your local development checkout. |
+
+<Note>
+  If you are new to Agent Canvas, use `npx` for a quick first run or npm local install if you want a reusable `agent-canvas` command. Use Docker when you specifically want sandboxing.
+</Note>
+
+## Verify Prerequisites
+
+<Tabs>
+
+  <Tab title="npm">
+    Install [Node.js](https://nodejs.org/en/download) 22.12 or later and [`uv`](https://docs.astral.sh/uv/getting-started/installation/), then verify both tools are available:
+
+    ```bash
+    node --version
+    npm --version
+    uv --version
+    ```
+
+    If `uv` or `uvx` is missing, install `uv` before starting Agent Canvas. The local agent server runtime uses it.
+  </Tab>
+
+  <Tab title="Docker">
+    Install [Docker](https://docs.docker.com/get-docker/) and make sure the Docker daemon is running:
+
+    ```bash
+    docker --version
+    docker ps
+    ```
+
+    On macOS and Windows, open Docker Desktop before running the container.
+  </Tab>
+
+    <Tab title="npx">
+    Install [Node.js](https://nodejs.org/en/download) 22.12 or later and [`uv`](https://docs.astral.sh/uv/getting-started/installation/), then verify the tools are available:
+
+    ```bash
+    node --version
+    npm --version
+    uv --version
+    ```
+
+    If `uv` or `uvx` is missing, install `uv` before starting Agent Canvas. The local agent server runtime uses it.
+  </Tab>
+
+</Tabs>
+
+<Note>
+  Termux and other mobile Linux environments are not a primary supported target. For the most reliable local setup, use macOS, Linux, Windows with PowerShell, or Windows with WSL2.
+</Note>
+
+## Install And Run
+
+<Tabs>
+
+  <Tab title="npm">
+    Install the published package globally:
+
     ```bash
     npm install -g @openhands/agent-canvas
     ```
 
-    **Run:**
+    Start the full local stack:
+
     ```bash
     agent-canvas
     ```
 
-    By default, Agent Canvas starts on `http://localhost:8000`.
-
-    ### CLI Flags
-
-    | Flag | Description |
-    |------|-------------|
-    | `-p`, `--port <port>` | Set the ingress port (default `8000`) |
-    | `--public` | Enable public mode — requires `LOCAL_BACKEND_API_KEY`. The key is **not** injected into the frontend; users must enter it when the UI loads. Use this for any deployment reachable by others. See [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm). |
-    | `--backend-only` | Start only the backend behind ingress (no frontend). Use this to run a headless backend on a VM or server. |
-    | `--frontend-only` | Start only the static frontend behind ingress (no agent server or automation). Use this to point a local UI at a remote backend. |
-    | `-v`, `--version` | Show the version number |
-    | `--info` | Show the version and default stack configuration (agent server version, ports, etc.) |
-    | `-h`, `--help` | Show the built-in help output |
-
-    ### Environment Variables
-
-    | Variable | Purpose |
-    |----------|---------|
-    | `LOCAL_BACKEND_API_KEY` | API key for the server. Required in `--public` mode; optional otherwise (auto-generated and persisted across restarts). |
-    | `OH_SECRET_KEY` | Secret used to protect stored settings and secrets |
-    | `OH_AGENT_SERVER_VERSION` | Pin a specific agent server version (e.g. `0.1.0`) |
+    Agent Canvas starts on `http://localhost:8000` by default. If your browser does not open automatically, open that URL manually.
   </Tab>
+
   <Tab title="Docker">
-    **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) (Docker Desktop on macOS/Windows, or Docker Engine on Linux).
-
-    A Docker image is available that sandboxes the entire Agent Canvas stack. Mount your project files and a persistence directory for settings, secrets, and conversation history.
-
-    Create a host directory for your projects (the agent can access any folder under this path) and run the container:
+    Create host directories for persistent settings and project files, then start the container.
 
     **macOS / Linux:**
+
     ```bash
     mkdir -p ~/projects ~/.openhands
 
@@ -30116,6 +30950,7 @@ Source: https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md
     ```
 
     **Windows (PowerShell):**
+
     ```powershell
     New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.openhands", "$env:USERPROFILE\projects" | Out-Null
 
@@ -30126,85 +30961,447 @@ Source: https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md
       ghcr.io/openhands/agent-canvas:latest
     ```
 
+    Agent Canvas starts on `http://localhost:8000`. The agent can access project files under the mounted `/projects` directory.
+
     <Note>
-      On Windows, Docker Desktop must be installed and running. PowerShell uses backticks (`` ` ``) for line continuation instead of backslashes.
+      PowerShell uses backticks (`` ` ``) for line continuation. If Docker reports that it cannot connect to the daemon, start Docker Desktop and run the command again.
     </Note>
+  </Tab>
+    <Tab title="npx">
+    Run the latest published package without installing it globally:
 
-    ### Environment Variables
+    ```bash
+    npx @openhands/agent-canvas
+    ```
 
-    Configuration is passed via `-e` flags on `docker run`:
+    Agent Canvas starts on `http://localhost:8000` by default. If your browser does not open automatically, open that URL manually.
 
-    | Variable | Purpose |
-    |----------|---------|
-    | `PORT` | Ingress port inside the container (default `8000`). Map it with `-p <host>:<PORT>`. |
-    | `LOCAL_BACKEND_API_KEY` | API key for the server. Auto-generated and persisted if not set. |
-    | `OH_SECRET_KEY` | Secret used to protect stored settings and secrets |
+    Use `npx` when you want to try Agent Canvas once, avoid global package installs, or work around a shell `PATH` issue with the global `agent-canvas` command.
+  </Tab>
+
+
+  <Tab title="From Source">
+    Use the source workflow only when you want to modify Agent Canvas itself:
+
+    ```bash
+    git clone https://github.com/OpenHands/agent-canvas.git
+    cd agent-canvas
+    npm install
+    npm run dev
+    ```
+
+    For development-specific environment variables and commands, see [Contribute / Development](/openhands/usage/agent-canvas/development).
   </Tab>
 </Tabs>
 
-<Note>
-  If you want to clone the repository, run custom dev modes, or configure Vite-specific environment variables, use the [Contribute / Development guide](/openhands/usage/agent-canvas/development) instead.
-</Note>
+## Confirm It Started
 
-## First Steps After Launch
+After startup:
 
-After the UI opens:
+1. Open `http://localhost:8000`.
+2. Confirm the default local backend shows as connected.
+3. Open `Settings > LLM` and configure a model.
+4. Choose `Open Workspace` before starting a conversation if you want the agent to work in a specific folder.
+5. Return to the home screen and start a conversation.
 
-1. Confirm the default local backend is healthy.
-2. Open `Settings > LLM` and configure a provider, model, and API key.
-3. Open `Customize` if you want to add skills or MCP servers.
-4. Return to the home screen and enter a prompt to start your first conversation.
-5. If you want the conversation tied to a local folder, choose `Open Workspace` first.
+If the page does not load, check the terminal where Agent Canvas is running. Common causes are a missing prerequisite, a busy port, or Docker not running.
 
-## Next Steps
+## Common Startup Options
 
-- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
-- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
-- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
+| Option | Description |
+|--------|-------------|
+| `-p`, `--port <port>` | Set the ingress port. The default is `8000`. |
+| `--backend-only` | Start only the backend behind ingress. Use this for a headless backend on a local machine, VM, or server. |
+| `--frontend-only` | Start only the static frontend behind ingress. Use this when connecting a local UI to a remote backend. |
+| `--public` | Enable public mode. Requires `LOCAL_BACKEND_API_KEY` and is intended for deployments reachable beyond localhost. |
+| `-v`, `--version` | Show the version number. |
+| `--info` | Show version and stack configuration details. |
+| `-h`, `--help` | Show built-in help. |
 
-### Troubleshooting
-Source: https://docs.openhands.dev/openhands/usage/agent-canvas/troubleshooting.md
-
-Use this page for the most common Agent Canvas problems.
-
-## Command Not Found
-
-If `agent-canvas` is not available after installation:
-
-- confirm the package installed successfully with `npm install -g @openhands/agent-canvas`
-- make sure your npm global bin directory is on your `PATH`
-- run `agent-canvas --help` to confirm the binary resolves correctly
-
-## Missing `uv`
-
-Agent Canvas relies on `uv` to run the local agent server stack.
-
-If startup fails because `uv` or `uvx` is missing, install it from the official guide:
-
-- [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/)
-
-## Port Already in Use
-
-Agent Canvas listens on port `8000` by default. If that port is busy, start it on another one:
+If port `8000` is already in use, start Agent Canvas on another port:
 
 ```bash
 agent-canvas --port 3000
 ```
 
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `LOCAL_BACKEND_API_KEY` | API key for the server. Required in `--public` mode; optional for local use because Agent Canvas can auto-generate and persist one. |
+| `OH_SECRET_KEY` | Secret used to protect stored settings and secrets. |
+| `OH_AGENT_SERVER_VERSION` | Pin a specific agent server version, such as `0.1.0`. |
+| `PORT` | Ingress port inside the Docker container. Map it with `-p <host>:<PORT>`. |
+
+## Stop Agent Canvas
+
+<Tabs>
+  <Tab title="npx">
+    Return to the terminal running Agent Canvas and press `Ctrl+C`.
+  </Tab>
+
+  <Tab title="npm">
+    Return to the terminal running Agent Canvas and press `Ctrl+C`.
+  </Tab>
+
+  <Tab title="Docker">
+    Return to the terminal running the container and press `Ctrl+C`.
+
+    If the container is running in the background, stop it with:
+
+    ```bash
+    docker ps
+    docker stop <container-id-or-name>
+    ```
+  </Tab>
+</Tabs>
+
+## Update Agent Canvas
+
+<Tabs>
+  <Tab title="npx">
+    Stop Agent Canvas, then run the latest package:
+
+    ```bash
+    npx @openhands/agent-canvas@latest
+    ```
+  </Tab>
+
+  <Tab title="npm">
+    Stop Agent Canvas, then reinstall the latest package:
+
+    ```bash
+    npm install -g @openhands/agent-canvas@latest
+    agent-canvas --version
+    ```
+  </Tab>
+
+  <Tab title="Docker">
+    Stop the running container, pull the latest image, then run the container again:
+
+    ```bash
+    docker pull ghcr.io/openhands/agent-canvas:latest
+    ```
+  </Tab>
+</Tabs>
+
+Your settings and conversation data are stored outside the package or image when you use the documented `~/.openhands` mount.
+
+## Uninstall Agent Canvas
+
+<Tabs>
+  <Tab title="npx">
+    There is no Agent Canvas package to uninstall when you use `npx`. Stop the running process with `Ctrl+C`.
+
+    If you want to clear downloaded package cache entries, use npm's cache commands:
+
+    ```bash
+    npm cache verify
+    ```
+  </Tab>
+
+  <Tab title="npm">
+    Stop any running Agent Canvas process, then uninstall the package:
+
+    ```bash
+    npm uninstall -g @openhands/agent-canvas
+    ```
+
+    If Windows reports that `uv.exe` or another file is in use, close terminals running Agent Canvas, stop related processes, and run the uninstall command again.
+  </Tab>
+
+  <Tab title="Docker">
+    Stop any running container, then remove the image if you no longer need it:
+
+    ```bash
+    docker ps
+    docker stop <container-id-or-name>
+    docker rmi ghcr.io/openhands/agent-canvas:latest
+    ```
+  </Tab>
+</Tabs>
+
+Uninstalling the package or image does not automatically remove your persisted data. If you want to delete local settings, secrets, and conversation history, remove the persistence directory you mounted or used, such as `~/.openhands`.
+
+## Next Steps
+
+- [First Time Setup](/openhands/usage/agent-canvas/first-time-setup)
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
+- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
+- [Troubleshooting](/openhands/usage/agent-canvas/troubleshooting)
+
+### Troubleshooting
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/troubleshooting.md
+
+Use this page when Agent Canvas does not start, the browser cannot reach it, the backend is disconnected, model setup fails, or uninstall/update commands get stuck.
+
+## Start With These Checks
+
+Run the checks for the install method you used:
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    node --version
+    npm --version
+    uv --version
+    agent-canvas --help
+    ```
+
+    If one command fails, fix that prerequisite first. See [Install](/openhands/usage/agent-canvas/setup).
+  </Tab>
+
+  <Tab title="Docker">
+    ```bash
+    docker --version
+    docker ps
+    ```
+
+    If `docker ps` cannot connect to the Docker daemon, start Docker Desktop or Docker Engine and try again.
+  </Tab>
+</Tabs>
+
+## `agent-canvas` Command Not Found
+
+If `agent-canvas` is not available after installation:
+
+1. Confirm the package installed successfully. You should see `@openhands/agent-canvas` followed by the version if it has been installed:
+
+   ```bash
+   npm list -g --depth 0
+   ```
+
+2. Check your npm global install prefix:
+
+   ```bash
+   npm prefix -g
+   ```
+
+3. Make sure the npm global `bin` directory is on your `PATH`.
+
+   <Tabs>
+     <Tab title="macOS / Linux">
+       Find the npm global `bin` directory:
+
+       ```bash
+       echo "$(npm prefix -g)/bin"
+       ```
+
+       Check whether your shell can already find `agent-canvas`:
+
+       ```bash
+       which agent-canvas
+       ```
+
+       If `which agent-canvas` prints nothing, check your current `PATH`:
+
+       ```bash
+       echo "$PATH"
+       ```
+
+       If the npm global `bin` directory is missing, add it for the current terminal session:
+
+       ```bash
+       export PATH="$(npm prefix -g)/bin:$PATH"
+       ```
+
+       To make the change permanent, add that `export` line to your shell profile, such as `~/.zshrc` or `~/.bashrc`.
+     </Tab>
+
+     <Tab title="Windows PowerShell">
+       Find the npm global install prefix:
+
+       ```powershell
+       npm prefix -g
+       ```
+
+       Check whether PowerShell can already find `agent-canvas`:
+
+       ```powershell
+       Get-Command agent-canvas
+       ```
+
+       If `Get-Command` cannot find it, inspect your current `PATH`:
+
+       ```powershell
+       $env:Path -split ';'
+       ```
+
+       The npm global package directory, or the `bin` directory for your Node.js installation, needs to appear in that list.
+     </Tab>
+   </Tabs>
+
+4. Try running without a global install:
+
+   ```bash
+   npx @openhands/agent-canvas
+   ```
+
+If `npx` works but `agent-canvas` does not, the issue is usually your shell `PATH`.
+
+## Missing `uv` Or `uvx`
+
+Agent Canvas uses `uv` to run the local agent server stack.
+
+If startup fails because `uv` or `uvx` is missing:
+
+1. Install `uv` from the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+2. Open a new terminal so your shell reloads its `PATH`.
+3. Verify the install:
+
+   ```bash
+   uv --version
+   ```
+
+4. Start Agent Canvas again:
+
+   ```bash
+   agent-canvas
+   ```
+
+## Browser Does Not Open Or Shows A Blank Page
+
+Agent Canvas listens on `http://localhost:8000` by default.
+
+If nothing opens automatically:
+
+1. Open `http://localhost:8000` manually.
+2. Check the terminal running Agent Canvas for startup errors.
+3. If port `8000` is busy, start on another port:
+
+   ```bash
+   agent-canvas --port 3000
+   ```
+
+4. Open `http://localhost:3000`.
+
+If the browser page loads but stays blank, refresh once and check the terminal for frontend or backend startup errors.
+
+## Port Already In Use
+
+If startup says port `8000` is already in use, run Agent Canvas on another port:
+
+```bash
+agent-canvas --port 3000
+```
+
+If you are using Docker, map a different host port:
+
+```bash
+docker run -it --rm \
+  -p 3000:8000 \
+  -v ~/.openhands:/home/openhands/.openhands \
+  -v ~/projects:/projects \
+  ghcr.io/openhands/agent-canvas:latest
+```
+
+Then open `http://localhost:3000`.
+
+## Docker Daemon Not Running
+
+If Docker commands fail with a daemon or connection error:
+
+1. Start Docker Desktop on macOS or Windows, or start Docker Engine on Linux.
+2. Verify Docker is running:
+
+   ```bash
+   docker ps
+   ```
+
+3. Run the Agent Canvas Docker command again.
+
+On Windows, use PowerShell command syntax from [Install](/openhands/usage/agent-canvas/setup#install-and-run). PowerShell uses backticks (`` ` ``) for line continuation instead of backslashes.
+
 ## Backend Is Unreachable
 
-If Agent Canvas cannot talk to the active backend:
+If Agent Canvas loads but the active backend is disconnected:
 
-- open `Manage Backends`
-- verify the backend host or base URL
-- verify the API key if the backend requires one
-- switch to another backend to confirm the issue is backend-specific
+1. Open the backend switcher and select `Manage Backends`.
+2. Verify the backend host URL.
+3. Verify the API key if the backend requires one.
+4. Switch to the default local backend if available.
+5. Check the terminal or server logs for backend startup errors.
 
-## LLM Profiles Do Not Match OpenHands Cloud
+For the default local setup, you usually do not need to manually enter a backend API key. Agent Canvas can generate and persist one locally.
 
-Agent Canvas currently has fuller support for LLM profiles than the hosted OpenHands Cloud UI.
+For `--public`, VM, Modal, or other remote backends, use the `LOCAL_BACKEND_API_KEY` configured for that backend. Anyone with that key can access the backend, so keep it private.
 
-If profiles appear in Agent Canvas but not in OpenHands Cloud directly, that can be expected while the Cloud rollout is still in progress.
+## Wrong Backend URL Or API Key
+
+Backend URLs should point to the Agent Canvas backend ingress, not to an unrelated local service.
+
+Common examples:
+
+| Setup | Typical URL |
+|-------|-------------|
+| Default local Agent Canvas | `http://localhost:8000` |
+| Local backend on another port | `http://localhost:8001` |
+| Docker mapped to host port `8000` | `http://localhost:8000` |
+| VM or reverse proxy | Your VM, proxy, or ngrok URL |
+
+If you changed the port with `--port`, use the port you selected.
+
+## Model Or API Key Errors
+
+If a conversation fails before the agent responds, check `Settings > LLM`.
+
+Common causes:
+
+- The API key is missing or expired.
+- The selected provider does not match the model name.
+- A custom or local model is missing the correct base URL.
+- A LiteLLM proxy token is invalid.
+- An OpenAI-compatible provider needs the provider, model, base URL, and key to line up.
+
+For model setup details, see:
+
+- [LLM Profiles and Model Configuration](/openhands/usage/agent-canvas/llm-profiles)
+- [LLM Settings](/openhands/usage/settings/llm-settings)
+- [Local LLMs](/openhands/usage/llms/local-llms)
+- [LiteLLM Proxy](/openhands/usage/llms/litellm-proxy)
+
+## `LLM Provider NOT provided`
+
+This error usually means the configured model name does not include enough provider information, or the provider field is not set.
+
+Fix it by opening `Settings > LLM` and confirming:
+
+1. The `LLM Provider` field is set.
+2. The model ID matches that provider.
+3. Any custom `Base URL` is correct for the provider or local model server.
+4. The API key or token is valid.
+
+If you are using Ollama, LM Studio, LiteLLM, or another OpenAI-compatible endpoint, use the provider and base URL expected by that service. See [Local LLMs](/openhands/usage/llms/local-llms).
+
+## ACP Agent Credentials Are Not Used
+
+ACP agents such as Claude Code, Codex, and Gemini CLI can be used in place of an LLM API key.
+
+If an ACP agent does not authenticate:
+
+1. Confirm the provider CLI is signed in on the same machine where the backend runs.
+2. If the backend runs in Docker, on a VM, or in cloud infrastructure, do not assume it can see your laptop's CLI login.
+3. Add the required API key or secret for that backend.
+4. Reopen or restart the conversation after changing agent settings.
+
+See [ACP Agents](/openhands/usage/agent-canvas/acp-agents) for the credential rules.
+
+## Workspace Is Not Where You Expected
+
+The agent works in the workspace attached to the conversation.
+
+If file changes appear in the wrong place or the agent cannot find your project:
+
+1. Use `Open Workspace` before starting the conversation.
+2. Confirm the conversation is using the backend you expect.
+3. For Docker, make sure the project is under the mounted projects directory, such as `~/projects`, which appears as `/projects` inside the container.
+4. For a VM backend, remember that the agent sees files on the VM, not files on your laptop.
+5. For a cloud backend, use the cloud workspace or repository flow for that backend.
+
+<Warning>
+  Do not expose broad filesystem mounts or sensitive directories unless you are comfortable with the agent reading and writing files there.
+</Warning>
 
 ## MCP Settings Are Missing
 
@@ -30212,11 +31409,62 @@ MCP configuration does not live under `Settings`.
 
 Open the top-level `Customize` area, then go to `MCP Servers`.
 
+If a configured MCP server is not available to the agent:
+
+1. Confirm it is saved on the active backend.
+2. Confirm any required secrets are saved under `Settings > Secrets`.
+3. Restart or start a new conversation if the server was added after the conversation began.
+
 ## Automation Features Are Unavailable
 
-If the `Automations` view shows an unavailable or unhealthy state, the active backend may not have a working automation service.
+Automations run on the active backend.
 
-Start with the default local backend to confirm the UI works, then debug the remote backend separately.
+If the `Automations` view shows an unavailable or unhealthy state:
+
+1. Switch to the default local backend and check whether automations work there.
+2. Confirm the remote backend includes the automation service.
+3. Check the backend logs for automation startup errors.
+4. Confirm required MCP servers and secrets are configured on the same backend as the automation.
+
+See [Pre-built Automations](/openhands/usage/agent-canvas/prebuilt-automations).
+
+## LLM Profiles Do Not Match OpenHands Cloud
+
+Agent Canvas currently has fuller support for LLM profiles than the hosted OpenHands Cloud UI.
+
+If profiles appear in Agent Canvas but not in OpenHands Cloud directly, that can be expected while the Cloud rollout is still in progress.
+
+Profiles and settings are also scoped to the active backend, so switching backends can change which profiles are available.
+
+## Update Or Uninstall Is Stuck
+
+Before updating or uninstalling, stop Agent Canvas.
+
+<Tabs>
+  <Tab title="npm">
+    Stop the running process with `Ctrl+C`, then update or uninstall:
+
+    ```bash
+    npm install -g @openhands/agent-canvas@latest
+    npm uninstall -g @openhands/agent-canvas
+    ```
+
+    On Windows, if uninstall fails because `uv.exe` or another file is in use, close terminals running Agent Canvas, stop related processes, and retry.
+  </Tab>
+
+  <Tab title="Docker">
+    Stop the container before updating or removing the image:
+
+    ```bash
+    docker ps
+    docker stop <container-id-or-name>
+    docker pull ghcr.io/openhands/agent-canvas:latest
+    docker rmi ghcr.io/openhands/agent-canvas:latest
+    ```
+  </Tab>
+</Tabs>
+
+Uninstalling the package or image does not automatically delete persisted settings, secrets, or conversation history. Those live in the persistence directory you used, such as `~/.openhands`.
 
 ## Get Help
 
@@ -30606,6 +31854,7 @@ When asking OpenHands to create an automation, include:
 - **What it should do**: Describe the task clearly
 - **When it should run**: Daily, weekly, every hour, etc.
 - **Timezone** (optional): Defaults to UTC if not specified
+- **Run timeout** (optional): Defaults to 10 minutes; maximum 30 minutes
 - **Name** (optional): The agent can suggest one based on your description
 - **Plugins** (optional): Mention specific plugins if you need extended capabilities
 
@@ -30684,6 +31933,10 @@ The agent converts this to the appropriate cron schedule.
 <Tip>
 If you're familiar with cron expressions, you can specify them directly: "Run on cron schedule `0 9 * * 1-5`"
 </Tip>
+
+## Run Timeouts
+
+Each run stops after its timeout. The default is 10 minutes; you can request up to 30 minutes, for example: "Use a 20-minute timeout."
 
 ## After Creation
 
@@ -31019,6 +32272,14 @@ Change the "Daily Report" automation to run at 10 AM instead of 9 AM
 ```
 Update the "Weekly Cleanup" automation to run on Sundays at 2 AM UTC
 ```
+
+## Changing the Run Timeout
+
+```
+Set the "Weekly Cleanup" automation timeout to 20 minutes
+```
+
+Timeouts can be up to 30 minutes. Runs that exceed their timeout fail automatically.
 
 ## Running Manually
 
@@ -34868,7 +36129,7 @@ If you're experiencing issues, try switching to one of these models before assum
 
 ## Advanced: Alternative LLM Backends
 
-This section describes how to run local LLMs with OpenHands using alternative backends like Ollama, SGLang, or vLLM — without relying on LM Studio.
+This section describes how to run local LLMs with OpenHands using alternative backends like Ollama, Atomic Chat, SGLang, or vLLM — without relying on LM Studio.
 
 ### Create an OpenAI-Compatible Endpoint with Ollama
 
@@ -34882,6 +36143,48 @@ This section describes how to run local LLMs with OpenHands using alternative ba
 OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_HOST=0.0.0.0:11434 OLLAMA_KEEP_ALIVE=-1 nohup ollama serve &
 ollama pull qwen3.6:35b-a3b
 ```
+
+### Create an OpenAI-Compatible Endpoint with Atomic Chat
+
+[Atomic Chat](https://atomic.chat/) is an open-source desktop app for running local models (and optional cloud providers). It exposes a **single OpenAI-compatible HTTP API** on your machine, typically at `http://127.0.0.1:1337/v1`. See the upstream [README](https://github.com/AtomicBot-ai/Atomic-Chat/blob/main/README.md) for downloads, system requirements, and release notes.
+
+#### 1. Install and start Atomic Chat
+
+1. Download Atomic Chat from [atomic.chat](https://atomic.chat/) or [GitHub Releases](https://github.com/AtomicBot-ai/Atomic-Chat/releases).
+2. Open Atomic Chat and **enable the local API server** in the app settings (defaults may vary by version; the API is usually served on **port 1337**).
+3. **Download and load a coding-capable model** with a **large context window**. OpenHands needs enough context for the system prompt and tools — use at least **~22k tokens**, and **32k+** when your hardware allows (same guidance as LM Studio on this page).
+
+<Note>
+  Atomic Chat binds the local API to **loopback (`127.0.0.1`) by default**, so the OpenAI-compatible endpoint is not exposed on your LAN unless you explicitly change the server host and set an API key. For Docker on the host, use `host.docker.internal:1337/v1` as described below.
+</Note>
+
+#### 2. Discover the model id OpenHands must use
+
+Atomic Chat lists served models via the OpenAI-compatible `GET /v1/models` endpoint. From the same machine:
+
+```bash
+curl -s http://127.0.0.1:1337/v1/models | head
+```
+
+Use the `id` field of the model you have loaded as the suffix after `openai/` in OpenHands (see [Configure OpenHands (Alternative Backends)](#configure-openhands-alternative-backends) below).
+
+#### 3. Point OpenHands at Atomic Chat
+
+Follow [Run OpenHands (Alternative Backends)](#run-openhands-alternative-backends) and [Configure OpenHands (Alternative Backends)](#configure-openhands-alternative-backends) below. When OpenHands runs **inside Docker** and Atomic Chat runs on the **host**, use:
+
+- **Base URL**: `http://host.docker.internal:1337/v1`
+- **Custom Model**: `openai/<model-id-from-/v1/models>` (prefix required, same convention as LM Studio on this page)
+- **API Key**: any placeholder string (for example `local-llm`) unless your Atomic Chat build requires a real key
+
+If OpenHands and Atomic Chat run on the **same host without Docker** for the web UI, you can use `http://127.0.0.1:1337/v1` instead.
+
+Atomic Chat also ships a **Launch → OpenHands** integration that can configure `LLM_BASE_URL`, `LLM_MODEL`, and `LLM_API_KEY` for the OpenHands CLI automatically.
+
+#### Troubleshooting
+
+- **Connection refused from Docker**: confirm Atomic Chat is running, the local server is enabled, and your `docker run` includes `--add-host host.docker.internal:host-gateway` as in [local setup](/openhands/usage/run-openhands/local-setup).
+- **Wrong model errors**: the Custom Model string must match an `id` returned by `GET /v1/models` after the `openai/` prefix.
+- **Agent ignores tools or acts like a chatbot**: try a stronger coding model or a larger context window; see [Community-Reported Notes and Troubleshooting](#community-reported-notes-and-troubleshooting) on this page.
 
 ### Create an OpenAI-Compatible Endpoint with vLLM or SGLang
 
@@ -34963,10 +36266,11 @@ Once OpenHands is running, open the Settings page in the UI and go to the `LLM` 
    - **Custom Model**: `openai/<served-model-name>`
      - For **Ollama**: `openai/qwen3.6:35b-a3b`
      - For **SGLang/vLLM**: `openai/Qwen3.6-35B-A3B`
+     - For **Atomic Chat**: `openai/<model-id-from-/v1/models>` (see [Atomic Chat](#create-an-openai-compatible-endpoint-with-atomic-chat) above)
    - **Base URL**: `http://host.docker.internal:<port>/v1`
-     Use port `11434` for Ollama, or `8000` for SGLang and vLLM.
+     Use port `11434` for Ollama, `1337` for Atomic Chat (default), or `8000` for SGLang and vLLM.
    - **API Key**:
-     - For **Ollama**: any placeholder value (e.g. `dummy`, `local-llm`)
+     - For **Ollama** or **Atomic Chat**: any placeholder value (e.g. `dummy`, `local-llm`) unless your server requires a real key
      - For **SGLang** or **vLLM**: use the same key provided when starting the server (e.g. `mykey`)
 
 ### Moonshot AI
@@ -36195,7 +37499,7 @@ MCP configuration can be defined in:
 
     - `name` (required)
       - Type: `str`
-      - Description: A unique name for the server.
+      - Description: A unique name for the server. Accepted characters are letters, digits, underscores (`_`), and hyphens (`-`). For example, `integrations-hub` is a valid name.
 
     - `command` (required)
       - Type: `str`
@@ -41055,7 +42359,7 @@ The SDK is a composable Python library that contains all of our agentic tech. It
 
 Define agents in code, then run them locally, or scale to 1000s of agents in the cloud.
 
-[Check out the docs](https://docs.openhands.dev/sdk) or [view the source](https://github.com/All-Hands-AI/agent-sdk/)
+[Check out the docs](https://docs.openhands.dev/sdk) or [view the source](https://github.com/OpenHands/software-agent-sdk)
 
 ## Legacy
 
@@ -41755,12 +43059,13 @@ The official global skill registry is maintained at [github.com/OpenHands/extens
 
 Skills inject additional context and rules into the agent's behavior.
 
-At a high level, OpenHands supports two loading models:
+At a high level, OpenHands supports three loading models:
 
 - **Always-on context** (e.g., `AGENTS.md`) that is injected into the system prompt at conversation start.
 - **On-demand skills** that are either:
   - **triggered by the user** (keyword matches), or
   - **invoked by the agent** (the agent decides to look up the full skill content).
+- **Path-triggered rules** that are injected deterministically when the agent reads, edits, or creates a file whose path matches a glob pattern.
 
 ## Permanent agent context (recommended)
 
@@ -41820,6 +43125,7 @@ Currently supported skill types:
 
 - **[Permanent Context](/overview/skills/repo)**: Repository-wide guidelines and best practices. We recommend `AGENTS.md` (and optionally `GEMINI.md` / `CLAUDE.md`).
 - **[Keyword-Triggered Skills](/overview/skills/keyword)**: Guidelines activated by specific keywords in user prompts.
+- **[Path-Triggered Rules](/overview/skills/path)**: Guidelines injected automatically when the agent touches files matching a glob pattern.
 - **[Organization Skills](/overview/skills/org)**: Team or organization-wide standards.
 - **[Global Skills](/overview/skills/public)**: Community-shared skills and templates.
 
@@ -41831,6 +43137,7 @@ Each skill file may include frontmatter that provides additional information. In
 |-------------|----------|
 | General Skills                           | No       |
 | Keyword-Triggered Skills                 | Yes      |
+| Path-Triggered Rules                     | Yes      |
 
 ## Skills Support Matrix
 
@@ -41880,7 +43187,7 @@ Each skill file may include frontmatter that provides additional information. In
 - **For bundling multiple components**: See [Plugins](/overview/plugins)
 - **For SDK integration**: See [SDK Skills Guide](/sdk/guides/skill)
 - **For architecture details**: See [Skills Architecture](/sdk/arch/skill)
-- **For specific skill types**: See [Repository Skills](/overview/skills/repo), [Keyword Skills](/overview/skills/keyword), [Organization Skills](/overview/skills/org), and [Global Skills](/overview/skills/public)
+- **For specific skill types**: See [Repository Skills](/overview/skills/repo), [Keyword Skills](/overview/skills/keyword), [Path-Triggered Rules](/overview/skills/path), [Organization Skills](/overview/skills/org), and [Global Skills](/overview/skills/public)
 
 ### Adding New Skills
 Source: https://docs.openhands.dev/overview/skills/adding.md
@@ -42261,6 +43568,27 @@ Triggers are keywords that automatically activate your skill. Choose words users
     - Quote specific user phrases: "deploy to Kubernetes"
     - List concrete scenarios
     - Mention related tools or frameworks
+  </Accordion>
+
+  <Accordion title="Path Triggers (Rules)">
+    Instead of keywords, scope a skill to files with a `paths:` glob. The skill
+    becomes a [path-triggered rule](/overview/skills/path) that OpenHands injects
+    automatically whenever the agent reads, edits, or creates a matching file — no
+    keyword or model decision needed:
+
+    ```yaml
+    ---
+    name: api-validation
+    paths:
+      - "src/api/**/*.ts"
+      - "**/*.route.ts"
+    ---
+    ```
+
+    **When to use:**
+    - Conventions tied to specific files (e.g. "validate request inputs with zod" for API routes)
+    - Guidance you want applied deterministically, without relying on trigger words
+    - `paths:` takes precedence over `triggers:` if a file declares both
   </Accordion>
 </AccordionGroup>
 
@@ -42927,6 +44255,90 @@ system and OpenHands will always load them for all your conversations. Repo-leve
   </Tab>
 </Tabs>
 
+### Path-Triggered Rules
+Source: https://docs.openhands.dev/overview/skills/path.md
+
+## Usage
+
+A path-triggered rule is an ordinary skill with a `paths:` glob in its frontmatter. Whenever the
+agent **touches** a file (reads, edits, or creates it) whose workspace-relative path matches one of
+those globs, the rule's content is folded into the tool result the agent reads next — so the guidance
+is guaranteed to be present exactly when the agent is working on the matching file.
+
+Unlike [keyword-triggered skills](/overview/skills/keyword), rules are **not** advertised in
+`<available_skills>` and cannot be invoked by the model. They add **zero baseline cost** to the
+context window: nothing is loaded until a matching file is actually touched, and each rule is injected
+only once per conversation.
+
+<Info>
+Use path-triggered rules for scoped conventions that should apply automatically when specific files
+are edited — e.g. "validate all request inputs with zod" for `src/api/**/*.ts`, or "keep migrations
+reversible" for `db/migrations/**`.
+</Info>
+
+## Frontmatter Syntax
+
+Frontmatter is required for path-triggered rules. Enclose it in triple dashes (`---`) at the top of
+the file, above the guidelines.
+
+| Field   | Description                                                        | Required | Default |
+|---------|--------------------------------------------------------------------|----------|---------|
+| `paths` | Glob patterns (YAML list or comma-separated string) that scope the rule. | Yes      | None    |
+
+A file that declares both `paths:` and `triggers:` becomes a path-triggered rule — `paths:` wins.
+This keeps rules deterministic and out of the model-invocable catalog.
+
+### Glob Semantics
+
+Patterns use gitignore-style matching against the workspace-relative POSIX path (matching is
+case-sensitive):
+
+| Pattern            | Matches                                                                 |
+|--------------------|-------------------------------------------------------------------------|
+| `**`               | Any number of path segments, including zero (crosses `/`).              |
+| `*`                | Any run of characters **within a single** path segment.                 |
+| `?`                | A single non-separator character.                                       |
+| `*.ts` (no slash)  | The basename at **any depth** — equivalent to `**/*.ts`.                 |
+
+`*` also matches leading-dot files (e.g. `src/*` matches `src/.env`).
+
+## Example
+
+Here's a rule located at `.agents/skills/api-validation.md`:
+
+```markdown
+---
+paths:
+  - "src/api/**/*.ts"
+  - "**/*.route.ts"
+---
+
+API RULE: validate all request inputs with zod before using them.
+Reject unknown fields and return a 400 with the validation error.
+```
+
+When the agent creates or edits `src/api/users.ts`, the rule content is appended to that tool result
+inside an `<EXTRA_INFO>` block:
+
+```xml
+<EXTRA_INFO>
+The following rule applies because a file you touched matches "src/api/**/*.ts". Follow it when working with matching files.
+Rule location: /repo/.agents/skills/api-validation.md
+
+API RULE: validate all request inputs with zod before using them.
+Reject unknown fields and return a 400 with the validation error.
+</EXTRA_INFO>
+```
+
+<Note>
+Path-triggered rules load from the same skills directories as other skills (`.agents/skills/`,
+`.openhands/skills/`, …). They are repo-scoped: touching a file outside the workspace never fires a
+rule. Injection is available for local conversations; ACP-backed conversations do not inject path
+rules because the ACP server owns tool execution.
+</Note>
+
+[See the SDK guide for the programmatic `PathTrigger` API](/sdk/guides/skill#path-triggered-rules).
+
 ### Global Skills
 Source: https://docs.openhands.dev/overview/skills/public.md
 
@@ -43097,8 +44509,8 @@ agreements and API keys.
 OpenHands Enterprise integrates with your existing enterprise ecosystem:
 
 - **Identity & Access**: Enterprise SAML/SSO for centralized authentication
-- **Source Control**: GitHub Enterprise, GitLab, and [Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center)
-- **Project Management**: [Jira Data Center](/enterprise/integrations/jira-data-center) and other ticketing systems
+- **Source Control**: GitHub Enterprise, GitLab, [Azure Repos](/enterprise/integrations/azure-devops), and [Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center)
+- **Project Management**: Azure Boards through [Azure DevOps](/enterprise/integrations/azure-devops), [Jira Data Center](/enterprise/integrations/jira-data-center), and other ticketing systems
 - **Communication**: Slack integration for notifications and workflows
 
 ### Containerized Sandbox Runtime
@@ -43157,62 +44569,120 @@ Enterprise customers receive:
 ### Analytics
 Source: https://docs.openhands.dev/enterprise/analytics.md
 
-This guide walks you through setting up and using Laminar for Analytics in OpenHands Enterprise.
-You'll opt into Analytics and configure conversations to automatically send traces to Laminar.
+This guide walks you through enabling Laminar in OpenHands Enterprise (OHE) so conversations automatically send traces for observability and analysis.
+
+For SDK-level tracing concepts, OTEL environment variables, and non-Laminar backends, see [Observability & Tracing](/sdk/guides/observability).
 
 ## Who This Is For
 
-This guide is for users who want to explore analytics on their OpenHands Enterprise conversations.
+This guide is for users who want to deploy Laminar alongside OpenHands Enterprise and inspect traces from Enterprise conversations.
 
-### Why Laminar?
+## Why Laminar in OHE?
 
-[Laminar](https://laminar.sh/) is an open source observability platform for AI agents like OpenHands.
+Laminar helps you understand what your OpenHands deployment is doing in production:
 
-Use Laminar to view your conversation traces including prompts, tool calls, and answers. A trace is a record of what your agent did.
-
-Laminar can help you see where the agent went wrong. From traces, you can create signals. A signal is a natural language instruction to extract structured data from traces. Use signals to analyze recurring behavior across traces. You can then create better situations for prompting and measure them in Laminar. You can also analyze and improve your skills.
-
-For example, you can view all conversation traces related to a specific skill.
-
-Laminar can help you answer the following questions:
-- On a trace, did the agent do a good job using the skill?
-- On another trace, did the agent do a bad job?
+- Inspect prompts, tool calls, answers, and nested agent behavior in Laminar's [trace views](https://laminar.sh/docs/platform/viewing-traces).
+- Use [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability) when conversations drive browser automation.
+- For Helm installs, define [signals](https://laminar.sh/docs/signals/introduction) to classify failures, measure outcomes, and monitor recurring patterns across many traces.
 
 For more information on evaluating skills, see [Evaluating Agent Skills](https://www.openhands.dev/blog/evaluating-agent-skills).
 
-### Prerequisites
+## Prerequisites
 
-Before you begin, make sure you completed the [Quick Start guide](/enterprise/quick-start).
+Before you begin, complete the [Quick Start guide](/enterprise/quick-start).
 
 ## Enable Analytics
 
-You should see an **Analytics Configuration** section on the application configuration page.
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    <Info>
+      VM installs currently support trace collection, but do not support Laminar signals. The Admin Console configures the Laminar Project API Key only; the installer sets the remaining Laminar connection values automatically.
+    </Info>
 
-Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+    You should see an **Analytics Configuration** section on the application configuration page.
 
-![Configure Analytics](./images/laminar-configure-analytics.png)
+    Check the **Enable Analytics** box to have the installer set up and configure Laminar for analytics.
+
+    ![Configure Analytics](./images/laminar-configure-analytics.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    If you deployed OpenHands Enterprise into your own Kubernetes cluster using Helm, enable Laminar in your `values.yaml` override file.
+
+    ```yaml
+    laminar:
+      enabled: true
+      global:
+        # Set to "aws" or "gcp" to match your cluster.
+        cloudProvider: "aws"
+
+      frontend:
+        ingress:
+          enabled: true
+          hostname: "analytics.app.<your-base-domain>"
+          tls:
+            enabled: true
+            secretName: "laminar-frontend-tls"
+
+      appServer:
+        # Use an app-server ingress on GCP or other L7 ingress setups.
+        ingress:
+          enabled: true
+          hostname: "laminar-api.<your-base-domain>"
+          tls:
+            enabled: true
+            secretName: "laminar-app-server-tls"
+
+        # On AWS, use a Network Load Balancer instead of appServer.ingress
+        # if your runtimes send traces directly over TCP.
+        loadBalancer:
+          enabled: false
+    ```
+
+    Keep `laminar.enabled: false` until your ingress, TLS, and storage class settings match your cluster.
+  </Tab>
+</Tabs>
 
 ## Deploy
 
-OpenHands will begin deploying. You can expect the deployment status to transition from
-**Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    OpenHands will begin deploying. You can expect the deployment status to transition from **Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
 
-![Deployment in progress](./images/laminar-deploy-in-progress.png)
+    ![Deployment in progress](./images/laminar-deploy-in-progress.png)
 
-Click **Details** next to the deployment status to monitor individual resources. Resources
-shown in orange are still deploying -- wait until all resources are ready.
+    Click **Details** next to the deployment status to monitor individual resources. Resources shown in orange are still deploying, so wait until all resources are ready.
 
-![Deployment status details](./images/laminar-deployment-status-details.png)
+    ![Deployment status details](./images/laminar-deployment-status-details.png)
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Apply your updated `values.yaml` override file:
 
-## Access Laminar UI
+    ```bash
+    helm upgrade openhands oci://ghcr.io/openhands/helm-charts/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
 
-Once the deployment status shows **Ready**, navigate to `https://analytics.app.<your-base-domain>`.
+    Wait for the Laminar workloads, ingress, and TLS resources to become ready.
+  </Tab>
+</Tabs>
+
+## Access the Laminar UI
+
+Once the deployment status shows **Ready**, navigate to the Laminar frontend URL:
+
+- VM install: `https://analytics.app.<your-base-domain>`
+- Kubernetes install: the hostname configured in `laminar.frontend.ingress.hostname`
 
 Click the **Continue with Keycloak** button:
 
 ![Laminar Keycloak Auth](./images/laminar-keycloak-auth.png)
 
-## Create a Laminar project
+If you want more background on Laminar Cloud versus self-hosting outside OHE, see Laminar's official [hosting options](https://laminar.sh/docs/hosting-options).
+
+## Create a Laminar Project
+
+Create a project in the Laminar UI:
 
 ![Laminar Create Project](./images/laminar-create-project.png)
 
@@ -43220,59 +44690,284 @@ Once a project has been created, Laminar is ready to listen for traces.
 
 ![Laminar Listen Traces](./images/laminar-listen-traces.png)
 
-## Create an ingest only API Key
+## Create an Ingest-Only API Key
 
-Important: Always use ingest API keys when deploying.
+Always use ingest-only API keys when deploying OHE.
 
-Create a key with the right permissions. Ingest only keys are recommended as they only have write access to write traces. They cannot be used to read data.
+Ingest-only keys are recommended because OHE only needs permission to write traces. They cannot be used to read trace data.
 
 ![Configure Laminar Ingest Only Key](./images/laminar-ingest-only-key.png)
 
-## Set Laminar Project API Key to enable automatic conversation traces
+## Set the Laminar Project API Key
 
-Set the ingest only key as the Laminar Project API Key in the Admin Console configuration:
+This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guide](/sdk/guides/observability).
 
-![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Set the ingest-only key as the **Laminar Project API Key** in the Admin Console configuration.
 
-Click **Save config**.
+    ![Configure Laminar Project API Key](./images/laminar-configure-key.png)
+
+    Click **Save config**.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Create a Kubernetes Secret for the ingest-only project key:
+
+    ```bash
+    kubectl create secret generic lmnr-project-api-key \
+      --namespace openhands \
+      --from-literal=LMNR_PROJECT_API_KEY=<your-ingest-only-key>
+    ```
+
+    Create a Secret for the Laminar app-server base URL:
+
+    ```bash
+    kubectl create secret generic lmnr-base-url \
+      --namespace openhands \
+      --from-literal=LMNR_BASE_URL=https://laminar-api.<your-base-domain>
+    ```
+
+    Then reference those Secrets from your `values.yaml` override file:
+
+    ```yaml
+    laminar:
+      enabled: true
+      apiKeyFromSecret:
+        name: lmnr-project-api-key
+        key: LMNR_PROJECT_API_KEY
+      baseUrlFromSecret:
+        name: lmnr-base-url
+        key: LMNR_BASE_URL
+      forceHttp: true
+    ```
+
+    If your self-hosted Laminar app server exposes a non-default HTTP port, set `laminar.httpPort`.
+  </Tab>
+</Tabs>
+
+## Configure Runtime Environment Variables
+
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    VM installs configure analytics through the Admin Console. After analytics is enabled and the Laminar Project API Key is saved, the installer automatically configures:
+
+    ```yaml
+    LMNR_BASE_URL: "http://laminar-app-server-service"
+    LMNR_PROJECT_API_KEY: "<your-ingest-only-key>"
+    LMNR_FORCE_HTTP: "true"
+    LMNR_HTTP_PORT: "8000"
+    ```
+
+    The Admin Console does not currently expose `LLM_*` settings for Laminar AI features. VM installs currently send traces to Laminar, but do not support Laminar signals.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    In OHE, environment variables whose names start with `LMNR_` or `LLM_` are forwarded to the SDK runtime. This lets you configure Laminar ingestion settings and the LLM settings used for Laminar-backed workflows.
+
+    For example, you can point the runtime at the managed Laminar endpoint and use an ingest-only project key:
+
+    ```yaml
+    LMNR_BASE_URL: "https://laminar-api.<your-base-domain>"
+    # Ingest-only API key, not a read-capable secret:
+    LMNR_PROJECT_API_KEY: ""
+    LMNR_FORCE_HTTP: "true"
+    ```
+
+    The chart sets `LMNR_PROJECT_API_KEY`, `LMNR_BASE_URL`, `LMNR_FORCE_HTTP`, and `LMNR_HTTP_PORT` from the `laminar` values above. If you need to override one of them directly, set it under the top-level `env` values in your `values.yaml`.
+
+    You can also control which LLM Laminar uses for its AI features — chat-with-trace, SQL-with-AI, and [signals](https://laminar.sh/docs/signals/introduction) — by forwarding the standard `LLM_*` variables. Add these values under the top-level `env` values:
+
+    ```yaml
+    env:
+      LLM_PROVIDER: "openai"
+      LLM_API_KEY: "<your-openai-or-gateway-key>"
+      LLM_BASE_URL: "https://llm-proxy.<your-base-domain>"
+      LLM_MODEL_SMALL: "gpt-5.4-mini"
+      LLM_MODEL_MEDIUM: "gpt-5.4-mini"
+      LLM_MODEL_LARGE: "gpt-5.5"
+    ```
+
+    `LLM_PROVIDER` accepts `gemini` (Laminar's default), `openai`, or `bedrock`, and `LLM_MODEL_SMALL` / `LLM_MODEL_MEDIUM` / `LLM_MODEL_LARGE` are optional per-tier model overrides. Set `LLM_PROVIDER` to `openai` whenever you point `LLM_BASE_URL` at an OpenAI-compatible gateway (for example LiteLLM, OpenRouter, or vLLM), not just the public OpenAI API. Set `LLM_API_KEY` for `gemini`, `openai`, and OpenAI-compatible gateways; use AWS credentials instead for `bedrock`.
+
+    For the full set of supported values, see Laminar's official [self-hosting configuration reference](https://laminar.sh/docs/self-hosting/configuration).
+  </Tab>
+</Tabs>
 
 ## Deploy Updated Configuration
 
-Deploy the config change after setting the Laminar Project API Key in the Admin Console.
+Deploy the configuration change after setting the Laminar Project API Key.
 
-![Laminar Deploy Again](./images/laminar-deploy-again.png)
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Click **Deploy** in the Admin Console.
+
+    ![Laminar Deploy Again](./images/laminar-deploy-again.png)
+
+    For a VM install walkthrough, watch the recap:
+
+    <video
+      controls
+      className="w-full aspect-video"
+      src="https://github.com/user-attachments/assets/0cdf1625-3246-4388-a989-765f00d33ffb"
+    ></video>
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Apply your updated `values.yaml` override file:
+
+    ```bash
+    helm upgrade openhands oci://ghcr.io/openhands/helm-charts/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
+  </Tab>
+</Tabs>
 
 Wait for the deployment to complete.
 
-## Start a conversation
+## Start a Conversation
 
 Navigate to the OpenHands UI at `https://app.<your-base-domain>`. Start a new conversation and try a prompt.
 
 ![Start a Conversation](./images/laminar-openhands-conversation.png)
 
-Your conversations will now automatically send a trace to Laminar.
+Your conversations will now automatically send traces to Laminar.
 
 ![Laminar Trace](./images/laminar-trace.png)
 
-<video
-  controls
-  className="w-full aspect-video"
-  src="https://github.com/user-attachments/assets/0cdf1625-3246-4388-a989-765f00d33ffb"
-></video>
+## What to Do Next in Laminar
+
+Once traces are flowing, use Laminar's official docs to go deeper:
+
+- [Viewing Traces](https://laminar.sh/docs/platform/viewing-traces) to inspect a single conversation in transcript, tree, or timeline views.
+- For Helm installs, [Signals](https://laminar.sh/docs/signals/introduction) to extract structured outcomes or failure modes across many traces.
+- [Session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability) to debug browser-based automations.
+- [Observability for OpenHands Software Agent SDK](https://laminar.sh/docs/tracing/integrations/openhands-sdk) for the OpenHands-specific tracing model.
 
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Observability & Tracing" icon="activity" href="/sdk/guides/observability">
+    Learn the full OpenHands tracing model, OTEL configuration options, and non-Laminar backends.
+  </Card>
   <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
-    Get the most out of your AI coding agents with effective prompting techniques.
+    Get more reliable traces by improving the prompts you give your agents.
   </Card>
   <Card title="Contact Support" icon="headset" href="https://openhands.dev/contact">
     Reach out to the OpenHands team for deployment assistance or questions.
   </Card>
-  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
-    Explore the full OpenHands documentation for usage guides and features.
-  </Card>
 </CardGroup>
+
+### Custom Sandbox Images
+Source: https://docs.openhands.dev/enterprise/custom-sandbox-image.md
+
+Custom sandbox images let you prebake the repository, dependencies, compiled output, and test harness
+your agents need. Instead of spending minutes provisioning a workspace on every run, your agents start
+on the actual task immediately.
+
+## Why Use a Custom Image
+
+Custom images eliminate cold-start setup work (clone, install, transpile, and bootstrap) so agents
+spend their time on the actual task. They also reduce setup variance and lower sandbox memory requirements
+by keeping only what the agent needs.
+
+## Build Your Own Custom Image
+
+The [OpenHands agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox)
+provides full documentation on building custom sandbox images. The approach is the same for the Enterprise
+Replicated VM deployment.
+
+### Basic Pattern
+
+1. Start from the OpenHands agent-server base image.
+2. Keep the normal OpenHands entrypoint intact: extend the image, do not replace the entrypoint.
+3. Add your repo, docs, tools, and verification wrappers.
+4. Pre-run the expensive setup you do not want to repeat at task time.
+5. Publish the image to a registry and point the Replicated installer at it.
+
+<Warning>
+  Do not override the entrypoint or replace the runtime contract of the base image. The installer
+  expects standard OpenHands agent-server behavior. Only extend, do not replace.
+</Warning>
+
+### Base Image
+
+```dockerfile
+FROM ghcr.io/openhands/agent-server:1.23.0-python
+```
+
+Pin a specific version tag to ensure reproducible builds. Check
+[ghcr.io/openhands/agent-server](https://github.com/OpenHands/OpenHands/pkgs/container/agent-server)
+for the latest available tags.
+
+<Note>
+  To get the latest features of OpenHands Enterprise, rebuild your custom image before each upgrade. The agent server base image is updated with every OHE release.
+</Note>
+
+### Example: Build and Push
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  -f your-project/Dockerfile \
+  -t ghcr.io/<your-org>/openhands-custom-image:<your-tag> \
+  --push \
+  .
+```
+
+Use `--platform linux/amd64` because the Enterprise Replicated VM runs on `x86-64`.
+
+### What to Bake In
+
+Good candidates for prebaking:
+
+- Pinned repository checkouts
+- Package manager caches and installed dependencies (`node_modules`, Python virtualenvs, etc.)
+- Compiled or transpiled output
+- Native system packages (`xvfb`, `libkrb5-dev`, `pkg-config`, etc.)
+- Browser or Electron artifacts
+- Stable helper scripts such as `prepare-*` and `*-verify` wrappers
+
+### What to Keep Out
+
+<Warning>
+  Do not bake the following into your image:
+
+  - Secrets, API keys, or personal credentials
+  - Machine-specific paths or environment assumptions
+  - Uncommitted source changes or task-specific fixes
+  - Rapidly changing dependencies (use a lightweight `prepare-*` helper instead)
+</Warning>
+
+If the repository or dependencies change frequently, include a `prepare-*` script in the image
+so the agent can refresh only the parts that need updating without a full rebuild.
+
+## Configure the Replicated VM Installer
+
+Once your image is built and pushed to a registry, point the Replicated Admin Console at it.
+
+1. Open the **Admin Console** at `https://<your-base-domain>:30000`.
+2. Navigate to **Config** and find the **Sandbox Image** section.
+3. Set the following fields:
+
+| Field | Value |
+|---|---|
+| **Use a Custom Sandbox Image** | Enabled |
+| **Sandbox Image Repository** | Your image repository (e.g. `ghcr.io/your-org/openhands-custom-image`) |
+| **Sandbox Image Tag** | Your image tag (e.g. `v1.2.0`) |
+| **Registry Server** | If your registry requires authentication |
+| **Registry Username** | If your registry requires authentication |
+| **Registry Password or Credentials** | If your registry requires authentication |
+
+4. Click **Save config** and then **Deploy** to apply the change.
+
+<Note>
+  This setting applies to the **sandbox / agent-server image** only (the image that runs inside each
+  agent's isolated workspace). It does not replace the other OpenHands service images.
+</Note>
+
+## Reference
+
+- [OpenHands custom image example repo](https://github.com/OpenHands/openhands-custom-image): Dockerfile, benchmark scripts, and analysis tooling for the VS Code custom image example.
+- [Agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox): full SDK documentation on building and configuring custom sandbox images.
 
 ### Enterprise vs. Open Source
 Source: https://docs.openhands.dev/enterprise/enterprise-vs-oss.md
@@ -43481,6 +45176,212 @@ in the Admin Console or Helm values:
 <Note>
   For production deployments, we recommend enabling SSL/TLS for database connections.
 </Note>
+
+### Azure DevOps
+Source: https://docs.openhands.dev/enterprise/integrations/azure-devops.md
+
+This guide explains how to connect Azure DevOps Services to an OpenHands
+Enterprise installation. The integration lets users sign in with Microsoft
+Entra ID, open Azure Repos, create branches and pull requests, and use Azure
+Boards work items or pull request comments as context for OpenHands workflows.
+
+<Note>
+  This guide covers Azure DevOps Services at `https://dev.azure.com`. Azure
+  DevOps Server is not covered by this integration.
+</Note>
+
+## Prerequisites
+
+- An OpenHands Enterprise installation using Replicated or standalone Helm.
+- A Microsoft Entra administrator who can register an application and create a
+  client secret.
+- An Azure DevOps Services organization, project, and repository.
+- Azure DevOps users with access to the projects and repositories they will use
+  with OpenHands.
+- Network access from OpenHands to `login.microsoftonline.com` and
+  `dev.azure.com`.
+- If you plan to trigger automations from Azure DevOps Service Hooks, network
+  access from Azure DevOps back to the OpenHands app URL or automation webhook
+  URL.
+
+## Register a Microsoft Entra Application
+
+In the Azure portal, create a Microsoft Entra app registration for OpenHands.
+
+1. Go to **Microsoft Entra ID > App registrations**.
+2. Click **New registration**.
+3. Enter a name such as `OpenHands Azure DevOps`.
+4. Select the supported account type for your organization.
+5. Add a **Web** redirect URI:
+
+   ```text
+   https://auth.app.<your-openhands-domain>/realms/allhands/broker/azure_devops/endpoint
+   ```
+
+   Replace `<your-openhands-domain>` with the domain for your OpenHands
+   Enterprise installation. If you configured a custom authentication hostname,
+   use that hostname instead of `auth.app.<your-openhands-domain>`.
+
+6. Click **Register**.
+7. Copy the **Directory (tenant) ID** and **Application (client) ID**.
+8. Go to **Certificates & secrets** and create a client secret. Copy the secret
+   value before leaving the page.
+9. If your tenant requires explicit API permissions, add the Azure DevOps
+   delegated permission required for user access and grant admin consent.
+
+OpenHands requests the following Microsoft identity scopes during sign-in:
+
+```text
+openid email profile offline_access https://app.vssps.visualstudio.com/.default
+```
+
+## Configure Azure DevOps Access
+
+Make sure the users who will sign in to OpenHands have access to the Azure
+DevOps organization, projects, and repositories they need. OpenHands uses the
+signed-in user's Azure DevOps access token for repository discovery and Git
+operations.
+
+Repository names in OpenHands use this format:
+
+```text
+organization/project/repository
+```
+
+For example:
+
+```text
+contoso/web/PetStore
+```
+
+## Configure the Admin Console
+
+Pick the path that matches how OpenHands Enterprise is deployed.
+
+<Tabs>
+  <Tab title="Replicated">
+    Open the Replicated Admin Console for your OpenHands Enterprise installation
+    and go to the application configuration page.
+
+    In **Azure DevOps Authentication**:
+
+    1. Enable **Azure DevOps Authentication**.
+    2. Enter the **Microsoft Entra Tenant ID**.
+    3. Enter the **Azure DevOps Organization** if you want to set a default
+       organization.
+    4. Enter the **Azure DevOps Client ID**.
+    5. Enter the **Azure DevOps Client Secret**.
+    6. Save and deploy the updated configuration.
+
+    <Note>
+      The Azure DevOps Organization field is the organization name only, for
+      example `contoso` for `https://dev.azure.com/contoso`. Do not include
+      `https://dev.azure.com/`.
+    </Note>
+  </Tab>
+
+  <Tab title="Standalone Helm">
+    Set Azure DevOps values on the `openhands` and `openhands-secrets` charts.
+
+    In your `values.yaml` for the `openhands` chart:
+
+    ```yaml
+    azureDevOps:
+      enabled: true
+      tenantId: "<your-microsoft-entra-tenant-id>"
+      organization: "<your-azure-devops-organization>"
+      auth:
+        existingSecret: azure-devops-app
+    ```
+
+    <Note>
+      The organization value is the organization name only, for example
+      `contoso` for `https://dev.azure.com/contoso`. Do not include
+      `https://dev.azure.com/`.
+    </Note>
+
+    In your `values.yaml` for the `openhands-secrets` chart:
+
+    ```yaml
+    config:
+      azure_devops_client_id: "<your-azure-devops-client-id>"
+      azure_devops_client_secret: "<your-azure-devops-client-secret>"
+    ```
+
+    Then redeploy both charts. Deploying the `openhands-secrets` chart with
+    these values creates the Kubernetes secret named `azure-devops-app`. The
+    `openhands` chart reads the client ID and client secret from that secret via
+    `azureDevOps.auth.existingSecret`. If you use a different secret name, set
+    the same name in both charts.
+  </Tab>
+</Tabs>
+
+## Sign In with Azure DevOps
+
+After the deployment is completed, users choose **Sign in with Azure DevOps** on
+your app's login page.
+
+On first sign-in, Microsoft may ask the user to consent to the requested
+permissions. After sign-in, OpenHands stores the user's Azure DevOps token
+through the authentication provider so it can list repositories and run Git
+operations as that user.
+
+## Use Azure DevOps Repositories
+
+After signing in, users can select Azure DevOps repositories from the OpenHands
+repository picker. OpenHands can:
+
+- List Azure DevOps projects and repositories available to the signed-in user.
+- Clone Azure Repos using the signed-in user's OAuth token.
+- Read branch and pull request context.
+- Create branches and pull requests.
+- Read and post Azure Repos pull request comments.
+- Read and post Azure Boards work item comments.
+
+OpenHands does not require users to paste a personal access token for Azure
+DevOps repository access when Microsoft Entra sign-in is configured.
+
+## Trigger OpenHands from Azure DevOps
+
+Azure DevOps events can be connected to OpenHands automations through Azure
+DevOps Service Hooks and OpenHands custom webhooks. Use this pattern for
+workflows such as:
+
+- A work item comment that asks OpenHands to create an implementation pull
+  request.
+- A pull request comment that asks OpenHands to review the change.
+- A pull request comment that asks OpenHands to generate tests or validation
+  evidence.
+- A pipeline or incident event that asks OpenHands to inspect logs and propose a
+  fix.
+
+To configure this pattern:
+
+1. Register a custom webhook in OpenHands. See
+   [Event-Based Automations](/openhands/usage/automations/event-automations#custom-webhooks).
+2. Create an Azure DevOps Service Hook that sends the selected event to the
+   webhook URL.
+3. Create an OpenHands automation that filters for the event type, repository,
+   project, or trigger phrase you want to support.
+4. Test with a non-production repository or project before enabling the
+   automation broadly.
+
+<Note>
+  GitHub has built-in event routing in OpenHands. Azure DevOps event routing is
+  configured through service hooks or custom webhooks.
+</Note>
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| The Azure DevOps login option is not visible | Confirm **Azure DevOps Authentication** is enabled in the Admin Console or Helm values and the deployment has been applied. |
+| OAuth redirects fail | Confirm the Entra redirect URI exactly matches `https://auth.app.<your-openhands-domain>/realms/allhands/broker/azure_devops/endpoint`. |
+| Microsoft sign-in shows an invalid client or secret error | Confirm the Azure DevOps Client ID and Client Secret match the Microsoft Entra app registration. If the secret expired, create a new one and redeploy. |
+| Microsoft sign-in succeeds but no repositories are listed | Confirm the user has access to the Azure DevOps organization, project, and repositories. Also confirm the default organization value is the organization name only. |
+| Consent fails or Azure DevOps API calls are denied | Confirm the Entra application has the required Azure DevOps delegated permission and that admin consent has been granted if your tenant requires it. |
+| Repository selection or Git operations fail | Confirm OpenHands can reach `dev.azure.com` and that the repository is referenced as `organization/project/repository`. |
+| Azure DevOps Service Hook deliveries do not trigger an automation | Confirm the custom webhook is registered, the Service Hook URL is correct, the event type matches the automation, and the automation is enabled. |
 
 ### Bitbucket Data Center
 Source: https://docs.openhands.dev/enterprise/integrations/bitbucket-data-center.md
@@ -44324,6 +46225,10 @@ OpenHands Enterprise consists of several components deployed as Kubernetes workl
 
 ## Guides
 
+<Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+  End-to-end installation instructions using your OpenHands Enterprise license.
+</Card>
+
 <Card title="External PostgreSQL" icon="database" href="/enterprise/external-postgres">
   Configure OpenHands to use your own PostgreSQL database instead of the bundled instance.
 </Card>
@@ -44341,6 +46246,180 @@ please contact our team to discuss your requirements.
 <Card title="Contact Sales" icon="envelope" href="https://openhands.dev/contact">
   Get in touch with our team to request access to Kubernetes installation.
 </Card>
+
+### Install with Helm
+Source: https://docs.openhands.dev/enterprise/k8s-install/installation.md
+
+OpenHands Enterprise is distributed as a Helm chart through the Replicated registry.
+Your license credentials authenticate the chart download, and the chart embeds your
+license automatically at install time — no separate license file to manage.
+
+<Note>
+  Helm-based installation requires an OpenHands Enterprise license. If you don't have
+  one yet, [contact our team](https://openhands.dev/contact) to get set up.
+</Note>
+
+## Prerequisites
+
+- A Kubernetes cluster with a default storage class and an ingress controller
+  (see [Resource Limits](/enterprise/k8s-install/resource-limits) for sizing guidance)
+- **Helm v3.18 or later** — older versions cannot render the chart
+- `kubectl` access to the target cluster
+- Your **license ID** and the **email address** registered with your license
+  (both provided by our team)
+- **LLM credentials** from your chosen provider, for example an Anthropic API key
+  from the [Anthropic Console](https://console.anthropic.com/)
+- A DNS hostname for the application and a TLS strategy (cert-manager or your own certificates)
+
+## Step 1: Log in to the registry
+
+Authenticate Helm against the Replicated registry using your license:
+
+```bash
+helm registry login registry.replicated.com \
+  --username <your-license-email> \
+  --password <your-license-id>
+```
+
+## Step 2: Create the namespace and secrets
+
+The chart references several Kubernetes secrets that you create ahead of installation:
+
+```bash
+kubectl create namespace openhands
+```
+
+```bash
+kubectl -n openhands create secret generic jwt-secret \
+  --from-literal=jwt-secret=<random-string>
+
+kubectl -n openhands create secret generic keycloak-admin \
+  --from-literal=admin-password=<random-string>
+
+kubectl -n openhands create secret generic keycloak-realm \
+  --from-literal=realm-name=openhands \
+  --from-literal=server-url=http://keycloak \
+  --from-literal=client-id=openhands \
+  --from-literal=client-secret=<random-string> \
+  --from-literal=smtp-password=<smtp-password>
+
+kubectl -n openhands create secret generic postgres-password \
+  --from-literal=username=postgres \
+  --from-literal=password=<random-string> \
+  --from-literal=postgres-password=<random-string>
+
+kubectl -n openhands create secret generic redis \
+  --from-literal=redis-password=<random-string>
+
+kubectl -n openhands create secret generic lite-llm-api-key \
+  --from-literal=lite-llm-api-key=<random-string>
+
+kubectl -n openhands create secret generic admin-password \
+  --from-literal=admin-password=<random-string>
+
+kubectl -n openhands create secret generic default-api-key \
+  --from-literal=default-api-key=<random-string>
+
+kubectl -n openhands create secret generic sandbox-api-key \
+  --from-literal=sandbox-api-key=<random-string>
+
+kubectl -n openhands create secret generic litellm-env-secrets \
+  --from-literal=ANTHROPIC_API_KEY=<your-llm-api-key>
+```
+
+<Tip>
+  Generate strong random values (for example with `openssl rand -hex 32`) for each
+  `<random-string>` placeholder, and store them in your secret manager. To use an
+  existing PostgreSQL instance instead of the bundled one, see
+  [External PostgreSQL](/enterprise/external-postgres).
+</Tip>
+
+## Step 3: Configure values
+
+Create a `values.yaml` with your environment-specific configuration. A minimal
+starting point:
+
+```yaml
+ingress:
+  enabled: true
+  host: openhands.example.com
+
+tls:
+  enabled: true
+  email: admin@example.com
+
+litellm-helm:
+  proxy_config:
+    model_list:
+      - model_name: claude-sonnet-4-5
+        litellm_params:
+          model: anthropic/claude-sonnet-4-5
+          api_key: os.environ/ANTHROPIC_API_KEY
+
+env:
+  LITELLM_DEFAULT_MODEL: litellm_proxy/claude-sonnet-4-5
+```
+
+## Step 4: Install
+
+```bash
+helm install openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands \
+  --values values.yaml
+```
+
+Watch the workloads come up:
+
+```bash
+kubectl get pods -n openhands --watch
+```
+
+The first install pulls all container images, which can take a while. Along with the
+application components you'll see a `replicated` pod — the Replicated SDK, which
+handles license verification and powers the support tooling below.
+
+## Step 5: Validate the installation
+
+The chart ships preflight checks that validate your cluster against the
+application's requirements. Run them with the
+[`preflight` CLI](https://troubleshoot.sh/docs/preflight/introduction/):
+
+```bash
+preflight secret/openhands/openhands-preflight
+```
+
+Then confirm the application is reachable at your configured hostname and log in.
+
+## Troubleshooting
+
+### Generate a support bundle
+
+If something isn't working, generate a support bundle with the
+[`support-bundle` CLI](https://troubleshoot.sh/docs/support-bundle/introduction/).
+It discovers the diagnostic specs that ship with the chart and collects logs,
+resource states, and health checks from the installation:
+
+```bash
+support-bundle --load-cluster-specs --namespace openhands
+```
+
+### Send it to us
+
+Upload the resulting archive directly to our support team — the upload
+authenticates with the license embedded in the bundle:
+
+```bash
+support-bundle upload support-bundle-<timestamp>.tar.gz
+```
+
+### Common issues
+
+| Symptom | Likely cause |
+|---------|--------------|
+| `helm install` fails with a template error mentioning `replicated` | Helm version too old — upgrade to v3.18+ |
+| `helm registry login` or chart pull returns 401/403 | License credentials incorrect, or the license isn't enabled for Helm installs — contact support |
+| Pods stuck in `Pending` | No default storage class, or insufficient cluster resources — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
+| Preflight warns about node memory | Cluster nodes below the recommended sizing — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
 
 ### Resource Limits
 Source: https://docs.openhands.dev/enterprise/k8s-install/resource-limits.md

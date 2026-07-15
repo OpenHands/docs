@@ -1,0 +1,176 @@
+---
+title: Install with Helm
+description: End-to-end installation of OpenHands Enterprise on Kubernetes using Helm
+icon: ship
+---
+
+OpenHands Enterprise is distributed as a Helm chart through the Replicated registry.
+Your license credentials authenticate the chart download, and the chart embeds your
+license automatically at install time — no separate license file to manage.
+
+<Note>
+  Helm-based installation requires an OpenHands Enterprise license. If you don't have
+  one yet, [contact our team](https://openhands.dev/contact) to get set up.
+</Note>
+
+## Prerequisites
+
+- A Kubernetes cluster with a default storage class and an ingress controller
+  (see [Resource Limits](/enterprise/k8s-install/resource-limits) for sizing guidance)
+- **Helm v3.18 or later** — older versions cannot render the chart
+- `kubectl` access to the target cluster
+- Your **license ID** and the **email address** registered with your license
+  (both provided by our team)
+- **LLM credentials** from your chosen provider, for example an Anthropic API key
+  from the [Anthropic Console](https://console.anthropic.com/)
+- A DNS hostname for the application and a TLS strategy (cert-manager or your own certificates)
+
+## Step 1: Log in to the registry
+
+Authenticate Helm against the Replicated registry using your license:
+
+```bash
+helm registry login registry.replicated.com \
+  --username <your-license-email> \
+  --password <your-license-id>
+```
+
+## Step 2: Create the namespace and secrets
+
+The chart references several Kubernetes secrets that you create ahead of installation:
+
+```bash
+kubectl create namespace openhands
+```
+
+```bash
+kubectl -n openhands create secret generic jwt-secret \
+  --from-literal=jwt-secret=<random-string>
+
+kubectl -n openhands create secret generic keycloak-admin \
+  --from-literal=admin-password=<random-string>
+
+kubectl -n openhands create secret generic keycloak-realm \
+  --from-literal=realm-name=openhands \
+  --from-literal=server-url=http://keycloak \
+  --from-literal=client-id=openhands \
+  --from-literal=client-secret=<random-string> \
+  --from-literal=smtp-password=<smtp-password>
+
+kubectl -n openhands create secret generic postgres-password \
+  --from-literal=username=postgres \
+  --from-literal=password=<random-string> \
+  --from-literal=postgres-password=<random-string>
+
+kubectl -n openhands create secret generic redis \
+  --from-literal=redis-password=<random-string>
+
+kubectl -n openhands create secret generic lite-llm-api-key \
+  --from-literal=lite-llm-api-key=<random-string>
+
+kubectl -n openhands create secret generic admin-password \
+  --from-literal=admin-password=<random-string>
+
+kubectl -n openhands create secret generic default-api-key \
+  --from-literal=default-api-key=<random-string>
+
+kubectl -n openhands create secret generic sandbox-api-key \
+  --from-literal=sandbox-api-key=<random-string>
+
+kubectl -n openhands create secret generic litellm-env-secrets \
+  --from-literal=ANTHROPIC_API_KEY=<your-llm-api-key>
+```
+
+<Tip>
+  Generate strong random values (for example with `openssl rand -hex 32`) for each
+  `<random-string>` placeholder, and store them in your secret manager. To use an
+  existing PostgreSQL instance instead of the bundled one, see
+  [External PostgreSQL](/enterprise/external-postgres).
+</Tip>
+
+## Step 3: Configure values
+
+Create a `values.yaml` with your environment-specific configuration. A minimal
+starting point:
+
+```yaml
+ingress:
+  enabled: true
+  host: openhands.example.com
+
+tls:
+  enabled: true
+  email: admin@example.com
+
+litellm-helm:
+  proxy_config:
+    model_list:
+      - model_name: claude-sonnet-4-5
+        litellm_params:
+          model: anthropic/claude-sonnet-4-5
+          api_key: os.environ/ANTHROPIC_API_KEY
+
+env:
+  LITELLM_DEFAULT_MODEL: litellm_proxy/claude-sonnet-4-5
+```
+
+## Step 4: Install
+
+```bash
+helm install openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands \
+  --values values.yaml
+```
+
+Watch the workloads come up:
+
+```bash
+kubectl get pods -n openhands --watch
+```
+
+The first install pulls all container images, which can take a while. Along with the
+application components you'll see a `replicated` pod — the Replicated SDK, which
+handles license verification and powers the support tooling below.
+
+## Step 5: Validate the installation
+
+The chart ships preflight checks that validate your cluster against the
+application's requirements. Run them with the
+[`preflight` CLI](https://troubleshoot.sh/docs/preflight/introduction/):
+
+```bash
+preflight secret/openhands/openhands-preflight
+```
+
+Then confirm the application is reachable at your configured hostname and log in.
+
+## Troubleshooting
+
+### Generate a support bundle
+
+If something isn't working, generate a support bundle with the
+[`support-bundle` CLI](https://troubleshoot.sh/docs/support-bundle/introduction/).
+It discovers the diagnostic specs that ship with the chart and collects logs,
+resource states, and health checks from the installation:
+
+```bash
+support-bundle --load-cluster-specs --namespace openhands
+```
+
+### Send it to us
+
+Upload the resulting archive directly to our support team — the upload
+authenticates with the license embedded in the bundle:
+
+```bash
+support-bundle upload support-bundle-<timestamp>.tar.gz
+```
+
+### Common issues
+
+| Symptom | Likely cause |
+|---------|--------------|
+| `helm install` fails with a template error mentioning `replicated` | Helm version too old — upgrade to v3.18+ |
+| `helm registry login` or chart pull returns 401/403 | License credentials incorrect, or the license isn't enabled for Helm installs — contact support |
+| Pods stuck in `Pending` | No default storage class, or insufficient cluster resources — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
+| Preflight warns about node memory | Cluster nodes below the recommended sizing — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
