@@ -170,6 +170,9 @@ runtime-api:
     # "true" — it must be "false" so sandbox URLs are served over https.
     RUNTIME_BASE_URL: runtime.openhands.example.com
     RUNTIME_DISABLE_SSL: "false"
+    # Optional: storage class for sandbox volumes. Defaults to the cluster's
+    # default storage class; set this if your default isn't the one you want.
+    # STORAGE_CLASS: standard
 
 # Store conversation data in the bundled MinIO, persisted to a volume
 filestore:
@@ -195,6 +198,27 @@ litellm-helm:
   `runtime-api.runtimeFileArchive.s3` keys) for production use.
 </Warning>
 
+<Note>
+  The example above uses cert-manager to issue certificates (`tls.enabled: true`
+  with an ACME `email`). If instead you terminate TLS at your ingress controller
+  with your **own certificates**, disable the chart's certificate handling and
+  install the certificate at the ingress yourself:
+
+  ```yaml
+  tls:
+    enabled: false
+  keycloak:
+    ingress:
+      tls: false
+  runtime-api:
+    ingress:
+      tls: false
+  ```
+
+  The certificates must still cover all of the hostnames listed in the
+  Prerequisites, and must be publicly trusted.
+</Note>
+
 ## Step 4: Install
 
 ```bash
@@ -202,6 +226,18 @@ helm install openhands oci://registry.replicated.com/openhands/openhands \
   --namespace openhands \
   --values values.yaml
 ```
+
+<Note>
+  The URL above installs from the **Stable** channel. If your license is
+  assigned to a different channel, include that channel's slug in the path —
+  otherwise the pull fails with `denied: Channel not found for license`:
+
+  ```bash
+  helm install openhands oci://registry.replicated.com/openhands/<channel-slug>/openhands \
+    --namespace openhands \
+    --values values.yaml
+  ```
+</Note>
 
 Watch the workloads come up:
 
@@ -222,6 +258,16 @@ application's requirements. Run them with the
 ```bash
 preflight secret/openhands/openhands-preflight
 ```
+
+<Tip>
+  The `preflight` and `support-bundle` CLIs are both part of
+  [Troubleshoot](https://troubleshoot.sh/docs/#installation). Install them with:
+
+  ```bash
+  curl -L https://krew.sh/preflight | bash
+  curl -L https://krew.sh/support-bundle | bash
+  ```
+</Tip>
 
 Then confirm the application is reachable at your configured hostname and log in.
 
@@ -268,11 +314,15 @@ authenticates with the license embedded in the bundle:
 support-bundle upload support-bundle-<timestamp>.tar.gz
 ```
 
+The CLI prints `Successfully uploaded support bundle` without a link — find the
+uploaded bundle as the most recent entry in the Vendor Portal.
+
 ### Common issues
 
 | Symptom | Likely cause |
 |---------|--------------|
 | `helm install` fails with a template error mentioning `replicated` | Helm version too old — upgrade to v3.18+ |
-| `helm registry login` or chart pull returns 401/403 | License credentials incorrect, or the license isn't enabled for Helm installs — contact support |
+| `helm registry login` or chart pull returns 401/403 | License credentials incorrect, the license isn't enabled for Helm installs, or you're pulling from a channel your license isn't assigned to (add the channel slug to the URL, see Step 4) — contact support if unsure |
 | Pods stuck in `Pending` | No default storage class, or insufficient cluster resources — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
 | Preflight warns about node memory | Cluster nodes below the recommended sizing — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
+| Uploaded support bundle shows "Instance ID: Not set" or "No app-info file" in the Vendor Portal | Known limitation of the bundled Replicated SDK's collectors — the bundle still uploads and authenticates, only instance-event correlation is affected. Include the timestamp when contacting support |
