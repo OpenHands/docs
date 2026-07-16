@@ -46269,10 +46269,16 @@ license automatically at install time — no separate license file to manage.
   (both provided by our team)
 - **LLM credentials** from your chosen provider, for example an Anthropic API key
   from the [Anthropic Console](https://console.anthropic.com/)
-- DNS records you control: a hostname for the application, a hostname for the
-  runtime API, and a **wildcard** record for runtime sandboxes
-  (e.g. `*.runtime.openhands.example.com`), plus a TLS strategy
-  (cert-manager or your own certificates)
+- DNS records you control, following the `app.<base-domain>` layout used
+  throughout this guide (with `openhands.example.com` as the base):
+  `app.openhands.example.com` (application), `auth.app.openhands.example.com`
+  (login), `runtime-api.openhands.example.com`, and a **wildcard**
+  `*.runtime.openhands.example.com` for runtime sandboxes
+- **Publicly-trusted TLS certificates covering all of the hostnames above** —
+  via cert-manager or your own certificates. This is not optional: the
+  application generates `https://` URLs throughout, and in-cluster components
+  verify the certificates, so self-signed certificates break login and agent
+  communication. Wildcard certificates require a DNS-01-capable issuer.
 - An **authentication method** for user login — GitLab, Bitbucket Data Center,
   and more are supported; this guide uses a **GitHub App**. No GitHub App yet?
   Our [script](/enterprise/quick-start#create-a-github-app) creates one
@@ -46304,9 +46310,9 @@ kubectl -n openhands create secret generic keycloak-admin \
   --from-literal=admin-password=<random-string>
 
 kubectl -n openhands create secret generic keycloak-realm \
-  --from-literal=realm-name=openhands \
+  --from-literal=realm-name=allhands \
   --from-literal=server-url=http://keycloak \
-  --from-literal=client-id=openhands \
+  --from-literal=client-id=allhands \
   --from-literal=client-secret=<random-string> \
   --from-literal=smtp-password=<smtp-password>
 
@@ -46373,7 +46379,7 @@ The example below uses Traefik, the chart's default ingress class; set
 ```yaml
 ingress:
   enabled: true
-  host: openhands.example.com
+  host: app.openhands.example.com
   class: traefik
 
 tls:
@@ -46383,6 +46389,13 @@ tls:
 # Enables login via the GitHub App created in Step 2
 github:
   enabled: true
+
+# Login is served at auth.<ingress.host> — this ingress must exist for users
+# to be able to log in
+keycloak:
+  ingress:
+    enabled: true
+    hostname: auth.app.openhands.example.com
 
 # Where agent sandboxes run. The runtime API needs its own hostname, and each
 # sandbox gets a subdomain under your wildcard DNS record.
@@ -46397,6 +46410,12 @@ runtime-api:
   ingress:
     enabled: true
     host: runtime-api.openhands.example.com
+  env:
+    # Base domain for the per-sandbox ingresses ({runtime_id}.<RUNTIME_BASE_URL>);
+    # must match RUNTIME_URL_PATTERN above. RUNTIME_DISABLE_SSL defaults to
+    # "true" — it must be "false" so sandbox URLs are served over https.
+    RUNTIME_BASE_URL: runtime.openhands.example.com
+    RUNTIME_DISABLE_SSL: "false"
 
 # Store conversation data in the bundled MinIO, persisted to a volume
 filestore:
