@@ -28921,6 +28921,534 @@ Then add the Docker backend:
 - [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
 - [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
 - [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm)
+- [Kubernetes (Helm)](/openhands/usage/agent-canvas/backend-setup/kubernetes)
+
+### Kubernetes (Helm)
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/kubernetes.md
+
+The official Helm chart deploys the all-in-one Agent Canvas image (frontend + agent-server + automation) on Kubernetes as a `StatefulSet` with a `PersistentVolumeClaim` for durable state, a `Service`, and an optional `Ingress` and RBAC layer. It's the recommended way to run Agent Canvas as a shared, always-on backend that survives pod restarts and image upgrades.
+
+<Tip>
+  **Turn this into an internal vibecoding platform.** Once Agent Canvas runs in your cluster with [RBAC enabled](#rbac), you can give it a skill that teaches the agent how to deploy the small web apps it builds straight into the cluster. From that point on, **anyone with access to the Agent Canvas UI can build and ship code into the cluster — and save it to GitHub — with just a prompt.** No pipelines, no manual `kubectl`, no hand-written manifests: the agent scaffolds the app, applies the manifests, and gives back a live URL.
+
+  The "save to GitHub" half of that loop requires the **GitHub MCP server** to be enabled so the agent can create repos and push commits on the user's behalf. See the [generic app-deployment skill](#skill-deploying-apps-into-the-cluster) below for a ready-to-adapt version, and [RBAC](#rbac) for the permissions it needs.
+</Tip>
+
+<Warning>
+  The agent server can read and write the pod filesystem, execute shell commands, and — when RBAC is enabled — mutate the Kubernetes cluster it runs in. Treat the release namespace as trusted infrastructure, put it behind an authenticated ingress before exposing it to the internet, and only turn on `rbac.clusterAdmin` when you truly need cluster-wide access.
+</Warning>
+
+## Relationship to OpenHands Enterprise
+
+Agent Canvas is an **unauthenticated, single-tenant** application. This Helm chart runs exactly that: **one** shared instance where all agents are comingled on the same pod and PVC, with no built-in authentication, user-level role-based access control, or tenant isolation. It's a good fit for a single team or individual running their own backend, and for the "internal vibecoding platform" pattern described above — where a small, trusted group shares one deployment.
+
+[OpenHands Enterprise (OHE)](https://www.all-hands.ai/enterprise) is the productized upgrade path when you need a hardened, multi-user deployment. OHE adds:
+
+- **Authentication** (SSO / SAML / OIDC) so users must log in before they can run agents.
+- **Role-based access control** over who can run agents and manage the deployment.
+- **Multi-tenancy** so different teams get isolated spaces rather than one shared instance.
+- **Isolated agent sandboxes** — each agent run executes in its own container instead of every agent sharing the pod's filesystem and shell.
+
+Use this Helm chart for self-hosted, single-tenant setups; reach for OHE when you need authentication, multi-tenancy, or isolated agent execution.
+
+## Prerequisites
+
+- Kubernetes **1.24 or later** (required by the chart's `kubeVersion` constraint).
+- [Helm **3.x**](https://helm.sh/docs/intro/install/).
+- A working `kubectl` context with permission to create resources in the target namespace.
+- A `StorageClass` that supports `ReadWriteOnce` volumes. On GKE this is usually `standard-rwo` on older node pools or `hyperdisk-balanced` on `c4` / `n4` node pools. On EKS it's `gp3`. On DigitalOcean/Linode it's `do-block-storage` / `linode-block-storage`.
+- An ingress controller (nginx, Traefik, cloud-provider ingress, etc.) if you want to reach Agent Canvas from outside the cluster.
+
+## Get the Chart
+
+The chart lives alongside the source in the `OpenHands/agent-canvas` repo. Clone it and install from the local path:
+
+```bash
+git clone https://github.com/OpenHands/agent-canvas.git
+cd agent-canvas
+helm install agent-canvas ./helm/agent-canvas \
+  --namespace agent-canvas --create-namespace
+```
+
+That single command deploys everything below. Agent Canvas is now reachable inside the cluster at `http://agent-canvas.agent-canvas.svc.cluster.local:8000`. See [Access It](#access-it) for how to reach it from a browser.
+
+## What Gets Deployed
+
+| Resource | Purpose |
+|---|---|
+| `StatefulSet` | Single-replica pod running the all-in-one image. |
+| `PersistentVolumeClaim` (per pod) | Backs `~/.openhands` and `~/workspace` (both mounted from the same PVC via `subPath`): settings, encrypted secrets, conversation history, automation SQLite DB, cloned repos, generated files. |
+| `Service` (`ClusterIP`) | Cluster-internal endpoint on port 8000. |
+| `Service` (headless) | Required by the `StatefulSet` for stable pod DNS. |
+| `ServiceAccount` | Stable identity the pod runs under. |
+| `Ingress` (optional) | External HTTP(S) entry point. |
+| `RoleBinding` (per namespace) | Created when `rbac.enabled=true`, one per entry in `rbac.namespaces`. |
+| `ClusterRoleBinding` (optional) | Created when `rbac.clusterAdmin=true`. |
+
+## Persistence
+
+The chart provisions **one** PVC and mounts it at multiple well-known subdirectories of the openhands user's HOME via `subPath`. That preserves the pristine `/home/openhands` the base image ships (dotfiles like `~/.bashrc` and `~/.profile`) while persisting the directories that actually contain state:
+
+- `~/.openhands` — agent-server settings and encrypted secrets, conversation history and event stores, automation SQLite database (unless you point at external Postgres — see [External Database](#external-database)), the `OH_SECRET_KEY` and session API key auto-generated on first boot
+- `~/workspace` — the agent's default working directory: cloned repos, worktrees, anything the agent writes when it treats `~` as the workspace root
+
+Both paths share the same underlying disk. Add more entries to `persistence.mounts` if you want other subtrees persisted (e.g. `~/.cache`, `~/.config`).
+
+Defaults:
+
+```yaml
+persistence:
+  enabled: true
+  mounts:
+    - mountPath: /home/openhands/.openhands
+      subPath: openhands
+    - mountPath: /home/openhands/workspace
+      subPath: workspace
+  size: 20Gi
+  # storageClassName: ""       # empty → cluster default
+  accessModes:
+    - ReadWriteOnce
+```
+
+<Note>
+  The pod runs as `openhands` (UID 10001) from the upstream image. The chart sets `podSecurityContext.fsGroup: 10001` so the kubelet chowns the PVC on mount and the process can write to it. If you override `securityContext` or `podSecurityContext`, make sure UID/GID/fsGroup all point at the same user or `openhands` won't be able to write to the volume.
+</Note>
+
+<Tip>
+  On GKE clusters using `c4` or `n4` node pools, the default `standard-rwo` StorageClass will fail to attach because those machine types require `hyperdisk-balanced`. Set `persistence.storageClassName: hyperdisk-balanced` explicitly.
+</Tip>
+
+### Bring Your Own PVC
+
+If you already manage the volume out of band, point the chart at it and it will skip the `volumeClaimTemplates` path:
+
+```yaml
+persistence:
+  enabled: true
+  existingClaim: my-agent-canvas-pvc
+```
+
+## Ingress
+
+Ingress is off by default. Enable it and provide the standard knobs — the chart supports `className`, `annotations`, multiple `hosts` with per-path routing, and TLS.
+
+```yaml
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: agent-canvas.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - agent-canvas.example.com
+      secretName: agent-canvas-tls
+```
+
+<Note>
+  The read/send timeout annotations matter — Agent Canvas holds long-lived WebSocket connections for streaming agent events. Without generous timeouts, the ingress controller will close idle streams and the UI will drop reconnects mid-turn. Nginx defaults to 60 seconds.
+</Note>
+
+## RBAC
+
+RBAC is **off by default**. The pod runs under its own ServiceAccount but has no in-cluster permissions. Turn it on when the agent needs to inspect or mutate Kubernetes resources (e.g. to deploy things it builds).
+
+Two independent switches:
+
+```yaml
+rbac:
+  enabled: true
+  # Full access to all resources in these namespaces (bound to the
+  # built-in `admin` ClusterRole via one RoleBinding per namespace).
+  # Each namespace must already exist in the cluster.
+  namespaces:
+    - default
+    - agent-sandbox
+  # Optionally grant cluster-admin. OFF by default. Very broad — enable
+  # only when the agent truly needs to manage the whole cluster.
+  clusterAdmin: false
+```
+
+<Warning>
+  `rbac.clusterAdmin: true` grants `cluster-admin` — the highest privilege level in Kubernetes. An agent with a compromised prompt (or a bad LLM response) could delete every resource in the cluster. Prefer scoping to specific namespaces with `rbac.namespaces` whenever possible.
+</Warning>
+
+## Skill: Deploying Apps Into the Cluster
+
+To unlock the internal vibecoding platform described at the top of this page, give the agent a [skill](/overview/skills/creating) that teaches it the conventions for shipping the apps it builds into a namespace of your cluster. Drop the markdown below into `.openhands/skills/deploy-app/SKILL.md` (or your workspace's skills directory), adjust the placeholders (`<namespace>`, `<domain>`, GitHub org), and the agent will scaffold, deploy, and — with the **GitHub MCP server enabled** — push each app to its own repo on request.
+
+This is a generic version of the skill the OpenHands team runs internally. It assumes the backend was installed with [`rbac.enabled=true`](#rbac) and a `rbac.namespaces` entry for the target namespace, so the pod's ServiceAccount can `kubectl apply` there directly.
+
+````markdown
+# Deploy apps into the cluster
+
+Use this skill to create and manage the small web apps you build, serving each
+one at `https://<name>.<domain>` from the `<namespace>` namespace of the
+cluster Agent Canvas runs in.
+
+## Platform conventions
+
+Every app follows the same pattern:
+
+- **Namespace:** `<namespace>`. The agent runs under a ServiceAccount that has
+  admin in this namespace (granted via the Helm chart's `rbac.namespaces`), so
+  `kubectl apply` works directly with no extra credentials.
+- **Content:** static files (HTML/JS/CSS) served by an `nginx:*-alpine` pod.
+  The files live in a **ConfigMap** (`<name>-web`) mounted at
+  `/usr/share/nginx/html`. Apps that need a backend add their own container.
+- **Objects per app:** `Deployment` + `Service` (ClusterIP, port 80) +
+  `Ingress`. Apps that need scheduled work add a `CronJob`.
+- **Host:** `<name>.<domain>`.
+- **TLS:** if cert-manager is installed, add the
+  `cert-manager.io/cluster-issuer: <issuer>` annotation and a `tls` block with
+  `secretName: <name>-tls`; the cert is issued automatically.
+- **Auth:** put shared apps behind your ingress's authentication (oauth2-proxy,
+  a forward-auth middleware, Cloudflare Access, etc.) so they aren't exposed
+  unauthenticated. Reference your cluster's auth middleware/annotation here.
+- **Resources:** keep them tiny (requests `10m`/`16Mi`, limits `100m`/`64Mi`).
+
+### Ingress template
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: <name>
+  namespace: <namespace>
+  labels:
+    app: <name>
+  annotations:
+    cert-manager.io/cluster-issuer: <issuer>
+    # Add your cluster's auth middleware/annotation here so the app is
+    # not exposed unauthenticated.
+spec:
+  ingressClassName: <ingress-class>   # e.g. nginx or traefik
+  rules:
+    - host: <name>.<domain>
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: <name>
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - <name>.<domain>
+      secretName: <name>-tls
+```
+
+### Deployment + Service template
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: <name>
+  namespace: <namespace>
+  labels:
+    app: <name>
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: <name>
+  template:
+    metadata:
+      labels:
+        app: <name>
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: web
+              mountPath: /usr/share/nginx/html
+      volumes:
+        - name: web
+          configMap:
+            name: <name>-web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: <name>
+  namespace: <namespace>
+  labels:
+    app: <name>
+spec:
+  selector:
+    app: <name>
+  ports:
+    - port: 80
+      targetPort: 80
+```
+
+## Secrets (never commit them)
+
+If an app needs credentials at runtime, store them in a Kubernetes `Secret`
+created out of band — never in a ConfigMap, the git repo, or the manifest, and
+never print their values. Create the Secret from environment variables so the
+plaintext never appears in a command line or file:
+
+```bash
+kubectl create secret generic <name>-<purpose> -n <namespace> \
+  --from-literal=<key>="$SOME_ENV_VAR" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Consume it in the Deployment via `env` + `secretKeyRef`. Document the one-off
+`kubectl create secret ...` command in the app's `README.md` — keep it out of
+`deploy.sh` and the committed manifest.
+
+## Source layout & GitHub
+
+- Keep each app's source under `~/workspace/<project>`.
+- Give each app its own GitHub repo (e.g. `<github-org>/app-<project>`).
+  **This requires the GitHub MCP server to be enabled** so the agent can create
+  the repo and push commits. Create it if it doesn't exist, then push.
+- Standard repo layout:
+  - `README.md` — what the app is, its URL, how to deploy, any one-off secrets.
+  - `k8s/<project>.yaml` — all Kubernetes objects (Deployment+Service+Ingress).
+  - `web/` — static assets served via the ConfigMap.
+  - `deploy.sh` — regenerates the ConfigMap from `web/`, applies `k8s/`, and
+    rolls the Deployment.
+
+### Typical `deploy.sh`
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+NS=<namespace>
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+kubectl create configmap <name>-web --namespace "$NS" \
+  --from-file="$DIR/web/" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl apply -f "$DIR/k8s/<name>.yaml"
+kubectl rollout restart deployment/<name> -n "$NS"
+kubectl rollout status deployment/<name> -n "$NS"
+```
+
+## Creating a new app
+
+1. `mkdir -p ~/workspace/<project>/{k8s,web}` and add `web/index.html`,
+   `k8s/<project>.yaml` (from the templates above), `deploy.sh`, and a
+   `README.md`.
+2. If GitHub MCP is enabled, create/verify `<github-org>/app-<project>`,
+   commit, and push.
+3. Deploy: `./deploy.sh`.
+4. If cert-manager is used, wait for the cert:
+   `kubectl get certificate <name>-tls -n <namespace>` should become
+   `READY=True`. Confirm the Ingress has an address.
+5. Report the live URL back to the user.
+
+## Updating an app
+
+Edit files under `~/workspace/<project>`, commit + push (via GitHub MCP), then
+re-run `./deploy.sh` (which restarts the Deployment so nginx reloads the
+ConfigMap).
+
+## Deleting an app
+
+1. `kubectl delete -f ~/workspace/<project>/k8s/<project>.yaml` and delete the
+   `<name>-web` ConfigMap. Deleting the Ingress lets cert-manager clean up the
+   TLS secret; delete any credential secrets explicitly.
+2. Optionally archive/delete the GitHub repo and remove
+   `~/workspace/<project>`.
+
+## Verifying access
+
+```bash
+kubectl get deploy,svc,ingress,certificate -n <namespace> -l app=<name>
+```
+````
+
+## Common Configurations
+
+### Minimal (defaults + ingress)
+
+```yaml
+# values.yaml
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: agent-canvas.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts: [agent-canvas.example.com]
+      secretName: agent-canvas-tls
+```
+
+### With LLM Credentials from a Secret
+
+Rather than typing your LLM key into the UI on every reinstall, pass it in through the chart. Create the secret separately, then reference it via `config.extraEnv`:
+
+```bash
+kubectl -n agent-canvas create secret generic llm \
+  --from-literal=api-key=sk-...
+```
+
+```yaml
+# values.yaml
+config:
+  extraEnv:
+    - name: LLM_MODEL
+      value: "openhands/claude-sonnet-4-5-20250929"
+    - name: LLM_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: llm
+          key: api-key
+```
+
+### Agent That Manages a Sandbox Namespace
+
+```yaml
+# values.yaml
+rbac:
+  enabled: true
+  namespaces:
+    - agent-sandbox
+```
+
+Create the sandbox namespace before installing (`kubectl create namespace agent-sandbox`). Then the pod can `kubectl apply` / `kubectl delete` anything inside `agent-sandbox` but nothing else.
+
+### External Database
+
+The automation subsystem uses a SQLite database on the PVC by default. For higher-volume deployments, point it at Postgres:
+
+```yaml
+# values.yaml
+config:
+  automationDbUrl: "postgresql+asyncpg://user:pass@postgres.databases.svc.cluster.local/agent_canvas"
+```
+
+Store the actual credentials in a Kubernetes Secret and reference them via `config.extraEnv` rather than putting the password in `values.yaml`.
+
+## Install and Upgrade
+
+```bash
+# First install
+helm install agent-canvas ./helm/agent-canvas \
+  --namespace agent-canvas --create-namespace \
+  -f values.yaml
+
+# Later upgrades
+helm upgrade agent-canvas ./helm/agent-canvas \
+  -n agent-canvas -f values.yaml
+
+# Check rollout
+kubectl -n agent-canvas rollout status statefulset/agent-canvas
+kubectl -n agent-canvas get pvc,pod,svc,ingress
+```
+
+To pin a specific image (e.g. a PR preview or a build newer than the chart's `appVersion`):
+
+```bash
+helm upgrade agent-canvas ./helm/agent-canvas \
+  -n agent-canvas -f values.yaml \
+  --set image.tag=sha-<git-sha>
+```
+
+## Access It
+
+The chart's default `Service` is `ClusterIP`. Three common ways to reach the UI:
+
+1. **Ingress** — configure the `ingress:` block as shown above. This is the production path.
+2. **Port-forward** — for quick access from your laptop without touching DNS or ingress:
+
+    ```bash
+    kubectl -n agent-canvas port-forward svc/agent-canvas 8000:8000
+    ```
+
+    Then open `http://localhost:8000`.
+3. **LoadBalancer** — set `service.type: LoadBalancer` if your cloud provisions cloud load balancers for you. Cheaper than ingress for one-off installs, but skips TLS and auth.
+
+<Warning>
+  The agent server accepts any request with the right `LOCAL_BACKEND_API_KEY`, so exposing it via a bare LoadBalancer means anyone on the internet who can guess the key can drive the agent. Prefer the Ingress path with an authenticated proxy (oauth2-proxy, Cloudflare Access, tailscale-serve, ngrok OAuth, etc.) in front of it.
+</Warning>
+
+## Uninstall
+
+```bash
+helm uninstall agent-canvas -n agent-canvas
+```
+
+The PVC created by the `StatefulSet` is **retained** on uninstall so a reinstall picks up where you left off. Delete it explicitly if you want a fully clean slate:
+
+```bash
+kubectl -n agent-canvas delete pvc -l app.kubernetes.io/instance=agent-canvas
+```
+
+## Troubleshooting
+
+### `FailedAttachVolume: pd-balanced disk type cannot be used by c4-standard-8 machine type`
+
+The default StorageClass on your cluster is provisioning a disk type your nodes can't attach. On GKE `c4` / `n4` node pools, use `hyperdisk-balanced`:
+
+```yaml
+persistence:
+  storageClassName: hyperdisk-balanced
+```
+
+Because `volumeClaimTemplates` on an existing `StatefulSet` are immutable, changing the StorageClass requires deleting the STS and PVC first:
+
+```bash
+kubectl -n agent-canvas delete statefulset agent-canvas
+kubectl -n agent-canvas delete pvc -l app.kubernetes.io/instance=agent-canvas
+helm upgrade agent-canvas ./helm/agent-canvas -n agent-canvas -f values.yaml
+```
+
+### `ErrImagePull` on `ghcr.io/openhands/agent-canvas:<tag>`
+
+Verify the tag exists on GHCR — the chart's `appVersion` pins the default. To pull an image built from a specific commit, use `--set image.tag=sha-<short-sha>`. See [GHCR](https://github.com/OpenHands/agent-canvas/pkgs/container/agent-canvas) for the tag list.
+
+### WebSocket disconnects every minute
+
+Your ingress is closing idle streams. Bump the timeout annotations on the `Ingress`:
+
+```yaml
+ingress:
+  annotations:
+    # nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Traefik
+    traefik.ingress.kubernetes.io/router.middlewares: ""  # keep this in mind if you also add auth middlewares
+```
+
+### Pod stuck in `Pending` — `no persistent volumes available`
+
+Either no `StorageClass` exists on the cluster, or the one you set doesn't provision on demand. Run `kubectl get storageclass` and set `persistence.storageClassName` to one that shows `VOLUMEBINDINGMODE=WaitForFirstConsumer` (Immediate is fine too).
+
+## Related Guides
+
+- [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker) — single-container equivalent for laptops and single-host VMs.
+- [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) — install directly on a Linux VM without Kubernetes.
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends) — point a local Agent Canvas UI at a remote backend.
 
 ### Local Backend
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/local.md
@@ -29657,6 +30185,7 @@ Before exposing Agent Canvas beyond an SSH tunnel:
 - [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)
 - [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
 - [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker)
+- [Kubernetes (Helm)](/openhands/usage/agent-canvas/backend-setup/kubernetes)
 - [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)
 
 ### Backends
@@ -44969,6 +45498,192 @@ Once your image is built and pushed to a registry, point the Replicated Admin Co
 - [OpenHands custom image example repo](https://github.com/OpenHands/openhands-custom-image): Dockerfile, benchmark scripts, and analysis tooling for the VS Code custom image example.
 - [Agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox): full SDK documentation on building and configuring custom sandbox images.
 
+### Running Docker in the Agent Sandbox
+Source: https://docs.openhands.dev/enterprise/docker-in-sandbox.md
+
+Agents in OpenHands Enterprise can run a Docker daemon **inside** their own sandbox. This means an
+agent can pull and run containers, bring up a multi-service stack with Docker Compose, and build and
+run its own images—all from within the isolated workspace where it already edits code and runs commands.
+
+Because everything happens inside the sandbox, the agent never touches your host's Docker daemon,
+your cluster, or other tenants. You get the convenience of containers in the loop without giving up
+the isolation that makes autonomous agents safe to run.
+
+## Why Run Containers Inside the Sandbox
+
+Many real-world projects assume Docker is part of the development workflow. When the agent can use
+Docker itself, it can work on those projects end to end instead of stopping at the point where a
+container is required.
+
+- **Run a containerized app to test it.** If your application ships as a set of containers—for
+  example, a `docker compose` stack—the agent can start it and interact with it for QA, reproduction,
+  and verification.
+- **Prove a Dockerfile actually works.** When a task involves creating or modifying a `Dockerfile`,
+  the agent can build the image and run it to confirm the change is correct, rather than editing the
+  file blind.
+- **Distribute components to the sandbox as images.** Teams building on top of OpenHands can package
+  their own tools and services as containers and have the agent run them inside the sandbox.
+- **Use containerized build and test tooling.** Toolchains that are only published as images become
+  usable in the agent's normal workflow.
+
+## Security Posture
+
+Running a Docker daemon inside a workload is normally a red flag: the traditional approaches
+("Docker-in-Docker" with a privileged container, or mounting the host's Docker socket) either weaken
+isolation or hand the workload effective control of the host. OpenHands Enterprise takes neither of
+those approaches.
+
+Instead, each sandbox runs under a **hardened container runtime that provides kernel-level isolation
+between the agent's workload and the host node.** Within that boundary, nested containers run
+**unprivileged**, using **user-namespace remapping** so that "root" inside the sandbox maps to an
+ordinary, unprivileged user on the host.
+
+Concretely, this design gives you the following guarantees:
+
+- **No privileged mode.** Enabling Docker inside the sandbox does **not** require running the sandbox
+  as a privileged container.
+- **No host Docker socket.** The in-sandbox Docker daemon is the sandbox's own daemon. The host's
+  Docker socket is never mounted into the sandbox, so the agent cannot reach the host's containers or
+  images.
+- **Unprivileged by construction.** Sandbox processes run as a **non-root user**, and nested
+  containers are confined by user namespaces. Root inside a nested container is not root on the node.
+- **Per-workload isolation.** Each sandbox is a separate, isolated environment running as its own
+  Kubernetes workload (one pod per sandbox). Containers an agent starts live and die inside that
+  sandbox and are not shared with other agents, other users, or the cluster.
+- **No cluster credentials in the sandbox.** Sandbox pods do not mount a Kubernetes service-account
+  token, so a sandbox cannot use one to reach the cluster's API.
+- **No host networking.** Sandbox pods run on the cluster pod network—not the host network
+  namespace—so the containers an agent starts cannot bind to or observe the node's network interfaces
+  directly.
+- **Enforced at the platform level.** The isolation runtime is chosen by the operator through a
+  Kubernetes [`RuntimeClass`](https://kubernetes.io/docs/concepts/containers/runtime-class/), and the
+  stronger-isolation runtime is the default. The security boundary is a property of the deployment—not
+  something an agent or an end user can turn off.
+
+This is a core value of running OpenHands on Kubernetes with Enterprise: agents get a full,
+container-capable Linux environment while the blast radius of anything they do stays contained to a
+single disposable sandbox.
+
+### Network Access
+
+The isolation guarantees above—separating each sandbox from the host node and from other
+tenants—are provided by the platform. They are built into the deployment and are not something you
+configure or manage.
+
+Controlling where sandboxes can reach on your *wider* network is governed by where you place the
+OpenHands Enterprise instance. Because the internal Kubernetes layer is managed as part of the
+appliance, the lever you own is the network around it: use your VPC and subnet placement, security
+groups, or on-premises firewall rules to constrain the instance's egress and its access to sensitive
+internal systems, just as you would for any server that runs untrusted workloads.
+
+<Note>
+  To learn more about the sandbox itself—including how to prebake dependencies and tools—see
+  [Custom Sandbox Images](/enterprise/custom-sandbox-image).
+</Note>
+
+## Tutorial: Using Docker From an Agent
+
+The examples below are things you can ask an agent to do in a normal conversation. Docker is already
+installed in the standard Enterprise sandbox image, and the agent will start the Docker daemon the
+first time it needs it. You don't have to run anything yourself—just give the agent the task.
+
+<Note>
+  Inside the sandbox, the agent runs Docker with `sudo` and starts the daemon
+  (`sudo dockerd`) on first use. You will see it do this in the conversation; that is expected and
+  safe given the isolation described above.
+</Note>
+
+<Steps>
+  <Step title="Confirm Docker is available">
+    Ask the agent to verify the daemon is up:
+
+    ```text
+    Start the Docker daemon if it isn't running, then show me `docker version`
+    and confirm the daemon is reachable.
+    ```
+
+    The agent starts `dockerd`, then runs `docker version`, reporting both a Client and a Server
+    section—confirming a working daemon inside the sandbox.
+  </Step>
+
+  <Step title="Pull and run a container">
+    Ask the agent to run a throwaway container:
+
+    ```text
+    Run the hello-world container and show me the output.
+    ```
+
+    This pulls `hello-world` from the registry and runs it, printing Docker's
+    "Hello from Docker!" confirmation message.
+  </Step>
+
+  <Step title="Bring up a stack with Docker Compose">
+    Ask the agent to stand up a service and check that it responds:
+
+    ```text
+    Create a docker-compose.yml with a single nginx service mapping host port 8080
+    to container port 80. Run `docker compose up -d`, then curl http://localhost:8080
+    and show me the HTTP status code. When you're done, run `docker compose down`.
+    ```
+
+    The agent writes a compose file like this:
+
+    ```yaml
+    services:
+      web:
+        image: nginx:alpine
+        ports:
+          - "8080:80"
+    ```
+
+    It then starts the stack, curls the service (which returns `200`), and tears the stack back down.
+  </Step>
+
+  <Step title="Build a custom image and run it">
+    This is the workflow that was impossible before—actually building and running an image to prove a
+    `Dockerfile` works:
+
+    ```text
+    Create a Dockerfile based on alpine whose command prints "hello-from-built-image".
+    Build it as demo:latest, then run it and show me the output.
+    ```
+
+    The agent writes a `Dockerfile`:
+
+    ```dockerfile
+    FROM alpine
+    CMD ["echo", "hello-from-built-image"]
+    ```
+
+    builds it with `docker build -t demo:latest .`, and runs it—printing
+    `hello-from-built-image`. If you're modifying an existing `Dockerfile` in your repository, the
+    same loop lets the agent verify its change instead of guessing.
+  </Step>
+</Steps>
+
+<Tip>
+  You don't need to spell out every command. A high-level request like *"our app runs with Docker
+  Compose—bring it up and check the homepage loads"* is usually enough; the agent will start the
+  daemon, run the stack, and verify it.
+</Tip>
+
+## Requirements
+
+- This feature is available in **OpenHands Enterprise 0.18.2 or higher**.
+- Docker-in-sandbox relies on the stronger sandbox isolation runtime, which is the **default** for
+  OpenHands Enterprise (configured under **Sandbox Isolation** in the installer). This runtime
+  requires nodes running **Linux kernel 6.3 or newer** (for example, Ubuntu 24.04); the installer's
+  pre-flight checks verify this before deploying. The alternative standard runtime does not support
+  running Docker inside the sandbox.
+- The standard Enterprise sandbox image ships with Docker, Buildx, and the Compose plugin
+  preinstalled. If you use a [custom sandbox image](/enterprise/custom-sandbox-image), extend the
+  standard base image so this tooling remains available.
+
+<Card title="Custom Sandbox Images" icon="box" href="/enterprise/custom-sandbox-image">
+  Prebake repositories, dependencies, and tooling—including your own container images—into the
+  sandbox your agents start from.
+</Card>
+
 ### Enterprise vs. Open Source
 Source: https://docs.openhands.dev/enterprise/enterprise-vs-oss.md
 
@@ -46276,8 +46991,7 @@ license automatically at install time.
   `*.runtime.openhands.example.com` for runtime sandboxes. These point at your
   cluster's ingress; see the Quick Start's
   [DNS checks](/enterprise/quick-start#dns-checks) for the full hostname list.
-- **TLS certificates covering all of the hostnames above** — via cert-manager or
-  your own certificates.
+- **TLS certificates covering all of the hostnames above**, which you provide.
 - An **authentication method** for user login — GitLab, Bitbucket Data Center,
   and more are supported; this guide uses a **GitHub App**. See
   [Creating a GitHub App](/enterprise/quick-start#create-a-github-app).
@@ -46368,7 +47082,8 @@ Create a `values.yaml` with your environment-specific configuration. The
 minimum for a working installation covers five areas: application ingress and
 TLS, user authentication, the runtime (sandbox) endpoints, conversation
 storage, and your LLM provider. PostgreSQL and Redis run embedded in the
-cluster by default — no configuration needed (to bring your own database, see
+cluster; the bundled PostgreSQL needs a database name and database creation
+turned on, both shown below (to use your own database instead, see
 [External PostgreSQL](/enterprise/external-postgres)).
 
 The example below uses Traefik, the chart's default ingress class; set
@@ -46388,6 +47103,14 @@ tls:
 # Enables login via the GitHub App created in Step 2
 github:
   enabled: true
+
+# Bundled PostgreSQL: name the application database and let the chart create
+# the databases it needs on first start
+postgresql:
+  auth:
+    database: openhands
+databaseMigrations:
+  createDatabases: true
 
 # Login is served at auth.<ingress.host> — this ingress must exist for users
 # to be able to log in
@@ -46411,6 +47134,8 @@ runtime-api:
     enabled: true
     host: runtime-api.openhands.example.com
     tls: false
+  databaseMigrations:
+    createDatabases: true
   env:
     # Base domain for the per-sandbox ingresses ({runtime_id}.<RUNTIME_BASE_URL>);
     # must match RUNTIME_URL_PATTERN above. RUNTIME_DISABLE_SSL defaults to
@@ -46429,6 +47154,7 @@ minio:
     enabled: true
 
 litellm-helm:
+  enabled: true
   proxy_config:
     model_list:
       - model_name: claude-sonnet-4-5
@@ -46436,29 +47162,6 @@ litellm-helm:
           model: anthropic/claude-sonnet-4-5
           api_key: os.environ/ANTHROPIC_API_KEY
 ```
-
-<Warning>
-  Without the `github` authentication section users cannot log in, and without
-  the `sandbox`/runtime configuration agents cannot start. These sections are
-  not optional. The bundled MinIO ships with development
-  credentials — override `minio.svcaccts` (and the matching
-  `runtime-api.runtimeFileArchive.s3` keys) for production use.
-</Warning>
-
-<Note>
-  **Certificates (bring your own):** this example terminates TLS at your ingress
-  controller with a certificate you provide, so the chart's per-ingress TLS is
-  turned off (`tls.enabled: false` and `tls: false` on the keycloak and
-  runtime-api ingresses). Install a certificate at the ingress controller that
-  covers all of the hostnames listed in the Prerequisites — for Traefik, a
-  [default certificate](https://doc.traefik.io/traefik/routing/tls/tls-certificates/#default-certificate)
-  serving every host is the simplest option. On other controllers use their
-  equivalent default-certificate mechanism (for example, ingress-nginx's
-  `--default-ssl-certificate`).
-
-  Having cert-manager issue and renew the certificates instead is also
-  supported; that variant will be documented separately.
-</Note>
 
 ## Step 4: Install
 
