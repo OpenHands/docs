@@ -27,7 +27,10 @@ Ask the user for **all four** component version ranges and the **Enterprise rele
 | runtime-api | `0.3.1 to 0.50` | Tags in `OpenHands/runtime-api` repo (prefixed `v` in GitHub) |
 | OpenHands-Cloud | `0.13.3 to 0.24.0` | Tags in `OpenHands/OpenHands-Cloud` repo (prefixed `openhands/`) |
 
-If the user omits any of these, ask:
+**software-agent-sdk** is derived automatically — you do NOT ask the user for it. See the
+"Deriving the software-agent-sdk version range" section below.
+
+If the user omits any of the four inputs above, ask:
 
 > To generate the Enterprise release notes I need the previous and new version for each component:
 > - **automations**: previous → new
@@ -43,6 +46,7 @@ If the user omits any of these, ask:
 | enterprise-server | `OpenHands/OpenHands` | `cloud-X.Y.Z` | `cloud-1.41.0`, `cloud-1.46.2` |
 | runtime-api | `OpenHands/runtime-api` | `vX.Y.Z` | `v0.4.0`, `v0.5.0` |
 | OpenHands-Cloud | `OpenHands/OpenHands-Cloud` | `openhands/X.Y.Z` | `openhands/0.14.0`, `openhands/0.24.0` |
+| software-agent-sdk | `OpenHands/software-agent-sdk` | `vX.Y.Z` | `v1.35.0`, `v1.36.0` |
 | automations | *(no repo — version noted only)* | — | — |
 
 ## Step-by-step procedure
@@ -72,10 +76,50 @@ curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('body',''))"
 ```
 
-### 3. Categorize and merge
+### 2b. Derive the software-agent-sdk version range
 
-Collect every bullet point from all releases across all repos and sort them into three sections:
+The `software-agent-sdk` version is pinned in the OpenHands-Cloud Helm chart. To find the range:
 
+1. Fetch `charts/openhands/values.yaml` from the OpenHands-Cloud repo at the **old** OpenHands-Cloud
+   tag (the "previous" version) and the **new** tag.
+2. In each file, find the `global:` → `agentServerImage:` → `tag:` value (e.g. `1.34.0-python`).
+3. Strip the `-python` suffix to get the SDK version number (e.g. `1.34.0`).
+4. The SDK release range is everything after `v{old_version}` up to and including `v{new_version}`
+   in the `OpenHands/software-agent-sdk` repo.
+
+```bash
+# Fetch the tag from a specific OpenHands-Cloud version
+curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "https://api.github.com/repos/OpenHands/OpenHands-Cloud/contents/charts/openhands/values.yaml?ref=openhands/{version}" \
+  | python3 -c "
+import json, sys, base64
+data = json.load(sys.stdin)
+content = base64.b64decode(data['content']).decode()
+lines = content.split('\n')
+in_global = False
+in_agent = False
+for line in lines:
+    if line.startswith('global:'):
+        in_global = True
+    if in_global and 'agentServerImage' in line:
+        in_agent = True
+    if in_agent and 'tag:' in line:
+        print(line.strip())
+        break
+"
+```
+
+### 3. Categorize by component
+
+Group bullet points **by component section**, with each section having its own Features, Bug Fixes,
+and Maintenance sub-headings. The component sections are:
+
+1. **Enterprise Server** — from `OpenHands/OpenHands`
+2. **Software Agent SDK** — from `OpenHands/software-agent-sdk`
+3. **Runtime API** — from `OpenHands/runtime-api`
+4. **OpenHands Cloud (Helm Chart)** — from `OpenHands/OpenHands-Cloud`
+
+Within each section, sort items into:
 - **Features** — lines starting with `* feat`
 - **Bug Fixes** — lines starting with `* fix`
 - **Maintenance** — lines starting with `* chore`, `* ci`, `* build`, `* refactor`, `* test`, etc.
@@ -94,6 +138,8 @@ Remove these automated/housekeeping lines that don't add value to customer-facin
 | `feat: bump image tag to ...` | Version bump PRs, not user-facing features |
 | `feat(openhands): bump image tag to ...` | Version bump PRs, not user-facing features |
 | `feat(runtime-api): bump image tag to ...` | Version bump PRs, not user-facing features |
+| `Release vX.Y.Z` | Automated release PRs in software-agent-sdk |
+| `Verify ... model` | Model verification entries in software-agent-sdk |
 
 ### 5. Write the page
 
@@ -111,27 +157,55 @@ icon: clipboard-list
 
 ## X.Y.Z
 
-### Features
-* feat: ... by @author in https://github.com/...
-* feat(...): ... by @author in https://github.com/...
+### Enterprise Server
 
-### Bug Fixes
-* fix: ... by @author in https://github.com/...
-* fix(...): ... by @author in https://github.com/...
+#### Features
+* feat: ... by @author in https://github.com/OpenHands/OpenHands/pull/...
 
-### Maintenance
-* ci: ... by @author in https://github.com/...
-* chore: ... by @author in https://github.com/...
+#### Bug Fixes
+* fix: ... by @author in https://github.com/OpenHands/OpenHands/pull/...
+
+#### Maintenance
+* ci: ... by @author in https://github.com/OpenHands/OpenHands/pull/...
+
+---
+
+### Software Agent SDK
+
+#### Features
+* feat: ... by @author in https://github.com/OpenHands/software-agent-sdk/pull/...
+
+#### Bug Fixes
+* fix: ... by @author in https://github.com/OpenHands/software-agent-sdk/pull/...
+
+---
+
+### Runtime API
+
+#### Features
+* feat: ... by @author in https://github.com/OpenHands/runtime-api/pull/...
+
+---
+
+### OpenHands Cloud (Helm Chart)
+
+#### Features
+* feat: ... by @author in https://github.com/OpenHands/OpenHands-Cloud/pull/...
+
+#### Bug Fixes
+* fix: ... by @author in https://github.com/OpenHands/OpenHands-Cloud/pull/...
 
 ## (previous release heading, if any)
 ...
 ```
 
 **Key formatting rules:**
-- One flat list per category — do NOT split by component or sub-version
+- Split by component section — each component gets its own `### Heading`
+- Within each component, group by `#### Features`, `#### Bug Fixes`, `#### Maintenance`
+- Separate component sections with `---` horizontal rules
 - Keep the exact bullet text from the original release notes (author, PR link)
-- Order within each section doesn't matter (by component grouping or chronological are both fine)
-- If a category has zero items after filtering, omit the heading entirely
+- If a category has zero items after filtering, omit that sub-heading entirely
+- Also filter out `Release vX.Y.Z` and `Verify ... model` lines from SDK notes
 
 ### 6. Update navigation
 
