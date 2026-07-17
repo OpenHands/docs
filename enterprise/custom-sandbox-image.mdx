@@ -1,115 +1,1272 @@
 ---
-title: Custom Sandbox Images
-description: Preload repos, dependencies, and tooling into a custom sandbox image to make your agents faster and more reliable.
+title: Multiple Custom Sandbox Images
+description: Configure multiple project-specific sandbox images using warm runtime pools for instant agent startup
 icon: box
 ---
 
-Custom sandbox images let you prebake the repository, dependencies, compiled output, and test harness
-your agents need. Instead of spending minutes provisioning a workspace on every run, your agents start
-on the actual task immediately.
+OpenHands agents run inside isolated sandbox containers where they execute code, interact with files, and perform tasks. Each sandbox is based on a container image that defines the runtime environment—the tools, dependencies, and configurations available to the agent.
 
-## Why Use a Custom Image
+## Why Use Multiple Custom Images
 
-Custom images eliminate cold-start setup work (clone, install, transpile, and bootstrap) so agents
-spend their time on the actual task. They also reduce setup variance and lower sandbox memory requirements
-by keeping only what the agent needs.
+By default, OpenHands provides a general-purpose agent sandbox image with Python, Node.js, and common development tools. However, enterprise teams often need specialized environments for different projects:
 
-## Build Your Own Custom Image
+- **PHP web applications** requiring PHP 8.4, Composer, MySQL client, and Redis
+- **Java microservices** needing JDK 21, Maven, and Spring Boot tooling
+- **Mobile development** requiring iOS/Android SDKs and simulators
+- **Data science workloads** with specialized Python packages, R, or Julia
+- **Legacy systems** with older runtime versions and specific system libraries
 
-The [OpenHands agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox)
-provides full documentation on building custom sandbox images. The approach is the same for the Enterprise
-Replicated VM deployment.
+Custom sandbox images eliminate cold-start provisioning time. Instead of spending minutes installing dependencies every time an agent starts, you prebake everything into the image. Agents start working immediately.
 
-### Basic Pattern
+**Multiple custom images** let you maintain different environments for different project types, with each image kept ready in a warm pool for instant claim when a conversation starts.
 
-1. Start from the OpenHands agent-server base image.
-2. Keep the normal OpenHands entrypoint intact: extend the image, do not replace the entrypoint.
-3. Add your repo, docs, tools, and verification wrappers.
-4. Pre-run the expensive setup you do not want to repeat at task time.
-5. Publish the image to a registry and point the Replicated installer at it.
+### Key Advantages Over Legacy Approach
 
-<Warning>
-  Do not override the entrypoint or replace the runtime contract of the base image. The installer
-  expects standard OpenHands agent-server behavior. Only extend, do not replace.
-</Warning>
+The warm runtime pool approach offers significant operational benefits:
 
-### Base Image
+✅ **No restarts required** - Add, update, or remove images via API without restarting OpenHands  
+✅ **No redeployments** - Changes take effect within ~1 minute (next reconciliation cycle)  
+✅ **Dynamic management** - Update image tags, pool sizes, or configurations on the fly  
+✅ **Multiple images** - Run different images simultaneously for different project types  
+✅ **Instant updates** - Change pool size from 2 to 10 pods without any downtime  
 
-```dockerfile
-FROM ghcr.io/openhands/agent-server:1.23.0-python
+**Previously**, changing sandbox images required:
+1. Editing Helm values or Replicated Admin Console config
+2. Redeploying the entire OpenHands application
+3. Waiting for all services to restart (5-10 minutes)
+4. Only one image could be used at a time
+
+**Now**, you can:
+1. Call a REST API endpoint with new configuration
+2. Wait ~1 minute for warm runtime reconciler to create pods
+3. Start using the new image immediately
+4. Maintain multiple images for different teams/projects
+
+## How Warm Runtime Pools Work
+
+OpenHands Enterprise maintains **warm runtime pools**—pre-started sandbox containers with no assigned user. When a conversation begins, instead of spinning up a new container from scratch (20+ seconds), the system claims an already-running warm container and assigns it to the conversation in under 2 seconds.
+
+You configure warm runtime pools via the Runtime API:
+
+```
+Admin → Runtime API → Warm Pool Configuration
+                   → Creates warm pods in Kubernetes
+                   
+User starts conversation → Claims warm pod → Agent runs immediately
 ```
 
-Pin a specific version tag to ensure reproducible builds. Check
-[ghcr.io/openhands/agent-server](https://github.com/OpenHands/OpenHands/pkgs/container/agent-server)
-for the latest available tags.
+**Key capabilities:**
+- Configure multiple warm runtime pools (one per custom image)
+- Set pool size per image (how many warm containers to keep ready)
+- Support for private container registries
+- Automatic pool maintenance (reconciliation every minute)
 
-<Note>
-  To get the latest features of OpenHands Enterprise, rebuild your custom image before each upgrade. The agent server base image is updated with every OHE release.
-</Note>
+## Prerequisites
 
-### Example: Build and Push
+### 1. Build and Publish Your Custom Image
+
+Your custom image must extend the OpenHands agent-server base image. Follow the existing image building guide:
+
+<Card title="Building Custom Sandbox Images" icon="docker" href="/sdk/guides/agent-server/docker-sandbox">
+  Complete guide to building agent-server images with custom dependencies
+</Card>
+
+**Quick checklist:**
+- ✅ Start from `ghcr.io/openhands/agent-server:VERSION-python`
+- ✅ Keep the OpenHands entrypoint intact (extend, don't replace)
+- ✅ Install your project's dependencies and tools
+- ✅ Pre-compile or transpile code if applicable
+- ✅ Do NOT bake in secrets or credentials
+- ✅ Push to a registry reachable from your OpenHands cluster
+
+<Accordion title="Additional Image Building Advice">
+
+### Security Context
+
+If your OpenHands deployment runs with non-root security contexts (common in enterprise K8s), ensure your Dockerfile sets appropriate ownership:
+
+```dockerfile
+FROM ghcr.io/openhands/agent-server:1.29.0-python
+
+# Install dependencies as root
+RUN apt-get update && apt-get install -y \
+    php8.4-cli \
+    php8.4-mysql \
+    composer
+
+# Set ownership for non-root execution
+RUN chown -R 10001:10001 /workspace
+USER 10001
+```
+
+### Platform Architecture
+
+Build for `linux/amd64` if your cluster runs on x86-64 nodes:
 
 ```bash
 docker buildx build \
   --platform linux/amd64 \
-  -f your-project/Dockerfile \
-  -t ghcr.io/<your-org>/openhands-custom-image:<your-tag> \
+  -t your-registry.com/project/agent-image:v1.0.0 \
   --push \
   .
 ```
 
-Use `--platform linux/amd64` because the Enterprise Replicated VM runs on `x86-64`.
+### Image Size Optimization
 
-### What to Bake In
+Large images slow down pod startup even in warm pools (initial image pull):
+- Use multi-stage builds to exclude build tools from final image
+- Combine `RUN` commands to reduce layers
+- Clean package manager caches (`apt-get clean`, `npm cache clean`)
+- Consider squashing layers for distribution
 
-Good candidates for prebaking:
+### Private Registries
 
-- Pinned repository checkouts
-- Package manager caches and installed dependencies (`node_modules`, Python virtualenvs, etc.)
-- Compiled or transpiled output
-- Native system packages (`xvfb`, `libkrb5-dev`, `pkg-config`, etc.)
-- Browser or Electron artifacts
-- Stable helper scripts such as `prepare-*` and `*-verify` wrappers
+Configure image pull secrets in your OpenHands Helm values:
 
-### What to Keep Out
+```yaml
+# For Replicated VM: configure in Admin Console under "Custom Sandbox Image"
+# For K8s Helm: add to runtime-api chart values
+runtime-api:
+  imagePullSecrets:
+    - name: harbor-registry-credentials
+```
 
-<Warning>
-  Do not bake the following into your image:
+Then create the secret:
 
-  - Secrets, API keys, or personal credentials
-  - Machine-specific paths or environment assumptions
-  - Uncommitted source changes or task-specific fixes
-  - Rapidly changing dependencies (use a lightweight `prepare-*` helper instead)
-</Warning>
+```bash
+kubectl create secret docker-registry harbor-registry-credentials \
+  --docker-server=harbor.company.com \
+  --docker-username=robot-account \
+  --docker-password=token \
+  --namespace openhands
+```
 
-If the repository or dependencies change frequently, include a `prepare-*` script in the image
-so the agent can refresh only the parts that need updating without a full rebuild.
+</Accordion>
 
-## Configure the Replicated VM Installer
+### 2. Set Up Admin Authentication
 
-Once your image is built and pushed to a registry, point the Replicated Admin Console at it.
+The Runtime API admin endpoints require authentication. The admin password is not set by default in Replicated VM installations.
 
-1. Open the **Admin Console** at `https://<your-base-domain>:30000`.
-2. Navigate to **Config** and find the **Sandbox Image** section.
-3. Set the following fields:
+**Set the admin password** (one-time setup):
 
-| Field | Value |
-|---|---|
-| **Use a Custom Sandbox Image** | Enabled |
-| **Sandbox Image Repository** | Your image repository (e.g. `ghcr.io/your-org/openhands-custom-image`) |
-| **Sandbox Image Tag** | Your image tag (e.g. `v1.2.0`) |
-| **Registry Server** | If your registry requires authentication |
-| **Registry Username** | If your registry requires authentication |
-| **Registry Password or Credentials** | If your registry requires authentication |
+```bash
+# Generate a secure password
+ADMIN_PASSWORD=$(openssl rand -base64 32)
 
-4. Click **Save config** and then **Deploy** to apply the change.
+# Store it in Kubernetes
+kubectl patch secret admin-password -n openhands \
+  -p="{\"data\":{\"admin-password\":\"$(echo -n $ADMIN_PASSWORD | base64)\"}}"
+
+# Restart runtime-api to load the new password
+kubectl rollout restart deployment -n openhands -l app.kubernetes.io/name=runtime-api
+
+# Save the password securely - you'll need it for API calls
+echo "Admin password (save this in your password manager):"
+echo "$ADMIN_PASSWORD"
+```
+
+Wait for the runtime-api pod to fully restart before proceeding:
+
+```bash
+kubectl rollout status deployment -n openhands -l app.kubernetes.io/name=runtime-api
+```
 
 <Note>
-  This setting applies to the **sandbox / agent-server image** only (the image that runs inside each
-  agent's isolated workspace). It does not replace the other OpenHands service images.
+  The admin password is stored in the `admin-password` Kubernetes secret. Keep your saved copy secure—it grants full access to Runtime API management endpoints.
 </Note>
 
-## Reference
+## Managing Warm Runtime Configurations
 
-- [OpenHands custom image example repo](https://github.com/OpenHands/openhands-custom-image): Dockerfile, benchmark scripts, and analysis tooling for the VS Code custom image example.
-- [Agent-server sandbox guide](https://docs.openhands.dev/sdk/guides/agent-server/docker-sandbox): full SDK documentation on building and configuring custom sandbox images.
+All warm runtime configuration is done via REST API calls to the Runtime API. We'll provide shell scripts that handle authentication and API calls from inside your cluster.
+
+### Authentication Flow
+
+Admin endpoints require a JWT token obtained through challenge-response authentication:
+
+1. **Get challenge**: `GET /api/admin/challenge` returns a challenge string and salt
+2. **Hash password**: Compute PBKDF2-HMAC-SHA256 with 10,000 iterations
+3. **Login**: `POST /api/admin/login` with challenge and hash → returns JWT token
+4. **Use token**: Include `Authorization: Bearer {token}` in subsequent requests
+
+JWT tokens expire after 24 hours. Re-authenticate if you get 401 errors.
+
+<Accordion title="Manual Authentication Example">
+
+If you prefer to call the API directly:
+
+```bash
+# Set your admin password
+ADMIN_PASSWORD="your-password-from-setup"
+RUNTIME_API_URL="https://runtime.your-domain.com"
+
+# Step 1: Get challenge
+CHALLENGE_RESP=$(curl -s "$RUNTIME_API_URL/api/admin/challenge")
+CHALLENGE=$(echo $CHALLENGE_RESP | jq -r '.challenge')
+SALT=$(echo $CHALLENGE_RESP | jq -r '.salt')
+
+# Step 2: Compute hash (using Python)
+HASH=$(python3 -c "
+import hashlib, binascii
+salt = '$SALT'
+challenge = '$CHALLENGE'
+password = '$ADMIN_PASSWORD'
+combined_salt = (salt + challenge).encode('utf-8')
+dk = hashlib.pbkdf2_hmac('sha256', password.encode(), combined_salt, 10000, dklen=32)
+print(binascii.hexlify(dk).decode())
+")
+
+# Step 3: Login and get token
+TOKEN=$(curl -s "$RUNTIME_API_URL/api/admin/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"challenge\":\"$CHALLENGE\",\"hash\":\"$HASH\"}" \
+  | jq -r '.token')
+
+# Step 4: Use token in API calls
+curl "$RUNTIME_API_URL/api/warm-runtime-configs" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+</Accordion>
+
+### Helper Script: Warm Runtime Config Manager
+
+Save this script as `manage-warm-runtimes.sh` to simplify warm runtime configuration:
+
+```bash
+#!/bin/bash
+#
+# manage-warm-runtimes.sh
+#
+# Manage warm runtime configurations for custom sandbox images.
+# Runs commands inside the runtime-api pod via kubectl exec.
+#
+# Usage:
+#   ./manage-warm-runtimes.sh list
+#   ./manage-warm-runtimes.sh add <config-name> <config.json>
+#   ./manage-warm-runtimes.sh update <config-name> <config.json>
+#   ./manage-warm-runtimes.sh delete <config-name>
+#
+# Examples:
+#   ./manage-warm-runtimes.sh list
+#   ./manage-warm-runtimes.sh add php-symfony php-config.json
+#   ./manage-warm-runtimes.sh delete php-symfony
+#
+
+set -e
+
+NAMESPACE="openhands"
+RUNTIME_API_URL="http://localhost:5000"
+
+# Parse command
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <command> [arguments]"
+    echo ""
+    echo "Commands:"
+    echo "  list                         List all warm runtime configurations"
+    echo "  add <name> <config-file>     Add a new configuration"
+    echo "  update <name> <config-file>  Update an existing configuration"
+    echo "  delete <name>                Delete a configuration"
+    echo ""
+    echo "Config file format (JSON):"
+    echo '  {'
+    echo '    "image": "registry.com/image:tag",'
+    echo '    "working_dir": "/workspace",'
+    echo '    "command": ["/usr/local/bin/openhands-agent-server", "--port", "60000"],'
+    echo '    "environment": {"LOG_JSON": "1"},'
+    echo '    "count": 2,'
+    echo '    "run_as_user": 10001,'
+    echo '    "run_as_group": 10001,'
+    echo '    "fs_group": 10001,'
+    echo '    "fuse_s3_mount": false'
+    echo '  }'
+    exit 1
+fi
+
+COMMAND="$1"
+
+# Find runtime-api pod
+echo "Finding runtime-api pod..."
+POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=runtime-api \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+if [ -z "$POD" ]; then
+    echo "Error: Could not find runtime-api pod in namespace '$NAMESPACE'"
+    exit 1
+fi
+echo "  ✓ Using pod: $POD"
+
+# Get admin password
+echo "Retrieving admin credentials..."
+ADMIN_PASSWORD=$(kubectl get secret admin-password -n "$NAMESPACE" \
+    -o jsonpath='{.data.admin-password}' | base64 -d)
+
+if [ -z "$ADMIN_PASSWORD" ]; then
+    echo "Error: Admin password not set. See documentation for setup instructions."
+    exit 1
+fi
+echo "  ✓ Credentials retrieved"
+
+# Execute command
+case "$COMMAND" in
+    list)
+        echo "Fetching warm runtime configurations..."
+        kubectl exec -n "$NAMESPACE" "$POD" -- python3 -c "
+import json, hashlib, binascii, urllib.request, urllib.error
+
+ADMIN_PASSWORD = '''$ADMIN_PASSWORD'''
+API_URL = '$RUNTIME_API_URL'
+
+def req(path, method='GET', data=None, token=None):
+    url = f'{API_URL}{path}'
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    r = urllib.request.Request(url, method=method, headers=headers)
+    if data:
+        r.data = json.dumps(data).encode('utf-8')
+    try:
+        with urllib.request.urlopen(r) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        raise Exception(f'HTTP {e.code}: {e.read().decode(\"utf-8\")}')
+
+# Authenticate
+chal = req('/api/admin/challenge')
+combined_salt = (chal['salt'] + chal['challenge']).encode('utf-8')
+dk = hashlib.pbkdf2_hmac('sha256', ADMIN_PASSWORD.encode(), combined_salt, 10000, dklen=32)
+token = req('/api/admin/login', 'POST', {
+    'challenge': chal['challenge'],
+    'hash': binascii.hexlify(dk).decode()
+})['token']
+
+# List configurations
+configs = req('/api/warm-runtime-configs', token=token)['configs']
+if not configs:
+    print('No warm runtime configurations found.')
+else:
+    print(f'Found {len(configs)} configuration(s):\\n')
+    for cfg in configs:
+        print(f\"  Name: {cfg['name']}\")
+        print(f\"  Image: {cfg['image']}\")
+        print(f\"  Count: {cfg.get('count', 'default')}\")
+        print(f\"  Fuse mount: {cfg.get('fuse_s3_mount', False)}\")
+        print()
+"
+        ;;
+
+    add|update)
+        if [ $# -ne 3 ]; then
+            echo "Usage: $0 $COMMAND <config-name> <config-file>"
+            exit 1
+        fi
+        CONFIG_NAME="$2"
+        CONFIG_FILE="$3"
+        
+        if [ ! -f "$CONFIG_FILE" ]; then
+            echo "Error: Config file not found: $CONFIG_FILE"
+            exit 1
+        fi
+        
+        # Validate JSON
+        if ! jq empty "$CONFIG_FILE" 2>/dev/null; then
+            echo "Error: Invalid JSON in $CONFIG_FILE"
+            exit 1
+        fi
+        
+        CONFIG_JSON=$(cat "$CONFIG_FILE")
+        ACTION="Adding"
+        if [ "$COMMAND" = "update" ]; then
+            ACTION="Updating"
+        fi
+        
+        echo "$ACTION warm runtime configuration '$CONFIG_NAME'..."
+        kubectl exec -i -n "$NAMESPACE" "$POD" -- python3 -c "
+import json, hashlib, binascii, urllib.request, urllib.error, sys
+
+ADMIN_PASSWORD = '''$ADMIN_PASSWORD'''
+API_URL = '$RUNTIME_API_URL'
+CONFIG_NAME = '$CONFIG_NAME'
+CONFIG_DATA = json.loads('''$CONFIG_JSON''')
+
+def req(path, method='GET', data=None, token=None):
+    url = f'{API_URL}{path}'
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    r = urllib.request.Request(url, method=method, headers=headers)
+    if data:
+        r.data = json.dumps(data).encode('utf-8')
+    try:
+        with urllib.request.urlopen(r) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        raise Exception(f'HTTP {e.code}: {e.read().decode(\"utf-8\")}')
+
+# Authenticate
+chal = req('/api/admin/challenge')
+combined_salt = (chal['salt'] + chal['challenge']).encode('utf-8')
+dk = hashlib.pbkdf2_hmac('sha256', ADMIN_PASSWORD.encode(), combined_salt, 10000, dklen=32)
+token = req('/api/admin/login', 'POST', {
+    'challenge': chal['challenge'],
+    'hash': binascii.hexlify(dk).decode()
+})['token']
+
+# Save configuration
+result = req(f'/api/admin/warm-runtime-configs/{CONFIG_NAME}', 'PUT', CONFIG_DATA, token)
+print(f\"✓ Configuration '{CONFIG_NAME}' saved successfully\")
+print(f\"  Image: {result['image']}\")
+print(f\"  Pool size: {result.get('count', 'default')}\")
+"
+        ;;
+
+    delete)
+        if [ $# -ne 2 ]; then
+            echo "Usage: $0 delete <config-name>"
+            exit 1
+        fi
+        CONFIG_NAME="$2"
+        
+        echo "Deleting warm runtime configuration '$CONFIG_NAME'..."
+        kubectl exec -n "$NAMESPACE" "$POD" -- python3 -c "
+import json, hashlib, binascii, urllib.request, urllib.error
+
+ADMIN_PASSWORD = '''$ADMIN_PASSWORD'''
+API_URL = '$RUNTIME_API_URL'
+CONFIG_NAME = '$CONFIG_NAME'
+
+def req(path, method='GET', data=None, token=None):
+    url = f'{API_URL}{path}'
+    headers = {'Content-Type': 'application/json'}
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
+    r = urllib.request.Request(url, method=method, headers=headers)
+    if data:
+        r.data = json.dumps(data).encode('utf-8')
+    try:
+        with urllib.request.urlopen(r) as resp:
+            if resp.status == 204:
+                return None
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        raise Exception(f'HTTP {e.code}: {e.read().decode(\"utf-8\")}')
+
+# Authenticate
+chal = req('/api/admin/challenge')
+combined_salt = (chal['salt'] + chal['challenge']).encode('utf-8')
+dk = hashlib.pbkdf2_hmac('sha256', ADMIN_PASSWORD.encode(), combined_salt, 10000, dklen=32)
+token = req('/api/admin/login', 'POST', {
+    'challenge': chal['challenge'],
+    'hash': binascii.hexlify(dk).decode()
+})['token']
+
+# Delete configuration
+req(f'/api/admin/warm-runtime-configs/{CONFIG_NAME}', 'DELETE', token=token)
+print(f\"✓ Configuration '{CONFIG_NAME}' deleted successfully\")
+"
+        ;;
+
+    *)
+        echo "Error: Unknown command: $COMMAND"
+        echo "Valid commands: list, add, update, delete"
+        exit 1
+        ;;
+esac
+```
+
+Make the script executable:
+
+```bash
+chmod +x manage-warm-runtimes.sh
+```
+
+### Configuration Format
+
+Each warm runtime configuration requires:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `image` | string | ✅ | Full image reference (e.g., `harbor.company.com/project/agent:v1.0`) |
+| `working_dir` | string | ✅ | Working directory inside container (typically `/workspace`) |
+| `command` | array | ✅ | Entrypoint command (typically `["/usr/local/bin/openhands-agent-server", "--port", "60000"]`) |
+| `environment` | object | ✅ | Environment variables as key-value pairs |
+| `count` | integer | ⬜ | Number of warm pods to maintain (default: global pool size) |
+| `run_as_user` | integer | ⬜ | User ID for pod security context |
+| `run_as_group` | integer | ⬜ | Group ID for pod security context |
+| `fs_group` | integer | ⬜ | Filesystem group ID for pod security context |
+| `fuse_s3_mount` | boolean | ⬜ | Use S3-backed workspace (requires fusey setup, default: `false`) |
+
+**Example configuration file** (`php-symfony.json`):
+
+```json
+{
+  "image": "harbor.company.com/web-team/php-symfony:8.4",
+  "working_dir": "/workspace",
+  "command": ["/usr/local/bin/openhands-agent-server", "--port", "60000"],
+  "environment": {
+    "LOG_JSON": "1",
+    "OH_ENABLE_VNC": "0",
+    "OH_CONVERSATIONS_PATH": "/workspace/conversations",
+    "OH_BASH_EVENTS_DIR": "/workspace/bash_events",
+    "OPENVSCODE_SERVER_ROOT": "/openhands/.openvscode-server"
+  },
+  "count": 3,
+  "run_as_user": 10001,
+  "run_as_group": 10001,
+  "fs_group": 10001,
+  "fuse_s3_mount": false
+}
+```
+
+<Note>
+  **Environment variables**: Include the standard OpenHands environment variables shown above. The Runtime API may inject additional variables at runtime (e.g., webhook URLs, CORS origins).
+</Note>
+
+### Common Operations
+
+**List all warm runtime configurations:**
+
+```bash
+./manage-warm-runtimes.sh list
+```
+
+**Add a new configuration:**
+
+```bash
+# Create config file
+cat > php-symfony.json <<EOF
+{
+  "image": "harbor.company.com/web-team/php-symfony:8.4",
+  "working_dir": "/workspace",
+  "command": ["/usr/local/bin/openhands-agent-server", "--port", "60000"],
+  "environment": {
+    "LOG_JSON": "1",
+    "OH_ENABLE_VNC": "0"
+  },
+  "count": 3,
+  "run_as_user": 10001,
+  "run_as_group": 10001,
+  "fs_group": 10001
+}
+EOF
+
+# Add configuration
+./manage-warm-runtimes.sh add php-symfony php-symfony.json
+```
+
+**Update an existing configuration** (e.g., change pool size or update image tag):
+
+```bash
+# Modify config file
+jq '.count = 5 | .image = "harbor.company.com/web-team/php-symfony:8.4.1"' \
+  php-symfony.json > php-symfony-updated.json
+
+# Update
+./manage-warm-runtimes.sh update php-symfony php-symfony-updated.json
+```
+
+**Delete a configuration:**
+
+```bash
+./manage-warm-runtimes.sh delete php-symfony
+```
+
+<Warning>
+  Deleting a configuration removes it from the database but does not immediately stop running warm pods. The warm runtime reconciler will cull excess pods on its next cycle (runs every ~1 minute).
+</Warning>
+
+## Verifying and Monitoring
+
+### Check Configuration Status
+
+After adding or updating a configuration, verify it was saved:
+
+```bash
+./manage-warm-runtimes.sh list
+```
+
+### Monitor Warm Pool Creation
+
+The warm runtime reconciler runs every ~1 minute and creates/culls pods to match configured pool sizes.
+
+**Watch pods being created:**
+
+```bash
+kubectl get pods -n openhands -l openhands.all-hands.dev/warm-runtime=true -w
+```
+
+**Check pod status:**
+
+```bash
+kubectl get pods -n openhands -l openhands.all-hands.dev/warm-runtime=true -o wide
+```
+
+You should see pods with names like `warm-runtime-<config-name>-<hash>` in `Running` state.
+
+### Verify Image Pull
+
+If your custom image is in a private registry, check that pods pulled it successfully:
+
+```bash
+kubectl describe pod -n openhands <pod-name> | grep -A 10 "Events:"
+```
+
+Look for successful `Pulled` events. If you see `ImagePullBackOff` or `ErrImagePull`, check your image pull secret configuration.
+
+### Check Warm Runtime Logs
+
+View logs from a warm runtime pod:
+
+```bash
+# Find a warm pod
+POD=$(kubectl get pods -n openhands -l openhands.all-hands.dev/warm-runtime=true \
+  -o jsonpath='{.items[0].metadata.name}')
+
+# View logs
+kubectl logs -n openhands $POD
+```
+
+Dormant warm runtimes should log something like:
+```
+Deferred init mode enabled (OH_DEFERRED_INIT=true)
+Waiting for POST /api/init to activate...
+```
+
+## Starting Conversations with Custom Images
+
+Once you've configured warm runtime pools, you can start using them. This section explains the complete flow from configuration to running conversations.
+
+### Understanding the Runtime Claim Flow
+
+When a conversation starts, here's what happens:
+
+1. **Client sends request** to OpenHands server (web UI, API, SDK)
+2. **OpenHands server** forwards `POST /start` to Runtime API with:
+   - `image`: Which sandbox image to use
+   - `command`, `working_dir`, `environment`: Runtime parameters
+   - `session_id`: Unique conversation identifier
+
+3. **Runtime API** looks for an available warm runtime where ALL of these match:
+   - ✅ `image` matches exactly
+   - ✅ `command` matches exactly  
+   - ✅ `working_dir` matches exactly
+   - ✅ `environment` matches (after key normalization)
+   - ✅ Pod is unclaimed (`api_key_name IS NULL`)
+
+4. **If match found**: Runtime is claimed and assigned to the conversation (<2 seconds)
+5. **If no match**: New pod is cold-started from the image (20+ seconds)
+
+<Warning>
+  **Exact matching required**: Even small differences (extra environment variable, different command order) prevent warm runtime matching and cause cold starts.
+</Warning>
+
+### Method 1: Direct Runtime API Calls
+
+If you're building custom integrations or automation, call the Runtime API directly.
+
+#### Step 1: Get Your API Key
+
+The Runtime API requires an API key for authentication. For internal OpenHands server usage, this is typically pre-configured. For external integrations:
+
+```bash
+# Retrieve the default API key from Kubernetes
+kubectl get secret default-api-key -n openhands -o jsonpath='{.data.key}' | base64 -d
+```
+
+Or create a dedicated API key using admin endpoints (see [API Reference](#api-reference)).
+
+#### Step 2: Start a Runtime
+
+Call `POST /start` with parameters matching your warm runtime configuration:
+
+```bash
+# Set variables
+RUNTIME_API_URL="https://runtime.your-domain.com"
+API_KEY="your-api-key"  # From step 1
+
+# Start runtime with custom PHP image
+curl -X POST "$RUNTIME_API_URL/start" \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "harbor.company.com/web-team/php-symfony:8.4",
+    "command": ["/usr/local/bin/openhands-agent-server", "--port", "60000"],
+    "working_dir": "/workspace",
+    "environment": {
+      "LOG_JSON": "1",
+      "OH_ENABLE_VNC": "0",
+      "OH_CONVERSATIONS_PATH": "/workspace/conversations",
+      "OH_BASH_EVENTS_DIR": "/workspace/bash_events",
+      "OPENVSCODE_SERVER_ROOT": "/openhands/.openvscode-server"
+    },
+    "session_id": "php-project-session-123",
+    "run_as_user": 10001,
+    "run_as_group": 10001,
+    "fs_group": 10001
+  }'
+```
+
+**Response** (warm runtime claimed):
+```json
+{
+  "runtime_id": "abc123",
+  "session_id": "php-project-session-123",
+  "status": "RUNNING",
+  "url": "https://abc123.runtime.your-domain.com",
+  "image": "harbor.company.com/web-team/php-symfony:8.4",
+  "created_at": "2026-07-08T10:30:45Z"
+}
+```
+
+<Tip>
+  **Warm vs Cold Start**: If the response comes back in under 2-3 seconds, you claimed a warm runtime. If it takes 20+ seconds, the runtime cold-started. Check the `created_at` timestamp.
+</Tip>
+
+#### Step 3: Verify Runtime is Using Your Image
+
+```bash
+# Get runtime details
+RUNTIME_ID="abc123"  # From step 2 response
+
+curl "$RUNTIME_API_URL/runtime/$RUNTIME_ID" \
+  -H "X-API-Key: $API_KEY"
+```
+
+Response shows the image being used:
+```json
+{
+  "runtime_id": "abc123",
+  "status": "RUNNING",
+  "image": "harbor.company.com/web-team/php-symfony:8.4",
+  ...
+}
+```
+
+### Method 2: Via OpenHands SDK
+
+If you're building applications using the OpenHands SDK:
+
+```python
+from openhands_sdk import OpenHands
+
+# Initialize client
+client = OpenHands(
+    runtime_api_url="https://runtime.your-domain.com",
+    api_key="your-api-key"
+)
+
+# Start runtime with custom image
+# IMPORTANT: Parameters must match your warm runtime configuration exactly
+runtime = client.runtime.start(
+    image="harbor.company.com/web-team/php-symfony:8.4",
+    command=["/usr/local/bin/openhands-agent-server", "--port", "60000"],
+    working_dir="/workspace",
+    environment={
+        "LOG_JSON": "1",
+        "OH_ENABLE_VNC": "0",
+        "OH_CONVERSATIONS_PATH": "/workspace/conversations",
+        "OH_BASH_EVENTS_DIR": "/workspace/bash_events",
+        "OPENVSCODE_SERVER_ROOT": "/openhands/.openvscode-server"
+    },
+    session_id="php-project-session-456",
+    run_as_user=10001,
+    run_as_group=10001,
+    fs_group=10001
+)
+
+print(f"Runtime started: {runtime.runtime_id}")
+print(f"Using image: {runtime.image}")
+print(f"Status: {runtime.status}")
+
+# Use the runtime for agent operations
+conversation = client.conversation.create(runtime_id=runtime.runtime_id)
+```
+
+### Method 3: Via OpenHands Web UI
+
+The OpenHands web UI currently uses a default sandbox image for all conversations. To use custom images through the UI, you have several options:
+
+#### Option A: Change the Global Default Image
+
+Configure OpenHands server to use your custom image as the default. This affects **all** web UI conversations.
+
+**For Replicated VM installations:**
+1. Open Admin Console: `https://<your-domain>:30000`
+2. Navigate to **Config** → **Sandbox Image**
+3. Enable **Use a Custom Sandbox Image**
+4. Set:
+   - Repository: `harbor.company.com/web-team/php-symfony`
+   - Tag: `8.4`
+   - Registry credentials (if needed)
+5. Save and deploy
+
+**For Kubernetes Helm installations:**
+
+Update your `values.yaml`:
+```yaml
+openhands:
+  sandbox:
+    defaultImage: "harbor.company.com/web-team/php-symfony:8.4"
+```
+
+Then upgrade:
+```bash
+helm upgrade openhands ./charts/openhands -n openhands -f values.yaml
+```
+
+<Note>
+  This approach uses a **single** default image for all web UI users. If you need different images per project, see Options B or C below.
+</Note>
+
+#### Option B: Per-User or Per-Project Configuration (Requires Code Changes)
+
+For enterprise deployments where different teams need different images, you can extend the OpenHands server to:
+
+1. **Map users/teams to images**: Store user→image mappings in database
+2. **Detect from repository**: Parse project files (e.g., `.openhands.yaml`) to determine required image
+3. **UI selector**: Add a dropdown in the conversation start UI for users to pick an image
+
+This requires custom development. Example flow:
+
+```python
+# In your OpenHands server code
+def determine_sandbox_image(user, repository_url):
+    """Determine which sandbox image to use."""
+    
+    # Option 1: User/team mapping
+    if user.team == "web-team":
+        return "harbor.company.com/web-team/php-symfony:8.4"
+    elif user.team == "mobile-team":
+        return "harbor.company.com/mobile-team/ios-android:latest"
+    
+    # Option 2: Repository detection
+    if repository_url and "symfony" in repository_url.lower():
+        return "harbor.company.com/web-team/php-symfony:8.4"
+    
+    # Fallback to default
+    return "ghcr.io/openhands/agent-server:1.29.0-python"
+
+# When starting conversation, pass to Runtime API
+runtime = runtime_api_client.start(
+    image=determine_sandbox_image(current_user, repo_url),
+    command=[...],
+    ...
+)
+```
+
+#### Option C: Use the REST API Directly
+
+Power users can bypass the web UI and call the OpenHands server API directly:
+
+```bash
+# Start conversation with specific sandbox image
+curl -X POST "https://your-domain.com/api/v1/app-conversations" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "github_repo": "https://github.com/company/php-project",
+    "agent_class": "CodeActAgent",
+    "language": "en",
+    "sandbox_config": {
+      "image": "harbor.company.com/web-team/php-symfony:8.4",
+      "command": ["/usr/local/bin/openhands-agent-server", "--port", "60000"],
+      "working_dir": "/workspace",
+      "environment": {
+        "LOG_JSON": "1",
+        "OH_ENABLE_VNC": "0"
+      },
+      "run_as_user": 10001,
+      "run_as_group": 10001,
+      "fs_group": 10001
+    }
+  }'
+```
+
+<Warning>
+  The exact API endpoint and parameter names vary by OpenHands version. Check your OpenHands server's OpenAPI documentation at `https://your-domain.com/openapi.json` for current API schema.
+</Warning>
+
+### Verifying Warm Runtime Usage
+
+After starting a conversation, verify it used a warm runtime (vs cold start):
+
+**Method 1: Check response time**
+- ✅ Warm runtime claim: 1-3 seconds
+- ❌ Cold start: 20-30+ seconds
+
+**Method 2: Check Runtime API logs**
+
+```bash
+kubectl logs -n openhands -l app.kubernetes.io/name=runtime-api --tail=100 | grep "claim"
+```
+
+Look for log lines like:
+```
+Claimed warm runtime <pod-id> for session <session-id>
+```
+
+**Method 3: Query running runtimes**
+
+```bash
+# Get all current runtimes
+curl "$RUNTIME_API_URL/list" -H "X-API-Key: $API_KEY"
+
+# Check which image a specific runtime is using
+curl "$RUNTIME_API_URL/runtime/$RUNTIME_ID" -H "X-API-Key: $API_KEY" | jq '.image'
+```
+
+### Why Warm Runtime Might Not Be Claimed
+
+If conversations are cold-starting instead of claiming warm runtimes:
+
+1. **Parameter mismatch**: Request parameters don't exactly match warm config
+   - Compare request JSON to `./manage-warm-runtimes.sh list` output
+   - Check for extra/missing environment variables
+   - Verify command array order and format
+
+2. **No available warm pods**: All warm pods are already claimed
+   - Check pool size: `./manage-warm-runtimes.sh list`
+   - Increase `count` if needed
+   - Check pod status: `kubectl get pods -n openhands -l openhands.all-hands.dev/warm-runtime=true`
+
+3. **Pods not ready yet**: Warm pods still starting
+   - Wait 1-2 minutes after adding configuration
+   - Check pod logs: `kubectl logs -n openhands <pod-name>`
+
+4. **Image pull failed**: Pods stuck pulling image
+   - Check events: `kubectl describe pod -n openhands <pod-name>`
+   - Verify registry credentials
+
+## Troubleshooting
+
+### "Admin functionality is disabled" Error
+
+**Cause**: The `ADMIN_PASSWORD` environment variable is not set in the Runtime API deployment.
+
+**Solution**: Follow the [Set Up Admin Authentication](#2-set-up-admin-authentication) steps to configure the admin password.
+
+### Authentication Failures (401 Unauthorized)
+
+**Cause**: JWT token expired (tokens last 24 hours) or incorrect password.
+
+**Solution**: 
+- Verify your saved admin password is correct
+- Re-authenticate to get a new token
+- Check runtime-api logs for authentication errors
+
+### Configuration Added But No Pods Created
+
+**Possible causes:**
+1. **Image doesn't exist or can't be pulled**: Check image name and registry credentials
+2. **Warm runtime reconciler not running**: Check runtime-api logs
+3. **Resource constraints**: Check cluster capacity
+
+**Debug steps:**
+
+```bash
+# Check runtime-api logs
+kubectl logs -n openhands -l app.kubernetes.io/name=runtime-api | grep -i "warm"
+
+# Check pending pods
+kubectl get pods -n openhands -l openhands.all-hands.dev/warm-runtime=true
+
+# Describe a pending pod to see why it's not starting
+kubectl describe pod -n openhands <pod-name>
+```
+
+### Conversation Uses Wrong Image (Cold Start Instead of Warm Pool)
+
+**Cause**: Request parameters don't exactly match warm runtime configuration.
+
+**Solution**: 
+1. List your warm runtime config: `./manage-warm-runtimes.sh list`
+2. Compare request parameters (image, command, working_dir, environment) to config
+3. Ensure exact match—even whitespace or key ordering differences prevent matching
+
+### Image Pull Errors (ImagePullBackOff)
+
+**Cause**: Private registry credentials not configured or incorrect.
+
+**Solution**:
+
+```bash
+# Verify image pull secret exists
+kubectl get secret -n openhands | grep registry
+
+# Check secret contents
+kubectl get secret <secret-name> -n openhands -o yaml
+
+# Recreate if needed
+kubectl delete secret <secret-name> -n openhands
+kubectl create secret docker-registry <secret-name> \
+  --docker-server=registry.company.com \
+  --docker-username=username \
+  --docker-password=password \
+  --namespace openhands
+
+# Verify runtime-api deployment references the secret
+kubectl get deployment runtime-api -n openhands -o yaml | grep imagePullSecrets
+```
+
+### Pods Stuck in Pending State
+
+**Cause**: Insufficient cluster resources (CPU, memory, storage).
+
+**Solution**: Check node resources and pod resource requests:
+
+```bash
+# Check node capacity
+kubectl describe nodes | grep -A 5 "Allocated resources"
+
+# Check pod resource requests
+kubectl get pods -n openhands -l openhands.all-hands.dev/warm-runtime=true -o yaml | grep -A 3 "resources:"
+```
+
+## API Reference
+
+### Warm Runtime Configuration Endpoints
+
+All endpoints require admin JWT authentication (see [Authentication Flow](#authentication-flow)).
+
+#### List Configurations
+
+```http
+GET /api/warm-runtime-configs
+Authorization: Bearer {admin-jwt}
+```
+
+**Response** (200 OK):
+```json
+{
+  "configs": [
+    {
+      "name": "php-symfony",
+      "image": "harbor.company.com/web-team/php-symfony:8.4",
+      "working_dir": "/workspace",
+      "command": ["/usr/local/bin/openhands-agent-server", "--port", "60000"],
+      "environment": {"LOG_JSON": "1"},
+      "count": 3,
+      "run_as_user": 10001,
+      "run_as_group": 10001,
+      "fs_group": 10001,
+      "fuse_s3_mount": false
+    }
+  ]
+}
+```
+
+#### Create or Update Configuration
+
+```http
+PUT /api/admin/warm-runtime-configs/{config-name}
+Authorization: Bearer {admin-jwt}
+Content-Type: application/json
+
+{
+  "image": "string",
+  "working_dir": "string",
+  "command": ["string"],
+  "environment": {"key": "value"},
+  "count": 2,
+  "run_as_user": 10001,
+  "run_as_group": 10001,
+  "fs_group": 10001,
+  "fuse_s3_mount": false
+}
+```
+
+**Response** (200 OK): Returns the saved configuration.
+
+#### Delete Configuration
+
+```http
+DELETE /api/admin/warm-runtime-configs/{config-name}
+Authorization: Bearer {admin-jwt}
+```
+
+**Response** (204 No Content): Configuration deleted successfully.
+
+## Image Lifecycle Management
+
+When managing custom images over time, you need to consider how image updates affect paused conversations that may need to resume later.
+
+### How Resume Works
+
+When a conversation is paused and later resumed, the behavior depends on your storage configuration:
+
+#### S3-Backed Runtimes (Fuse Mount)
+
+**What happens:**
+- Resume claims a new warm pod matching the **original image tag** used when the conversation started
+- If no warm pod matches, a fresh pod is created with the original image tag
+- Workspace data is restored from S3
+
+**Implications:**
+- Old image tags must remain available in your registry
+- Updating warm pool config to new image tag does NOT affect resumed conversations
+- If original image tag is deleted from registry → resume fails with `ImagePullBackOff`
+
+#### Traditional PVC-Backed Runtimes
+
+**What happens:**
+- Resume scales the existing deployment back to 1 replica
+- Before resuming, checks for a warm config named `"current"` and updates deployment to that image
+- Workspace data persists in PVC attached to deployment
+
+**Implications:**
+- Resumed conversations automatically get updated to "current" image if configured
+- Image updates could introduce compatibility issues with existing workspace state
+- Less common in enterprise deployments (S3-backed is preferred)
+
+### Image Update Strategies
+
+#### Strategy 1: Keep Old Tags Available (Recommended for S3-backed)
+
+When you update to a new image version, keep old tags in your registry:
+
+```bash
+# Build and push new version
+docker tag harbor.company.com/web-team/php-symfony:8.4 \
+  harbor.company.com/web-team/php-symfony:8.4-20260708
+
+docker push harbor.company.com/web-team/php-symfony:8.4-20260708
+docker push harbor.company.com/web-team/php-symfony:8.4
+
+# Update warm pool config to new tag
+jq '.image = "harbor.company.com/web-team/php-symfony:8.4-20260708"' \
+  php-config.json > php-config-updated.json
+./manage-warm-runtimes.sh update php-symfony php-config-updated.json
+```
+
+**Advantages:**
+- ✅ Old conversations can always resume
+- ✅ Clear version history
+- ✅ Can rollback if new version has issues
+
+**Disadvantages:**
+- ❌ Registry storage grows over time
+- ❌ Need cleanup process for very old tags
+
+**Cleanup guidance:**
+- Check Runtime API for active/paused runtimes using old tags
+- Only delete tags with no active or paused runtimes
+- Set registry retention policies (e.g., keep last 10 tags)
+
+```bash
+# Check which images are currently in use
+curl "$RUNTIME_API_URL/list?show_all=true" -H "X-API-Key: $API_KEY" \
+  | jq -r '.[] | .image' | sort | uniq -c
+
+# Delete old tags only after confirming no usage
+```
+
+#### Strategy 2: Force Fresh Start (For Breaking Changes)
+
+If a new image version is incompatible with old workspace state, inform users to start fresh conversations:
+
+```bash
+# Update warm pool to new incompatible version
+jq '.image = "harbor.company.com/web-team/php-symfony:9.0"' \
+  php-config.json > php-config-v9.json
+./manage-warm-runtimes.sh update php-symfony php-config-v9.json
+
+# Keep old version available temporarily under different config name
+jq '.image = "harbor.company.com/web-team/php-symfony:8.4"' \
+  php-config.json > php-config-v8-legacy.json
+./manage-warm-runtimes.sh add php-symfony-v8-legacy php-config-v8-legacy.json
+```
+
+**Communication to users:**
+- Announce the breaking change in advance
+- Ask users to complete or stop ongoing conversations
+- After migration window, stop and remove paused runtimes on old version
+
+```bash
+# List paused runtimes (these need attention)
+curl "$RUNTIME_API_URL/list?show_all=true" -H "X-API-Key: $API_KEY" \
+  | jq '.[] | select(.status == "PAUSED")'
+
+# After grace period, stop old runtimes
+# (Users can't resume anyway if you've deleted the old image)
+```
+
+#### Strategy 3: Gradual Rollout
+
+Test new images with a small pool before full replacement:
+
+```bash
+# Add new version alongside existing
+./manage-warm-runtimes.sh add php-symfony-v2 php-config-v2.json
+
+# Gradually shift load by adjusting pool sizes
+jq '.count = 1' php-config-v1.json | ./manage-warm-runtimes.sh update php-symfony -
+jq '.count = 5' php-config-v2.json | ./manage-warm-runtimes.sh update php-symfony-v2 -
+
+# Monitor for issues, then complete migration
+./manage-warm-runtimes.sh delete php-symfony  # Remove v1
+```
+
+### Best Practices
+
+1. **Use semantic versioning** in image tags (e.g., `php-symfony:8.4.1`, not `latest`)
+2. **Keep previous 3-5 versions** available for resume
+3. **Set registry retention policies** to auto-cleanup very old tags
+4. **Monitor paused runtimes** before deleting old images
+5. **Document breaking changes** and migration paths for users
+6. **Test resume** after image updates to verify compatibility
+
+### What Happens When Image is Missing
+
+If a runtime tries to resume but the image tag no longer exists:
+
+**Symptoms:**
+- Resume request times out or returns error after 2+ minutes
+- Runtime status stuck in `STARTING` or moves to `ERROR`
+- Pod events show `ImagePullBackOff` or `ErrImagePull`
+
+**Check pod status:**
+```bash
+# Find the pod
+kubectl get pods -n openhands | grep runtime-
+
+# Check events
+kubectl describe pod -n openhands runtime-<runtime-id> | grep -A 10 Events
+```
+
+**Resolution:**
+1. Push the missing image tag back to registry, OR
+2. Stop the runtime and ask user to start a new conversation
+
+```bash
+# Stop failed runtime
+curl -X POST "$RUNTIME_API_URL/stop" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"runtime_id": "abc123"}'
+```
+
+## Migration from Legacy Approach
+
+If you're currently using the Replicated Admin Console "Custom Sandbox Image" settings (single global image), you can migrate to warm runtime pools:
+
+1. **Note your current image**: Check Admin Console → Config → Sandbox Image
+2. **Create warm runtime config** for your current image using the steps above
+3. **(Optional)** Disable the Admin Console setting after verifying warm pools work
+4. **Add additional images** for different project types as needed
+
+The new approach doesn't interfere with the old approach—they can coexist during migration.
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Building Custom Images" icon="docker" href="/sdk/guides/agent-server/docker-sandbox">
+    Complete guide to building agent-server images
+  </Card>
+  <Card title="K8s Installation" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Kubernetes installation overview
+  </Card>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Configure sandbox resource limits
+  </Card>
+  <Card title="Deferred Init Guide" icon="hourglass-start" href="/sdk/guides/agent-server/deferred-init">
+    Deep dive into warm pool lifecycle
+  </Card>
+</CardGroup>
