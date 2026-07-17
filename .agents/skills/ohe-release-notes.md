@@ -2,7 +2,7 @@
 name: ohe-release-notes
 description: Generate consolidated OpenHands Enterprise release notes from multiple component repos
 triggers:
-  - ohe-release-notes
+  - /ohe-release-notes
 ---
 
 # OpenHands Enterprise Release Notes Generator
@@ -19,13 +19,13 @@ ranges for four components. If any are missing, ask before proceeding.
 
 Ask the user for **all four** component version ranges and the **Enterprise release version**:
 
-| Input | Example | Description |
-|-------|---------|-------------|
-| Enterprise release version | `0.24.0` | The version number for the `## X.X.X` heading |
-| automations | `1.1.5 to 1.1.5` | Previous → new version (same = no changes) |
-| enterprise-server | `cloud-1.40.1 to 1.46.2` | Tags in `OpenHands/OpenHands` repo |
-| runtime-api | `0.3.1 to 0.50` | Tags in `OpenHands/runtime-api` repo (prefixed `v` in GitHub) |
-| OpenHands-Cloud | `0.13.3 to 0.24.0` | Tags in `OpenHands/OpenHands-Cloud` repo (prefixed `openhands/`) |
+| Input                      | Example                        | Description                                                      |
+|----------------------------|--------------------------------|------------------------------------------------------------------|
+| Enterprise release version | `0.24.0`                       | The version number for the `## X.X.X` heading                    |
+| automations                | `1.1.5 to 1.1.7`               | Tags in `OpenHands/automation` repo                              |
+| enterprise-server          | `cloud-1.40.1 to cloud-1.46.2` | Tags in `OpenHands/OpenHands` repo                               |
+| runtime-api                | `0.3.1 to 0.5.0`               | Tags in `OpenHands/runtime-api` repo (prefixed `v` in GitHub)    |
+| OpenHands-Cloud            | `0.13.3 to 0.24.0`             | Tags in `OpenHands/OpenHands-Cloud` repo (prefixed `openhands/`) |
 
 **software-agent-sdk** is derived automatically — you do NOT ask the user for it. See the
 "Deriving the software-agent-sdk version range" section below.
@@ -38,16 +38,6 @@ If the user omits any of the four inputs above, ask:
 > - **runtime-api**: previous → new (tags are `vX.Y.Z` in OpenHands/runtime-api)
 > - **OpenHands-Cloud**: previous → new (tags are `openhands/X.Y.Z` in OpenHands/OpenHands-Cloud)
 > - **Enterprise release version**: the version number for the heading (e.g. `0.25.0`)
-
-## Component repositories and tag formats
-
-| Component | GitHub Repo | Tag format | Example tags |
-|-----------|-------------|------------|--------------|
-| enterprise-server | `OpenHands/OpenHands` | `cloud-X.Y.Z` | `cloud-1.41.0`, `cloud-1.46.2` |
-| runtime-api | `OpenHands/runtime-api` | `vX.Y.Z` | `v0.4.0`, `v0.5.0` |
-| OpenHands-Cloud | `OpenHands/OpenHands-Cloud` | `openhands/X.Y.Z` | `openhands/0.14.0`, `openhands/0.24.0` |
-| software-agent-sdk | `OpenHands/software-agent-sdk` | `vX.Y.Z` | `v1.35.0`, `v1.36.0` |
-| automations | *(no repo — version noted only)* | — | — |
 
 ## Step-by-step procedure
 
@@ -63,8 +53,6 @@ curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
   "https://api.github.com/repos/{owner}/{repo}/releases?per_page=100" \
   | python3 -c "import json,sys; [print(r['tag_name']) for r in json.load(sys.stdin)]"
 ```
-
-If the "previous" tag doesn't exist as a release, use the nearest earlier tag as the boundary.
 
 ### 2. Fetch release notes
 
@@ -128,18 +116,18 @@ Within each section, sort items into:
 
 Remove these automated/housekeeping lines that don't add value to customer-facing release notes:
 
-| Pattern | Reason |
-|---------|--------|
-| `chore(main): release X.X.X` | Automated release PRs |
-| `chore: bump SDK packages to vX.X.X` | Automated dependency bumps |
-| `chore: bump SDK and agent-server to X.X.X` | Automated dependency bumps |
-| `fix(backport): ...` | Backport cherry-picks (the original fix is already listed) |
-| `feat: bump agent-server to ...` | Version bump PRs, not user-facing features |
-| `feat: bump image tag to ...` | Version bump PRs, not user-facing features |
-| `feat(openhands): bump image tag to ...` | Version bump PRs, not user-facing features |
-| `feat(runtime-api): bump image tag to ...` | Version bump PRs, not user-facing features |
-| `Release vX.Y.Z` | Automated release PRs in software-agent-sdk |
-| `Verify ... model` | Model verification entries in software-agent-sdk |
+| Pattern                                     | Reason                                                     |
+|---------------------------------------------|------------------------------------------------------------|
+| `chore(main): release X.X.X`                | Automated release PRs                                      |
+| `chore: bump SDK packages to vX.X.X`        | Automated dependency bumps                                 |
+| `chore: bump SDK and agent-server to X.X.X` | Automated dependency bumps                                 |
+| `fix(backport): ...`                        | Backport cherry-picks (the original fix is already listed) |
+| `feat: bump agent-server to ...`            | Version bump PRs, not user-facing features                 |
+| `feat: bump image tag to ...`               | Version bump PRs, not user-facing features                 |
+| `feat(openhands): bump image tag to ...`    | Version bump PRs, not user-facing features                 |
+| `feat(runtime-api): bump image tag to ...`  | Version bump PRs, not user-facing features                 |
+| `Release vX.Y.Z`                            | Automated release PRs in software-agent-sdk                |
+| `Verify ... model`                          | Model verification entries in software-agent-sdk           |
 
 ### 5. Write the page
 
@@ -205,7 +193,6 @@ icon: clipboard-list
 - Separate component sections with `---` horizontal rules
 - Keep the exact bullet text from the original release notes (author, PR link)
 - If a category has zero items after filtering, omit that sub-heading entirely
-- Also filter out `Release vX.Y.Z` and `Verify ... model` lines from SDK notes
 
 ### 6. Update navigation
 
