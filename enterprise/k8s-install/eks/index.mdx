@@ -1,0 +1,139 @@
+---
+title: Amazon EKS
+description: Prepare an Amazon EKS cluster to run OpenHands Enterprise
+icon: aws
+---
+
+Running OpenHands Enterprise on Amazon EKS follows the standard
+[Helm install](/enterprise/k8s-install/installation), with a few EKS-specific choices for node
+groups, storage, ingress, and the sandbox runtime. This guide covers preparing the cluster; once
+it's ready, follow the Helm install to deploy.
+
+## Cluster Requirements
+
+| Requirement | Recommendation |
+|---|---|
+| EKS version | 1.32–1.35 (the range [Sysbox](/enterprise/k8s-install/eks/sysbox) supports) |
+| Add-ons | VPC CNI, CoreDNS, kube-proxy, and the **EBS CSI driver** (sandboxes and stateful components use EBS volumes) |
+| Storage class | A `gp3` StorageClass backed by the EBS CSI driver |
+| Metrics | Metrics Server, for `kubectl top` and autoscaling |
+
+The chart's default sandbox storage class (`standard-rwo`) is GKE-only. Set
+`runtime-api.env.STORAGE_CLASS` to your `gp3` class or sandboxes will never start.
+
+## Node Groups
+
+OpenHands runs two very different workloads, so use two node groups:
+
+- **General** — the OpenHands services (server, runtime API, Keycloak, LiteLLM, Redis) and the
+  cluster add-ons (ingress, DNS, and certificate controllers). Standard EKS nodes on the Amazon
+  Linux 2023 AMI; on-demand or Spot.
+- **Sysbox** — the agent sandboxes, one pod per session. These need the Sysbox runtime, which
+  requires an **Ubuntu** AMI and at least **4 vCPU** per node, on **on-demand** capacity. See
+  [Installing Sysbox](/enterprise/k8s-install/eks/sysbox).
+
+We recommend [Karpenter](https://karpenter.sh/) for autoscaling both groups (managed node groups
+also work). The sandbox group is the one that scales with usage — size it by peak concurrent
+sessions, and configure it so a node is only removed when empty, never while a session is running.
+
+Sandboxes are pinned to Sysbox nodes automatically by the `sysbox-runc` RuntimeClass. Keep the
+ingress, DNS, and certificate controllers on the general group with a node selector.
+
+### Sizing the Sandbox Nodes
+
+Each sandbox requests **0.5 vCPU**, **3 GiB memory** (request = limit, so it's guaranteed), and
+**10 GiB** of ephemeral storage. Memory is usually the binding constraint, so `m`-family instances
+(4 GiB per vCPU) pack most efficiently:
+
+| Instance | vCPU / memory | Sandboxes per node | Bound by |
+|---|---|---|---|
+| `c6i.2xlarge` | 8 / 16 GiB | ~4 | memory |
+| `m6i.2xlarge` | 8 / 32 GiB | ~9 | memory |
+| `r6i.2xlarge` | 8 / 64 GiB | ~14 | CPU |
+| `m6i.4xlarge` | 16 / 64 GiB | ~19 | memory |
+
+Two things to size for:
+
+- **Root volume** — ephemeral scratch is `10 GiB × sandboxes per node`. A full `m6i.4xlarge` needs
+  ~190 GiB of scratch, so give Sysbox nodes a large root volume (200 GiB or more), or prefer more,
+  smaller nodes.
+- **Warm capacity** — a new sandbox otherwise waits for a node to boot, which takes a few minutes.
+  Keeping a small pool of spare capacity (for example a low-priority placeholder Deployment sized to
+  one sandbox) lets sessions start instantly. Size it to your expected burst.
+
+For per-pod tuning — larger sandboxes, server replicas, autoscaling — see
+[Resource Limits](/enterprise/k8s-install/resource-limits).
+
+## Object Storage
+
+OpenHands stores conversation and session state in a file store. The bundled MinIO is ephemeral;
+for production, back it with an **S3 bucket**:
+
+1. Create a bucket in the cluster's region.
+2. Grant access with either an IAM user access key scoped to the bucket, or — to avoid a long-lived
+   credential — IRSA / EKS Pod Identity.
+3. For the access-key approach, store the credentials in a secret:
+
+```bash
+kubectl -n openhands create secret generic openhands-s3-credentials \
+  --from-literal=AWS_ACCESS_KEY_ID=<access-key-id> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<secret-access-key>
+```
+
+Then point the file store at the bucket in your values:
+
+```yaml
+filestore:
+  ephemeral: false
+  type: s3
+  bucket: <your-bucket>
+  region: <your-region>
+  existingSecret: openhands-s3-credentials
+```
+
+## Database
+
+Use an external **Amazon RDS for PostgreSQL** instance rather than the bundled database. Place it in
+the cluster's VPC, reachable from the nodes on port 5432. See
+[External PostgreSQL](/enterprise/external-postgres) for the values.
+
+## Ingress
+
+Install an ingress controller on the general node group and expose it with an **AWS Network Load
+Balancer**, provisioned directly from Service annotations (no AWS Load Balancer Controller required).
+Both Traefik and NGINX are supported:
+
+- **Traefik (recommended)** — set `ingress.class: traefik` in your OpenHands values. Its default
+  `TLSStore` lets one wildcard certificate serve every host.
+- **NGINX** — set `ingress.class: nginx` and use `nginx.ingress.kubernetes.io/*` annotations for
+  per-ingress tuning.
+
+Expose the controller's Service as an NLB in the controller's own chart values:
+
+```yaml
+service:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+```
+
+Then set up certificates and DNS records for the OpenHands hostnames — see
+[DNS and TLS](/enterprise/k8s-install/eks/dns-and-tls).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/eks/sysbox">
+    Install the sandbox runtime on your Sysbox node group.
+  </Card>
+  <Card title="DNS and TLS" icon="lock" href="/enterprise/k8s-install/eks/dns-and-tls">
+    Automate records and certificates with external-dns and cert-manager.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy OpenHands once the cluster is ready.
+  </Card>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Size memory, CPU, and replicas for production.
+  </Card>
+</CardGroup>
