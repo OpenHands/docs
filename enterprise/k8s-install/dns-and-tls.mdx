@@ -4,9 +4,10 @@ description: Automate DNS records and TLS certificates with external-dns and cer
 icon: lock
 ---
 
-OpenHands needs DNS records and TLS certificates for its hostnames. On EKS we recommend automating
-both with **external-dns** (Route 53) and **cert-manager** (Let's Encrypt). If you can't run those,
-provision the records and certificates by hand — see [Manual Setup](#manual-setup).
+OpenHands needs DNS records and TLS certificates for its hostnames. We recommend automating both with
+**external-dns** and **cert-manager** — they run on any Kubernetes distribution and support the major
+cloud DNS providers. If you can't run them, provision the records and certificates by hand — see
+[Manual Setup](#manual-setup).
 
 ## Hostnames
 
@@ -20,34 +21,37 @@ OpenHands serves these hostnames, using `openhands.example.com` as the base doma
 | `runtime-api.openhands.example.com` | Runtime API |
 | `*.runtime.openhands.example.com` | Per-session sandboxes |
 
-All of these resolve to your ingress load balancer (the NLB). The sandbox entry must be a
-**wildcard** — each session gets its own subdomain.
+All of these resolve to your ingress load balancer. The sandbox entry must be a **wildcard** — each
+session gets its own subdomain.
 
 ## external-dns
 
-external-dns watches your Ingresses and Services and creates the matching Route 53 records
-automatically.
+external-dns watches your Ingresses and Services and creates the matching DNS records automatically.
+It supports many providers, including Amazon Route 53, Google Cloud DNS, Azure DNS, and Cloudflare.
 
-- Install it from its [Helm chart](https://kubernetes-sigs.github.io/external-dns/) onto the general
-  node group.
-- Grant it access to your hosted zone with IRSA or EKS Pod Identity: `route53:ChangeResourceRecordSets`
-  on the zone, plus `route53:ListHostedZones` and `route53:ListResourceRecordSets`.
+- Install it from its [Helm chart](https://kubernetes-sigs.github.io/external-dns/).
+- Set `provider` to your DNS provider and grant it access to your zone (the access mechanism is
+  provider-specific).
 - Recommended settings:
 
 ```yaml
 provider:
-  name: aws
-policy: upsert-only          # only ever create/update, never delete
+  name: aws                   # or google, azure, cloudflare, ...
+policy: upsert-only           # only ever create/update, never delete
 registry: txt
 txtOwnerId: openhands
 domainFilters:
-  - openhands.example.com    # only manage names under your base domain
+  - openhands.example.com     # only manage names under your base domain
 ```
 
+With `upsert-only` and a TXT registry, external-dns only ever touches records it created.
+
 <Note>
-  If your hosted zone is a parent of the domain filter (zone `example.com`, filter
-  `openhands.example.com`), add the `--aws-zone-match-parent` flag, or external-dns matches no zone
-  and creates nothing.
+  **Amazon EKS / Route 53.** Grant access with IRSA or EKS Pod Identity:
+  `route53:ChangeResourceRecordSets` on the zone, plus `route53:ListHostedZones` and
+  `route53:ListResourceRecordSets`. If your hosted zone is a *parent* of the domain filter (zone
+  `example.com`, filter `openhands.example.com`), add the `--aws-zone-match-parent` flag, or
+  external-dns matches no zone and creates nothing.
 </Note>
 
 ## cert-manager
@@ -57,11 +61,12 @@ the only one that can issue the **wildcard** certificate the sandbox hostnames n
 
 <Steps>
   <Step title="Install cert-manager">
-    Install it from its [Helm chart](https://cert-manager.io/docs/installation/helm/) onto the
-    general node group, and grant it Route 53 access with IRSA or EKS Pod Identity
-    (`route53:ChangeResourceRecordSets` on the zone and `route53:GetChange`).
+    Install it from its [Helm chart](https://cert-manager.io/docs/installation/helm/), and grant it
+    access to your DNS provider so it can solve DNS-01 challenges.
   </Step>
   <Step title="Create a ClusterIssuer">
+    The `solvers` block is specific to your DNS provider — the Route 53 solver is shown here.
+
     ```yaml
     apiVersion: cert-manager.io/v1
     kind: ClusterIssuer
@@ -75,7 +80,7 @@ the only one that can issue the **wildcard** certificate the sandbox hostnames n
           name: letsencrypt-prod
         solvers:
           - dns01:
-              route53:
+              route53:                 # swap for cloudDNS, azureDNS, cloudflare, ...
                 hostedZoneID: <your-zone-id>
     ```
 
@@ -107,14 +112,20 @@ the only one that can issue the **wildcard** certificate the sandbox hostnames n
   </Step>
 </Steps>
 
+<Note>
+  **Amazon EKS / Route 53.** Grant cert-manager Route 53 access with IRSA or EKS Pod Identity:
+  `route53:ChangeResourceRecordSets` on the zone and `route53:GetChange`. Use the `route53` solver as
+  shown above.
+</Note>
+
 ## Manual Setup
 
 If you don't run external-dns and cert-manager, provision these by hand and point the ingress
 controller at them.
 
-**DNS** — create a record for each hostname in the table above, all pointing to your NLB (a CNAME to
-the NLB hostname, or a Route 53 alias). The sandbox record must be the wildcard
-`*.runtime.openhands.example.com`.
+**DNS** — create a record for each hostname in the table above, all pointing to your ingress load
+balancer (typically a CNAME to the load balancer's hostname, or a cloud DNS alias). The sandbox
+record must be the wildcard `*.runtime.openhands.example.com`.
 
 **TLS** — obtain certificates covering those hostnames and load them into the ingress controller as
 Kubernetes TLS secrets. A single wildcard isn't enough, because the hostnames sit at different
@@ -128,8 +139,8 @@ depths. You need:
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Amazon EKS" icon="aws" href="/enterprise/k8s-install/eks/index">
-    Back to the EKS cluster setup overview.
+  <Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/sysbox">
+    Install the sandbox runtime on your sandbox nodes.
   </Card>
   <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
     Deploy OpenHands once the cluster is ready.
