@@ -1,0 +1,88 @@
+---
+title: Installing Sysbox
+description: Install the Sysbox runtime on your sandbox node group
+icon: cube
+---
+
+OpenHands runs each agent session in a sandbox that uses [Sysbox](https://github.com/nestybox/sysbox)
+for isolation — sandboxes run nested containers and mount `sysfs`, which the default runtime can't do
+safely. Install Sysbox on the node group that hosts sandboxes.
+
+## Node Requirements
+
+Sysbox nodes must:
+
+- Run an **Ubuntu** AMI (Canonical publishes EKS-optimized Ubuntu images). Amazon Linux is not
+  supported.
+- Have at least **4 vCPU** and 4 GiB of memory.
+- Run a Kubernetes version in Sysbox's supported range (currently 1.32–1.35).
+
+This is the Sysbox node group from [Amazon EKS](/enterprise/k8s-install/eks/index#node-groups).
+
+## Install Sysbox
+
+Sysbox installs per node via the `sysbox-deploy-k8s` DaemonSet. It targets nodes labeled
+`sysbox-install=yes`, installs the runtime, and registers a `sysbox-runc` RuntimeClass.
+
+<Steps>
+  <Step title="Label the sandbox nodes">
+    ```bash
+    kubectl label nodes <node-name> sysbox-install=yes
+    ```
+
+    With Karpenter or a managed node group, set this label on the node group (or NodePool) so every
+    node it launches is labeled automatically.
+  </Step>
+  <Step title="Apply the installer">
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/nestybox/sysbox/master/sysbox-k8s-manifests/sysbox-install.yaml
+    ```
+  </Step>
+  <Step title="Confirm the RuntimeClass exists">
+    ```bash
+    kubectl get runtimeclass sysbox-runc
+    ```
+  </Step>
+</Steps>
+
+The RuntimeClass carries a node selector that pins any pod using it to Sysbox nodes, so sandboxes
+only schedule where the runtime is installed.
+
+## Point OpenHands at Sysbox
+
+Tell the runtime API to launch sandboxes with the Sysbox runtime class. On EKS (containerd) you also
+need to enable native user namespaces, or sandboxes fail to mount `sysfs`:
+
+```yaml
+runtime-api:
+  env:
+    RUNTIME_CLASS: sysbox-runc
+    SET_HOST_USERS: "true"
+```
+
+`SET_HOST_USERS: "true"` runs each sandbox pod with `hostUsers: false` (a native Kubernetes user
+namespace). This is required on containerd — the CRI-O user-namespace annotation Sysbox uses
+elsewhere has no effect there.
+
+## Verify
+
+Start a conversation in OpenHands, then confirm the sandbox pod landed on a Sysbox node with the
+runtime class applied:
+
+```bash
+kubectl get pod <sandbox-pod> -n openhands \
+  -o jsonpath='{.spec.runtimeClassName}{"\n"}'
+```
+
+The output should be `sysbox-runc`.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DNS and TLS" icon="lock" href="/enterprise/k8s-install/eks/dns-and-tls">
+    Set up records and certificates for the OpenHands hostnames.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy OpenHands once the cluster is ready.
+  </Card>
+</CardGroup>
