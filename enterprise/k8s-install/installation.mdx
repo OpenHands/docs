@@ -1,0 +1,317 @@
+---
+title: Install with Helm
+description: End-to-end installation of OpenHands Enterprise on Kubernetes using Helm
+icon: ship
+---
+
+OpenHands Enterprise is distributed as a Helm chart through the Replicated registry.
+Your license credentials authenticate the chart download, and the chart embeds your
+license automatically at install time.
+
+<Note>
+  Helm-based installation requires an OpenHands Enterprise license. If you don't have
+  one yet, [register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup)
+  or [contact our team](https://openhands.dev/contact) to get set up.
+</Note>
+
+## Prerequisites
+
+- A Kubernetes cluster with a default storage class and an ingress controller
+  (see [Resource Limits](/enterprise/k8s-install/resource-limits) for sizing guidance)
+- **Helm v4 or later**
+- `kubectl` access to the target cluster
+- Your **license ID** and the **email address** registered with your license
+  (both provided by our team)
+- **LLM credentials** from your chosen provider, for example an Anthropic API key
+  from the [Anthropic Console](https://console.anthropic.com/)
+- DNS records you control, following the `app.<base-domain>` layout used
+  throughout this guide (with `openhands.example.com` as the base):
+  `app.openhands.example.com` (application), `auth.app.openhands.example.com`
+  (login), `runtime-api.openhands.example.com`, and a **wildcard**
+  `*.runtime.openhands.example.com` for runtime sandboxes. These point at your
+  cluster's ingress; see the Quick Start's
+  [DNS checks](/enterprise/quick-start#dns-checks) for the full hostname list.
+- **TLS certificates covering all of the hostnames above**, which you provide.
+- An **authentication method** for user login — GitLab, Bitbucket Data Center,
+  and more are supported; this guide uses a **GitHub App**. See
+  [Creating a GitHub App](/enterprise/quick-start#create-a-github-app).
+
+## Step 1: Log in to the registry
+
+Authenticate Helm against the Replicated registry using your license:
+
+```bash
+helm registry login registry.replicated.com \
+  --username <your-license-email> \
+  --password <your-license-id>
+```
+
+## Step 2: Create the namespaces and secrets
+
+We recommend running agent sandboxes in a namespace separate from the
+application. Sandboxes run agent-authored code, so a dedicated namespace keeps
+them isolated from the application, database, and secrets. Create both
+namespaces now:
+
+```bash
+kubectl create namespace openhands
+kubectl create namespace openhands-runtimes
+```
+
+The chart references several Kubernetes secrets that you create ahead of
+installation, all in the `openhands` namespace:
+
+```bash
+kubectl -n openhands create secret generic jwt-secret \
+  --from-literal=jwt-secret=<random-string>
+
+kubectl -n openhands create secret generic keycloak-admin \
+  --from-literal=admin-password=<random-string>
+
+kubectl -n openhands create secret generic keycloak-realm \
+  --from-literal=realm-name=allhands \
+  --from-literal=server-url=http://keycloak \
+  --from-literal=client-id=allhands \
+  --from-literal=client-secret=<random-string> \
+  --from-literal=smtp-password=<smtp-password>
+
+kubectl -n openhands create secret generic postgres-password \
+  --from-literal=username=postgres \
+  --from-literal=password=<random-string> \
+  --from-literal=postgres-password=<random-string>
+
+kubectl -n openhands create secret generic redis \
+  --from-literal=redis-password=<random-string>
+
+kubectl -n openhands create secret generic lite-llm-api-key \
+  --from-literal=lite-llm-api-key=<random-string>
+
+kubectl -n openhands create secret generic admin-password \
+  --from-literal=admin-password=<random-string>
+
+kubectl -n openhands create secret generic default-api-key \
+  --from-literal=default-api-key=<random-string>
+
+kubectl -n openhands create secret generic sandbox-api-key \
+  --from-literal=sandbox-api-key=<random-string>
+
+kubectl -n openhands create secret generic litellm-env-secrets \
+  --from-literal=ANTHROPIC_API_KEY=<your-llm-api-key>
+```
+
+Then create the secret for user authentication. Other providers (GitLab,
+Bitbucket Data Center, and more) are supported, but this guide uses GitHub
+throughout. If you don't have a GitHub App yet, run our
+[script](/enterprise/quick-start#create-a-github-app) — its output provides
+every value below, and the private key file is written to its `keys`
+directory:
+
+```bash
+kubectl -n openhands create secret generic github-app \
+  --from-literal=app-id=<github-app-id> \
+  --from-literal=app-slug=<github-app-slug> \
+  --from-literal=client-id=<github-app-client-id> \
+  --from-literal=client-secret=<github-app-client-secret> \
+  --from-literal=private-key="$(cat <github-app-private-key>.pem)" \
+  --from-literal=webhook-secret=<github-app-webhook-secret>
+```
+
+<Tip>
+  Generate strong random values (for example with `openssl rand -hex 32`) for each
+  `<random-string>` placeholder, and store them in your secret manager. To use an
+  existing PostgreSQL instance instead of the bundled one, see
+  [External PostgreSQL](/enterprise/external-postgres).
+</Tip>
+
+## Step 3: Configure values
+
+Create a `values.yaml` with your environment-specific configuration. The
+minimum for a working installation covers five areas: application ingress and
+TLS, user authentication, the runtime (sandbox) endpoints, conversation
+storage, and your LLM provider. PostgreSQL and Redis run embedded in the
+cluster; the bundled PostgreSQL needs a database name and database creation
+turned on, both shown below (to use your own database instead, see
+[External PostgreSQL](/enterprise/external-postgres)).
+
+<Warning>
+  The embedded PostgreSQL is intended for proof-of-concept and evaluation use
+  only, not production. For production deployments we recommend bringing your
+  own managed PostgreSQL — see
+  [External PostgreSQL](/enterprise/external-postgres). There is no officially
+  supported migration path from the embedded PostgreSQL instance to an external
+  one, so plan to switch to an external database before you load production
+  data.
+</Warning>
+
+The example below uses Traefik, the chart's default ingress class; set
+`ingress.class` and the annotations to match your controller.
+
+```yaml
+ingress:
+  enabled: true
+  host: app.openhands.example.com
+  class: traefik
+
+# This guide brings its own certificate, terminated at the ingress controller,
+# so the chart's per-ingress TLS is disabled (see the note below the example).
+tls:
+  enabled: false
+
+# Enables login via the GitHub App created in Step 2
+github:
+  enabled: true
+
+# Bundled PostgreSQL: name the application database and let the chart create
+# the databases it needs on first start
+postgresql:
+  auth:
+    database: openhands
+databaseMigrations:
+  createDatabases: true
+
+# Login is served by the bundled Keycloak at auth.<ingress.host> — both the
+# component and its ingress must be enabled for users to be able to log in
+keycloak:
+  enabled: true
+  ingress:
+    enabled: true
+    hostname: auth.app.openhands.example.com
+    tls: false
+
+# Where agent sandboxes run. The runtime API needs its own hostname, and each
+# sandbox gets a subdomain under your wildcard DNS record.
+sandbox:
+  apiHostname: https://runtime-api.openhands.example.com
+
+env:
+  RUNTIME_URL_PATTERN: "https://{runtime_id}.runtime.openhands.example.com"
+  LITELLM_DEFAULT_MODEL: litellm_proxy/claude-sonnet-4-5
+
+runtime-api:
+  # Create sandboxes in the dedicated namespace from Step 2, isolated from the
+  # application workloads.
+  sandbox_namespace: openhands-runtimes
+  ingress:
+    enabled: true
+    host: runtime-api.openhands.example.com
+    tls: false
+  databaseMigrations:
+    createDatabases: true
+  env:
+    # Base domain for the per-sandbox ingresses ({runtime_id}.<RUNTIME_BASE_URL>);
+    # must match RUNTIME_URL_PATTERN above. RUNTIME_DISABLE_SSL defaults to
+    # "true" — it must be "false" so sandbox URLs are served over https.
+    RUNTIME_BASE_URL: runtime.openhands.example.com
+    RUNTIME_DISABLE_SSL: "false"
+    # Storage class for sandbox volumes. The chart default (standard-rwo) only
+    # exists on GKE — set a storage class from `kubectl get storageclass` or
+    # sandboxes will never start.
+    STORAGE_CLASS: <your-storage-class>
+
+# Store conversation data in the bundled MinIO, persisted to a volume
+filestore:
+  ephemeral: true
+minio:
+  persistence:
+    enabled: true
+
+litellm-helm:
+  enabled: true
+  proxy_config:
+    model_list:
+      - model_name: claude-sonnet-4-5
+        litellm_params:
+          model: anthropic/claude-sonnet-4-5
+          api_key: os.environ/ANTHROPIC_API_KEY
+```
+
+## Step 4: Install
+
+```bash
+helm install openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands \
+  --values values.yaml
+```
+
+Watch the workloads come up:
+
+```bash
+kubectl get pods -n openhands --watch
+```
+
+The first install pulls all container images, which can take a while. Along with the
+application components you'll see a `replicated` pod — the Replicated SDK, which
+handles license verification and powers the support tooling below.
+
+## Step 5: Validate the installation
+
+The chart ships preflight checks that validate your cluster against the
+application's requirements. Run them with the
+[`preflight` CLI](https://troubleshoot.sh/docs/preflight/introduction/):
+
+```bash
+preflight secret/openhands/openhands-preflight
+```
+
+<Tip>
+  The `preflight` and `support-bundle` CLIs are both part of
+  [Troubleshoot](https://troubleshoot.sh/docs/#installation). Install them with:
+
+  ```bash
+  curl -L https://krew.sh/preflight | bash
+  curl -L https://krew.sh/support-bundle | bash
+  ```
+</Tip>
+
+Then confirm the application is reachable at your configured hostname and log in.
+
+## Next Steps
+
+The install above is a minimal working baseline. Features and tuning are values
+overrides on the same release — edit your `values.yaml` and apply with
+`helm upgrade` using the chart URL from Step 4:
+
+<CardGroup cols={2}>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Size memory, CPU, and replicas for production workloads.
+  </Card>
+  <Card title="External PostgreSQL" icon="database" href="/enterprise/external-postgres">
+    Use your own PostgreSQL instead of the embedded instance.
+  </Card>
+  <Card title="Analytics" icon="chart-line" href="/enterprise/analytics">
+    Enable conversation analytics with Laminar.
+  </Card>
+  <Card title="Plugin Marketplace" icon="puzzle-piece" href="/enterprise/plugin-marketplace">
+    Offer curated plugins to your users.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Generate a support bundle
+
+If something isn't working, generate a support bundle with the
+[`support-bundle` CLI](https://troubleshoot.sh/docs/support-bundle/introduction/).
+It discovers the diagnostic specs that ship with the chart and collects logs,
+resource states, and health checks from the installation:
+
+```bash
+support-bundle --load-cluster-specs --namespace openhands
+```
+
+### Send it to us
+
+Upload the resulting archive directly to our support team — the upload
+authenticates with the license embedded in the bundle:
+
+```bash
+support-bundle upload support-bundle-<timestamp>.tar.gz
+```
+
+### Common issues
+
+| Symptom | Likely cause |
+|---------|--------------|
+| `helm install` fails with a template error mentioning `replicated` | Helm version too old — upgrade to v4+ |
+| `helm registry login` or chart pull returns 401/403 | License credentials incorrect, or the license isn't enabled for Helm installs — contact support |
+| Preflight warns about node memory | Cluster nodes below the recommended sizing — see [Resource Limits](/enterprise/k8s-install/resource-limits) |
