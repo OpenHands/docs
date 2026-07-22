@@ -3,7 +3,7 @@ title: Google Gemini/Vertex
 description: OpenHands uses LiteLLM to make calls to Google's chat models. You can find their documentation on using Google as a provider -> [Gemini - Google AI Studio](https://docs.litellm.ai/docs/providers/gemini), [VertexAI - Google Cloud Platform](https://docs.litellm.ai/docs/providers/vertex)
 ---
 
-## Gemini - Google AI Studio Configs
+## Gemini - Google AI Studio Configuration
 
 When running OpenHands, you'll need to set the following in the OpenHands UI through the Settings under the `LLM` tab:
 - `LLM Provider` to `Gemini`
@@ -12,7 +12,7 @@ If the model is not in the list, enable `Advanced` options, and enter it in `Cus
 (e.g. gemini/&lt;model-name&gt; like `gemini/gemini-2.0-flash`).
 - `API Key` to your Gemini API key
 
-## VertexAI - Google Cloud Platform Configs
+## VertexAI - Google Cloud Platform Configuration
 
 To use Vertex AI through Google Cloud Platform when running OpenHands, you'll need to set the following environment
 variables using `-e` in the docker run command:
@@ -28,3 +28,82 @@ Then set the following in the OpenHands UI through the Settings under the `LLM` 
 - `LLM Model` to the model you will be using.
 If the model is not in the list, enable `Advanced` options, and enter it in `Custom Model`
 (e.g. vertex_ai/&lt;model-name&gt;).
+
+### Vertex AI Dependencies
+
+The `vertex_ai/*` models (including Gemini and Claude via Vertex AI) require the
+`google-cloud-aiplatform` package, which is **not included by default** in the published
+agent-server image. How you enable it depends on your deployment:
+
+<Note>
+Unlike AWS Bedrock (whose `boto3` dependency is bundled by default), Vertex AI support is
+opt-in. If you skip this step, you will see a <code>ModuleNotFoundError: No module named
+'vertexai'</code> error when the agent tries to call a Vertex AI model.
+</Note>
+
+#### Local / Non-Docker Install
+
+Install the `vertex` extra in your Python environment:
+
+```bash
+pip install "openhands-sdk[vertex]"
+# or, with uv (works in any Python environment):
+uv pip install "openhands-sdk[vertex]"
+```
+
+#### Custom Agent-Server Image
+
+Build the image with the `ENABLE_VERTEX` build flag (the container build file is in the
+[`software-agent-sdk` repo](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile);
+run from the repo root):
+
+```bash
+docker build \
+    --build-arg ENABLE_VERTEX=1 \
+    -t my-agent-server:vertex \
+    -f openhands-agent-server/openhands/agent_server/docker/Dockerfile \
+    .
+```
+
+Then point OpenHands at your custom image via the `AGENT_SERVER_IMAGE_REPOSITORY` and
+`AGENT_SERVER_IMAGE_TAG` environment variables (see the
+[Custom Sandbox Guide](/openhands/usage/advanced/custom-sandbox-guide) for details).
+
+#### OpenHands Enterprise (Replicated / Kubernetes)
+
+The default OHE installer Vertex path routes LLM calls through a LiteLLM proxy — the
+agent-server uses a `litellm_proxy/...` model, and the proxy makes the actual Vertex call.
+So the agent-server image does **not** need Vertex enabled for the default path; `ENABLE_VERTEX=1`
+is only relevant if you customize OHE to bypass the proxy and call `vertex_ai/*` directly from
+the agent-server.
+
+### Claude via Vertex AI
+
+If you route Anthropic Claude through Google Vertex AI / Model Garden (rather than direct
+Anthropic endpoints), use the `vertex_ai/` prefix with the Vertex-published model name,
+which is date-stamped:
+
+- `Custom Model`: `vertex_ai/claude-sonnet-4-5@20250929`
+
+Use the exact model name shown in your Vertex AI Model Garden console.
+
+<Note>
+For `vertex_ai/*` models, OpenHands still needs <code>google-cloud-aiplatform</code>
+from the `vertex` extra above. In custom Claude via Vertex AI setups, if you encounter
+<code>ModuleNotFoundError: No module named 'anthropic'</code>, install the Anthropic SDK too:
+<code>pip install "anthropic[vertex]"</code>.
+</Note>
+
+### Troubleshooting
+
+#### Vertex AI SDK Import Error
+
+If you encounter this error:
+```
+litellm.BadRequestError: Vertex_aiException BadRequestError - vertexai import failed
+please run `pip install -U "google-cloud-aiplatform>=1.38"`.
+Got error: No module named 'vertexai'
+```
+
+This means the agent-server image does not include the Vertex AI SDK. Enable the `vertex`
+extra as described in [Vertex AI Dependencies](#vertex-ai-dependencies) above.
