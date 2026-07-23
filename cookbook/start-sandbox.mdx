@@ -1,0 +1,123 @@
+---
+title: Start a Sandbox
+description: Create an OpenHands Cloud sandbox and run shell commands directly against the agent-server REST API — no conversation required.
+---
+
+**Source:** [`start-sandbox/`](https://github.com/jpshackelford/oh-examples/tree/main/start-sandbox)
+
+Sometimes you want a managed remote workspace you drive yourself — for tooling, batch jobs, or programmatic agents — without a full conversation. This example creates a sandbox, waits for it to be ready, then executes shell commands directly on the agent-server.
+
+## Two Servers
+
+OpenHands uses two separate servers:
+
+| Server | Purpose | Auth |
+|--------|---------|------|
+| **Cloud app server** (`app.all-hands.dev`) | Creates and tracks sandboxes | `X-Session-API-Key: <OH_API_KEY>` |
+| **Agent server** (URL from `exposed_urls`) | Runs inside the sandbox; executes commands | `X-Session-API-Key: <session_api_key>` |
+
+The `session_api_key` is different from your Cloud API key — it's returned by the sandbox-create response.
+
+## The Flow
+
+```
+POST /api/v1/sandboxes                      # 1. Create sandbox
+GET  /api/v1/sandboxes?id=<id>              # 2. Poll until status == RUNNING
+POST {agent_url}/api/bash/execute_bash_command  # 3. Run commands
+```
+
+## Quickstart
+
+```bash
+export OH_API_KEY="your-api-key"
+pip install requests
+python sandbox_demo_brief.py
+```
+
+## How It Works
+
+### 1. Create the Sandbox
+
+```python
+import os
+import requests
+
+CLOUD = "https://app.all-hands.dev"
+headers = {"X-Session-API-Key": os.environ["OH_API_KEY"]}
+
+sb = requests.post(f"{CLOUD}/api/v1/sandboxes", headers=headers).json()
+sid = sb["id"]
+```
+
+### 2. Poll Until Running
+
+The sandbox starts asynchronously. Poll until `status == "RUNNING"`:
+
+```python
+import time
+
+for _ in range(60):
+    if sb["status"] == "RUNNING":
+        break
+    time.sleep(3)
+    sb = requests.get(
+        f"{CLOUD}/api/v1/sandboxes", headers=headers, params={"id": sid}
+    ).json()[0]
+```
+
+### 3. Locate the Agent Server
+
+The sandbox response includes an `exposed_urls` list. Find the one named `"AGENT_SERVER"`:
+
+```python
+agent_url = next(u["url"] for u in sb["exposed_urls"] if u["name"] == "AGENT_SERVER")
+sess = {"X-Session-API-Key": sb["session_api_key"]}
+```
+
+### 4. Run Commands
+
+Use `POST /api/bash/execute_bash_command` to run shell commands:
+
+```python
+def sh(cmd):
+    r = requests.post(
+        f"{agent_url}/api/bash/execute_bash_command",
+        headers=sess,
+        json={"command": cmd, "timeout": 30},
+    ).json()
+    return (r.get("stdout") or "") + (r.get("stderr") or "")
+
+print(sh("ls -la /workspace"))
+```
+
+## Example Output
+
+```
+sandbox: 59Ji2kvkUtZZSm7zAkAxwN
+  status: RUNNING
+agent: https://rzwfxneubhwcfpav.prod-runtime.all-hands.dev
+
+=== ls -la /workspace ===
+drwxr-sr-x bash_events
+drwxr-sr-x conversations
+drwxrws--- lost+found
+```
+
+## Cleanup
+
+The example intentionally leaves the sandbox running. To delete it:
+
+```bash
+SID=<sandbox_id>
+curl -X DELETE "https://app.all-hands.dev/api/v1/sandboxes/${SID}?sandbox_id=${SID}" \
+     -H "X-Session-API-Key: $OH_API_KEY"
+```
+
+<Note>
+The OpenAPI schema for the agent-server is available at `{agent_url}/openapi.json` once the sandbox is `RUNNING`.
+</Note>
+
+## See Also
+
+- [Clone and Attach](/cookbook/clone-and-attach) — Builds on this: clones a repo, runs its setup script, then attaches a conversation to the prepared sandbox
+- [Test MCP Config](/cookbook/test-mcp-config) — Uses a sandbox to validate MCP server configurations before use
