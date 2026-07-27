@@ -134,6 +134,12 @@ Remove these automated/housekeeping lines that don't add value to customer-facin
 Create or update `enterprise/release-notes.mdx`. Prepend the new release at the top of the file
 (after the frontmatter), so the most recent release appears first.
 
+**Always write a short summary paragraph immediately under the `## X.Y.Z` heading**, before the
+first `### Component` section. Read all of the changelog entries for the release and summarize what
+the release encompasses. Only call out things worth highlighting like notable features. If the
+release contains only bug fixes and maintenance, keep it brief — for example: "This release was
+focused on stability and maintenance fixes." Keep the summary to 1-2 short paragraphs.
+
 **Page structure:**
 
 ```mdx
@@ -144,6 +150,9 @@ icon: clipboard-list
 ---
 
 ## X.Y.Z
+
+<One or two short paragraphs summarizing what the release encompasses. Call out notable features;
+if it's only bug fixes, say something like "This release was focused on stability and maintenance fixes.">
 
 ### Enterprise Server
 
@@ -188,6 +197,7 @@ icon: clipboard-list
 ```
 
 **Key formatting rules:**
+- Start each release with a short summary paragraph under the `## X.Y.Z` heading (see above)
 - Split by component section — each component gets its own `### Heading`
 - Within each component, group by `#### Features`, `#### Bug Fixes`, `#### Maintenance`
 - Separate component sections with `---` horizontal rules
