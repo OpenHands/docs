@@ -136,9 +136,10 @@ Create or update `enterprise/release-notes.mdx`. Prepend the new release at the 
 
 **Always write a short summary paragraph immediately under the `## X.Y.Z` heading**, before the
 first `### Component` section. Read all of the changelog entries for the release and summarize what
-the release encompasses. Only call out things worth highlighting like notable features. If the
-release contains only bug fixes and maintenance, keep it brief — for example: "This release was
-focused on stability and maintenance fixes." Keep the summary to 1-2 short paragraphs.
+the release encompasses. Keep it high-level and short (usually a single paragraph) — only call out
+things genuinely worth highlighting like notable features, and don't enumerate individual fixes or
+config flags. If the release contains only bug fixes and maintenance, just say something like
+"This release was focused on stability and maintenance fixes."
 
 **Page structure:**
 
