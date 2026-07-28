@@ -1,0 +1,255 @@
+---
+title: Skills and Plugins
+description: Manage repository, organization, and user skills and control how plugins are discovered and loaded in OpenHands Enterprise.
+icon: puzzle-piece
+---
+
+OpenHands Enterprise supports several ways to add reusable guidance and capabilities to
+conversations. Choose the approach that meets your needs.
+
+<Info>
+  This guide covers Enterprise distribution and governance. For skill formats, triggers, and
+  precedence, see [Skills](/overview/skills). For plugin structure and development, see
+  [Plugins](/overview/plugins).
+</Info>
+
+## Choose a Distribution Method
+
+| Method | Scope | Use When |
+|---|---|---|
+| `AGENTS.md` | One repository | Instructions should apply whenever OpenHands works in the repository |
+| `.agents/skills/` | One repository | A focused workflow or reference should load on demand |
+| Organization skills repository | Organization | Standards should be available across the organization's conversations |
+| User skills repository | One user | A skill should follow one user across conversations |
+| Conversation plugin | One conversation | A capability bundle is needed for a specific task |
+| Marketplace | User or organization | Users need a governed collection of plugins they can load on demand |
+| Marketplace Auto-Load | User or organization | Every applicable conversation requires the marketplace's plugins |
+
+## Understand Enterprise Loading Layers
+
+Enterprise marketplaces operate at three different layers:
+
+1. **Instance Plugin Marketplace** — An administrator configures the catalog source through
+   Replicated or Helm. This powers the Plugin Directory at `/plugins`.
+2. **Registered marketplace** — A user or organization registers a Git repository under
+   `Settings` > `Skills`. Registration makes its plugins discoverable and governable.
+3. **Conversation attachment** — A plugin is loaded into a conversation through the Plugin
+   Directory, a launch link, the V1 API, or Auto-Load.
+
+Registering a marketplace does not by itself load every plugin into every conversation.
+
+## Add Repository Skills
+
+Use repository files when a skill or instruction belongs to one codebase.
+
+### Permanent Repository Context
+
+Add `AGENTS.md` at the repository root for concise instructions that should always apply:
+
+```text
+my-project/
+└── AGENTS.md
+```
+
+OpenHands loads this file when a conversation uses the repository.
+
+### On-Demand Repository Skills
+
+Add one directory per skill under `.agents/skills/`:
+
+```text
+my-project/
+└── .agents/
+    └── skills/
+        └── deploy-helper/
+            ├── SKILL.md
+            ├── scripts/
+            └── references/
+```
+
+The `SKILL.md` file contains the skill name, description, and instructions. OpenHands initially
+shows the agent a summary and loads the full content when the skill is invoked or triggered.
+
+See [Skills](/overview/skills) for the complete format and loading precedence.
+
+## Add Organization and User Skills
+
+Use a special configuration repository when skills should apply beyond one project.
+
+For GitHub, create a repository named `.agents` under the organization or user and place skills
+under `skills/`:
+
+```text
+Great-Co/.agents
+└── skills/
+    └── engineering-standards/
+        └── SKILL.md
+```
+
+For GitLab organizations, use `openhands-config` because GitLab repository names cannot begin
+with a period.
+
+<Note>
+  Earlier OpenHands Enterprise releases may use a `.openhands` configuration repository. If an
+  existing deployment already uses `.openhands`, confirm the supported convention for that
+  release before migrating. Do not define duplicate skill names in both repositories.
+</Note>
+
+The source control integration must have access to the configuration repository. Access to one
+user or organization does not grant access to repositories owned by another organization.
+
+See [Organization and User Skills](/overview/skills/org) for more information.
+
+## Register a Marketplace
+
+Register a marketplace to make a Git-hosted plugin collection available to a user or organization.
+
+1. Open `Settings` > `Skills`.
+2. In `Marketplaces`, select `+ Add Repository`.
+3. Enter the repository URL.
+4. Optionally specify a branch, tag, commit, or repository path.
+5. Select the personal or organization scope available to your role.
+6. Save the marketplace.
+
+The `Skills & Plugins` table shows the entries discovered from registered marketplaces and
+built-in sources.
+
+<Warning>
+  Register only repositories you trust. A loaded plugin can include skills, hooks, MCP servers,
+  agents, and commands. It can also use secrets available to the conversation. Explicit launch
+  flows require trust confirmation. Review every plugin before enabling Auto-Load, which may
+  attach plugins without a per-conversation prompt.
+</Warning>
+
+For private repositories, ensure that your Enterprise source control integration has access.
+
+## Load a Plugin for One Conversation
+
+Use explicit attachment when a plugin is needed for one task. This keeps ordinary conversations
+isolated from unrelated plugin context and integrations.
+
+<Tabs>
+  <Tab title="Plugin Directory">
+    1. Open `https://app.<your-base-domain>/plugins`.
+    2. Select a plugin.
+    3. Select `Create New Conversation`.
+    4. Review the repository, path, and ref.
+    5. Confirm that you trust the plugin.
+    6. Select `Start Conversation`.
+
+    The plugin is loaded only into the new conversation.
+  </Tab>
+  <Tab title="Launch Link">
+    Use the `/launch` route to share a preconfigured plugin:
+
+    ```text
+    https://app.<your-base-domain>/launch?plugins=<base64-encoded-plugin-array>
+    ```
+
+    A launch link can include multiple plugins, editable parameter defaults, and an optional
+    starting message. The user reviews the configuration and confirms trust before the
+    conversation starts.
+
+    See [Plugin Launcher](/openhands/usage/cloud/plugin-launcher) for the plugin definition and
+    encoding format. Replace the Cloud hostname in its examples with your Enterprise application
+    hostname.
+  </Tab>
+  <Tab title="V1 API">
+    Add a `plugins` array to `POST /api/v1/app-conversations`:
+
+    ```json
+    {
+      "initial_message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Run the release readiness check."
+          }
+        ]
+      },
+      "plugins": [
+        {
+          "source": "github:AcmeCo/openhands-plugins",
+          "ref": "main",
+          "repo_path": "plugins/release-ready"
+        }
+      ]
+    }
+    ```
+
+    See [Cloud API](/openhands/usage/cloud/cloud-api) for authentication, response handling, and
+    conversation status. Use your Enterprise application hostname as the base URL.
+  </Tab>
+</Tabs>
+
+## Configure Auto-Load
+
+Auto-Load adds a registered marketplace's plugins to every applicable conversation in its scope.
+
+Use Auto-Load when:
+
+- Every conversation requires the capability.
+- The marketplace is controlled and reviewed by your organization.
+- The additional context and startup work are acceptable.
+- The plugins are allowed to use the secrets available in those conversations.
+
+Keep Auto-Load off when users should choose plugins per task.
+
+To change Auto-Load:
+
+1. Open `Settings` > `Skills`.
+2. Find the marketplace under `Marketplaces`.
+3. Toggle `Auto-Load`.
+4. Save the changes.
+5. Start a new conversation to verify the new behavior.
+
+Changes do not retroactively reload skills or plugins in an already-running conversation.
+
+## Verify Skill and Plugin Loading
+
+Use this to really verify loading instead of checking only that a name appears in the UI.
+
+1. Create a small skill with a unique trigger and an exact expected response.
+2. Start a new conversation in the intended scope.
+3. Use the trigger.
+4. Confirm that the response reflects the skill's instructions.
+5. Start a control conversation outside that scope and confirm that the skill does not activate.
+
+For organization skills, use a conversation without a selected repository or explicit plugin when
+the release supports organization-wide loading in that context. For marketplace Auto-Load, compare
+a conversation created before the setting changed with a new conversation created afterward.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="A Marketplace Is Registered but Its Plugins Are Not Loaded">
+    Registration makes plugins available on demand. Enable Auto-Load for the marketplace or attach
+    a plugin explicitly through the Plugin Directory, a launch link, or the V1 API.
+  </Accordion>
+  <Accordion title="A Repository Skill Is Missing">
+    Confirm that the conversation selected the expected repository and ref. Verify the skill path
+    is `.agents/skills/<name>/SKILL.md` and that the source control integration can clone the
+    repository.
+  </Accordion>
+  <Accordion title="A Skill Appears but Does Not Affect the Conversation">
+    Confirm that its trigger matches the user message or explicitly ask the agent to invoke the
+    skill. Test with a unique trigger and exact expected behavior.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills" icon="book" href="/overview/skills">
+    Learn about skill formats, triggers, and loading precedence.
+  </Card>
+  <Card title="Plugins" icon="plug" href="/overview/plugins">
+    Build bundles containing skills, hooks, MCP servers, agents, and commands.
+  </Card>
+  <Card title="Plugin Marketplace" icon="store" href="/enterprise/plugin-marketplace">
+    Enable and configure the Enterprise Plugin Directory.
+  </Card>
+  <Card title="Plugin Launcher" icon="rocket" href="/openhands/usage/cloud/plugin-launcher">
+    Create shareable links that open conversations with plugins attached.
+  </Card>
+</CardGroup>
