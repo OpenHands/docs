@@ -1,148 +1,137 @@
 ---
-title: Overview
-description: Skills are specialized prompts that enhance OpenHands with domain-specific knowledge, expert guidance, and automated task handling.
+title: Skills Overview
+description: Give OpenHands reusable instructions, domain knowledge, workflows, and supporting resources.
 ---
 
-Skills are specialized prompts that enhance OpenHands with domain-specific knowledge, expert guidance, and automated task handling. They provide consistent practices across projects and can be triggered automatically based on keywords or context.
+Skills give OpenHands reusable instructions for specialized tasks. A skill can capture domain knowledge, define a repeatable workflow, and include supporting scripts, references, or templates.
+
+Skills guide the agent's behavior; they do not grant permissions or install dependencies by themselves. The agent can only use the files, tools, secrets, and network access available in its environment.
 
 <Info>
-OpenHands supports an **extended version** of the [AgentSkills standard](https://agentskills.io/specification) with optional keyword triggers for automatic activation. See the [SDK Skills Guide](/sdk/guides/skill) for details on the SKILL.md format.
+OpenHands supports the [Agent Skills specification](https://agentskills.io/specification) and adds optional features such as keyword triggers and path-triggered rules. Other Agent Skills clients may ignore these OpenHands extensions.
 </Info>
+
+## Choose the Right Mechanism
+
+| Need | Use | Recommended Location | Loading Behavior |
+|---|---|---|---|
+| Instructions for every task in a repository | `AGENTS.md` | Repository root | Full content is included in the initial system prompt |
+| Reusable expertise or a workflow for a specific task | Agent Skills `SKILL.md` | `.agents/skills/<skill-name>/SKILL.md` | Name and description are advertised first; the agent invokes the full skill when relevant |
+| Automatic activation for specific words or commands | `SKILL.md` with `triggers` | `.agents/skills/<skill-name>/SKILL.md` | The skill remains available for model invocation and its content is also injected when a trigger matches |
+| Deterministic guidance for specific files | A skill with `paths` | `.agents/skills/<skill-name>/SKILL.md` or `.agents/skills/<rule-name>.md` | Content is injected when the agent first touches a matching file |
+
+Use `AGENTS.md` for short, repository-wide conventions. Use `SKILL.md` for focused knowledge that is needed only for some tasks. A legacy `.md` skill without a trigger is always loaded in full; prefer `AGENTS.md` for that use case so its purpose is clear.
+
+OpenHands also recognizes `CLAUDE.md` and `GEMINI.md` as model-specific repository context.
+
+## How Progressive Disclosure Works
+
+Agent Skills use three levels of context:
+
+1. **Discovery**: OpenHands loads each skill's `name` and `description` into the available-skills catalog.
+2. **Invocation**: When a task matches the description, the agent invokes the skill by name and receives the full `SKILL.md` instructions.
+3. **Resources**: The agent reads referenced files from `scripts/`, `references/`, or `assets/` only when needed.
+
+This keeps the initial prompt smaller than loading every skill in full. Write the description to explain both what the skill does and when it applies; the agent uses that metadata to decide whether to invoke it.
+
+OpenHands supports two deterministic activation paths:
+
+- `triggers` injects the skill when a keyword or command appears in a user message. The skill is still available for model invocation.
+- `paths` turns the file into a path-triggered rule. The rule is not advertised to the model and is injected once per conversation when a matching file is read, edited, or created. If a file declares both `paths` and `triggers`, `paths` takes precedence.
+
+<Note>
+Always-on content occupies the conversation context from the beginning. Keep `AGENTS.md` concise and move lengthy or specialized instructions into on-demand skills and references.
+</Note>
 
 ## Official Skill Registry
 
 The official global skill registry is maintained at [github.com/OpenHands/extensions](https://github.com/OpenHands/extensions). This repository contains community-shared skills that can be used by all OpenHands agents. You can browse available skills, contribute your own, and learn from examples created by the community.
 
-## How Skills Work
 
-Skills inject additional context and rules into the agent's behavior.
+## Five-Minute Setup
 
-At a high level, OpenHands supports three loading models:
+Add concise repository guidance and one on-demand skill:
 
-- **Always-on context** (e.g., `AGENTS.md`) that is injected into the system prompt at conversation start.
-- **On-demand skills** that are either:
-  - **triggered by the user** (keyword matches), or
-  - **invoked by the agent** (the agent decides to look up the full skill content).
-- **Path-triggered rules** that are injected deterministically when the agent reads, edits, or creates a file whose path matches a glob pattern.
-
-## Permanent agent context (recommended)
-
-For repository-wide, always-on instructions, prefer a root-level `AGENTS.md` file.
-
-We also support model-specific variants:
-- `GEMINI.md` for Gemini
-- `CLAUDE.md` for Claude
-
-## Triggered and optional skills
-
-To add optional skills that are loaded on demand:
-
-- **AgentSkills standard (recommended for progressive disclosure)**: create one directory per skill and add a `SKILL.md` file.
-- **Legacy/OpenHands format (simple)**: put markdown files in `.agents/skills/*.md` at the repository root.
-
-<Note>
-Loaded skills take up space in the context window. On-demand skills help keep the system prompt smaller because the agent sees a summary first and reads the full content only when needed.
-</Note>
-
-### Example Repository Structure
-
-```
-some-repository/
-├── AGENTS.md                       # Permanent repository guidelines (recommended)
+```text
+my-repository/
+├── AGENTS.md
 └── .agents/
     └── skills/
-        ├── rot13-encryption/       # AgentSkills standard (progressive disclosure)
-        │   ├── SKILL.md
-        │   ├── scripts/
-        │   │   └── rot13.sh
-        │   └── references/
-        │       └── README.md
-        ├── another-agentskill/     # AgentSkills standard (progressive disclosure)
-        │   ├── SKILL.md
-        │   └── scripts/
-        │       └── placeholder.sh
-        └── legacy_trigger_this.md  # Legacy/OpenHands format (keyword-triggered)
+        └── release-checklist/
+            └── SKILL.md
 ```
 
-## Skill Loading Precedence
+```markdown title="AGENTS.md"
+# Repository Guidance
 
-For project location, paths are relative to the repository root; `.agents/skills/` is a subdirectory of the project directory.
-For user home location, paths are relative to the user home: `~/`
+Run the test suite before committing. Keep changes focused and follow the existing project conventions.
+```
 
-When multiple skills share the same name, OpenHands keeps the first match in this order:
+```markdown title=".agents/skills/release-checklist/SKILL.md"
+---
+name: release-checklist
+description: Prepare and verify a release checklist. Use when creating release notes or publishing a release.
+---
 
-1. `.agents/skills/` (recommended)
-2. `.openhands/skills/` (deprecated)
-3. `.openhands/microagents/` (deprecated)
+Check the version, changelog, validation commands, and release notes before publishing.
+```
 
-Project-specific skills take precedence over user skills.
+For a portable Agent Skills package, `name` and `description` are required. The `name` must match the parent directory and use lowercase letters, numbers, and hyphens. See [Creating Skills](/overview/skills/creating) for the complete format and authoring guidance.
 
-## Skill Types
+Start a new conversation after changing skill files so OpenHands rebuilds the available-skills catalog.
 
-Currently supported skill types:
+## Skill Locations and Precedence
 
-- **[Permanent Context](/overview/skills/repo)**: Repository-wide guidelines and best practices. We recommend `AGENTS.md` (and optionally `GEMINI.md` / `CLAUDE.md`).
-- **[Keyword-Triggered Skills](/overview/skills/keyword)**: Guidelines activated by specific keywords in user prompts.
-- **[Path-Triggered Rules](/overview/skills/path)**: Guidelines injected automatically when the agent touches files matching a glob pattern.
-- **[Organization Skills](/overview/skills/org)**: Team or organization-wide standards.
-- **[Global Skills](/overview/skills/public)**: Community-shared skills and templates.
+OpenHands can combine skills from several scopes:
 
-### Skills Frontmatter Requirements
+| Scope | Recommended Location | Applies To |
+|---|---|---|
+| Repository context | `<repository>/AGENTS.md` | Conversations in that repository |
+| Project skills | `<project>/.agents/skills/` | Conversations using that project workspace |
+| User skills | `~/.agents/skills/` | Conversations for that user |
+| Public skills | [OpenHands extensions registry](https://github.com/OpenHands/extensions/tree/main/skills) | Conversations configured to load the public registry |
 
-Each skill file may include frontmatter that provides additional information. In some cases, this frontmatter is required:
+Both `.openhands/skills/` and the legacy `.openhands/microagents/` directories remain supported, but use `.agents/skills/` for new skills which supports multi agent workflows.
 
-| Skill Type  | Required |
-|-------------|----------|
-| General Skills                           | No       |
-| Keyword-Triggered Skills                 | Yes      |
-| Path-Triggered Rules                     | Yes      |
+Name conflicts are resolved by precedence rather than by merging skill bodies. For automatically loaded sources, project skills override user skills, and user skills override public skills. Within a project or user scope, `.agents/skills/` takes precedence over the legacy directories.
 
-## Skills Support Matrix
+<Note>
+In the SDK, explicitly supplied skills override automatically loaded user and public skills. Project skills are resolved from the conversation workspace and override a same-named skill from another source. See the [SDK Skills Guide](/sdk/guides/skill) for loader configuration.
+</Note>
 
-| Platform | Support Level | Configuration Method | Implementation | Documentation |
-|----------|---------------|---------------------|----------------|---------------|
-| **CLI** | ✅ Full Support | `~/.agents/skills/` (user-level) and `.agents/skills/` (repo-level) | File-based markdown | [Skills Overview](/overview/skills) |
-| **SDK** | ✅ Full Support | Programmatic `Skill` objects | Code-based configuration | [SDK Skills Guide](/sdk/guides/skill) |
-| **Local GUI** | ✅ Full Support | `.agents/skills/` + UI | File-based with UI management | [Local Setup](/openhands/usage/run-openhands/local-setup) |
-| **OpenHands Cloud** | ✅ Full Support | Cloud UI + repository integration | Managed skill library | [Cloud UI](/openhands/usage/cloud/cloud-ui) |
+## OpenHands-Specific Skill Types
 
-## Platform-Specific Differences
+- [Repository Context](/overview/skills/repo) provides always-on project instructions.
+- [Keyword-Triggered Skills](/overview/skills/keyword) activate when a user message contains configured terms.
+- [Path-Triggered Rules](/overview/skills/path) apply deterministic instructions to matching files.
+- [Organization and User Skills](/overview/skills/org) share guidance across repositories.
+- [Global Skills](/overview/skills/public) are reusable skills published through the OpenHands extensions registry.
 
-<Tabs>
-  <Tab title="CLI">
-    - File-based configuration in two locations:
-      - `~/.agents/skills/` - User-level skills (all conversations).
-      - `.agents/skills/` - Repository-level skills (current directory)
-    - Markdown format for skill definitions
-    - Manual file management required
-    - Supports both general and keyword-triggered skills
-  </Tab>
-  <Tab title="SDK">
-    - Programmatic `Skill` objects in code
-    - Dynamic skill creation and management
-    - Integration with custom workflows
-    - Full control over skill lifecycle
-  </Tab>
-  <Tab title="Local GUI">
-    - Visual skill management through UI
-    - File-based storage with GUI editing
-    - Real-time skill status display
-    - Drag-and-drop skill organization
-  </Tab>
-  <Tab title="OpenHands Cloud">
-    - Cloud-based skill library management
-    - Team-wide skill sharing and templates
-    - Organization-level skill policies
-    - Integrated skill marketplace
-  </Tab>
-</Tabs>
+## Using Skills Across OpenHands
+
+| Surface | How Skills Are Loaded |
+|---|---|
+| **Agent Canvas** | Manage installed skills under `Customize > Skills`; configuration is scoped to the active backend |
+| **SDK and agent server** | Pass `Skill` objects directly or enable the user, project, and public file-based loaders in `AgentContext` |
+| **OpenHands Cloud** | Select or import skills for a conversation, including skills stored in Git repositories |
+
+See [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings) for Agent Canvas and [Plugin Launcher](/openhands/usage/cloud/plugin-launcher) for loading a Git-hosted skill into an OpenHands Cloud conversation.
+
+<Warning>
+Review a skill and its bundled resources before installing it. A skill can instruct the agent to run scripts, read files, use secrets, or call connected tools. Only install skills from sources you trust.
+</Warning>
+
+## Next Steps
+
+- [Add an Existing Skill](/overview/skills/adding)
+- [Create a Skill](/overview/skills/creating)
+- [Browse the OpenHands Skills Registry](https://github.com/OpenHands/extensions/tree/main/skills)
+- [Use Skills in the SDK](/sdk/guides/skill)
+- [Bundle Skills in a Plugin](/overview/plugins)
+- [Monitor and Improve Skills](/overview/skills/monitoring)
 
 ## Learn More
 
-- **To add existing skills**: See [Adding New Skills](/overview/skills/adding)
-- **To create your own skills**: See [Creating New Skills](/overview/skills/creating)
-- **To monitor skill performance**: See [Monitoring and Improving Skills](/overview/skills/monitoring)
-- **For bundling multiple components**: See [Plugins](/overview/plugins)
-- **For SDK integration**: See [SDK Skills Guide](/sdk/guides/skill)
-- **For architecture details**: See [Skills Architecture](/sdk/arch/skill)
-- **For specific skill types**: See [Repository Skills](/overview/skills/repo), [Keyword Skills](/overview/skills/keyword), [Path-Triggered Rules](/overview/skills/path), [Organization Skills](/overview/skills/org), and [Global Skills](/overview/skills/public)
+- **For SDK integration**: See [**SDK Skills Guide**](/sdk/guides/skill)
+- **For architecture details**: See [**Skills Architecture**](/sdk/arch/skill)
+- **For specific skill types**: See [**Repository Skills**](/overview/skills/repo), [**Keyword Skills**](/overview/skills/keyword), [**Path-Triggered Rules**](/overview/skills/path), [**Organization Skills**](/overview/skills/org), and [**Global Skills**](/overview/skills/public)
