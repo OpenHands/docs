@@ -36,7 +36,7 @@ the user to add it** before proceeding:
 ## When to use
 
 Use this skill when asked to create or update Enterprise release notes. You derive every component
-version yourself from Replicated — you do **not** ask the user for version ranges.
+version yourself from Replicated.
 
 ## What you need to determine
 
@@ -48,8 +48,6 @@ plus the derived software-agent-sdk range — is derived from the Replicated rel
 By default:
 - **new** = the latest release on the Replicated `Stable` channel
 - **previous** = the most recent release already documented at the top of `enterprise/release-notes.mdx`
-
-Confirm these two with the user before generating the page.
 
 ## Step-by-step procedure
 
@@ -95,13 +93,13 @@ The `openhands` chart version equals the Enterprise release version and lives in
 `OpenHands/OpenHands-Cloud` repo under the tag `openhands/{version}`. Read the pinned tags at both
 the **previous** and **new** versions to get each component's version range.
 
-| Component | Where the tag is pinned (in `OpenHands/OpenHands-Cloud` at `openhands/{version}`) | Notes |
-|-----------|-----------------------------------------------------------------------------------|-------|
-| **OpenHands-Cloud** (Helm chart) | the release version itself (`charts/openhands/Chart.yaml` → `version`)            | equals the Enterprise release version |
-| **Enterprise Server**            | `charts/openhands/values.yaml` → top-level `image:` → `repository: ghcr.io/openhands/enterprise-server`, `tag:` | see prefix note below |
-| **Software Agent SDK**           | `charts/openhands/charts/runtime-api/values.yaml` → `repository: ghcr.io/openhands/agent-server`, `tag: X.Y.Z-python` | strip the `-python` suffix |
-| **Runtime API**                  | `charts/openhands/charts/runtime-api/values.yaml` → top-of-file `tag:` (the runtime-api image) | tags are `vX.Y.Z` in GitHub |
-| **Automation**                   | `charts/openhands/charts/automation/values.yaml` → top-of-file `tag:`             | tags are plain `X.Y.Z` in GitHub |
+| Component                         | Where the tag is pinned (in `OpenHands/OpenHands-Cloud` at `openhands/{version}`)                                     | Notes                                   |
+|-----------------------------------|-----------------------------------------------------------------------------------------------------------------------|-----------------------------------------|
+| **OpenHands-Cloud** (Helm chart)  | the release version itself (`charts/openhands/Chart.yaml` → `version`)                                                | equals the Enterprise release version   |
+| **Enterprise Server**             | `charts/openhands/values.yaml` → top-level `image:` → `repository: ghcr.io/openhands/enterprise-server`, `tag:`       | see prefix note below                   |
+| **Software Agent SDK**            | `charts/openhands/charts/runtime-api/values.yaml` → `repository: ghcr.io/openhands/agent-server`, `tag: X.Y.Z-python` | strip the `-python` suffix              |
+| **Runtime API**                   | `charts/openhands/charts/runtime-api/values.yaml` → top-of-file `tag:` (the runtime-api image)                        | tags are `vX.Y.Z` in GitHub             |
+| **Automation**                    | `charts/openhands/charts/automation/values.yaml` → top-of-file `tag:`                                                 | tags are plain `X.Y.Z` in GitHub        |
 
 Fetch any of these files with the GitHub contents API:
 
@@ -113,15 +111,6 @@ curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
 
 Do this for both the **previous** and **new** Enterprise versions to build the range for each
 component (previous → new).
-
-> **Enterprise Server repo move + tag prefix (one-time transition):** The enterprise-server code
-> used to live in `OpenHands/OpenHands`, where the image and GitHub release tags were `cloud-X.Y.Z`.
-> It has since moved to its own repo, **`OpenHands/enterprise`**, where releases use plain semver
-> (`1.48.0`, `1.49.0`, …). Starting with Enterprise `0.36.0` the chart tag also switched from
-> `cloud-1.47.1` to plain semver (`1.49.0`). When you fetch enterprise-server release notes:
-> - Look in **`OpenHands/enterprise`** for plain-semver releases (`1.48.0`, `1.49.0`, …).
-> - For older ranges whose lower bound predates the move, the previous bound may still be a
->   `cloud-X.Y.Z` tag in `OpenHands/OpenHands`. Check both repos for the versions in your range.
 
 #### 1c. Confirm the derived versions with the user
 
@@ -141,13 +130,13 @@ ask the user to confirm, exactly as this skill does interactively. Example:
 For each component repo, list all GitHub releases and identify which fall **after** the previous
 version and **up to and including** the new version.
 
-| Component | Repo | GitHub tag format |
-|-----------|------|-------------------|
-| Enterprise Server | `OpenHands/enterprise` (moved; legacy `OpenHands/OpenHands`) | `X.Y.Z` (legacy `cloud-X.Y.Z`) |
-| Software Agent SDK | `OpenHands/software-agent-sdk` | `vX.Y.Z` |
-| Runtime API | `OpenHands/runtime-api` | `vX.Y.Z` |
-| Automation | `OpenHands/automation` | `X.Y.Z` |
-| OpenHands-Cloud | `OpenHands/OpenHands-Cloud` | `openhands/X.Y.Z` |
+| Component           | Repo                           | GitHub tag format              |
+|---------------------|--------------------------------|--------------------------------|
+| Enterprise Server   | `OpenHands/enterprise`         | `X.Y.Z` (legacy `cloud-X.Y.Z`) |
+| Software Agent SDK  | `OpenHands/software-agent-sdk` | `vX.Y.Z`                       |
+| Runtime API         | `OpenHands/runtime-api`        | `vX.Y.Z`                       |
+| Automation          | `OpenHands/automation`         | `X.Y.Z`                        |
+| OpenHands-Cloud     | `OpenHands/OpenHands-Cloud`    | `openhands/X.Y.Z`              |
 
 ```bash
 curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
