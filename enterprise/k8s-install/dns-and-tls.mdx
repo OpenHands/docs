@@ -17,12 +17,13 @@ OpenHands serves these hostnames, using `openhands.example.com` as the base doma
 | Hostname | Purpose |
 |---|---|
 | `app.openhands.example.com` | Application |
-| `auth.app.openhands.example.com` | Login (Keycloak) |
+| `auth.openhands.example.com` | Login (Keycloak) |
 | `runtime-api.openhands.example.com` | Runtime API |
-| `*.runtime.openhands.example.com` | Per-session sandboxes |
+| `<id>-runtime.openhands.example.com` | Per-session sandboxes |
 
-All of these must resolve to your ingress load balancer. The sandbox entry must be a **wildcard**
-because each session gets its own subdomain.
+All of these must resolve to your ingress load balancer. Every hostname sits one label under the
+base domain, so a single **wildcard** DNS record and certificate for `*.openhands.example.com`
+cover everything, including the dynamically named sandboxes.
 
 ## external-dns
 
@@ -48,7 +49,7 @@ With `upsert-only` and a TXT registry, external-dns only ever touches records it
 ## cert-manager
 
 cert-manager issues and renews certificates from Let's Encrypt. Use the **DNS-01** challenge, the
-only one that can issue the **wildcard** certificate the sandbox hostnames need.
+only one that can issue **wildcard** certificates.
 
 <Steps>
   <Step title="Install cert-manager">
@@ -81,25 +82,23 @@ only one that can issue the **wildcard** certificate the sandbox hostnames need.
     </Tip>
   </Step>
   <Step title="Request a wildcard certificate">
-    A single wildcard covers every sandbox host. With Traefik, serve it as the default `TLSStore` so
+    A single wildcard covers every hostname. With Traefik, serve it as the default `TLSStore` so
     no per-ingress TLS config is needed.
 
     ```yaml
     apiVersion: cert-manager.io/v1
     kind: Certificate
     metadata:
-      name: runtime-wildcard
+      name: openhands-wildcard
       namespace: openhands
     spec:
-      secretName: runtime-wildcard-tls
+      secretName: openhands-wildcard-tls
       issuerRef:
         name: letsencrypt-prod
         kind: ClusterIssuer
       dnsNames:
-        - "*.runtime.openhands.example.com"
+        - "*.openhands.example.com"
     ```
-
-    Issue certificates for the `app`, `auth`, and `runtime-api` hosts the same way.
   </Step>
 </Steps>
 
@@ -108,18 +107,16 @@ only one that can issue the **wildcard** certificate the sandbox hostnames need.
 If you don't run external-dns and cert-manager, provision these by hand and point the ingress
 controller at them.
 
-**DNS**: create a record for each hostname in the table above, all pointing to your ingress load
-balancer (typically a CNAME to the load balancer's hostname, or a cloud DNS alias). The sandbox
-record must be the wildcard `*.runtime.openhands.example.com`.
+**DNS**: create a single wildcard record `*.openhands.example.com` pointing to your ingress load
+balancer (typically a CNAME to the load balancer's hostname, or a cloud DNS alias).
 
-**TLS**: obtain certificates covering those hostnames and load them into the ingress controller as
-Kubernetes TLS secrets. A single wildcard isn't enough, because the hostnames sit at different
-depths. You need:
+**TLS**: obtain a certificate with a `*.openhands.example.com` SAN and load it into the ingress
+controller as a Kubernetes TLS secret.
 
-- `*.runtime.openhands.example.com` for the sandboxes, and
-- certificates for `app.openhands.example.com`, `auth.app.openhands.example.com`, and
-  `runtime-api.openhands.example.com` (for example a `*.openhands.example.com` wildcard, which covers
-  `app` and `runtime-api`, plus a certificate for `auth.app.openhands.example.com`).
+If you can't use a wildcard certificate, obtain one with SANs for the `app`, `auth`, and
+`runtime-api` hostnames plus `runtime.openhands.example.com`, and set
+`runtime-api.env.RUNTIME_ROUTING_MODE: "path"` in your Helm values so sandboxes are served under
+`runtime.openhands.example.com/<id>` instead of their own hostnames.
 
 ## Next Steps
 
