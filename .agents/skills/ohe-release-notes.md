@@ -160,7 +160,7 @@ curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
 Group bullet points **by component section**, with each section having its own Features, Bug Fixes,
 and Maintenance sub-headings. The component sections are:
 
-1. **Enterprise Server** — from `OpenHands/enterprise` (legacy: `OpenHands/OpenHands`)
+1. **Enterprise Server** — from `OpenHands/enterprise`
 2. **Software Agent SDK** — from `OpenHands/software-agent-sdk`
 3. **Runtime API** — from `OpenHands/runtime-api`
 4. **Automation** — from `OpenHands/automation`
