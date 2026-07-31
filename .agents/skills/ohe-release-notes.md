@@ -112,10 +112,11 @@ curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
 Do this for both the **previous** and **new** Enterprise versions to build the range for each
 component (previous → new).
 
-#### 1c. Confirm the derived versions with the user
+#### 1c. Inform the user of the version jumps
 
-Before generating the page, present the derived table (previous → new for all five components) and
-ask the user to confirm, exactly as this skill does interactively. Example:
+You don't need the user to confirm before proceeding — just **inform** them of the derived version
+jumps (previous → new for all five components) so they can double-check if they want to. Present the
+table and continue generating the page. Example:
 
 | Component | Previous | New |
 |---|---|---|
@@ -162,7 +163,8 @@ and Maintenance sub-headings. The component sections are:
 1. **Enterprise Server** — from `OpenHands/enterprise` (legacy: `OpenHands/OpenHands`)
 2. **Software Agent SDK** — from `OpenHands/software-agent-sdk`
 3. **Runtime API** — from `OpenHands/runtime-api`
-4. **OpenHands Cloud (Helm Chart)** — from `OpenHands/OpenHands-Cloud`
+4. **Automation** — from `OpenHands/automation`
+5. **OpenHands Cloud (Helm Chart)** — from `OpenHands/OpenHands-Cloud`
 
 Within each section, sort items into:
 - **Features** — lines starting with `* feat`
@@ -239,6 +241,16 @@ if it's only bug fixes, say something like "This release was focused on stabilit
 
 #### Features
 * feat: ... by @author in https://github.com/OpenHands/runtime-api/pull/...
+
+---
+
+### Automation
+
+#### Features
+* feat: ... by @author in https://github.com/OpenHands/automation/pull/...
+
+#### Bug Fixes
+* fix: ... by @author in https://github.com/OpenHands/automation/pull/...
 
 ---
 
