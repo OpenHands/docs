@@ -118,13 +118,13 @@ You don't need the user to confirm before proceeding — just **inform** them of
 jumps (previous → new for all five components) so they can double-check if they want to. Present the
 table and continue generating the page. Example:
 
-| Component | Previous | New |
-|---|---|---|
-| OpenHands-Cloud (Helm chart) | 0.28.0 | 0.36.0 |
-| Enterprise Server | 1.47.1 | 1.49.0 |
-| Software Agent SDK | 1.36.0 | 1.39.1 |
-| Runtime API | 0.5.2 | 0.7.0 |
-| Automation | 1.1.5 | 1.5.0 |
+| Component                    | Previous | New    |
+|------------------------------|----------|--------|
+| OpenHands-Cloud (Helm chart) | 0.28.0   | 0.36.0 |
+| Enterprise Server            | 1.47.1   | 1.49.0 |
+| Software Agent SDK           | 1.36.0   | 1.39.1 |
+| Runtime API                  | 0.5.2    | 0.7.0  |
+| Automation                   | 1.1.5    | 1.5.0  |
 
 ### 2. Identify GitHub releases in range
 
