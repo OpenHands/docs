@@ -46,6 +46,74 @@ export SANDBOX_VOLUMES=$PWD:/workspace:rw
   agent.
 </Note>
 
+## Self-hosting Behind a Reverse Proxy
+
+When you self-host OpenHands behind a reverse proxy (nginx, Traefik, etc.), each
+Docker sandbox exposes its agent-server (and VS Code / worker) ports on a
+**randomly assigned host port**. The frontend reaches the sandbox by plugging
+that random port into the `container_url_pattern`, which defaults to
+`http://localhost:{port}`. Two things break for a typical reverse-proxy setup:
+
+1. The hostname is `localhost`, not your public domain.
+2. The port is random, so you cannot add a static proxy route for it.
+
+<Note>
+  <code>OH_WEB_URL</code> does **not** control these sandbox URLs. It only sets
+  the agent-server's <code>root_path</code> and adds the origin to the sandbox's
+  CORS allow-list. Setting it will not change the host/port the browser uses to
+  reach a sandbox.
+</Note>
+
+### Pin sandbox ports with host networking
+
+Set `AGENT_SERVER_USE_HOST_NETWORK=true` to run agent-server containers in
+Docker host-network mode. Instead of random host ports, each container's ports
+are reachable directly on fixed host ports:
+
+| Container port | Service |
+|-----------------|---------|
+| `8000` | Agent server |
+| `8001` | VS Code server |
+| `8011` | Worker 1 |
+| `8012` | Worker 2 |
+
+```bash
+export AGENT_SERVER_USE_HOST_NETWORK=true
+```
+
+This lets you add a single static reverse-proxy route for each fixed port.
+
+<Warning>
+  Host-network mode binds every sandbox to the **same** fixed host ports. Only
+  one sandbox can run at a time; concurrent conversations will collide on those
+  ports. OpenHands logs a warning if host networking is enabled with
+  <code>max_num_sandboxes &gt; 1</code>.
+</Warning>
+
+### Fix the sandbox URL hostname
+
+To point sandbox URLs at your public domain (keeping the per-sandbox port),
+set the `container_url_pattern` to your hostname with the `{port}` placeholder:
+
+```bash
+# OH_-prefixed form (recommended for V1):
+export OH_SANDBOX_CONTAINER_URL_PATTERN="https://my-domain:{port}"
+# Legacy form (also accepted):
+export SANDBOX_CONTAINER_URL_PATTERN="https://my-domain:{port}"
+```
+
+This replaces `localhost` with your domain, but the port is still random per
+sandbox. Traefik cannot natively route an arbitrary dynamic port; a regex-based
+proxy (e.g. nginx) is needed to forward each port to the right sandbox.
+
+### Summary
+
+| Goal | Variable | Effect |
+|------|----------|--------|
+| Fixed, static ports (one sandbox at a time) | `AGENT_SERVER_USE_HOST_NETWORK=true` | Containers use host networking; ports `8000`/`8001`/`8011`/`8012` are exposed directly on the host. |
+| Public hostname for sandbox URLs | `OH_SANDBOX_CONTAINER_URL_PATTERN` / `SANDBOX_CONTAINER_URL_PATTERN` | Replaces `localhost` with your domain in the URLs the browser uses. Port stays random per sandbox. |
+
+
 ## Custom sandbox images
 
 To customize the container image (extra tools, system deps, etc.), see
