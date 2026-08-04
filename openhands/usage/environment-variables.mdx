@@ -15,6 +15,73 @@ OpenHands follows a consistent naming pattern for environment variables:
 - **Sandbox settings**: Prefixed with `SANDBOX_` (e.g., `timeout` → `SANDBOX_TIMEOUT`)
 - **Security settings**: Prefixed with `SECURITY_` (e.g., `confirmation_mode` → `SECURITY_CONFIRMATION_MODE`)
 
+
+## Two-Container Architecture (V1)
+
+<Note>
+This section is important for understanding how environment variables work in Docker deployments.
+</Note>
+
+When running OpenHands with Docker (the default), the system uses a **two-container architecture**:
+
+1. **App-server container** (`openhands-app`) - Handles the web UI, API endpoints, and orchestration
+2. **Agent-server container** (`oh-agent-server-*`) - Runs the actual AI agent and executes commands
+
+Environment variables set on your host machine or in docker-compose only directly affect the **app-server container**. To configure the agent-server, you need to understand how variables are forwarded.
+
+### Auto-Forwarded Variables
+
+The following environment variable prefixes are **automatically forwarded** from the app-server to the agent-server:
+
+| Prefix | Description | Examples |
+|--------|-------------|----------|
+| `LLM_*` | LLM configuration settings | `LLM_TIMEOUT`, `LLM_NUM_RETRIES`, `LLM_MODEL` |
+
+This means you can set `LLM_TIMEOUT=3600` on your host, and it will automatically be available inside the agent-server container.
+
+### Explicit Agent-Server Configuration
+
+For environment variables that are **not** auto-forwarded, you can use the `OH_AGENT_SERVER_ENV` variable to pass arbitrary settings to the agent-server:
+
+```bash
+# Pass custom environment variables to the agent-server as a JSON object
+export OH_AGENT_SERVER_ENV='{"DEBUG": "true", "CUSTOM_VAR": "value", "LOG_LEVEL": "debug"}'
+```
+
+<Warning>
+The `OH_AGENT_SERVER_ENV` JSON values take **precedence** over auto-forwarded variables. For example, if you set both `LLM_TIMEOUT=3600` and `OH_AGENT_SERVER_ENV='{"LLM_TIMEOUT": "7200"}'`, the agent-server will use `7200`.
+</Warning>
+
+### Agent-Server Networking
+
+| Environment Variable | Type | Default | Description |
+|---------------------|------|---------|-------------|
+| `AGENT_SERVER_USE_HOST_NETWORK` | boolean | `false` | Use host networking mode for agent-server containers. Useful for reverse proxy setups. |
+| `SANDBOX_USE_HOST_NETWORK` | boolean | `false` | (Legacy) Same as above, for backward compatibility |
+| `SANDBOX_CONTAINER_URL_PATTERN` | string | `"http://localhost:{port}"` | URL pattern for accessing exposed agent-server ports. Use `{port}` as placeholder. |
+| `SANDBOX_HOST_PORT` | integer | `3000` | The port the app-server is running on (for webhook callbacks) |
+
+### Example: Configuring LLM Timeouts
+
+```bash
+# These LLM_* variables are auto-forwarded to the agent-server
+export LLM_TIMEOUT=3600           # 1 hour timeout
+export LLM_NUM_RETRIES=10         # More retries for flaky connections
+export LLM_RETRY_MIN_WAIT=30      # 30 second minimum wait between retries
+
+# Start OpenHands - these settings will apply to the agent
+docker run -e LLM_TIMEOUT -e LLM_NUM_RETRIES -e LLM_RETRY_MIN_WAIT ...
+```
+
+### Example: Host Network Mode
+
+```bash
+# Enable host network mode for the agent-server
+# (useful when running behind a reverse proxy)
+export AGENT_SERVER_USE_HOST_NETWORK=true
+export SANDBOX_CONTAINER_URL_PATTERN="http://localhost:{port}"
+```
+
 ## Core Configuration Variables
 
 These variables correspond to the `[core]` section in `config.toml`:
