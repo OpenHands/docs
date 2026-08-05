@@ -167,9 +167,21 @@ Indices and tables
 * :ref:`search`
 ''')
         
-        # Main SDK module
+        # Main SDK module - dynamically build the toctree based on the modules list
+        # (the list is defined below, so we define it here first)
+        all_modules = [
+            # Core modules (original)
+            'agent', 'conversation', 'event', 'llm', 
+            'tool', 'workspace', 'security', 'utils',
+            # Additional important modules
+            'context', 'hooks', 'critic', 'mcp', 'plugin', 
+            'subagent', 'io', 'secret', 'skills',
+            'observability', 'logger',
+        ]
+        
+        toctree_entries = "\n".join(f"   openhands.sdk.{m}" for m in all_modules)
         sdk_rst = sphinx_source / "openhands.sdk.rst"
-        sdk_rst.write_text('''
+        sdk_rst.write_text(f'''
 openhands.sdk package
 =====================
 
@@ -184,23 +196,11 @@ Submodules
 .. toctree::
    :maxdepth: 1
 
-   openhands.sdk.agent
-   openhands.sdk.conversation
-   openhands.sdk.event
-   openhands.sdk.llm
-   openhands.sdk.tool
-   openhands.sdk.workspace
-   openhands.sdk.security
-   openhands.sdk.utils
+{toctree_entries}
 ''')
         
-        # Generate RST files for each major module
-        modules = [
-            'agent', 'conversation', 'event', 'llm', 
-            'tool', 'workspace', 'security', 'utils'
-        ]
-        
-        for module in modules:
+        # Generate RST files for each major module (reuse the list defined above)
+        for module in all_modules:
             module_rst = sphinx_source / f"openhands.sdk.{module}.rst"
             module_rst.write_text(f'''
 openhands.sdk.{module} module
@@ -233,6 +233,17 @@ openhands.sdk.{module} module
         
         build_dir = self.sphinx_dir / "build"
         
+        # Define the modules we want to include (must match the list in create_rst_files)
+        allowed_modules = [
+            # Core modules (original)
+            'agent', 'conversation', 'event', 'llm', 
+            'tool', 'workspace', 'security', 'utils',
+            # Additional important modules
+            'context', 'hooks', 'critic', 'mcp', 'plugin', 
+            'subagent', 'io', 'secret', 'skills',
+            'observability', 'logger',
+        ]
+        
         # Remove old output directory
         if self.output_dir.exists():
             shutil.rmtree(self.output_dir)
@@ -246,6 +257,13 @@ openhands.sdk.{module} module
             # Skip the top-level openhands.sdk.md file as it duplicates content
             if md_file.name == "openhands.sdk.md":
                 logger.info(f"Skipping {md_file.name} (top-level duplicate)")
+                continue
+            
+            # Only process files for modules in the allowed list
+            # File names are like: openhands.sdk.module.md
+            module_name = md_file.stem.replace('openhands.sdk.', '')
+            if module_name not in allowed_modules:
+                logger.info(f"Skipping {md_file.name} (not in allowed modules)")
                 continue
                 
             logger.info(f"Processing {md_file.name}")
@@ -277,7 +295,261 @@ openhands.sdk.{module} module
         content = re.sub(pattern3, '(configuration object)', content, flags=re.DOTALL)
         
         return content
+    
+    def fix_example_blocks(self, content: str) -> str:
+        """Fix example code blocks that are not properly formatted."""
+        import re
+        
+        lines = content.split('\n')
+        result_lines = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this is an Example header followed by unformatted code
+            # Handle both header-style and plain "Example:" format
+            is_example_header = (
+                line.strip() in ['#### Example', '### Example', '## Example'] or
+                line.strip() == 'Example:' or
+                line.strip() == 'Example'
+            )
+            
+            if is_example_header:
+                # Normalize to h4 header
+                result_lines.append('#### Example')
+                result_lines.append('')
+                i += 1
+                
+                # Skip any blank lines after the header
+                while i < len(lines) and not lines[i].strip():
+                    i += 1
+                
+                # Check if the next line looks like code (not a proper code block)
+                if i < len(lines) and not lines[i].startswith('```'):
+                    # Collect all lines until we hit another header or blank line followed by a header
+                    code_lines = []
+                    while i < len(lines):
+                        current = lines[i]
+                        # Stop if we hit a header
+                        if current.startswith('#'):
+                            break
+                        # Stop if we hit Properties or Methods sections
+                        if current.strip() in ['#### Properties', '#### Methods', '### Properties', '### Methods']:
+                            break
+                        # Stop if we hit two blank lines (paragraph break)
+                        if not current.strip() and i + 1 < len(lines) and lines[i + 1].startswith('#'):
+                            break
+                        code_lines.append(current)
+                        i += 1
+                    
+                    # Remove trailing blank lines from code
+                    while code_lines and not code_lines[-1].strip():
+                        code_lines.pop()
+                    
+                    # Clean up the code lines
+                    cleaned_code = []
+                    for code_line in code_lines:
+                        # Remove RST-style definition list markers
+                        code_line = re.sub(r'^:\s*', '', code_line)
+                        # Remove <br/> tags
+                        code_line = code_line.replace('`<br/>`', '')
+                        code_line = code_line.replace('<br/>', '')
+                        # Remove standalone > characters (blockquote artifacts)
+                        code_line = re.sub(r'^\s*>\s*', '', code_line)
+                        cleaned_code.append(code_line)
+                    
+                    if cleaned_code:
+                        # Determine language from content
+                        first_non_empty = next((l for l in cleaned_code if l.strip()), '')
+                        if first_non_empty.strip().startswith('{') or first_non_empty.strip() == 'json':
+                            # Remove the standalone 'json' line if present
+                            if cleaned_code and cleaned_code[0].strip() == 'json':
+                                cleaned_code = cleaned_code[1:]
+                            result_lines.append('```json')
+                        else:
+                            result_lines.append('```python')
+                        result_lines.extend(cleaned_code)
+                        result_lines.append('```')
+                        result_lines.append('')
+                # else: Already has a proper code block starting with ```
+                # The code block lines will be added by subsequent iterations
+                # (i is already pointing to the ``` line)
+                continue
+            
+            result_lines.append(line)
+            i += 1
+        
+        return '\n'.join(result_lines)
 
+    def fix_shell_config_examples(self, content: str) -> str:
+        """Fix shell-style configuration examples where # comments are interpreted as headers.
+        
+        Wraps configuration blocks (KEY=VALUE lines with # comments) in code blocks.
+        """
+        import re
+        
+        lines = content.split('\n')
+        result = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this line introduces a configuration example
+            # Common patterns: "Example configuration:", "Configuration example:", etc.
+            if re.match(r'^(Example\s+)?[Cc]onfiguration[:\s]', line.strip()) or \
+               line.strip().endswith('configuration:'):
+                result.append(line)
+                i += 1
+                
+                # Collect following lines that look like config (KEY=VALUE or # comments)
+                config_lines = []
+                while i < len(lines):
+                    current = lines[i]
+                    stripped = current.strip()
+                    
+                    # Stop conditions: empty line followed by non-config, or header
+                    if not stripped:
+                        # Check if next non-blank is a real header (method/class)
+                        j = i + 1
+                        while j < len(lines) and not lines[j].strip():
+                            j += 1
+                        if j < len(lines) and lines[j].startswith('###'):
+                            break
+                        config_lines.append(current)
+                        i += 1
+                        continue
+                    
+                    # Real markdown headers (### method or class)
+                    if stripped.startswith('### ') or stripped.startswith('#### '):
+                        break
+                    
+                    # Config-like lines: KEY=VALUE, # comment, or continuation
+                    if re.match(r'^[A-Z_]+=', stripped) or \
+                       stripped.startswith('#') or \
+                       '=' in stripped:
+                        config_lines.append(current)
+                        i += 1
+                    else:
+                        # Non-config line
+                        break
+                
+                # Remove trailing blank lines from config
+                while config_lines and not config_lines[-1].strip():
+                    config_lines.pop()
+                
+                if config_lines:
+                    # Wrap in code block
+                    result.append('```bash')
+                    result.extend(config_lines)
+                    result.append('```')
+                continue
+            
+            result.append(line)
+            i += 1
+        
+        return '\n'.join(result)
+    
+    def add_class_separators(self, content: str) -> str:
+        """Add horizontal rules before class headers to ensure proper spacing.
+        
+        This fixes the CSS issue where h4 (method headers like init()) followed by 
+        h3 (class headers) lose their margin-top due to Mintlify's CSS rule that 
+        sets margin-top: 0 for elements following h4.
+        """
+        import re
+        
+        lines = content.split('\n')
+        result = []
+        
+        for i, line in enumerate(lines):
+            # Check if this is a class header
+            # Match both "### class ..." and "### *class* ..." formats
+            is_class_header = (
+                line.startswith('### class ') or 
+                line.startswith('### *class* ')
+            )
+            
+            if is_class_header:
+                # Don't add separator before the very first class (after frontmatter)
+                # Check if there's actual content before this (not just blank lines or frontmatter)
+                has_content_before = False
+                for j in range(i - 1, -1, -1):
+                    stripped = lines[j].strip()
+                    if stripped and stripped != '---':  # Ignore frontmatter delimiters
+                        # Found non-blank, non-frontmatter content
+                        has_content_before = True
+                        break
+                
+                if has_content_before:
+                    # Add a horizontal rule before the class header for visual separation
+                    # This overrides the margin-top: 0 from CSS
+                    result.append('')
+                    result.append('---')
+                    result.append('')
+            
+            result.append(line)
+        
+        return '\n'.join(result)
+    
+    def remove_malformed_examples(self, content: str) -> str:
+        """Remove Example sections that contain malformed code (raw JSON/code without proper code blocks)."""
+        import re
+        
+        lines = content.split('\n')
+        result = []
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check if this is an Example header
+            if line.strip() == '#### Example':
+                # Look ahead to see if the example content is properly formatted
+                j = i + 1
+                
+                # Skip blank lines
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                
+                # Check if the next non-blank line starts a proper code block
+                if j < len(lines) and lines[j].startswith('```'):
+                    # This is a properly formatted example, keep it
+                    result.append(line)
+                    i += 1
+                    continue
+                
+                # Check if the content contains curly braces (JSON/dict) without code blocks
+                # This would cause MDX parsing errors
+                example_content = []
+                k = j
+                while k < len(lines):
+                    if lines[k].startswith('#'):  # Hit next header
+                        break
+                    example_content.append(lines[k])
+                    k += 1
+                
+                example_text = '\n'.join(example_content)
+                has_curly_braces = '{' in example_text or '}' in example_text
+                has_proper_code_block = '```' in example_text
+                
+                if has_curly_braces and not has_proper_code_block:
+                    # This is a malformed example with raw code - skip it entirely
+                    # Skip to the next header
+                    i = k
+                    continue
+                else:
+                    # Keep this example
+                    result.append(line)
+                    i += 1
+                    continue
+            
+            result.append(line)
+            i += 1
+        
+        return '\n'.join(result)
+    
     def fix_header_hierarchy(self, content: str) -> str:
         """Fix header hierarchy to ensure proper nesting under class headers."""
         import re
@@ -444,6 +716,35 @@ openhands.sdk.{module} module
 
     def clean_markdown_content(self, content: str, filename: str) -> str:
         """Clean markdown content to be parser-friendly."""
+        # FIRST: Fix malformed *args and **kwargs patterns from Sphinx
+        # These appear as: ```\n*\n```\n<br/>\nargs  or similar
+        # Convert to clean `*args` and `**kwargs`
+        content = re.sub(
+            r'<br/>\s*```\s*\n\s*\*\*\s*\n\s*```\s*<br/>\s*kwargs',
+            '`**kwargs`',
+            content
+        )
+        content = re.sub(
+            r'<br/>\s*```\s*\n\s*\*\s*\n\s*```\s*<br/>\s*args',
+            '`*args`',
+            content
+        )
+        # Also without <br/> tags
+        content = re.sub(
+            r'```\s*\n\s*\*\*\s*\n\s*```[\s\n]*kwargs',
+            '`**kwargs`',
+            content
+        )
+        content = re.sub(
+            r'```\s*\n\s*\*\s*\n\s*```[\s\n]*args',
+            '`*args`',
+            content
+        )
+        
+        # Handle escaped \*args and \*\*kwargs before other processing
+        content = content.replace('\\*\\*kwargs', '`**kwargs`')
+        content = content.replace('\\*args', '`*args`')
+        
         # First handle multi-line dictionary patterns
         content = self.clean_multiline_dictionaries(content)
         
@@ -452,6 +753,98 @@ openhands.sdk.{module} module
         
         # Fix header hierarchy (Example sections should be h4 under class headers)
         content = self.fix_header_hierarchy(content)
+        
+        # Fix example code blocks that are not properly formatted
+        content = self.fix_example_blocks(content)
+        
+        # Fix shell-style configuration examples that have # comments being interpreted as headers
+        # Pattern: lines like "Example configuration:" followed by KEY=VALUE and "# comment" lines
+        content = self.fix_shell_config_examples(content)
+        
+        # Remove all <br/> tags (wrapped in backticks or not)
+        content = content.replace('`<br/>`', '')
+        content = content.replace('<br/>', '')
+        
+        # Clean up malformed code blocks with weird backtick patterns
+        # These come from Sphinx's markdown output
+        content = re.sub(r'```\s*\n``\s*\n```', '', content)  # Empty weird block
+        content = re.sub(r'```\s*\n`\s*\n```', '', content)   # Another weird pattern
+        content = re.sub(r'^## \}', '}', content, flags=re.MULTILINE)  # Fix closing brace with header prefix
+        
+        # Handle any remaining standalone code blocks with just * or ** (cleanup)
+        content = re.sub(r'\s*```\s*\n\s*\*\*\s*\n\s*```\s*', ' ', content)
+        content = re.sub(r'\s*```\s*\n\s*\*\s*\n\s*```\s*', ' ', content)
+        
+        # Clean up blockquote markers that break MDX parsing
+        # Convert '  > text' to '  text' (indented blockquotes to plain indented text)
+        # Handle multiple levels of nesting like '> > text'
+        # BUT: Don't remove >>> which are Python REPL prompts!
+        # Run multiple times to handle nested blockquotes
+        prev_content = None
+        while prev_content != content:
+            prev_content = content
+            # Only match single > at start of line (not >>> or >>)
+            # Pattern: start of line, optional whitespace, single > not followed by >
+            content = re.sub(r'^(\s*)>(?!>)\s*', r'\1', content, flags=re.MULTILINE)
+        
+        # Remove duplicate Example: lines after #### Example header
+        content = re.sub(r'(#### Example\n\n)Example:\n', r'\1', content)
+        
+        # Remove malformed standalone backtick patterns
+        content = re.sub(r'^``\s*$', '', content, flags=re.MULTILINE)
+        content = re.sub(r'^`\s*$', '', content, flags=re.MULTILINE)
+        
+        # Clean up multiple consecutive blank lines (more than 2)
+        content = re.sub(r'\n{4,}', '\n\n\n', content)
+        
+        # Remove orphaned code block openers (but not closers!)
+        # Pattern: ``` opener followed by content that doesn't have a matching closing ```
+        # This handles Sphinx's broken JSON/code examples
+        # We track whether we're inside a code block to distinguish openers from closers
+        lines = content.split('\n')
+        cleaned = []
+        in_code_block = False
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check for code block markers
+            if line.strip().startswith('```'):
+                if not in_code_block:
+                    # This is an opener - check if it has a matching close
+                    if line.strip() == '```':
+                        # Standalone opener - look ahead for close
+                        j = i + 1
+                        has_close = False
+                        while j < len(lines):
+                            if lines[j].strip() == '```':
+                                has_close = True
+                                break
+                            if lines[j].startswith('#'):  # Hit a header - no proper close
+                                break
+                            j += 1
+                        
+                        if not has_close:
+                            # Skip this orphaned opener
+                            i += 1
+                            continue
+                    # It's a valid opener (either has language or has close)
+                    in_code_block = True
+                else:
+                    # This is a closer
+                    in_code_block = False
+            
+            cleaned.append(line)
+            i += 1
+        content = '\n'.join(cleaned)
+        
+        # Remove malformed Example sections that contain raw JSON/code without proper formatting
+        # These cause MDX parsing errors due to curly braces being interpreted as JSX
+        content = self.remove_malformed_examples(content)
+        
+        # Add horizontal rules before class headers to ensure proper spacing
+        # This fixes the issue where h4 (method) followed by h3 (class) loses margin-top
+        content = self.add_class_separators(content)
         
         lines = content.split('\n')
         cleaned_lines = []
@@ -529,14 +922,11 @@ description: API reference for {module_name} module
         # Only replace if it looks like an HTML tag: <tagname> or </tagname>
         line = re.sub(r'<(/?\w+[^>]*)>', r'`<\1>`', line)
         
-        # Fix Sphinx-generated blockquote markers that should be list continuations
-        if line.startswith('> ') and not line.startswith('> **'):
-            # This is likely a continuation of a bullet point, not a blockquote
-            line = '  ' + line[2:]  # Replace '> ' with proper indentation
+        # Note: Blockquote markers are now handled globally in clean_markdown_content
+        # Note: *args and **kwargs are now handled at the start of clean_markdown_content
         
-        # Remove escaped characters that cause issues
-        line = line.replace('\\*', '*')
-        line = line.replace('\\', '')
+        # Remove remaining escaped backslashes, but preserve literal asterisks in code
+        line = re.sub(r'\\([^*])', r'\1', line)  # Remove backslash before non-asterisks
         
         # Fix dictionary/object literals that cause parsing issues
         # Pattern: = {'key': 'value', 'key2': 'value2'} or = {}
@@ -570,37 +960,57 @@ description: API reference for {module_name} module
         
         # Note: All cross-reference link conversion logic removed - we now just strip links entirely
         class_to_module = {
+            # agent module
             'Agent': 'agent',
             'AgentBase': 'agent', 
-            'AgentContext': 'agent',
+            # context module
+            'AgentContext': 'context',
+            'Skill': 'context',
+            'SkillKnowledge': 'context',
+            'BaseTrigger': 'context',
+            'KeywordTrigger': 'context',
+            'TaskTrigger': 'context',
+            'SkillValidationError': 'context',
+            # conversation module
             'Conversation': 'conversation',
             'BaseConversation': 'conversation',
             'LocalConversation': 'conversation',
             'RemoteConversation': 'conversation',
             'ConversationState': 'conversation',
             'ConversationStats': 'conversation',
+            # event module
             'Event': 'event',
             'LLMConvertibleEvent': 'event',
             'MessageEvent': 'event',
+            'HookExecutionEvent': 'event',
+            # llm module
             'LLM': 'llm',
             'LLMRegistry': 'llm',
             'LLMResponse': 'llm',
+            'LLMProfileStore': 'llm',
+            'LLMStreamChunk': 'llm',
+            'FallbackStrategy': 'llm',
             'Message': 'llm',
             'ImageContent': 'llm',
             'TextContent': 'llm',
             'ThinkingBlock': 'llm',
             'RedactedThinkingBlock': 'llm',
+            'TokenUsage': 'llm',
             'Metrics': 'llm',
             'RegistryEvent': 'llm',
+            # security module
             'SecurityManager': 'security',
+            # tool module
             'Tool': 'tool',
             'ToolDefinition': 'tool',
             'Action': 'tool',
             'Observation': 'tool',
+            # workspace module
             'Workspace': 'workspace',
             'BaseWorkspace': 'workspace',
             'LocalWorkspace': 'workspace',
             'RemoteWorkspace': 'workspace',
+            'AsyncRemoteWorkspace': 'workspace',
             'WorkspaceFile': 'workspace',
             'WorkspaceFileEdit': 'workspace',
             'WorkspaceFileEditResult': 'workspace',
@@ -611,6 +1021,66 @@ description: API reference for {module_name} module
             'WorkspaceSearchResultItem': 'workspace',
             'WorkspaceUploadResult': 'workspace',
             'WorkspaceWriteResult': 'workspace',
+            # hooks module
+            'HookConfig': 'hooks',
+            'HookDefinition': 'hooks',
+            'HookMatcher': 'hooks',
+            'HookType': 'hooks',
+            'HookExecutor': 'hooks',
+            'HookResult': 'hooks',
+            'HookManager': 'hooks',
+            'HookEvent': 'hooks',
+            'HookEventType': 'hooks',
+            'HookDecision': 'hooks',
+            'HookEventProcessor': 'hooks',
+            # critic module
+            'CriticBase': 'critic',
+            'CriticResult': 'critic',
+            'IterativeRefinementConfig': 'critic',
+            'AgentFinishedCritic': 'critic',
+            'APIBasedCritic': 'critic',
+            'EmptyPatchCritic': 'critic',
+            'PassCritic': 'critic',
+            # mcp module
+            'MCPClient': 'mcp',
+            'MCPToolDefinition': 'mcp',
+            'MCPToolAction': 'mcp',
+            'MCPToolObservation': 'mcp',
+            'MCPToolExecutor': 'mcp',
+            'MCPError': 'mcp',
+            'MCPTimeoutError': 'mcp',
+            # plugin module
+            'Plugin': 'plugin',
+            'PluginManifest': 'plugin',
+            'PluginAuthor': 'plugin',
+            'PluginSource': 'plugin',
+            'ResolvedPluginSource': 'plugin',
+            'CommandDefinition': 'plugin',
+            'PluginFetchError': 'plugin',
+            'Marketplace': 'plugin',
+            'MarketplaceEntry': 'plugin',
+            'MarketplaceOwner': 'plugin',
+            'MarketplacePluginEntry': 'plugin',
+            'MarketplacePluginSource': 'plugin',
+            'MarketplaceMetadata': 'plugin',
+            'InstalledPluginInfo': 'plugin',
+            'InstalledPluginsMetadata': 'plugin',
+            'GitHubURLComponents': 'plugin',
+            # subagent module
+            'AgentDefinition': 'subagent',
+            # io module
+            'FileStore': 'io',
+            'LocalFileStore': 'io',
+            'InMemoryFileStore': 'io',
+            # secret module
+            'SecretSource': 'secret',
+            'StaticSecret': 'secret',
+            'LookupSecret': 'secret',
+            'SecretValue': 'secret',
+            # skills module
+            'InstalledSkillInfo': 'skills',
+            'InstalledSkillsMetadata': 'skills',
+            'SkillFetchError': 'skills',
         }
 
         # Fix anchor links - convert full module path anchors to simple class format
@@ -731,12 +1201,26 @@ description: API reference for {module_name} module
                 docs_config = json.load(f)
             
             # Find and update the API Reference section
+            # Structure: API Reference (collapsed) > Python SDK (collapsed) > modules
             updated = False
+            new_api_ref_structure = {
+                "group": "API Reference",
+                "collapsed": True,
+                "pages": [
+                    {
+                        "group": "Python SDK",
+                        "collapsed": True,
+                        "pages": nav_entries
+                    }
+                ]
+            }
+            
             for tab in docs_config.get("navigation", {}).get("tabs", []):
                 if tab.get("tab") == "SDK":
-                    for page in tab.get("pages", []):
+                    pages = tab.get("pages", [])
+                    for i, page in enumerate(pages):
                         if isinstance(page, dict) and page.get("group") == "API Reference":
-                            page["pages"] = nav_entries
+                            pages[i] = new_api_ref_structure
                             updated = True
                             logger.info("Updated API Reference navigation in docs.json")
                             break
