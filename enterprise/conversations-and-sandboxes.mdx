@@ -265,6 +265,77 @@ Use the events endpoint for messages, tool actions, tool observations, state
 changes, and errors. Use the current app-conversation record to reconcile
 status after a process restart or missed event.
 
+## Sandbox Status States
+
+The `sandbox_status` field indicates the lifecycle state of the sandbox. This is
+distinct from `execution_status`, which tracks the agent's task state.
+
+| Status | What it means | Can send messages | Workspace available | Notes |
+| --- | --- | --- | --- | --- |
+| `STARTING` | Sandbox is being created | No | No | Sandboxes provision on-demand |
+| `RUNNING` | Sandbox is active and ready | Yes | Yes | Normal operating state |
+| `PAUSED` | Sandbox is paused | Yes | Yes | Agent paused; sandbox still running |
+| `ERROR` | Sandbox encountered an error | No (read-only) | No | Terminal state; check UI for details |
+| `MISSING` | Sandbox was deleted/cleaned up | No (read-only) | No | Terminal state |
+
+### State Transitions
+
+```
+STARTING → RUNNING → PAUSED
+                 ↘ ERROR
+                 ↘ MISSING
+```
+
+- **STARTING → RUNNING**: Normal transition as the sandbox boots up
+- **RUNNING → PAUSED**: Happens when the agent pauses for user confirmation or
+  due to rate limits
+- **RUNNING → ERROR**: Unrecoverable error in the sandbox (e.g., container
+  failure)
+- **RUNNING → MISSING**: Sandbox was cleaned up due to idle timeout or manual
+  deletion
+
+## Execution Status
+
+The `execution_status` field indicates the agent's task state when the sandbox
+is `RUNNING`:
+
+| Status | What it means |
+| --- | --- |
+| `IDLE` | Agent is idle, waiting for input |
+| `RUNNING` | Agent is actively processing |
+| `PAUSED` | Agent has paused (e.g., waiting for confirmation mode) |
+| `WAITING_FOR_CONFIRMATION` | Agent is waiting for user to approve a high-risk action |
+| `FINISHED` | Task completed successfully |
+| `ERROR` | Task encountered an error |
+| `STUCK` | Agent appears to be stuck |
+
+## Read-Only Conversations
+
+When `sandbox_status` is `ERROR` or `MISSING`, the conversation becomes
+read-only. You can:
+
+- ✅ View the full conversation transcript
+- ✅ Scroll through all past messages and agent actions
+- ❌ Send new messages
+- ❌ Resume the sandbox
+- ❌ Access workspace files
+
+### What Gets Preserved
+
+| Artifact | Preserved after cleanup |
+| --- | --- |
+| Conversation transcript | ✅ Yes (always) |
+| Agent actions and observations | ✅ Yes (always) |
+| Workspace files | ❌ No (deleted with sandbox) |
+| Sandbox state | ❌ No (deleted with sandbox) |
+
+### Workspace Archive Capture
+
+When a sandbox is cleaned up, OpenHands captures an internal archive of the
+workspace contents. This archive is used for debugging, support, and audit
+trails (Enterprise plans). The workspace archive is an internal artifact and is
+not directly accessible to users.
+
 ## Manage Sandbox Lifecycle
 
 The V1 sandbox endpoints include:
