@@ -3,13 +3,7 @@ title: Agent Canvas Architecture
 description: Understand how Agent Canvas connects to execution, automation, and sandbox services.
 ---
 
-Agent Canvas is the open-source browser client and control center for OpenHands conversations and automations. It presents backend state and sends requests to backend services; it is not an agent runtime or sandbox.
-
-<Warning>
-  **Agent Canvas does not execute tools.** Agent Server or an ACP agent process executes tools in the selected workspace.
-
-  **Agent Canvas does not provide sandbox isolation.** Isolation comes from the selected workspace, container, sandbox service, or remote platform.
-</Warning>
+Agent Canvas is the open-source browser client and control center for OpenHands conversations and automations. It presents backend state and sends requests to backend services; it is not an agent runtime or sandbox. Agent Server or an ACP agent process executes tools, and the selected workspace or sandbox provides the execution boundary.
 
 ## Core Components
 
@@ -18,8 +12,9 @@ Agent Canvas is the open-source browser client and control center for OpenHands 
 | **Agent Canvas** | Browser interface for conversations, files, settings, backends, and automations | [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) |
 | **Agent Server** | Runs conversations, agents, tools, and workspace operations; streams events to clients | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server) |
 | **Automation Server** | Stores schedules and event triggers, tracks runs, and dispatches conversations | [`OpenHands/automation`](https://github.com/OpenHands/automation) |
-| **Sandbox Server** | Creates and manages sandboxed environments that host Agent Server | [`OpenHands/sandbox-server`](https://github.com/OpenHands/sandbox-server) |
 | **Workspace or sandbox** | Defines which files, processes, credentials, and networks an agent can access | Deployment-specific |
+
+Sandbox Server is a community-driven standalone API and sandbox control plane. It is not a core Agent Canvas backend or a supported deployment option. [Learn more about Sandbox Server](https://github.com/OpenHands/sandbox-server).
 
 ## Service Relationships
 
@@ -28,30 +23,34 @@ Agent Canvas is the open-source browser client and control center for OpenHands 
 flowchart TB
     Browser["Browser"] --> Canvas["Agent Canvas<br/>browser client"]
 
-    Canvas -->|conversations and settings| AgentServer["Agent Server"]
-    Canvas -->|schedules, events, and runs| Automation["Automation Server"]
-    Automation -->|dispatch conversation| AgentServer
-    AgentServer -->|execute agent and tools| Workspace["Workspace or sandbox"]
+    subgraph Backend["Selected backend"]
+        AgentServer["Agent Server"] -->|execute agent and tools| Workspace["Workspace or sandbox"]
+        Automation["Automation Server"] -->|dispatch conversation| AgentServer
+    end
 
-    Canvas -.->|optional control plane| SandboxServer["Sandbox Server"]
-    SandboxServer -->|create and manage| Sandbox["Sandbox"]
-    Sandbox -->|hosts| SandboxedAgentServer["Agent Server"]
+    Canvas -->|conversations and settings| AgentServer
+    Canvas -->|schedules, events, and runs| Automation
 
-    Canvas -.->|remote backend| Remote["OpenHands Cloud or Enterprise"]
+    subgraph Platform["OpenHands Cloud or Enterprise"]
+        ControlPlane["Platform control plane"] -->|create and manage| Sandbox["Conversation sandbox"]
+        Sandbox -->|hosts| PlatformAgentServer["Agent Server"]
+    end
+
+    Canvas -.->|managed backend| PlatformAgentServer
 
     classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
     classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
     classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
     classDef service fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
     class Canvas primary
-    class AgentServer,Automation,SandboxedAgentServer secondary
+    class AgentServer,Automation,PlatformAgentServer secondary
     class Workspace,Sandbox tertiary
-    class SandboxServer,Remote service
+    class ControlPlane service
 ```
 
-The normal browser path is **Browser → Agent Canvas → backend services**. Agent Server owns conversation execution. Automation Server owns scheduled and event-driven run lifecycle. A backend distribution can expose both services behind one URL, but they remain separate responsibilities.
+The normal browser path is **Browser → Agent Canvas → selected backend**. Agent Server owns conversation execution. Automation Server owns scheduled and event-driven run lifecycle. A backend distribution can expose both services behind one URL, but they remain separate responsibilities.
 
-Sandbox Server is an optional control plane. It creates sandboxes that host Agent Server, while Agent Canvas remains the client. OpenHands Cloud and OpenHands Enterprise provide remote backend and sandbox infrastructure behind their service endpoints.
+A remote backend uses the same Agent Server API as a local backend. The Agent Server can run on another machine, or in a separate container on the same machine as Canvas. OpenHands Cloud and OpenHands Enterprise are managed backend platforms: their platform control planes create conversation sandboxes that host Agent Server.
 
 ## Client And Launcher Boundaries
 
@@ -80,8 +79,8 @@ The workspace determines the execution boundary:
 |----------------|----------------------------------|
 | **Local process** | Agent Server and tools run directly on the backend host without container isolation. |
 | **Docker or Kubernetes** | Agent Server and tools run inside the configured container or pod with its mounts and network policy. |
-| **Sandbox Server** | The control plane creates a sandbox that hosts Agent Server and applies the configured sandbox boundary. |
-| **OpenHands Cloud or Enterprise** | The remote platform selects and manages the execution environment. |
+| **Remote Agent Server** | Agent Server runs on another machine or in a separate container, with the workspace boundary configured there. |
+| **OpenHands Cloud or Enterprise** | The managed platform creates and operates the conversation sandbox that hosts Agent Server. |
 
 Connecting Canvas to a remote backend does not grant the browser direct access to that backend's filesystem. Canvas displays files and terminal output returned by Agent Server.
 
@@ -101,9 +100,9 @@ Switching backends changes which backend-managed conversations, settings, automa
 | Pattern | Relationship |
 |---------|--------------|
 | **Local all-in-one** | The launcher starts Canvas and local backend services on one machine. |
-| **Split local or self-hosted** | Canvas runs separately and connects to a backend-only launcher on a workstation, VM, or cluster. |
-| **Sandbox control plane** | Canvas connects through Sandbox Server to Agent Server instances hosted in managed sandboxes. |
-| **Remote platform** | Canvas connects to OpenHands Cloud or OpenHands Enterprise endpoints. |
+| **Remote Agent Server** | Canvas connects to an Agent Server running on another machine or in a separate container on the same machine. |
+| **Self-hosted backend services** | You deploy Agent Server, and optionally Automation Server, on a VM, Docker host, Kubernetes cluster, or Modal. |
+| **Managed platform** | Canvas connects to OpenHands Cloud or OpenHands Enterprise, which operate their backend and sandbox infrastructure. |
 
 ## Next Steps
 

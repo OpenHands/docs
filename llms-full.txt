@@ -29030,13 +29030,7 @@ If you choose OpenHands, the setup flow also configures the LLM profile that the
 ### Agent Canvas Architecture
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/architecture.md
 
-Agent Canvas is the open-source browser client and control center for OpenHands conversations and automations. It presents backend state and sends requests to backend services; it is not an agent runtime or sandbox.
-
-<Warning>
-  **Agent Canvas does not execute tools.** Agent Server or an ACP agent process executes tools in the selected workspace.
-
-  **Agent Canvas does not provide sandbox isolation.** Isolation comes from the selected workspace, container, sandbox service, or remote platform.
-</Warning>
+Agent Canvas is the open-source browser client and control center for OpenHands conversations and automations. It presents backend state and sends requests to backend services; it is not an agent runtime or sandbox. Agent Server or an ACP agent process executes tools, and the selected workspace or sandbox provides the execution boundary.
 
 ## Core Components
 
@@ -29045,8 +29039,9 @@ Agent Canvas is the open-source browser client and control center for OpenHands 
 | **Agent Canvas** | Browser interface for conversations, files, settings, backends, and automations | [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) |
 | **Agent Server** | Runs conversations, agents, tools, and workspace operations; streams events to clients | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server) |
 | **Automation Server** | Stores schedules and event triggers, tracks runs, and dispatches conversations | [`OpenHands/automation`](https://github.com/OpenHands/automation) |
-| **Sandbox Server** | Creates and manages sandboxed environments that host Agent Server | [`OpenHands/sandbox-server`](https://github.com/OpenHands/sandbox-server) |
 | **Workspace or sandbox** | Defines which files, processes, credentials, and networks an agent can access | Deployment-specific |
+
+Sandbox Server is a community-driven standalone API and sandbox control plane. It is not a core Agent Canvas backend or a supported deployment option. [Learn more about Sandbox Server](https://github.com/OpenHands/sandbox-server).
 
 ## Service Relationships
 
@@ -29055,30 +29050,34 @@ Agent Canvas is the open-source browser client and control center for OpenHands 
 flowchart TB
     Browser["Browser"] --> Canvas["Agent Canvas<br/>browser client"]
 
-    Canvas -->|conversations and settings| AgentServer["Agent Server"]
-    Canvas -->|schedules, events, and runs| Automation["Automation Server"]
-    Automation -->|dispatch conversation| AgentServer
-    AgentServer -->|execute agent and tools| Workspace["Workspace or sandbox"]
+    subgraph Backend["Selected backend"]
+        AgentServer["Agent Server"] -->|execute agent and tools| Workspace["Workspace or sandbox"]
+        Automation["Automation Server"] -->|dispatch conversation| AgentServer
+    end
 
-    Canvas -.->|optional control plane| SandboxServer["Sandbox Server"]
-    SandboxServer -->|create and manage| Sandbox["Sandbox"]
-    Sandbox -->|hosts| SandboxedAgentServer["Agent Server"]
+    Canvas -->|conversations and settings| AgentServer
+    Canvas -->|schedules, events, and runs| Automation
 
-    Canvas -.->|remote backend| Remote["OpenHands Cloud or Enterprise"]
+    subgraph Platform["OpenHands Cloud or Enterprise"]
+        ControlPlane["Platform control plane"] -->|create and manage| Sandbox["Conversation sandbox"]
+        Sandbox -->|hosts| PlatformAgentServer["Agent Server"]
+    end
+
+    Canvas -.->|managed backend| PlatformAgentServer
 
     classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
     classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
     classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
     classDef service fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
     class Canvas primary
-    class AgentServer,Automation,SandboxedAgentServer secondary
+    class AgentServer,Automation,PlatformAgentServer secondary
     class Workspace,Sandbox tertiary
-    class SandboxServer,Remote service
+    class ControlPlane service
 ```
 
-The normal browser path is **Browser → Agent Canvas → backend services**. Agent Server owns conversation execution. Automation Server owns scheduled and event-driven run lifecycle. A backend distribution can expose both services behind one URL, but they remain separate responsibilities.
+The normal browser path is **Browser → Agent Canvas → selected backend**. Agent Server owns conversation execution. Automation Server owns scheduled and event-driven run lifecycle. A backend distribution can expose both services behind one URL, but they remain separate responsibilities.
 
-Sandbox Server is an optional control plane. It creates sandboxes that host Agent Server, while Agent Canvas remains the client. OpenHands Cloud and OpenHands Enterprise provide remote backend and sandbox infrastructure behind their service endpoints.
+A remote backend uses the same Agent Server API as a local backend. The Agent Server can run on another machine, or in a separate container on the same machine as Canvas. OpenHands Cloud and OpenHands Enterprise are managed backend platforms: their platform control planes create conversation sandboxes that host Agent Server.
 
 ## Client And Launcher Boundaries
 
@@ -29107,8 +29106,8 @@ The workspace determines the execution boundary:
 |----------------|----------------------------------|
 | **Local process** | Agent Server and tools run directly on the backend host without container isolation. |
 | **Docker or Kubernetes** | Agent Server and tools run inside the configured container or pod with its mounts and network policy. |
-| **Sandbox Server** | The control plane creates a sandbox that hosts Agent Server and applies the configured sandbox boundary. |
-| **OpenHands Cloud or Enterprise** | The remote platform selects and manages the execution environment. |
+| **Remote Agent Server** | Agent Server runs on another machine or in a separate container, with the workspace boundary configured there. |
+| **OpenHands Cloud or Enterprise** | The managed platform creates and operates the conversation sandbox that hosts Agent Server. |
 
 Connecting Canvas to a remote backend does not grant the browser direct access to that backend's filesystem. Canvas displays files and terminal output returned by Agent Server.
 
@@ -29128,9 +29127,9 @@ Switching backends changes which backend-managed conversations, settings, automa
 | Pattern | Relationship |
 |---------|--------------|
 | **Local all-in-one** | The launcher starts Canvas and local backend services on one machine. |
-| **Split local or self-hosted** | Canvas runs separately and connects to a backend-only launcher on a workstation, VM, or cluster. |
-| **Sandbox control plane** | Canvas connects through Sandbox Server to Agent Server instances hosted in managed sandboxes. |
-| **Remote platform** | Canvas connects to OpenHands Cloud or OpenHands Enterprise endpoints. |
+| **Remote Agent Server** | Canvas connects to an Agent Server running on another machine or in a separate container on the same machine. |
+| **Self-hosted backend services** | You deploy Agent Server, and optionally Automation Server, on a VM, Docker host, Kubernetes cluster, or Modal. |
+| **Managed platform** | Canvas connects to OpenHands Cloud or OpenHands Enterprise, which operate their backend and sandbox infrastructure. |
 
 ## Next Steps
 
@@ -30193,6 +30192,54 @@ modal volume delete openhands-data
 - [VM / Self-Hosted Backend](/openhands/usage/agent-canvas/backend-setup/vm)
 - [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud)
 
+### Remote Backend
+Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/remote.md
+
+A remote backend is an Agent Server endpoint that runs somewhere other than the Agent Canvas client. It uses the same Agent Server API as a local backend. The backend can run on another machine, on a VM, or in a separate container on the same machine.
+
+Agent Canvas does not distinguish a remote backend by where it runs. It connects to the endpoint URL and displays the conversations, files, settings, and automations that backend provides.
+
+## What A Remote Backend Needs
+
+A remote backend must provide:
+
+- An accessible Agent Server URL.
+- An API key when the backend requires authentication.
+- A workspace or sandbox where Agent Server can execute tools.
+
+To use scheduled or event-driven automations, the backend must also provide Automation Server.
+
+## Connect To A Remote Backend
+
+1. Start or obtain the URL for the Agent Server backend.
+2. In Agent Canvas, open the backend switcher and choose `Manage Backends`.
+3. Select `Add Backend`.
+4. Enter a display name, the **Host / Base URL**, and the API key when required.
+5. Save the backend and select it.
+
+The selected backend becomes the execution environment for new conversations. Its workspace, settings, profiles, secrets, MCP servers, and automation state remain separate from other backends.
+
+<Warning>
+  Anyone who can reach Agent Server with its API key can request agent execution in that backend's workspace. Use TLS, access controls, and a high-entropy API key before exposing a backend outside a trusted network.
+</Warning>
+
+## Deployment Examples
+
+| Location | Start here |
+|----------|------------|
+| Another local process or container | [Local Backend](/openhands/usage/agent-canvas/backend-setup/local) |
+| A VM or dedicated machine | [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm) |
+| Docker | [Use Docker with Agent Canvas](/openhands/usage/agent-canvas/backend-setup/docker) |
+| Kubernetes | [Kubernetes (Helm)](/openhands/usage/agent-canvas/backend-setup/kubernetes) |
+| Modal | [Modal Backend](/openhands/usage/agent-canvas/backend-setup/modal) |
+| A managed OpenHands platform | [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud) |
+
+## Next Steps
+
+- [Connect And Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Agent Canvas Architecture](/openhands/usage/agent-canvas/architecture)
+- [Agent Server Overview](/sdk/guides/agent-server/overview)
+
 ### VM / Self-Hosted Installation
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/vm.md
 
@@ -30547,16 +30594,23 @@ Settings, LLM configuration, MCP servers, and automations are all scoped to the 
 
 | Setup | When to use | How |
 |-------|-------------|-----|
-| **Default local** | Quick local work on your machine | Run `agent-canvas` — a local backend is created automatically |
-| **Backend-only (local)** | Multiple projects, or separate frontend and backend processes | Run `agent-canvas --backend-only` (optionally on different ports), connect with `--frontend-only`. See [Local Backend](/openhands/usage/agent-canvas/backend-setup/local). |
-| **Self-hosted VM** | Always-on server, more powerful hardware, team-shared access, or a full self-hosted Canvas | Run `agent-canvas --backend-only --public` for backend-only mode, or `agent-canvas --public` for the full UI and backend. Expose it with SSH, ngrok, or a reverse proxy. See [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm). |
-| **Cloud** | Managed sandboxes without local resources | Connect to [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) from **Manage Backends**. See [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud). |
-| **Modal** | Cloud backend with per-second billing, no VM management | Deploy the agent server on [Modal](https://modal.com) with a single command. See [Modal Backend](/openhands/usage/agent-canvas/backend-setup/modal). |
+| **Default local** | Quick local work on your machine | Run `agent-canvas`—a local backend is created automatically. |
+| **Remote Agent Server** | An Agent Server on another machine or in a separate local container | Add its host URL and API key in `Manage Backends`. See [Remote Backend](/openhands/usage/agent-canvas/backend-setup/remote). |
+| **Self-hosted VM** | Always-on server, more powerful hardware, team-shared access, or a full self-hosted Canvas | Run `agent-canvas --backend-only --public` for backend-only mode, or `agent-canvas --public` for the full UI and backend. See [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm). |
+| **Cloud or Enterprise** | Managed backend and sandbox infrastructure | Connect from `Manage Backends`. See [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud). |
 
 ### Conversations
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md
 
 A conversation is a single agent session on the active backend. It has its own message history, tool calls, file changes, selected agent profile, and conversation-specific plugins.
+
+## Follow Agent Activity
+
+While an agent is running, the composer shows a live activity chip for its current unresolved action, such as reading a file or running a command. If no action-specific label is available, it shows `Thinking`. The chip disappears when the agent pauses or completes its work.
+
+## Handle a Failed Message
+
+If a message fails to send, select `Retry` to send it again or `Dismiss` to remove the failed message bubble. Dismissing a message does not restore its text to the composer.
 
 ## Branch From a Message
 
@@ -31138,6 +31192,10 @@ Click an automation to open its detail view. The detail view shows:
 - LLM profile used for runs
 - Recent run history and status
 
+### Run Statuses
+
+A run can be `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`, or `SKIPPED`. A `SKIPPED` run can occur when the backend reaches its concurrency limit. Future backend statuses appear as a neutral status badge so they do not prevent you from viewing the automation.
+
 ## Enable and disable automations
 
 Toggle an automation on or off from the kebab menu (⋮) on the automation row, or from the detail view. Disabled automations do not fire on their scheduled trigger or in response to events, but their configuration is preserved.
@@ -31490,10 +31548,12 @@ In the `Automate` view, you can:
 
 The `Automations` view is mainly for browsing and managing automations that already exist.
 
-In practice, new automation setup often starts in one of two ways:
+In practice, new automation setup starts in one of two ways:
 
-- From a conversation, where you ask OpenHands to create an automation for you
+- From a conversation, where you ask OpenHands to `create an automation` for you
 - From a recommended automation flow in the `Automations` view
+
+For recommended automations that support a direct form setup, Agent Canvas checks the active backend's capabilities and any prerequisites, then guides you through the required input fields, a review step, and creation. If direct form setup is unavailable, it offers a conversation-assisted setup instead. Review the proposed configuration before creating an automation.
 
 For a detailed walkthrough, see [Creating Automations](/openhands/usage/automations/creating-automations).
 
@@ -43291,10 +43351,6 @@ The [Software Agent SDK](/sdk) is a composable Python library for building agent
 
 [Get started with the SDK](/sdk/getting-started) or [view the source](https://github.com/OpenHands/software-agent-sdk).
 
-## Sandbox Server
-
-[Sandbox Server](https://github.com/OpenHands/sandbox-server) is the standalone OpenHands API and sandbox control plane. It creates and manages sandboxed environments that host Agent Server. It does not bundle a frontend; use Agent Canvas as its browser client.
-
 ## OpenHands Cloud
 
 [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) is the managed commercial service for running OpenHands without operating your own backend and sandbox infrastructure. It provides hosted execution, integrations, collaboration, access controls, usage reporting, and budget management.
@@ -43307,6 +43363,11 @@ The [Software Agent SDK](/sdk) is a composable Python library for building agent
 
 Learn more at [openhands.dev/enterprise](https://openhands.dev/enterprise).
 
+## Sandbox Server
+
+[Sandbox Server](https://github.com/OpenHands/sandbox-server) is the community supported standalone OpenHands API and sandbox control plane. It creates and manages sandboxed environments that host Agent Server. It does not bundle a frontend but can be configured to use Agent Canvas as its browser client.
+
+
 ## Component And Repository Map
 
 | Component | Responsibility | Source |
@@ -43314,14 +43375,15 @@ Learn more at [openhands.dev/enterprise](https://openhands.dev/enterprise).
 | **Agent Canvas** | Browser client and control center | [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) |
 | **Software Agent SDK and Agent Server** | Agent framework and remote execution API | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) |
 | **Automation Server** | Scheduled and event-driven automation lifecycle | [`OpenHands/automation`](https://github.com/OpenHands/automation) |
-| **Sandbox Server** | Standalone API and sandbox control plane | [`OpenHands/sandbox-server`](https://github.com/OpenHands/sandbox-server) |
-| **OpenHands CLI** | Terminal, IDE, and headless client | [`OpenHands/OpenHands-CLI`](https://github.com/OpenHands/OpenHands-CLI) |
 | **Documentation** | Documentation for the OpenHands ecosystem | [`OpenHands/docs`](https://github.com/OpenHands/docs) |
 | **Evaluations** | Benchmark and evaluation infrastructure | [`OpenHands/benchmarks`](https://github.com/OpenHands/benchmarks) |
 
 Each public repository includes its own license. Check the repository you use or modify instead of assuming one license applies to the entire ecosystem.
 
+
 ## Legacy
+
+The archived [`OpenHands/legacy`](https://github.com/OpenHands/legacy) snapshot also preserves the previous backend and runtime architecture for historical reference.
 
 <Accordion title="OpenHands CLI and Local GUI">
   **OpenHands CLI**
@@ -43330,18 +43392,16 @@ Each public repository includes its own license. Check the repository you use or
 
   [Check out the docs](/openhands/usage/cli/installation) or [view the source](https://github.com/OpenHands/OpenHands-CLI).
 
-  **OpenHands Local GUI**
+  **OpenHands Legacy Local GUI**
 
   The Local GUI is the deprecated Docker-based browser application from the former OpenHands monorepo. Use Agent Canvas for active browser-client development.
 
-  [Check out the legacy docs](/openhands/usage/run-openhands/local-setup) or [view the pinned source](https://github.com/OpenHands/legacy/tree/ee9e78b7defdfa744e0bbe48c9cafa90b6135ad7).
+  [View the pinned source](https://github.com/OpenHands/legacy).
 </Accordion>
-
-The archived [`OpenHands/legacy`](https://github.com/OpenHands/legacy/tree/ee9e78b7defdfa744e0bbe48c9cafa90b6135ad7) snapshot also preserves the previous backend and runtime architecture for historical reference. For active agent and Agent Server development, use the [Software Agent SDK repository](https://github.com/OpenHands/software-agent-sdk).
 
 ## Community
 
-Check the [product roadmap](https://github.com/orgs/openhands/projects/1), explore all [OpenHands repositories](https://github.com/orgs/OpenHands/repositories), or [join us on Slack](https://openhands.dev/joinslack).
+Explore all [OpenHands repositories](https://github.com/orgs/OpenHands/repositories) and [join us on Slack](https://openhands.dev/joinslack).
 
 ### Model Context Protocol (MCP)
 Source: https://docs.openhands.dev/overview/model-context-protocol.md
@@ -46070,6 +46130,77 @@ status, and model usage metrics.
 Use the events endpoint for messages, tool actions, tool observations, state
 changes, and errors. Use the current app-conversation record to reconcile
 status after a process restart or missed event.
+
+## Sandbox Status States
+
+The `sandbox_status` field indicates the lifecycle state of the sandbox. This is
+distinct from `execution_status`, which tracks the agent's task state.
+
+| Status | What it means | Can send messages | Workspace available | Notes |
+| --- | --- | --- | --- | --- |
+| `STARTING` | Sandbox is being created | No | No | Sandboxes provision on-demand |
+| `RUNNING` | Sandbox is active and ready | Yes | Yes | Normal operating state |
+| `PAUSED` | Sandbox is paused | Yes | Yes | Agent paused; sandbox still running |
+| `ERROR` | Sandbox encountered an error | No (read-only) | No | Terminal state; check UI for details |
+| `MISSING` | Sandbox was deleted/cleaned up | No (read-only) | No | Terminal state |
+
+### State Transitions
+
+```
+STARTING → RUNNING → PAUSED
+                 ↘ ERROR
+                 ↘ MISSING
+```
+
+- **STARTING → RUNNING**: Normal transition as the sandbox boots up
+- **RUNNING → PAUSED**: Happens when the agent pauses for user confirmation or
+  due to rate limits
+- **RUNNING → ERROR**: Unrecoverable error in the sandbox (e.g., container
+  failure)
+- **RUNNING → MISSING**: Sandbox was cleaned up due to idle timeout or manual
+  deletion
+
+## Execution Status
+
+The `execution_status` field indicates the agent's task state when the sandbox
+is `RUNNING`:
+
+| Status | What it means |
+| --- | --- |
+| `IDLE` | Agent is idle, waiting for input |
+| `RUNNING` | Agent is actively processing |
+| `PAUSED` | Agent has paused (e.g., waiting for confirmation mode) |
+| `WAITING_FOR_CONFIRMATION` | Agent is waiting for user to approve a high-risk action |
+| `FINISHED` | Task completed successfully |
+| `ERROR` | Task encountered an error |
+| `STUCK` | Agent appears to be stuck |
+
+## Read-Only Conversations
+
+When `sandbox_status` is `ERROR` or `MISSING`, the conversation becomes
+read-only. You can:
+
+- ✅ View the full conversation transcript
+- ✅ Scroll through all past messages and agent actions
+- ❌ Send new messages
+- ❌ Resume the sandbox
+- ❌ Access workspace files
+
+### What Gets Preserved
+
+| Artifact | Preserved after cleanup |
+| --- | --- |
+| Conversation transcript | ✅ Yes (always) |
+| Agent actions and observations | ✅ Yes (always) |
+| Workspace files | ❌ No (deleted with sandbox) |
+| Sandbox state | ❌ No (deleted with sandbox) |
+
+### Workspace Archive Capture
+
+When a sandbox is cleaned up, OpenHands captures an internal archive of the
+workspace contents. This archive is used for debugging, support, and audit
+trails (Enterprise plans). The workspace archive is an internal artifact and is
+not directly accessible to users.
 
 ## Manage Sandbox Lifecycle
 
