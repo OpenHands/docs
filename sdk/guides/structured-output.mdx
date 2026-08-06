@@ -1,0 +1,124 @@
+---
+title: Structured Output
+description: Attach a schema to any tool so the LLM must return typed, validated fields alongside the tool's own arguments — no prompt engineering or output parsing.
+---
+
+Agents normally return free text, so getting machine-readable results means prompting for a format and then parsing whatever comes back. Structured output removes that step: attach a schema to a tool and the SDK merges your fields into the schema the LLM sees, validates the reply, and hands you back a typed object.
+
+## Basic usage
+
+Pass a Pydantic model as the `response_schema` parameter of a tool spec. Its fields are added to that tool's parameters, so the model must populate them whenever it calls the tool:
+
+```python
+from pydantic import BaseModel, Field
+
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.tool.builtins.finish import FinishTool
+from openhands.sdk.tool import register_tool
+
+
+class ProjectFacts(BaseModel):
+    description: str = Field(description="One-paragraph description of the project.")
+    facts: list[str] = Field(description="Three concise, distinct facts.")
+
+
+register_tool("FinishTool", FinishTool)
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name="FinishTool", params={"response_schema": ProjectFacts})],
+    # Skip the auto-injected FinishTool so the schema-bound one is used.
+    include_default_tools=["ThinkTool"],
+)
+```
+
+No subclassing is required, and the tool's own arguments are untouched — `FinishTool` still takes its `message`, now alongside `description` and `facts`.
+
+## Reading typed results
+
+Resolved tools are available on `agent.tools_map`. Use `parse_last_response()` for the most recent call, or `parse_response()` for a specific action:
+
+```python
+from typing import cast
+
+conversation = Conversation(agent=agent, workspace=os.getcwd())
+conversation.send_message("Inspect the repo, then finish with three facts about it.")
+conversation.run()
+
+finish_tool = agent.tools_map["finish"]
+facts = cast(ProjectFacts | None, finish_tool.parse_last_response(conversation.state.events))
+
+if facts:
+    print(facts.description)
+    for fact in facts.facts:
+        print(f"- {fact}")
+```
+
+`parse_last_response()` returns `None` when the tool has not been called yet. To read every call instead of just the last one, walk the events and parse each action:
+
+```python
+from openhands.sdk.event import ActionEvent
+
+for event in conversation.state.events:
+    if isinstance(event, ActionEvent) and event.tool_name == "finish" and event.action:
+        result = cast(ProjectFacts, finish_tool.parse_response(event.action))
+```
+
+The values also live on the action itself as `action.structured_output` (a plain dict), which is what gets persisted with the event.
+
+## Annotating any tool
+
+Structured output is not limited to `FinishTool` — attach a schema to any tool to force per-call annotations. This makes every terminal command carry a justification:
+
+```python
+class CommandRationale(BaseModel):
+    purpose: str = Field(description="Why this command is being run, in one line.")
+    expected_outcome: str = Field(description="What the assistant expects to observe.")
+
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=TerminalTool.name, params={"response_schema": CommandRationale})],
+)
+```
+
+It works the same way for [custom tools](/sdk/guides/custom-tools), client-defined tools, and [MCP](/sdk/guides/mcp) tools.
+
+## Using raw JSON Schema
+
+A JSON Schema dict works anywhere a Pydantic model does. In that case `parse_response()` validates against the schema and returns the validated dict rather than a model instance:
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "severity": {"type": "string", "enum": ["low", "high"]},
+        "summary_text": {"type": "string"},
+    },
+    "required": ["severity", "summary_text"],
+}
+
+agent = Agent(llm=llm, tools=[Tool(name="FinishTool", params={"response_schema": schema})])
+```
+
+The schema must describe a JSON object with named properties; anything else is rejected when the tool is resolved.
+
+<Note>
+Pydantic schemas are serialized as JSON Schema when a conversation is persisted or sent to a remote agent server. After such a round-trip the tool holds the dict form, so `parse_response()` returns a validated dict instead of a model instance. Cast accordingly if you resume a conversation and then read results.
+</Note>
+
+## Constraints
+
+<Warning>
+**Reserved field names.** A response schema may not declare `kind`, `security_risk`, `structured_output`, or `summary`. The SDK injects those onto every action, so a schema using them is rejected with a `ValueError` when the tool is resolved — at configuration time, not mid-run.
+</Warning>
+
+**One tool per spec.** A `response_schema` applies to exactly one tool. Attaching it to a spec that resolves to a tool set (which returns several tools) raises:
+
+```
+ValueError: response_schema requires a spec that resolves to exactly one tool
+```
+
+Attach the schema to the individual tool you want annotated instead.
+
+**Validation is strict.** If the model omits a schema field or sends the wrong type, the call fails validation like any other malformed tool call, and the agent is asked to correct it.
