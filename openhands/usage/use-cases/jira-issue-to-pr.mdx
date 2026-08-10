@@ -1,0 +1,113 @@
+---
+title: Jira Issue to PR
+description: Automatically create GitHub pull requests from Jira tickets using a polling automation in Agent Canvas
+automation:
+  icon: ticket-simple
+  summary: >-
+    Poll Jira for labeled issues and open a GitHub pull request for each new one.
+---
+
+<Card
+  title="View the Skill"
+  icon="github"
+  href="https://github.com/OpenHands/extensions/tree/main/skills/jira-issue-to-pr"
+>
+  Check out the complete Jira issue-to-PR skill with the polling script and setup reference.
+</Card>
+
+When a Jira ticket is ready for engineering work, creating a GitHub pull request still requires a developer to manually pick up the ticket, create a branch, and open a PR. OpenHands can automate that handoff: a polling automation watches your Jira project for issues carrying a configurable label, and for each new one it clones the repository, implements the change, and opens a pull request—then posts a comment on the Jira ticket with a link to the live conversation.
+
+## Overview
+
+The automation runs entirely through [Agent Canvas](/openhands/usage/agent-canvas/overview). Each polling cycle is lightweight (no LLM calls); compute costs are only incurred when a new, unprocessed issue is found and a conversation is started.
+
+The automation:
+
+- **Polls on a schedule** — runs every N minutes using a cron trigger to check Jira for open issues with the target label
+- **Deduplicates automatically** — records processed issue keys so the same ticket never triggers a second PR
+- **Spawns an agent per issue** — starts an independent OpenHands conversation for each new issue, which reads the ticket description, clones the target GitHub repository, implements the requested change, and opens a pull request
+- **Comments on the ticket** — posts "I'm on it: `<conversation URL>`" on the Jira issue so the reporter can follow along in real time
+
+## How It Works
+
+1. **Poll** — every N minutes, the script calls the Jira Cloud search API to find open issues labeled with the configured label (default: `create-pr`) that have been updated since the automation was first deployed.
+
+2. **Deduplicate** — on the very first run, a baseline timestamp (`first_run_at`) is written to the KV store. Issues updated before that timestamp are skipped, preventing a backlog blast on first deploy. Subsequent runs skip any issue key already stored in `processed_keys`.
+
+3. **Dispatch** — for each new issue, an agent conversation is started. The agent is instructed to extract the GitHub repository reference (`owner/repo` format or a full GitHub URL) from the ticket body, then clone the repository, create a branch, implement the changes described in the ticket, and open a pull request.
+
+4. **Comment** — immediately after the conversation starts, the script posts a comment on the Jira issue: "I'm on it: `<conversation URL>`".
+
+5. **Persist** — the issue key is written to `processed_keys` in the KV store so it is permanently skipped on future runs.
+
+## Prerequisites
+
+Before setting up the automation, ensure the following are in place:
+
+| Requirement | Details |
+|---|---|
+| **Jira API token** | Stored as an OpenHands secret (see [Jira API token setup](https://id.atlassian.com/manage-profile/security/api-tokens)) |
+| **GitHub token** | Stored as an OpenHands secret with `repo` + `workflow` scope so the spawned conversation can push branches and open PRs |
+| **Jira label** | The label the automation watches for (default: `create-pr`) must exist in your Jira project |
+| **GitHub repo in ticket body** | Each Jira ticket must include the target repository in `owner/repo` format (e.g. `acme-org/backend`) — the automation reads it from the ticket at dispatch time |
+
+### Storing Secrets
+
+Go to **Settings → Secrets** in Agent Canvas and add:
+
+- **`JIRA_CLOUD_KEY`** — your Jira API token (the name is configurable; match it to `jira_token_secret` in the setup prompt below)
+- **`GITHUB_TOKEN`** — your GitHub personal access token with `repo` and `workflow` scopes
+
+## Automate This
+
+You can set up this automation from any Agent Canvas conversation using the skill.
+Copy this prompt and fill in your details before sending it:
+
+```
+Deploy a Jira issue-to-PR automation that polls my Jira project every 5 minutes
+for issues labeled "create-pr" and automatically creates a GitHub pull request
+for each new issue found.
+
+My setup:
+- Jira base URL: https://acme.atlassian.net
+- Jira email: alice@acme.com
+- Jira API token secret name: JIRA_CLOUD_KEY
+- Label to watch: create-pr
+- Polling schedule: */5 * * * *
+
+For each matching issue, the agent should read the GitHub repository (owner/repo)
+from the ticket body, clone it, implement the requested change, and open a pull request.
+It should also post a comment on the Jira ticket with a link to the conversation.
+
+Learn more at https://docs.openhands.dev/openhands/usage/use-cases/jira-issue-to-pr
+```
+
+<Note>
+The automation uses the [jira-issue-to-pr skill](https://github.com/OpenHands/extensions/tree/main/skills/jira-issue-to-pr). If Agent Canvas does not have the skill installed, add it first with `/add-skill https://github.com/OpenHands/extensions/tree/main/skills/jira-issue-to-pr`, then resend the prompt.
+</Note>
+
+### Writing Jira Tickets for This Automation
+
+Each Jira ticket that should trigger a PR must include the target GitHub repository in its body. The agent looks for an `owner/repo` reference or a full GitHub URL. For example:
+
+```
+Repo: acme-org/backend
+
+Add a /health endpoint to the FastAPI app that returns {"status": "ok"}.
+The endpoint should be unauthenticated and mounted at /api/v1/health.
+```
+
+The more context the ticket provides—file paths, acceptance criteria, test requirements—the better the resulting pull request will be.
+
+## Known Limitations
+
+**Pre-existing issues updated after deployment** — The deduplication filter checks whether an issue's `updated` timestamp is newer than `first_run_at`. If a pre-existing issue already carries the `create-pr` label at deploy time and is later updated for any reason (a comment, a priority change), its `updated` timestamp advances past `first_run_at` and it can slip through until it is added to `processed_keys`. To avoid this, use a label that is only applied to new issues after the automation is deployed—not one that may already be on existing tickets.
+
+Once an issue is processed, its key is permanently written to `processed_keys` and will never be dispatched again.
+
+## Related Resources
+
+- [Jira Issue to PR Skill](https://github.com/OpenHands/extensions/tree/main/skills/jira-issue-to-pr) — Full skill with polling script and troubleshooting reference
+- [Agent Canvas Overview](/openhands/usage/agent-canvas/overview) — Learn about the Agent Canvas environment
+- [Managing Automations](/openhands/usage/agent-canvas/managing-automations) — Monitor and update running automations
+- [Secrets Settings](/openhands/usage/settings/secrets-settings) — Store API tokens securely
