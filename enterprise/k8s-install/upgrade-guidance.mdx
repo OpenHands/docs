@@ -1,0 +1,99 @@
+---
+title: Upgrade Guidance
+description: Generic advice for upgrading a Kubernetes cluster running OpenHands Enterprise
+icon: circle-up
+---
+
+A few OpenHands-specific properties may make a cluster upgrade more high-touch than usual. Sandboxes run on a [Sysbox](/enterprise/k8s-install/sysbox) node pool. The pods in this node pool carry a zero-tolerance [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) which means that typical upgrade operations will hang indefinitely while those pods refuse eviction.
+
+This page collects general guidance that applies on any managed Kubernetes offering (GKE, EKS, AKS) or on self-managed clusters. See the information below in an advisory capacity, rather than a runbook.
+
+Upgrade in this order: control plane first, then your ordinary node pools, then the Sysbox pool. Never let nodes run ahead of the control plane. Only the sysbox node pool may need special handling 
+
+## Control Plane
+
+A plain upgrade is fine. Follow the usual pre-upgrade best practices for your platform, such as:
+
+- **Review removed and deprecated APIs** for the target version and confirm nothing you deploy still uses them. Most managed platforms surface this for you — GKE deprecation insights, `kubectl get --raw /metrics | grep apiserver_requested_deprecated_apis`, or a tool like [Pluto](https://github.com/FairwindsOps/pluto) against your manifests.
+- **Move one minor version at a time** and check the version skew policy of your provider before you start.
+- **Expect the upgrade to be one-way.** No managed platform lets you roll a control plane back, so verify on a non-production cluster first if you have one.
+
+OpenHands itself is unaffected by a control-plane upgrade. Sandboxes keep running throughout.
+
+## Non-Sandbox Node Pools
+
+Also a plain upgrade. A standard surge upgrade is appropriate here — the platform brings up new nodes, drains the old ones, and your workloads reschedule.
+
+Expect roughly the same behavior you would see when upgrading OpenHands itself: server and supporting pods restart, in-flight requests may blip, and the UI briefly reconnects. If your OpenHands deployment runs a single replica, that blip is a short outage. Scale up beforehand if you need to avoid it — see [Resource Limits](/enterprise/k8s-install/resource-limits) for replica and autoscaling settings.
+
+Running sandboxes are not affected, since they live on the Sysbox pool.
+
+## Sysbox Node Pool
+
+This is the pool that needs a decision. Sandbox pods refuse eviction while they are alive, so a plain drain will not complete — the upgrade hangs rather than fails, often with no obvious signal beyond a node stuck in `SchedulingDisabled`.
+
+Pick a branch based on whether you can tolerate interrupting active conversations.
+
+<Tabs>
+  <Tab title="Maintenance window (in-place)">
+    Simpler and needs no extra capacity, but it ends active conversations.
+
+    1. **Cordon the Sysbox nodes** so no new sandboxes land on them, and lower the pool's autoscaler ceiling if it has one.
+    2. **Drain the remaining sandboxes.** Either wait for active conversations to finish, or end them. The upgrade will not proceed while sandbox pods are still alive, so getting to zero is the gating step — not an optimization.
+    3. **Confirm the pool is empty** before starting:
+
+       ```bash
+       kubectl get pods -n openhands -o wide --field-selector spec.nodeName=<node>
+       ```
+
+    4. **Run a plain upgrade** on the pool once no sandbox pods remain.
+
+    Communicate the window to your users. From their side, an ended sandbox looks like a conversation that stopped working.
+  </Tab>
+  <Tab title="Zero disruption (blue/green)">
+    Stand up a second Sysbox pool at the target version and let the old one drain by attrition. No running sandbox is ever evicted, so the disruption budget never comes into play.
+
+    1. **Create a new Sysbox pool** at the target version, alongside the existing one. Install Sysbox on it as usual — see [Installing Sysbox](/enterprise/k8s-install/sysbox).
+    2. **Verify the new pool functionally, not just that nodes report `Ready`.** A node can be `Ready` with Sysbox not installed correctly. Confirm the RuntimeClass is registered and land one real sandbox on the new pool before steering anything to it:
+
+       ```bash
+       kubectl get runtimeclass sysbox-runc
+       kubectl get pods -n openhands -o wide | grep <new-node-name>
+       ```
+
+    3. **Cordon the old pool and lower its autoscaler ceiling.** New sandboxes then schedule onto the new pool while existing ones keep running where they are.
+    4. **Wait for the old pool to empty** as conversations finish and their sandboxes terminate. How long that takes is a function of your conversation lifetimes, not the upgrade.
+    5. **Delete the old pool** once no sandbox pods remain on it.
+
+    <Note>
+      This approach needs enough capacity for both pools at once, at least briefly. On a large pool that can mean a meaningful number of extra instances — reserve the capacity ahead of the window if your cloud supports reservations, since instance stockouts are a more common cause of a stalled cutover than anything Kubernetes does.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Pod Disruption Budgets
+
+The sandbox disruption budget only interferes when active sandboxes are in play. Once no sandbox pods are running, it is inert and the pool upgrades like any other. That is why both branches above converge on the same thing: get the pool to zero sandboxes, by attrition or by ending them, and the rest is ordinary.
+
+If an upgrade appears to hang, check what is still holding the budget:
+
+```bash
+kubectl get pdb -A
+kubectl get pods -n openhands -o wide
+```
+
+## Upgrading OpenHands Itself
+
+Cluster upgrades are independent of OpenHands releases. To upgrade the OpenHands Enterprise chart, see [Install with Helm](/enterprise/k8s-install/installation) and the [Release Notes](/enterprise/release-notes).
+
+Avoid changing both at once: upgrade the cluster, verify sandboxes still launch, and only then move the application version.
+
+## Additional Info
+
+<Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/sysbox">
+  Requirements and installation for the sandbox node pool runtime.
+</Card>
+
+<Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+  Size the application and sandbox workloads before planning capacity.
+</Card>
