@@ -17,7 +17,8 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `openhands/usage/` — product docs for Web/Cloud/CLI/etc.
 - `sdk/` — Agent SDK docs (guides, architecture, API reference pages)
 - `openapi/` — OpenAPI specs consumed by Mintlify
-  - `openapi/openapi.json` — OpenHands REST API schema
+  - `openapi/V0_openapi.json` — OpenHands V0 REST API schema (legacy)
+  - `openapi/openhands-cloud.json` — OpenHands Cloud REST API schema (served by app.all-hands.dev; surfaced under the Enterprise tab)
   - `openapi/agent-sdk.json` — Agent SDK agent-server schema (synced from `software-agent-sdk`)
 - `scripts/` — automation for generating SDK API reference docs
 - `.github/workflows/` — CI workflows (broken link checks, sync jobs)
