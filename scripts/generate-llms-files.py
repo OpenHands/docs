@@ -7,12 +7,13 @@ Why this exists
 Mintlify automatically generates and hosts `/llms.txt` and `/llms-full.txt` for
 Mintlify-backed documentation sites.
 
-For OpenHands, we want those files to provide **V1-only** context to LLMs while we
-still keep some legacy V0 pages available for humans. In particular, we want to
-exclude:
+For OpenHands, we want those files to provide **current architecture** context
+to LLMs while we still keep legacy pages available for humans. In particular,
+we want to exclude:
 
 - The legacy docs subtree under `openhands/usage/v0/`
 - Any page whose filename starts with `V0*`
+- Orphaned architecture pages for the former monorepo backend and runtime
 
 Mintlify supports overriding the auto-generated files by committing `llms.txt`
 (and/or `llms-full.txt`) to the repository root.
@@ -51,6 +52,10 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = "https://docs.openhands.dev"
 
 EXCLUDED_DIRS = {".git", ".github", ".agents", "tests", "openapi", "logo"}
+EXCLUDED_PAGES = {
+    Path("openhands/usage/architecture/backend.mdx"),
+    Path("openhands/usage/architecture/runtime.mdx"),
+}
 
 
 @dataclass(frozen=True)
@@ -127,7 +132,7 @@ def iter_doc_pages() -> list[DocPage]:
 
         if any(part in EXCLUDED_DIRS for part in rel_path.parts):
             continue
-        if is_v0_page(rel_path):
+        if rel_path in EXCLUDED_PAGES or is_v0_page(rel_path):
             continue
 
         raw = mdx_path.read_text(encoding="utf-8")
