@@ -1,0 +1,51 @@
+---
+title: Structured Output
+description: Attach a schema to any tool so the LLM returns typed, validated fields alongside the tool's own arguments.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+Pass a Pydantic model (or a JSON Schema dict) as a tool's `response_schema`. Its fields are merged into the schema the LLM sees, so the model must populate them when it calls that tool, and the reply is validated on receipt — no prompting for a format, no output parsing.
+
+```python
+class ProjectFacts(BaseModel):
+    description: str = Field(description="One-paragraph description of the project.")
+    facts: list[str] = Field(description="Three concise, distinct facts.")
+
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name="FinishTool", params={"response_schema": ProjectFacts})],
+)
+```
+
+The tool keeps its own arguments — `FinishTool` still takes `message`, now alongside `description` and `facts`. This works on any tool, including [custom](/sdk/guides/custom-tools) and [MCP](/sdk/guides/mcp) tools.
+
+## Reading results
+
+Resolved tools live on `agent.tools_map`. Use `parse_last_response()` for the most recent call, or `parse_response(action)` for a specific one:
+
+```python
+finish_tool = agent.tools_map["finish"]
+facts = cast(ProjectFacts | None, finish_tool.parse_last_response(conversation.state.events))
+```
+
+`parse_last_response()` returns `None` if the tool has not been called. With a JSON Schema dict instead of a model, both methods return a validated `dict`.
+
+<Note>
+`parse_last_response()` re-reads the tool call, so it works after a conversation is persisted and reloaded. `action.structured_output` is in-memory only — it is not serialized with the event and comes back `None` after a round-trip, so prefer the parse methods.
+</Note>
+
+## Constraints
+
+- **Reserved names.** A schema may not declare `kind`, `security_risk`, `structured_output`, or `summary`, nor reuse one of the tool's own field names (e.g. `message` on `FinishTool`). Both raise a `ValueError` when the tool is resolved.
+- **One tool per spec.** A spec that resolves to a tool set is rejected; attach the schema to the individual tool instead.
+- **Scoped to its tool.** A model may try to send the schema fields when calling *other* tools; those calls are rejected as unexpected arguments and the agent retries.
+
+## Ready-to-run Example
+
+```python icon="python" expandable examples/01_standalone_sdk/56_structured_output.py
+# content is auto-synced
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/56_structured_output.py"/>

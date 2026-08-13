@@ -1,0 +1,103 @@
+---
+title: Sizing Guide
+description: Recommended VM or Cluster sizing for an OpenHands Enterprise deployment
+icon: ruler
+---
+
+OpenHands Enterprise deployments are sized primarily based on expected **peak concurrent sandboxes** — the largest number of sandboxes you expect to be running at the same time. Keep in mind that one user can have multiple sandboxes running at one time.
+
+<Note>
+  The **Users** column in the tables below is a rough translation of peak sandboxes into headcount, not an input. Size on peak sandboxes; the user estimate is a very rough guide
+</Note>
+
+## Planning Unit
+
+Both tables below are built from the same per-sandbox allocation:
+
+| Resource | Per sandbox |
+|----------|-------------|
+| CPU | 0.5 vCPU |
+| Memory | 4 GiB |
+| Node disk | 10 GiB |
+| Volume storage | 10 GiB |
+
+If you raise the sandbox defaults (for large monorepos or memory-hungry builds), scale the totals in the tables by the same factor. See [Resource Limits](/enterprise/k8s-install/resource-limits) for how to change these values.
+
+## Installation Modes
+
+This guide covers the two supported installation modes:
+
+<CardGroup cols={2}>
+  <Card title="Embedded Cluster (Single VM)" icon="server" href="/enterprise/quick-start">
+    The installer builds a single-node k0s cluster on a VM you provide. Fixed capacity, configured through the Admin Console, everything bundled on one machine.
+  </Card>
+  <Card title="Helm (Existing Kubernetes)" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Install into a cluster you already run, with standard Kubernetes elasticity and autoscaling.
+  </Card>
+</CardGroup>
+
+## Replicated Embedded Cluster — Single VM
+
+Machine sizes below are based on the peak sandboxes, so feel free to size up or down based on expected usage.
+
+| Peak sandboxes | Users (estimate) | VM | Example machine types | Data disk (starting recommendation) |
+|----------------|------------------|----|-----------------------|-------------------------------------|
+| **5** | ~25 | 8 vCPU / 32 GiB | `e2-standard-8`, `m6i.2xlarge`, `D8s_v5` | 500 GiB SSD |
+| **15** | ~60 | 16 vCPU / 64 GiB | `n2-standard-16`, `m6i.4xlarge`, `D16s_v5` | 1 TiB SSD |
+| **30** | ~125 | 32 vCPU / 128 GiB | `n2-standard-32`, `m6i.8xlarge`, `D32s_v5` | 1.5 TiB SSD |
+| **50** | ~250 | 64 vCPU / 256 GiB | `n2-standard-64`, `m6i.16xlarge`, `D64s_v5` | 3 TiB SSD |
+| **100** | ~400 | 96 vCPU / 384 GiB | `n2-standard-96`, `m6i.24xlarge`, `D96s_v5` | 4 TiB SSD |
+| **Above 100** | — | Use a Kubernetes install, or contact us for a sizing consultation | — | — |
+
+The 16 vCPU / 64 GiB row matches the minimum VM in the [Quick Start](/enterprise/quick-start) system requirements. Trials that stay below roughly 15 concurrent sandboxes are well served by that baseline.
+
+<Warning>
+  **Put the data disk on a separate expandable volume, not the boot disk.** Sandbox volumes on a single VM are host directories that consume actual bytes rather than preallocating, so the disk grows with real usage and is meant to be resized in place as demand increases.
+</Warning>
+
+## Replicated Helm Installation
+
+Use two node pools: a tainted pool that runs **only** sandboxes, and an untainted pool that runs everything else. This keeps a burst of sandboxes from evicting platform components.
+
+Recommended node pools:
+
+- **Sandbox pool**: 16 vCPU / 64 GiB / 400 GiB SSD
+- **Platform pool**: 8 vCPU / 32 GiB / 100 GiB
+
+| Peak sandboxes | Users (estimate) | Sandbox nodes (min–max) | Platform nodes | Volume storage (start) | PostgreSQL (in-cluster by default) |
+|----------------|------------------|-------------------------|----------------|------------------------|------------------------------------|
+| **10** | ~50 | 1–1 | 2 | 1 TiB | 2 vCPU / 8 GiB — fits the platform pool |
+| **25** | ~125 | 1–3 | 2 | 2.5 TiB | 2 vCPU / 8 GiB — fits the platform pool |
+| **50** | ~250 | 1–5 | 2 | 5 TiB | 2 vCPU / 8 GiB — fits the platform pool |
+| **100** | ~500 | 1–10 | 3 | 10 TiB | 4 vCPU / 16 GiB — fits the platform pool |
+| **200** | ~1,000 | 2–20 | 3 | 20 TiB | 4 vCPU / 16 GiB — fits the platform pool |
+| **500** | ~2,500 | 3–48 | 4 | 50 TiB | 8 vCPU / 32 GiB — **needs a dedicated node** |
+| **1,000** | ~5,000 | 5–96 | 5 | 100 TiB | 16 vCPU / 64 GiB — **needs a dedicated node** |
+
+Notes on the table:
+
+- **Minimum node counts assume autoscaling.** If your cluster cannot scale up quickly, raise the minimum toward your typical daily peak so users don't wait on node provisioning.
+- **PostgreSQL** is deployed in-cluster by default. At 500 peak sandboxes and above, give it a dedicated node — or use [External PostgreSQL](/enterprise/external-postgres) and size it with your database team.
+
+## Adjusting After Rollout
+
+- Track sandbox pod count over time and size to the observed peak, plus headroom.
+- Watch memory usage against limits to catch OOMKills, and usage against requests to catch evictions. See [Resource Limits](/enterprise/k8s-install/resource-limits) for the metrics and the settings to change.
+- Grow volume storage before it fills. Sandbox workspaces are deleted with their sandbox, but their usage and retention may outstrip initial storage numbers
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/enterprise/quick-start">
+    Provision a VM and install OpenHands Enterprise.
+  </Card>
+  <Card title="Kubernetes Installation" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Deploy into an existing cluster with Helm.
+  </Card>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Tune CPU, memory, and storage for the application server and sandboxes.
+  </Card>
+  <Card title="Conversations and Sandboxes" icon="boxes-stacked" href="/enterprise/conversations-and-sandboxes">
+    Understand how conversations map onto sandboxes and how placement affects capacity.
+  </Card>
+</CardGroup>
