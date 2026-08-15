@@ -21,6 +21,80 @@ This pattern is useful when:
 TaskToolSet is designed for **sequential** blocking tasks.
 </Tip>
 
+## Background DelegateExecutor
+
+`TaskToolSet` remains blocking and supports resuming a completed task. Use the
+lower-level `DelegateExecutor` when a parent must continue working while one or
+more named sub-agents run in the background.
+
+Set `background=True` on a `delegate` action. The observation returns one stable
+task ID for each sub-agent in the `tasks` map. Use lifecycle actions to check the
+status, retrieve output, or stop the task.
+
+```python icon="python"
+from openhands.tools.delegate import (
+    DelegateAction,
+    DelegateExecutor,
+    DelegateTaskStatus,
+)
+
+delegate = DelegateExecutor()
+
+# Spawn a named conversation. "code_reviewer" was registered above.
+delegate(
+    DelegateAction(
+        command="spawn",
+        ids=["reviewer"],
+        agent_types=["code_reviewer"],
+    ),
+    conversation,
+)
+
+started = delegate(
+    DelegateAction(
+        command="delegate",
+        tasks={"reviewer": "Review the authentication changes."},
+        background=True,
+    ),
+    conversation,
+)
+assert started.task_ids is not None
+task_id = started.task_ids["reviewer"]
+
+status = delegate(
+    DelegateAction(command="status", task_id=task_id),
+    conversation,
+)
+if status.status == DelegateTaskStatus.COMPLETED:
+    output = delegate(
+        DelegateAction(command="output", task_id=task_id),
+        conversation,
+    )
+    print(output.text)
+elif status.status in {
+    DelegateTaskStatus.QUEUED,
+    DelegateTaskStatus.RUNNING,
+}:
+    # Request cooperative cancellation when the result is no longer needed.
+    delegate(
+        DelegateAction(command="stop", task_id=task_id),
+        conversation,
+    )
+```
+
+Background tasks move through `queued`, `running`, `completed`, `failed`, or
+`cancelled`. Multiple sub-agents can run at the same time, but a second task for
+the same spawned agent is rejected until its active task reaches a terminal
+state. Reading status or output more than once is safe and does not duplicate
+usage metrics.
+
+<Warning>
+Background task IDs are in-process control handles owned by one
+`DelegateExecutor` and parent conversation. The registry is not restored after a
+process restart. Persisted sub-agent conversation data does not restore running
+workers or their task IDs.
+</Warning>
+
 ## How It Works
 
 The agent calls the task tool with a prompt and a sub-agent type. The TaskManager creates (or resumes) a sub-agent conversation, runs it to completion, and returns the result to the parent.
