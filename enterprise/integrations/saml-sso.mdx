@@ -1,0 +1,168 @@
+---
+title: SAML SSO
+description: Enable SAML single sign-on for OpenHands Enterprise and connect your corporate identity provider in Keycloak.
+icon: user-shield
+---
+
+This guide explains how to let users sign in to an OpenHands Enterprise
+installation with a corporate identity provider (for example Okta, Microsoft
+Entra ID, Google Workspace, or ADFS) over SAML.
+
+OpenHands delegates authentication to the Keycloak service bundled with the
+installation. When SAML SSO is enabled, the OpenHands login page shows a
+`Connect to Enterprise SSO` button. Clicking it sends the user to Keycloak with
+the `kc_idp_hint=enterprise_sso` parameter, which tells Keycloak to skip its own
+login page and redirect straight to the identity provider whose alias is
+`enterprise_sso`. After the user authenticates, Keycloak brokers them back and
+OpenHands creates the session.
+
+<Note>
+  SAML single sign-on is an OpenHands Enterprise feature. See
+  [Enterprise vs Open Source](/enterprise/enterprise-vs-oss).
+</Note>
+
+## Prerequisites
+
+- An OpenHands Enterprise installation using Helm or Replicated.
+- Administrator access to your corporate identity provider to create a SAML
+  application and read its metadata.
+- Administrator access to the bundled Keycloak. Keycloak is served on your
+  installation's Authentication hostname (`auth.<your-openhands-domain>` by
+  default). For Helm installations, the admin password is the value you placed
+  in the `keycloak-admin` Kubernetes secret during
+  [installation](/enterprise/k8s-install/installation).
+- The Keycloak realm for the installation is `allhands`. All URLs below assume
+  this realm.
+
+## Step 1: Enable the Environment Variable
+
+The OpenHands login page shows the `Connect to Enterprise SSO` button only when
+the `ENABLE_ENTERPRISE_SSO` environment variable is present in the OpenHands
+application server environment. The value itself is not parsed. Any non-empty
+value enables the button.
+
+For Helm installations, add the variable to the top-level `env` map in your
+`values.yaml`:
+
+```yaml
+env:
+  ENABLE_ENTERPRISE_SSO: "true"
+```
+
+Then apply the change:
+
+```bash
+helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands \
+  --values values.yaml
+```
+
+Wait for the OpenHands application pods to restart and confirm the login page
+at `https://app.<your-openhands-domain>` now shows the
+`Connect to Enterprise SSO` button.
+
+<Warning>
+  Clicking the button before Step 2 is complete opens the Keycloak login page
+  instead of your identity provider. Configure Keycloak first if users should
+  not see that page.
+</Warning>
+
+## Step 2: Register Keycloak as a SAML Service Provider with Your Identity Provider
+
+Keycloak acts as a SAML service provider (SP) towards your corporate identity
+provider. Create a SAML application in your identity provider with these
+values:
+
+| Identity provider field | Value |
+|---|---|
+| Assertion Consumer Service (ACS) URL / Reply URL | `https://<your-auth-hostname>/realms/allhands/broker/enterprise_sso/endpoint` |
+| Entity ID / Audience / SAML SP Entity ID | `https://<your-auth-hostname>/realms/allhands` |
+| Name ID format | `persistent` (recommended) or `email` |
+
+Replace `<your-auth-hostname>` with your installation's Authentication hostname
+(`auth.<your-openhands-domain>` by default), for example
+`https://auth.openhands.example.com/realms/allhands/broker/enterprise_sso/endpoint`.
+
+Send these attribute statements with the SAML response:
+
+- `email` (required)
+- `firstName` and `lastName` (recommended)
+
+Assign the application to the users or groups that should have access to
+OpenHands. After saving, download the identity provider metadata (also called
+the entity descriptor or federation metadata) as a file or copy its URL. You
+need it in the next step.
+
+## Step 3: Create the SAML Identity Provider in Keycloak
+
+1. Open the Keycloak Admin Console on your Authentication hostname and sign in
+   with the Keycloak admin credentials.
+2. Select the `allhands` realm.
+3. Go to **Identity providers** and choose **SAML v2.0** as the new provider
+   type.
+4. Set **Alias** to exactly `enterprise_sso`.
+
+   <Warning>
+     The alias must be `enterprise_sso`. The OpenHands login button sends
+     `kc_idp_hint=enterprise_sso`, and Keycloak matches that parameter against
+     the identity provider alias. With any other alias, users land on the
+     Keycloak login page instead of your identity provider.
+   </Warning>
+
+5. Set a **Display name**, for example `Company SSO`.
+6. Import the identity provider metadata from Step 2. Provide the metadata URL
+   or upload the file, depending on what your identity provider offers.
+   Keycloak fills in the identity provider's single sign-on URL and signing
+   certificates from the metadata.
+7. Recommended settings:
+   - Enable **Validate signatures** so Keycloak verifies SAML responses against
+     the imported certificates.
+   - Select **Trust email** so users are not prompted to verify their email
+     address on first sign-in.
+8. Save the provider.
+
+## Step 4: Add the Required Identity Provider Mapper
+
+OpenHands distinguishes SAML logins from OAuth logins by reading a
+`identity_provider` claim on the signed-in user. Add a mapper on the new
+provider so that claim carries the SAML marker:
+
+1. Open the `enterprise_sso` identity provider and go to its **Mappers** tab.
+2. Create a mapper with type **Hardcoded attribute**.
+3. Set the user attribute to `identity_provider`.
+4. Set the value to `enterprise_sso:saml`.
+
+The `saml` suffix tells the OpenHands backend to skip the OAuth broker-token
+lookup and offline-token validation that do not apply to SAML identity
+providers.
+
+<Note>
+  If your identity provider does not send the attributes as `email`,
+  `firstName`, and `lastName`, add SAML attribute importers on the same
+  **Mappers** tab to map your identity provider's attribute names onto the
+  OpenHands user profile.
+</Note>
+
+## Step 5: Verify Sign-In
+
+1. Open `https://app.<your-openhands-domain>` in a private browser window.
+2. Click `Connect to Enterprise SSO`.
+3. Complete sign-in on your corporate identity provider.
+4. Confirm you return to OpenHands signed in.
+
+<Note>
+  SAML single sign-on only establishes the OpenHands session. Users who work
+  with repositories still need to connect their Git provider from **Settings >
+  Integrations** inside OpenHands.
+</Note>
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `Connect to Enterprise SSO` is not on the login page | Confirm `ENABLE_ENTERPRISE_SSO` is set on the OpenHands application server and the deployment has rolled out. |
+| Clicking the button opens the Keycloak login page | Confirm the identity provider alias in Keycloak is exactly `enterprise_sso`. |
+| Redirect loop ending on the offline sign-in flow | Confirm the hardcoded mapper sets `identity_provider` to `enterprise_sso:saml` on the identity provider. |
+| New users are asked to verify their email | Enable **Trust email** on the identity provider in Keycloak, or disable it intentionally if your policy requires email verification. |
+| Identity provider returns an error after sign-in at Keycloak | Confirm the ACS URL registered in the identity provider is exactly `https://<your-auth-hostname>/realms/allhands/broker/enterprise_sso/endpoint`. |
+| Keycloak reports an invalid signature | Confirm the signing certificates imported from the identity provider metadata are current. Re-import the metadata after the identity provider rotates certificates. |
