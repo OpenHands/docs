@@ -173,20 +173,22 @@ Within each section, sort items into:
 
 ### 5. Filter out noise
 
-Remove these automated/housekeeping lines that don't add value to customer-facing release notes:
+Apply these exclusions before categorizing entries:
 
-| Pattern                                     | Reason                                                     |
-|---------------------------------------------|------------------------------------------------------------|
-| `chore(main): release X.X.X`                | Automated release PRs                                      |
-| `chore: bump SDK packages to vX.X.X`        | Automated dependency bumps                                 |
-| `chore: bump SDK and agent-server to X.X.X` | Automated dependency bumps                                 |
-| `fix(backport): ...`                        | Backport cherry-picks (the original fix is already listed) |
-| `feat: bump agent-server to ...`            | Version bump PRs, not user-facing features                 |
-| `feat: bump image tag to ...`               | Version bump PRs, not user-facing features                 |
-| `feat(openhands): bump image tag to ...`    | Version bump PRs, not user-facing features                 |
-| `feat(runtime-api): bump image tag to ...`  | Version bump PRs, not user-facing features                 |
-| `Release vX.Y.Z`                            | Automated release PRs in software-agent-sdk                |
-| `Verify ... model`                          | Model verification entries in software-agent-sdk           |
+- Exclude every entry whose linked PR was authored by `dependabot[bot]`, regardless of its title or
+  category. Use the release-note attribution or linked PR metadata to identify the author.
+- Exclude every version-only bump entry, regardless of its conventional commit prefix, scope, or
+  author. This includes forms such as `bump X from A to B`, `bump X to B`, and `bump from A to B`,
+  plus dependency, package, SDK, agent-server, image, and image-tag bumps.
+
+Also remove these automated/housekeeping lines that don't add value to customer-facing release notes:
+
+| Pattern                      | Reason                                                     |
+|------------------------------|------------------------------------------------------------|
+| `chore(main): release X.X.X` | Automated release PRs                                      |
+| `fix(backport): ...`         | Backport cherry-picks (the original fix is already listed) |
+| `Release vX.Y.Z`             | Automated release PRs in software-agent-sdk                |
+| `Verify ... model`           | Model verification entries in software-agent-sdk           |
 
 ### 6. Write the page
 
