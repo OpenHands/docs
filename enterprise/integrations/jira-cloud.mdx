@@ -1,0 +1,147 @@
+---
+title: Jira Cloud
+description: Configure Jira Cloud for OpenHands Enterprise.
+icon: cloud
+---
+
+This guide explains how to connect Jira Cloud to an OpenHands Enterprise
+Replicated installation. The integration lets users start OpenHands from Jira
+issues by commenting with `@openhands` or by adding the `openhands` label.
+OpenHands replies on the issue with a link to the conversation and posts the
+result back when it finishes.
+
+Jira Cloud users are linked to OpenHands accounts by **email match**: no
+Atlassian OAuth app is required, and users need no per-user setup beyond
+making their email visible (see [User requirements](#user-requirements)).
+Users are enrolled automatically the first time they trigger OpenHands.
+
+## Prerequisites
+
+- Jira Cloud **site administrator** access, to invite the service account and
+  register a webhook.
+- An OpenHands Enterprise **organization admin or owner** account, to
+  configure the integration inside OpenHands.
+- Network access from Jira Cloud to the OpenHands app URL over HTTPS with a
+  publicly trusted certificate (for webhook delivery), and from OpenHands to
+  `api.atlassian.com` (for Jira API calls).
+
+## Create a service account
+
+Create a dedicated Atlassian account for OpenHands, for example
+`openhands-bot@company.com`. OpenHands uses this account to read issues and
+post comments, and its replies appear under this account's name.
+
+1. Invite the account to your Jira site and grant it access to every project
+   where OpenHands should read and comment.
+2. Log in as the service account and create an API token at
+   **id.atlassian.com → Security → API tokens**. Save the token for the
+   configuration step below.
+
+<Warning>
+  Mentions and labels made by the service account itself are ignored to
+  prevent the agent from triggering itself. Always test from a regular user
+  account, not the service account.
+</Warning>
+
+## Enable the integration in the Admin Console
+
+1. In the OpenHands Enterprise Admin Console, open **Config** and check
+   **Enable Jira Cloud Integration** under **Jira Cloud Integration**.
+2. Save and deploy the new version, and wait for the rollout to finish.
+
+After the deploy, a **Jira** card appears under **Settings → Integrations**
+in the OpenHands app.
+
+## Configure the workspace in OpenHands
+
+As an organization admin or owner, open **Settings → Integrations → Jira**
+in OpenHands and select **Configure**:
+
+- **Workspace**: the full site hostname, for example
+  `yourcompany.atlassian.net`. Webhook events are matched against this
+  hostname, so the bare site name is not sufficient.
+- **Service account email**: the service account's email address.
+- **Service account API token**: the token created above. The credentials are
+  validated against Jira when you save, so a typo fails immediately.
+- **Webhook secret**: choose a strong secret. You will paste the same secret
+  into Jira in the next step.
+
+Save, then copy the **events URL** shown below the webhook secret field. It
+has the form:
+
+```
+https://app.<your-openhands-domain>/integration/jira/events
+```
+
+## Register the webhook in Jira
+
+In Jira, open **Settings (gear icon) → System → WebHooks** and create a
+webhook:
+
+- **URL**: the events URL copied above.
+- **Secret**: the same webhook secret entered in OpenHands. Jira uses it to
+  sign deliveries, and OpenHands rejects unsigned or mis-signed events.
+- **Events**: check **Issue → updated** and **Comment → created**. These are
+  the only two events OpenHands processes.
+- Optionally scope the webhook with a JQL filter (for example
+  `project = ENG`).
+- Leave the request body included (do not check "Exclude body").
+
+## User requirements
+
+Each user who wants to trigger OpenHands from Jira must satisfy two
+conditions:
+
+1. **Matching email**: the user's Atlassian account email must exactly match
+   their OpenHands login email.
+2. **Visible email**: in the user's Atlassian account settings
+   (**id.atlassian.com → Profile and visibility → Contact → Email address**),
+   visibility must be set to **Anyone**. Jira omits the email from webhook
+   payloads otherwise, and OpenHands cannot match the user without it.
+
+<Warning>
+  Atlassian can take 15 minutes or more to propagate an email-visibility
+  change into webhook payloads. If OpenHands replies that it could not
+  determine your email address right after you changed the setting, wait and
+  try again before assuming the setting is wrong.
+</Warning>
+
+No further setup is needed: the first successful mention enrolls the user
+automatically.
+
+## Start OpenHands from an issue
+
+- Comment `@openhands` followed by instructions on any issue in a project the
+  webhook covers, or add the `openhands` label to the issue. Both the typed
+  literal text and the mention selected from Jira's autocomplete picker work.
+- To have OpenHands work in a repository, include the repository URL (for
+  example `https://gitlab.com/group/project` or
+  `https://github.com/org/repo`) in the issue description or the comment. The
+  triggering user must have that Git provider connected in OpenHands, and
+  exactly one repository should be mentioned. Without a repository, OpenHands
+  still answers on the issue but works without a workspace.
+
+OpenHands reacts with a comment linking to the conversation, and the service
+account posts the result back to the issue when the run completes.
+
+## Troubleshooting
+
+- **OpenHands replies "Could not determine your Jira email address"**: the
+  email-visibility requirement above is not met, or the change has not
+  propagated yet. Verify the exact setting and retry after 15 minutes.
+- **A mention does nothing, with no reply at all**: check that the comment
+  was not made by the service account (those are ignored), that the user's
+  Atlassian email matches their OpenHands email, and that the webhook covers
+  the issue's project. Jira Cloud does not show a delivery log for system
+  webhooks, so check the OpenHands logs (the `openhands-integrations`
+  workload) or collect a support bundle.
+- **Logs show `403 Unidentified workspace`**: the Workspace field in the
+  OpenHands configuration does not equal the site hostname in the webhook
+  payload. Re-open the configuration and set it to
+  `yourcompany.atlassian.net`.
+- **OpenHands replies that multiple repositories were found**: mention
+  exactly one repository in the issue and comment text.
+- **On older releases, only the typed `@openhands` triggers**: releases
+  before the picker-mention fix ignore mentions inserted by Jira's
+  autocomplete. Type the literal text and dismiss the autocomplete popup with
+  Escape, or upgrade.
