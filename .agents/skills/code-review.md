@@ -94,7 +94,6 @@ Include a "Source Verification" section that lists the key claims verified and t
 | Legacy skills with `trigger=None` are included in the initial system prompt and remain in LLM context for subsequent turns | ✅ | [agent.py#L150](permalink) |
 | `load_skills_from_dir()` returns tuple of (skills, repo_skills) | ✅ | [context.py#L85](permalink) |
 | AgentSkills format uses progressive disclosure | ❌ Incorrect | [agent.py#L200](permalink) shows... |
-```
 
 If you cannot find source code to verify a documentation claim, explicitly flag it:
 
@@ -102,6 +101,12 @@ If you cannot find source code to verify a documentation claim, explicitly flag 
 ⚠️ Unverified: Could not find source code for the claimed behavior of "X".
 This should be verified before merging.
 ```
+
+## Repository boundaries
+
+Verify that documentation changes belong in this repository rather than a source repository. `OpenHands/OpenHands` owns Agent Canvas, `OpenHands/software-agent-sdk` owns the SDK/Agent Server and canonical API, `OpenHands/typescript-client` owns typed browser API access, `OpenHands/automation` owns scheduling and dispatch, and `OpenHands/extensions` owns reusable skills, plugins, automations, and integrations.
+
+If a PR is opened in the wrong repository, explicitly recommend that it may need to be closed and moved to the repository that owns the change rather than merged here. Every PR must follow this repository's review guidance.
 
 ## Review Decisions
 
