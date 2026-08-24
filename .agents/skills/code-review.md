@@ -94,6 +94,7 @@ Include a "Source Verification" section that lists the key claims verified and t
 | Legacy skills with `trigger=None` are included in the initial system prompt and remain in LLM context for subsequent turns | ✅ | [agent.py#L150](permalink) |
 | `load_skills_from_dir()` returns tuple of (skills, repo_skills) | ✅ | [context.py#L85](permalink) |
 | AgentSkills format uses progressive disclosure | ❌ Incorrect | [agent.py#L200](permalink) shows... |
+```
 
 If you cannot find source code to verify a documentation claim, explicitly flag it:
 
