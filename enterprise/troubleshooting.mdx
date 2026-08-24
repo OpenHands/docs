@@ -1,0 +1,207 @@
+---
+title: Troubleshooting
+description: Collect diagnostics and inspect OpenHands Enterprise (OHE) workloads.
+icon: life-ring
+---
+
+OpenHands Enterprise Replicated VM installations run in a Replicated Embedded
+Cluster which is a Kubernetes cluster based on k0s. Once you have access to the
+VM, you can use standard Kubernetes commands to inspect OHE. For Helm
+deployments, use your existing Kubernetes access to run the same commands.
+
+Most OHE workloads run in the `openhands` namespace. The Replicated Admin
+Console runs in `kotsadm`, and ingress runs in `traefik`.
+
+## Start With a Support Bundle
+
+A support bundle is the fastest way to give OpenHands Support a snapshot of the
+installation. You do not need to investigate the problem yourself before opening
+a support ticket.
+
+### Use the Admin Console
+
+For a Replicated VM installation:
+
+1. Open `https://admin.<your-base-domain>:30000`.
+2. Select `Troubleshoot`.
+3. Select `Analyze` and wait for it to finish.
+4. Select `Download bundle`.
+
+If `Send bundle to vendor` is available, you can upload the bundle for us to
+inspect directly. Sending a support bundle does not automatically create a
+support ticket, so be sure to still open a support ticket and mention the
+support bundle upload.
+
+### Use the Command Line
+
+On a Replicated VM, use the command line when the Admin Console is unavailable.
+For a Helm installation, run the Kubernetes command from a workstation with
+`kubectl` access.
+
+<Tabs>
+  <Tab title="Replicated (VM/embedded cluster)">
+    Connect to the VM and run:
+
+    ```bash
+    sudo /var/lib/embedded-cluster/bin/openhands support-bundle
+    ```
+
+    If the installation did not complete, run the original installer from the
+    directory where you extracted it:
+
+    ```bash
+    sudo ./openhands support-bundle
+    ```
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    For OHE installed with Helm in an existing Kubernetes cluster, run this
+    command from a workstation with `kubectl` access:
+
+    ```bash
+    kubectl support-bundle --load-cluster-specs --namespace openhands
+    ```
+
+    See the [Kubernetes installation guide](/enterprise/k8s-install/installation#step-5-validate-the-installation)
+    if the `support-bundle` CLI is not installed.
+  </Tab>
+</Tabs>
+
+The bundle includes cluster health, Kubernetes resource state, application logs,
+and OHE service checks.
+
+### Open a Support Ticket
+
+Open the OpenHands Support Portal provided during Enterprise onboarding. Please
+attach the generated archive. If you used `Send bundle to vendor`, mention the
+upload in the ticket. Include:
+
+- When the problem occurred, including the time zone.
+- The affected user or conversation ID, when applicable.
+- The expected and actual behavior.
+- Any recent upgrade or configuration change.
+- Steps that reproduce the problem.
+
+If you cannot access the Support Portal, please contact your OpenHands
+representative for more assistance.
+
+## Inspect the Deployment
+
+This workflow is for practitioners who are already familiar with `kubectl`.
+
+<Warning>
+  Keep your investigation read-only. Do not change Kubernetes resources unless
+  directed by OpenHands Support. Ad hoc `kubectl` changes can be overwritten
+  during a deployment or upgrade and may leave the installation in an
+  inconsistent state.
+</Warning>
+
+### Get a Kubernetes Session
+
+<Tabs>
+  <Tab title="Replicated (VM/embedded cluster)">
+    Connect to a controller VM. On a single-node installation, this is the OHE
+    VM. Then run:
+
+    ```bash
+    sudo /var/lib/embedded-cluster/bin/openhands shell
+    ```
+
+    This opens a shell with `kubectl` configured for the embedded cluster. Run
+    `exit` when finished.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Use your existing Kubernetes access and confirm the current context:
+
+    ```bash
+    kubectl config current-context
+    kubectl get pods -n openhands
+    ```
+  </Tab>
+</Tabs>
+
+### Check Overall Status
+
+Record the time, then inspect the cluster and recent events:
+
+```bash
+date -u
+kubectl get nodes -o wide
+kubectl get pods -n openhands -o wide
+kubectl get deployments,statefulsets -n openhands
+kubectl get events -n openhands --sort-by=.metadata.creationTimestamp
+```
+
+Start with the `STATUS`, `READY`, and `RESTARTS` columns:
+
+- `Pending` usually points to scheduling, storage, or capacity problems.
+- `Init:` means an init container has not completed. Check that container's logs.
+- `CrashLoopBackOff` means a container repeatedly exits. Check previous logs.
+- A pod that is not ready or keeps restarting usually has a failed dependency,
+  health check, or resource limit.
+
+If the Kubernetes Metrics API is available, check current resource usage:
+
+```bash
+kubectl top pods -n openhands
+```
+
+### Inspect a Pod and Its Logs
+
+```bash
+kubectl describe pod -n openhands <pod-name>
+
+kubectl logs -n openhands <pod-name> \
+  --all-containers=true --since=30m --timestamps
+
+kubectl logs -n openhands <pod-name> \
+  --all-containers=true --previous --timestamps
+
+kubectl logs -n openhands <pod-name> -c <container-name> \
+  --since=10m --timestamps --follow
+```
+
+Use `--previous` after a container restarts. Use `-c` to select a specific
+container, including an init container such as `migrate-db`.
+
+### Choose the Right Component
+
+Pod names may include a release prefix and generated suffix. Match the
+recognizable component name to the table below.
+
+| Component | Investigate when |
+|---|---|
+| `openhands` | Web application, API, conversations, and general application errors. |
+| `openhands-integrations` | Integration events and background integration work. |
+| `runtime-api` | Sandbox creation, startup, pause, and cleanup. |
+| `runtime-...` | A particular conversation's sandbox. |
+| `litellm` | Model-provider requests and authentication. |
+| `keycloak` | Login, SSO, and authentication. |
+| `kotsadm` namespace | Replicated Admin Console problems. |
+
+### Temporarily Enable Debug Logging
+
+On a Replicated VM, `Log Level` defaults to `INFO`. Use `DEBUG` only during a
+short investigation:
+
+1. In the Admin Console, select `Config`.
+2. Under `Troubleshooting`, set `Log Level` to `DEBUG`.
+3. Save and deploy, then reproduce the problem.
+4. Collect the logs or a support bundle.
+5. Return `Log Level` to `INFO`, then save and deploy again.
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/enterprise/quick-start">
+    Install an OpenHands Enterprise VM deployment.
+  </Card>
+  <Card title="Admin Console Configuration" icon="sliders" href="/enterprise/vm-install/admin-console-configuration">
+    Configure a Replicated VM installation.
+  </Card>
+  <Card title="Kubernetes Installation" icon="dharmachakra" href="/enterprise/k8s-install/installation">
+    Install OHE into an existing Kubernetes cluster.
+  </Card>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Diagnose and tune CPU, memory, replicas, and storage.
+  </Card>
+</CardGroup>
