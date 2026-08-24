@@ -1,0 +1,71 @@
+---
+title: Prompt Token Composition
+description: Break down prompt tokens per LLM call into system prompt, tool schemas, conversation history, and the latest message.
+---
+
+## Overview
+
+Every LLM call records a per-call decomposition of its prompt tokens, so you can see where the input budget goes on each step of an agent run:
+
+- `system_prompt_tokens` - Tokens in system messages
+- `tool_tokens` - Tokens in the tool schemas included with the call
+- `history_tokens` - Tokens in conversation history (all non-system messages except the latest one)
+- `latest_message_tokens` - Tokens in the latest observation or user message
+
+The decomposition is computed automatically on every call - both the Chat Completions and Responses API paths - and recorded into the LLM's [Metrics](/sdk/guides/metrics). No configuration is required.
+
+## Accessing the Composition
+
+Each call appends one `PromptComposition` record to `llm.metrics.prompt_compositions`. The most recent record is available as `llm.metrics.latest_prompt_composition`:
+
+```python icon="python"
+conversation.run()
+
+composition = llm.metrics.latest_prompt_composition
+assert composition is not None
+print(f"System prompt:  {composition.system_prompt_tokens}")
+print(f"Tool schemas:   {composition.tool_tokens}")
+print(f"History:        {composition.history_tokens}")
+print(f"Latest message: {composition.latest_message_tokens}")
+```
+
+Each record carries the `response_id` of its call, so you can join it with the provider-reported record in `llm.metrics.token_usages`:
+
+```python icon="python"
+for composition, usage in zip(
+    llm.metrics.prompt_compositions, llm.metrics.token_usages
+):
+    estimated = (
+        composition.system_prompt_tokens
+        + composition.tool_tokens
+        + composition.history_tokens
+        + composition.latest_message_tokens
+    )
+    print(
+        f"{composition.response_id}: estimated {estimated}, "
+        f"provider reported {usage.prompt_tokens}"
+    )
+```
+
+Agent steps always include the agent's tool list, so calls from the primary agent loop have `tool_tokens > 0`. Auxiliary calls that pass no tools - for example the [context condenser](/sdk/guides/context-condenser) or title generation - are recorded with `tool_tokens == 0`.
+
+## Estimates vs Provider-Reported Usage
+
+Composition counts are **client-side estimates**, computed with the model's tokenizer before the request is sent. The provider-reported `TokenUsage` remains the authoritative accounting:
+
+- `is_estimate` is `True` on records produced by the client-side estimator.
+- Each component is counted independently, so per-message framing overhead is included in every component and the components do not necessarily sum exactly to the provider-reported `prompt_tokens`.
+- When no tokenizer is available for a model, composition recording is skipped for that call; the call itself is unaffected.
+
+<Tip>
+    Treat the composition as a breakdown of *where* prompt tokens go, and `token_usages` as the record of *how many* tokens the provider billed.
+</Tip>
+
+## Performance
+
+The estimator adds roughly 10-20 ms per call on a typical agent payload (measured with the default 19-tool agent on a ~27K-token prompt) - negligible next to network latency - so it is always on.
+
+## Next Steps
+
+- **[Metrics Tracking](/sdk/guides/metrics)** - Token usage, costs, and latency metrics for your agents
+- **[Context Condenser](/sdk/guides/context-condenser)** - How OpenHands keeps history within the context window
