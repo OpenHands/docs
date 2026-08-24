@@ -35,6 +35,10 @@ Before you begin, make sure you have the following ready:
 
 You will need a VM to host OpenHands Enterprise. Choose one of the options below to provision your infrastructure.
 
+<Note>
+  The requirements below are the trial baseline, which comfortably supports about 15 concurrent sandboxes. For a larger rollout, pick your VM from the [Sizing Guide](/enterprise/sizing-guide) before provisioning.
+</Note>
+
 <Tabs>
   <Tab title="AWS with Terraform (Recommended)">
     We provide a [Terraform module](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws) that provisions a properly configured environment
@@ -43,6 +47,13 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
     <Card title="OpenHands AWS Terraform Module" icon="github" href="https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws">
       Follow the README instructions to configure and apply the Terraform configuration.
     </Card>
+
+    <Warning>
+      The recommended Terraform path provisions a publicly trusted TLS certificate. If you bring
+      your own certificate instead, use a publicly trusted CA whenever possible. Private CA
+      certificates require every external webhook or OAuth provider that calls OpenHands to trust
+      your CA.
+    </Warning>
   </Tab>
 
   <Tab title="Manual VM Setup">
@@ -59,6 +70,17 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
       | **OS** | Linux (x86-64 architecture) |
       | **Init system** | systemd |
       | **Access** | Root access (sudo) required |
+
+      <Note>
+        We recommend **Ubuntu 24.04 LTS**. The default **Sandbox Isolation** runtime
+        (Sysbox) is best supported on Ubuntu and requires **Linux kernel 6.3 or newer**,
+        which Ubuntu 24.04 provides. Very new, non-LTS releases (for example, Ubuntu 25.10
+        or later) may ship kernels that are not yet supported by Sysbox and can cause
+        sandbox containers to fail during startup. If you do not need Docker inside the
+        sandbox, you can instead select the standard runtime under **Sandbox Isolation** in
+        the installer, which does not require a Sysbox-compatible kernel. See
+        [Docker in Sandbox](/enterprise/docker-in-sandbox) for details.
+      </Note>
     </Accordion>
 
     <Accordion title="Network requirements">
@@ -120,22 +142,32 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
 
     Once your VM is running, configure DNS and TLS before starting the installer.
 
-    **Create DNS A records** pointing to your VM's public IP address:
+    **Create a wildcard DNS A record** pointing to your VM's public IP address:
 
     | Record | Example |
     |--------|---------|
-    | `<your-domain>` | `openhands.example.com` |
-    | `app.<your-domain>` | `app.openhands.example.com` |
-    | `analytics.app.<your-domain>` | `analytics.app.openhands.example.com` |
-    | `auth.app.<your-domain>` | `auth.app.openhands.example.com` |
-    | `llm-proxy.<your-domain>` | `llm-proxy.openhands.example.com` |
-    | `runtime-api.<your-domain>` | `runtime-api.openhands.example.com` |
-    | `*.runtime.<your-domain>` | `*.runtime.openhands.example.com` |
+    | `*.<your-domain>` | `*.openhands.example.com` |
 
-    **Obtain a TLS certificate signed by a well-known certificate authority (CA) such as Let's Encrypt**, with SANs
-    (Subject Alternative Names) for all of the above domains, then copy the certificate
+    **Obtain a wildcard TLS certificate signed by a well-known certificate authority (CA) such as Let's Encrypt**
+    for `*.<your-domain>`, then copy the certificate
     (`.pem` or `.crt`) and private key (`.pem` or `.key`) to the VM. Self-signed certificates
     are not supported for the OpenHands application.
+
+    <Accordion title="Can't use wildcard certificates?">
+      Obtain a certificate with SANs (Subject Alternative Names) for each of these hostnames:
+
+      - `admin.<your-domain>`
+      - `app.<your-domain>`
+      - `auth.<your-domain>`
+      - `analytics.<your-domain>`
+      - `llm-proxy.<your-domain>`
+      - `runtime-api.<your-domain>`
+      - `runtime.<your-domain>`
+
+      By default, each sandbox runtime gets its own dynamic hostname, which only a wildcard
+      certificate can cover. When you configure OpenHands, set **Sandbox Routing Mode** to
+      **Path-based** so all sandboxes are served under `runtime.<your-domain>` instead.
+    </Accordion>
 
     <Warning>
       If you don't provide TLS certificates during installation, the Admin Console will use a
@@ -171,27 +203,14 @@ export BASE_DOMAIN="openhands.example.com"
 ```
 Test DNS:
 ```bash
-for h in \
-  "${BASE_DOMAIN}" \
-  "app.${BASE_DOMAIN}" \
-  "analytics.app.${BASE_DOMAIN}" \
-  "auth.app.${BASE_DOMAIN}" \
-  "llm-proxy.${BASE_DOMAIN}" \
-  "runtime-api.${BASE_DOMAIN}"; do
+for h in "admin.${BASE_DOMAIN}" "app.${BASE_DOMAIN}" "test-runtime.${BASE_DOMAIN}"; do
   echo "[DNS] $h"
   getent hosts "$h" || nslookup "$h"
 done
 ```
 
-Expected: each hostname above resolves to your VM's public IP address.
-
-Test that a runtime wildcard hostname resolves:
-
-```bash
-getent hosts "test.runtime.${BASE_DOMAIN}" || nslookup "test.runtime.${BASE_DOMAIN}"
-```
-
-Expected: `test.runtime.${BASE_DOMAIN}` resolves to the same target as `${BASE_DOMAIN}`.
+Expected: each hostname resolves to your VM's public IP address through the
+wildcard record.
 
 ### Outbound connectivity checks
 
@@ -234,7 +253,7 @@ If any check fails, stop and resolve before continuing:
 | `443/TCP` inbound | Primary HTTPS entrypoint for users and service hostnames |
 | `30000/TCP` inbound | Replicated/KOTS Admin Console for install and configuration |
 | `80/TCP` inbound | HTTP entrypoint used for ingress/redirect behavior |
-| `*.runtime.<domain>` DNS + cert SAN | Runtime sandboxes are addressed by dynamic runtime-specific hostnames |
+| `*.<domain>` DNS + cert SAN | Application services and sandboxes are addressed by hostnames under the base domain |
 | `replicated.app`, `proxy.replicated.com` | Replicated control-plane/license/install paths |
 | `images.r9...`, `charts.r9...`, `updates.r9...`, `install.r9...` | Vendor distribution image/chart/update/install endpoints |
 | `traefik.github.io` | Embedded cluster ingress chart repository |
@@ -282,6 +301,11 @@ If the install command fails after preflight checks pass, run `sudo ./openhands 
   If you provisioned manually and have your own certificates on the VM, pass them the same way.
   You can also omit the `--tls-cert` and `--tls-key` flags and upload certificates later through
   the Admin Console.
+
+  For trials and production deployments, use a publicly trusted TLS certificate whenever possible.
+  Private CA certificates may work for users after manual trust setup, but external integrations
+  such as GitHub, GitLab, Slack, Jira, and Bitbucket must also trust the certificate chain. If they
+  do not, webhook or OAuth callbacks can fail TLS verification and repeatedly retry.
 </Warning>
 
 ![Installation commands](./images/install-commands.png)
@@ -289,7 +313,7 @@ If the install command fails after preflight checks pass, run `sudo ./openhands 
 ### 4. Access the Admin Console
 
 Once the install command completes, the Admin Console is available at:
-- `https://<your-base-domain>:30000` (if you provided TLS certificates)
+- `https://admin.<your-base-domain>:30000` (if you provided TLS certificates)
 - `http://<your-vm-ip>:30000` (if you did not use the `--tls-cert` and `--tls-key` flags on the `install` command)
 
 If you did not provide TLS certificates with the `install` command, your browser will display a security warning.
@@ -300,7 +324,10 @@ Click **Advanced**, then **Proceed** to continue to the Admin Console.
 ### 5. Upload TLS certificate (if not provided with the install command)
 
 If you did not provide certificates with the `install` command, select **"Upload your own"**,
-enter your base domain under **Hostname**, upload your private key and SSL certificate, then click **Continue**.
+enter `admin.<your-base-domain>` under **Hostname**, upload your private key and SSL certificate, then click **Continue**.
+
+If you upload a private CA certificate, make sure any external webhook or OAuth provider that
+calls OpenHands also trusts that CA.
 
 ![Upload TLS certificate](./images/upload-tls-certificate.png)
 
@@ -325,7 +352,7 @@ You should now see the application configuration page.
 
 ### Domain Configuration
 
-- Select **"Derive hostnames from domain (recommended)"**
+- Keep the Hostname Configuration Mode set to **"Simple (default)"**
 - Enter your base domain (e.g., `openhands.example.com`)
 
 ### Certificate Configuration

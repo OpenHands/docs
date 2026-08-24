@@ -1,0 +1,113 @@
+---
+title: Issue Triage and the ready-for-dev Gate
+description: How issues are labeled and marked ready-for-dev, and what the pull request description check enforces.
+---
+
+# Issue Triage and the ready-for-dev Gate
+
+OpenHands uses automated labeling and readiness checks to route issues toward development. Understanding this lifecycle helps you file issues that are picked up quickly and open pull requests that pass validation on the first try.
+
+Two repositories are covered here:
+
+- **OpenHands/OpenHands** (the monorepo: app, CLI, and Agent Canvas frontend)
+- **OpenHands/software-agent-sdk** (the Agent SDK)
+
+## What Happens After You File an Issue
+
+The labeling pipeline differs between the two repositories, but both converge on the same readiness check.
+
+<Tabs>
+  <Tab title="OpenHands/OpenHands (monorepo)">
+    1. **Type label at creation.** The issue form templates apply the type label (`bug` or `enhancement`) when the issue is created.
+    2. **Topic and priority labels.** The all-hands-bot app adds topic and priority labels later.
+    3. **Readiness check.** Once a type label is present, the issue readiness workflow evaluates the body against the type-specific criteria below and applies the `ready-for-dev` label within about a minute if they are met.
+
+    <Note>
+      When your agent files an issue, it might forget to check the templates, in which case the issue will have no labels. The all-hands-bot app usually adds a type label within about an hour here too — but if it abstains, the issue waits for a human triager. Only once a type label is present does the readiness check run.
+    </Note>
+  </Tab>
+  <Tab title="OpenHands/software-agent-sdk">
+    1. **Type, topic, and priority labels.** The all-hands-bot app applies a type label (`bug` or `enhancement`) plus topic and priority labels, typically within about an hour of filing.
+    2. **Readiness check.** As soon as the type label lands, the issue readiness workflow evaluates the body and applies `ready-for-dev` within about a minute if the criteria below are met.
+
+    <Note>
+      The bot can abstain from assigning a type label when it cannot classify the issue confidently. If your issue sits with no type label, the reliable remedy is to recreate it through the web issue form, which sets the type label at creation.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Filing Tips
+
+- **File through the web form when you can.** It is the deterministic path: the type label is set at creation and the readiness check runs within about a minute.
+- **SDK issues filed via CLI or API** usually still get labeled by the bot within about an hour, with the abstention risk noted above.
+- **Monorepo issues filed via CLI or API** start unlabeled; the triage bot usually types them within about an hour, and only an abstention waits on a human.
+
+## Readiness Criteria
+
+The readiness check parses the issue body into sections using `###` (h3) headings — the same headings the issue forms render for each field — and evaluates the sections for the issue's type.
+
+<Warning>
+  Only `###` headings are parsed. If you write the sections as `##` (h2) headings, every section parses as empty and the issue never gets `ready-for-dev` — with no hint that the heading level is the reason. Keep the `###` headings exactly as the form renders them.
+</Warning>
+
+### Bug Reports
+
+The bug criteria differ between the two repositories:
+
+**OpenHands/OpenHands (monorepo)** — all three must hold:
+
+1. **`### Steps to Reproduce`** is filled in and references a supported run method: `agent-canvas`, `npm run`, or `app.all-hands.dev/canvas`.
+2. **`### Actual Behavior`** contains an embedded screenshot or video of the bug (a dragged-in file, a GitHub attachment, or a video link). A screenshot attached to a different field does not count — the evidence must be inside the Actual Behavior section.
+3. **`### Acceptance Criteria`** contains at least one checklist item (`- [ ] …`) so the fix is verifiable.
+
+**OpenHands/software-agent-sdk** — both must hold:
+
+1. **`### Actual Behavior`** shows the problem as a runnable command or snippet referencing `python`, `pytest`, `uv`, or `pip`.
+2. **`### Acceptance Criteria`** contains at least one checklist item (`- [ ] …`).
+
+### Enhancements
+
+An issue labeled `enhancement` is ready for development when both of the following hold:
+
+1. **`### Desired Behavior`** is filled in.
+2. **`### Acceptance Criteria`** contains at least one checklist item (`- [ ] …`).
+
+<Note>
+  An empty optional form field renders as `_No response_`, which the check treats as empty.
+</Note>
+
+You can run the same check locally against a draft body before filing, using the script in each repository:
+
+```bash
+python .github/scripts/check_issue_readiness.py --body-file /tmp/issue.md --labels bug
+```
+
+## The Pull Request Description Gate
+
+In the monorepo, a workflow validates the PR description before review. It enforces the PR template plus a link back to a ready issue:
+
+- **First line is `HUMAN:`.** The first visible line of the description must be `HUMAN:` alone on the line, followed by a short human-written note (at least 20 characters), followed by the `AGENT:` marker from the template. Both markers must be present.
+- **Template sections are filled in.** The `## Why`, `## Summary`, and `## How to Test` sections must be kept and contain content.
+- **The human-tested checkbox.** If the `A human has tested these changes` checkbox is present, it must be checked.
+- **Frontend changes need visual evidence.** If the PR touches frontend code, the description must include a screenshot or video.
+- **Bug fixes need reproduction evidence.** If the PR is marked as a Bug fix, the description must include a screenshot or video showing the bug before the fix and the result after — this applies even when no frontend code was touched (a terminal capture is fine).
+- **A linked issue with `ready-for-dev`.** The body must reference at least one issue (for example `Fixes #123`), and at least one referenced issue must carry the `ready-for-dev` label.
+- **The PR type must match the linked issue.** A "Bug fix" PR must link an issue labeled `bug`; a "Feature" PR must link one labeled `enhancement`.
+
+You can run the same validation locally before opening the PR:
+
+```bash
+python .github/scripts/check_pr_description.py --body-file /tmp/pr-body.md --files-file /tmp/pr-files.txt
+```
+
+## Common Pitfalls
+
+- **Using `##` instead of `###` headings in an issue.** The readiness parser only reads `###` headings; `##` sections parse as empty and the sections read as missing with no hint of the real cause. See [Readiness Criteria](#readiness-criteria).
+- **Putting the screenshot in the wrong field.** For bug reports, the screenshot or video must be embedded in `### Actual Behavior`. Attaching it elsewhere in the issue does not satisfy the check.
+- **Skipping reproduction evidence on a non-frontend bug fix.** The before/after evidence requirement for Bug fix PRs applies regardless of which files changed.
+- **Filing a monorepo issue via CLI or API.** It starts unlabeled and the readiness check cannot run until a human triager adds a type label. Use the web form for the deterministic path.
+- **Waiting on a stuck SDK issue.** If the triage bot abstains from assigning a type, recreate the issue through the web form rather than waiting.
+
+## Related
+
+- [Contributing](/overview/contributing) — how to get started contributing to OpenHands
