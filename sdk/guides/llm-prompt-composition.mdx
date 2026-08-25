@@ -5,18 +5,26 @@ description: Break down prompt tokens per LLM call into system prompt, tool sche
 
 ## Overview
 
-Every LLM call records a per-call decomposition of its prompt tokens, so you can see where the input budget goes on each step of an agent run:
+When enabled, every LLM call records a per-call decomposition of its prompt tokens, so you can see where the input budget goes on each step of an agent run:
 
 - `system_prompt_tokens` - Tokens in system messages
 - `tool_tokens` - Tokens in the tool schemas included with the call
 - `history_tokens` - Tokens in conversation history (all non-system messages except the latest one)
 - `latest_message_tokens` - Tokens in the latest observation or user message
 
-The decomposition is computed automatically on every call - both the Chat Completions and Responses API paths - and recorded into the LLM's [Metrics](/sdk/guides/metrics). No configuration is required. On the Responses API path, the decomposition is computed on the finalized payload (instructions plus input items), so the record reflects what the provider received.
+Recording is **opt-in**: set `enable_prompt_composition=True` on the LLM. When off (the default), no tokenization pass runs and no records are appended. When on, the decomposition is computed on every call - both the Chat Completions and Responses API paths - and recorded into the LLM's [Metrics](/sdk/guides/metrics). On the Responses API path, the decomposition is computed on the finalized payload (instructions plus input items), so the record reflects what the provider received.
+
+```python icon="python" focus={4}
+llm = LLM(
+    model="anthropic/claude-sonnet-4-5-20250929",
+    api_key=SecretStr(os.getenv("LLM_API_KEY")),
+    enable_prompt_composition=True,
+)
+```
 
 ## Accessing the Composition
 
-Each call appends one `PromptComposition` record to `llm.metrics.prompt_compositions`. The most recent record is available as `llm.metrics.latest_prompt_composition`:
+With the flag enabled, each call appends one `PromptComposition` record to `llm.metrics.prompt_compositions`. The most recent record is available as `llm.metrics.latest_prompt_composition` (`None` when the flag is off):
 
 ```python icon="python"
 conversation.run()
@@ -73,7 +81,7 @@ Composition counts are **client-side estimates**, computed with the model's toke
 
 ## Performance
 
-The estimator's cost scales linearly with prompt size: roughly 10-20 ms per call on a typical agent payload, measured at ~31 ms for a ~100K-token prompt and ~61 ms for ~190K tokens (19 tools, gpt-4o tokenizer) - negligible next to network latency, so it is always on.
+The estimator's cost scales linearly with prompt size: roughly 10-20 ms per call on a typical agent payload, measured at ~31 ms for a ~100K-token prompt and ~61 ms for ~190K tokens (19 tools, gpt-4o tokenizer) - negligible next to network latency. Because the feature is opt-in, this cost is only paid when `enable_prompt_composition=True`.
 
 ## Next Steps
 
