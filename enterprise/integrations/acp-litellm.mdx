@@ -1,0 +1,234 @@
+---
+title: ACP Agents with LiteLLM
+description: Route Claude Code, Codex, and Gemini CLI ACP agents through your existing LiteLLM or Bedrock proxy so they use your managed models instead of external provider API keys.
+icon: robot
+---
+
+OpenHands Enterprise (OHE) can drive a conversation with the built-in
+**OpenHands** agent or with a third-party **ACP agent** — Claude Code, Codex, or
+Gemini CLI — on the same sandbox. This guide is for operators who already run a
+LiteLLM proxy (including one that fronts AWS Bedrock) and want the ACP agents to
+call models through that proxy instead of reaching out to Anthropic, OpenAI, or
+Google directly with external API keys.
+
+<Info>
+  This guide covers routing the **ACP agent CLIs** through a LiteLLM proxy. It is
+  distinct from chaining OHE's built-in LiteLLM to an external gateway for the
+  OpenHands agent — for that, see
+  [External LLM Gateways](/enterprise/integrations/external-llm-gateways). For a
+  conceptual overview of ACP agents themselves, see
+  [ACP Agents](/openhands/usage/agent-canvas/acp-agents).
+</Info>
+
+## Architecture: where the ACP agent runs
+
+The ACP agent CLI runs **inside the sandbox runtime**, not on the OpenHands
+server pod. When you select an ACP agent, the Agent Server that manages the
+sandbox spawns the provider's CLI (for example `claude-agent-acp`) as a
+subprocess and relays each conversation turn to it over JSON-RPC on stdio. The
+CLI has native filesystem access to the workspace, and it makes its own LLM
+calls directly.
+
+```text
+OpenHands Server pod
+  │  (conversation turns)
+  ▼
+Agent Server  ──spawns──►  ACP agent CLI  ──LLM calls──►  Your LiteLLM proxy
+(inside sandbox pod)       (inside sandbox pod)            (LiteLLM / Bedrock)
+```
+
+This has two consequences that matter for the LiteLLM setup:
+
+- **The sandbox already has what the CLI needs.** Node and `npx` are present, the
+  workspace is mounted, and the CLI runs next to it — no round-trip to the server
+  pod for filesystem work.
+- **The LLM call originates from the sandbox.** Each ACP CLI resolves its own
+  model alias locally and sends its vendor's native model ID over its vendor's
+  native wire format straight to the endpoint you configure. Nothing in OHE sits
+  in the middle rewriting the request. That is why the base-URL override below is
+  all that is needed: point the CLI at your proxy and the CLI does the rest.
+
+<Note>
+  Because each CLI talks its own vendor dialect directly to the proxy, your
+  LiteLLM proxy must expose models under the identifiers that each CLI sends
+  (Anthropic-style names for Claude Code, OpenAI-style for Codex, Gemini names
+  for Gemini CLI), and accept each vendor's native API shape. LiteLLM handles
+  all three natively. This path is exercised by the OpenHands ACP evals, which
+  run Codex, Claude Code, and Gemini CLI through a LiteLLM proxy.
+</Note>
+
+## Prerequisites
+
+- **OHE is installed and reachable**, and you can sign in at
+  `https://app.<your-base-domain>`.
+- **A LiteLLM proxy reachable from the sandbox network**, with the models you
+  want to use registered under the vendor-native names each CLI expects. If the
+  proxy fronts Bedrock, that mapping is configured on the proxy side; OHE does
+  not need Bedrock credentials.
+- **A LiteLLM virtual key** the CLIs can authenticate with.
+
+<Note>
+  The proxy URL is your deployment's LiteLLM URL. On OpenHands SaaS this is
+  `https://llm-proxy.app.all-hands.dev`; on a self-hosted OHE cluster it is your
+  own LiteLLM endpoint (for example the in-cluster `http://openhands-litellm:4000`
+  or whatever hostname your proxy is exposed on).
+</Note>
+
+## How ACP credentials reach the CLI
+
+Every field you set for an ACP agent is stored as a **global secret** whose name
+is exactly the environment variable the Agent Server exports into the ACP
+subprocess. Keeping the secret name identical to the env var is what makes the
+value actually reach the CLI. You can set these during onboarding or at any time
+under **Settings → Secrets**; the **Settings → Agent** page surfaces the same
+fields per provider.
+
+The two fields that matter for LiteLLM routing are the provider's **API key**
+env var (set to your LiteLLM virtual key) and its **base URL** env var (set to
+your proxy URL):
+
+| Provider | API key env var | Base URL env var |
+|---|---|---|
+| **Claude Code** | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` |
+| **Codex** | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
+| **Gemini CLI** | `GEMINI_API_KEY` | `GEMINI_BASE_URL` |
+
+<Warning>
+  Each provider also exposes a subscription/OAuth or file-based credential
+  (Claude Code's `CLAUDE_CODE_OAUTH_TOKEN`, Codex's `CODEX_AUTH_JSON`, Gemini's
+  Vertex/OAuth fields). **Those take precedence over the API key + base URL and
+  bypass your proxy.** Leave them blank when routing through LiteLLM. Each
+  section below calls out exactly which fields to leave empty.
+</Warning>
+
+## Configure each provider
+
+All steps happen on **Settings → Agent**. Choose **Agent = ACP**, pick the
+**Preset**, then set the credentials as global secrets.
+
+<Tabs>
+  <Tab title="Claude Code">
+    1. **Agent = ACP**, **Preset = Claude Code**, and pick a **Model**.
+    2. Set `ANTHROPIC_API_KEY` to your LiteLLM virtual key.
+    3. Set `ANTHROPIC_BASE_URL` to your proxy URL, then **Save**.
+
+    This works because `claude-agent-acp` reads `ANTHROPIC_BASE_URL` directly and
+    sends Anthropic-native requests to it.
+
+    <Warning>
+      Leave `CLAUDE_CODE_OAUTH_TOKEN` **blank**. When it is set, the SDK strips
+      both `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL` (the OAuth bearer
+      authenticates against Anthropic directly, and a base URL would misroute
+      it), so the CLI bypasses your proxy entirely.
+    </Warning>
+  </Tab>
+
+  <Tab title="Codex">
+    1. **Agent = ACP**, **Preset = Codex**, and pick a **Model** (for example
+       `gpt-5.5`).
+    2. Set `OPENAI_API_KEY` to your LiteLLM virtual key.
+    3. Set `OPENAI_BASE_URL` to your proxy URL, then **Save**.
+
+    Codex does not read `OPENAI_BASE_URL` from the environment itself — its
+    base-URL setting lives in its own config. OHE handles this for you: it
+    rewrites `OPENAI_BASE_URL` into the config key the Codex ACP adapter reads,
+    so the value you set takes effect.
+
+    <Warning>
+      Leave `CODEX_AUTH_JSON` **blank**. The subscription auth file takes
+      precedence over the key + base URL and bypasses your proxy.
+    </Warning>
+  </Tab>
+
+  <Tab title="Gemini CLI">
+    1. **Agent = ACP**, **Preset = Gemini CLI**, and pick a **Model** (for
+       example `gemini-2.5-pro`, or `auto`).
+    2. Set `GEMINI_API_KEY` to your LiteLLM virtual key. This is **required** — it
+       selects the routable API-key auth path.
+    3. Set `GEMINI_BASE_URL` to your proxy URL, then **Save**.
+
+    The SDK passes the base URL to the CLI as its authenticate **gateway** target,
+    which is how Gemini CLI is routed through LiteLLM.
+
+    <Warning>
+      Leave the Vertex/OAuth fields **blank**:
+      `GOOGLE_APPLICATION_CREDENTIALS_JSON`, `GOOGLE_CLOUD_PROJECT`,
+      `GOOGLE_CLOUD_LOCATION`, and `GOOGLE_GENAI_USE_VERTEXAI`. They take
+      precedence and bypass the proxy.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## The model-identifier handshake
+
+A common concern when routing agent CLIs through a proxy is whether the model
+name and provider "dialect" survive the trip. With ACP agents there is no
+translation layer to get wrong: each CLI resolves its configured model alias
+locally and issues the LLM call itself, in its own vendor's API format, directly
+to the base URL you set. OHE does not rewrite the model name or the request
+shape.
+
+The practical requirement is on the **proxy** side, not OHE:
+
+- The model you select for each ACP agent must be registered on your LiteLLM
+  proxy under the identifier that CLI sends.
+- The proxy must accept that CLI's native request shape (Anthropic Messages for
+  Claude Code, OpenAI Chat Completions for Codex, the Gemini API for Gemini CLI).
+  LiteLLM supports all three, including when the upstream is Bedrock.
+
+If a call fails with a model-not-found or 4xx error, it is almost always a proxy
+mapping issue — the model alias the CLI sent is not registered on the proxy under
+that exact name — rather than something OHE is doing to the request.
+
+## Verify
+
+1. Start a new conversation with the ACP agent configured above and send a simple
+   prompt (for example, "list the files in the workspace").
+2. Confirm the turn completes and, if your proxy has spend/usage logging, that
+   the call appears on **your** LiteLLM proxy — not on the provider's own
+   dashboard.
+3. Switch the selected **Model** and repeat to confirm your other proxy-hosted
+   models are reachable.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Calls hit the real provider instead of my proxy">
+    A subscription/OAuth or file credential is set and taking precedence. Clear
+    the provider's precedence field: `CLAUDE_CODE_OAUTH_TOKEN` (Claude Code),
+    `CODEX_AUTH_JSON` (Codex), or the `GOOGLE_APPLICATION_CREDENTIALS_JSON` /
+    `GOOGLE_CLOUD_*` / `GOOGLE_GENAI_USE_VERTEXAI` fields (Gemini CLI). Then
+    re-save the API key + base URL and start a new conversation.
+  </Accordion>
+
+  <Accordion title="Claude Code ignores my base URL">
+    Confirm `CLAUDE_CODE_OAUTH_TOKEN` is blank. When it is present the SDK strips
+    `ANTHROPIC_API_KEY` and `ANTHROPIC_BASE_URL`, so the base URL never reaches
+    the CLI.
+  </Accordion>
+
+  <Accordion title="Codex fails with an auth or 401 error against api.openai.com">
+    This means the base URL did not take effect and Codex fell back to the real
+    OpenAI API. Verify `OPENAI_BASE_URL` is set as a global secret (exact name)
+    and that `CODEX_AUTH_JSON` is blank, then start a new conversation.
+  </Accordion>
+
+  <Accordion title="Model not found at the proxy">
+    The alias the CLI sent is not registered on the LiteLLM proxy under that
+    name. Register the model on the proxy using the vendor-native identifier the
+    CLI uses, or select a model in OHE that is already registered.
+  </Accordion>
+
+  <Accordion title="A running conversation still uses the old settings">
+    Agent and credential changes apply to conversations started **after** the
+    change. A conversation keeps the agent and settings it started with — start a
+    new conversation to pick up the new configuration.
+  </Accordion>
+</AccordionGroup>
+
+## Reference
+
+- [ACP Agents](/openhands/usage/agent-canvas/acp-agents) — concepts, providers, and authentication
+- [External LLM Gateways](/enterprise/integrations/external-llm-gateways) — chain OHE's built-in LiteLLM to an external gateway (OpenHands agent)
+- [ACP Agent (SDK)](/sdk/guides/agent-acp) — the SDK-level `ACPAgent` and its base-URL/credential handling
+- [Agent Client Protocol](https://agentclientprotocol.com/protocol/overview)
