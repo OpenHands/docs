@@ -1,0 +1,275 @@
+---
+title: GitHub
+description: Configure the GitHub App and control the built-in GitHub resolver in OpenHands Enterprise.
+icon: github
+---
+
+This guide explains how to connect GitHub to a self-hosted OpenHands Enterprise
+installation. The integration lets users sign in with GitHub, open repositories,
+and invoke OpenHands from issue and pull request comments.
+
+<Info>
+  For OpenHands Cloud, see [GitHub Integration](/openhands/usage/cloud/github-installation).
+  This page covers the GitHub App that you create and operate for OpenHands Enterprise.
+</Info>
+
+## Overview
+
+A self-hosted installation needs its own GitHub App so GitHub can send events to
+your domain. Setup has four parts:
+
+1. Create a GitHub App for the installation.
+2. Install the app on the organizations and repositories where OpenHands should run.
+3. Add the app credentials to the OpenHands Enterprise Admin Console and deploy the configuration.
+4. Have each user sign in to OpenHands with GitHub before they invoke `@openhands`.
+
+The integration uses two GitHub identities:
+
+- The GitHub App posts acknowledgements and completion messages as the OpenHands bot.
+- The agent uses the triggering user's GitHub authorization for repository operations,
+  including formal pull request reviews.
+
+This is why an `I'm on it!` comment can appear as the bot while the resulting pull
+request review appears as the user who requested it.
+
+## Prerequisites
+
+Before you start, confirm:
+
+- OpenHands Enterprise is reachable at `https://app.<your-base-domain>`.
+- The authentication service is reachable at `https://auth.<your-base-domain>`
+  when using the default **Simple** hostname mode.
+- Both hostnames use publicly trusted TLS certificates.
+- You can create a GitHub App for your user or organization.
+- You can install the app on the organizations and repositories that should use OpenHands.
+- Your workstation has [uv](https://docs.astral.sh/uv/) and can open a browser to GitHub.
+
+## Step 1: Create the GitHub App
+
+Use the helper script in the
+[`OpenHands-Cloud`](https://github.com/OpenHands/OpenHands-Cloud/tree/main/scripts/create_github_app)
+repository. It creates a private GitHub App with the callback URL, webhook URL,
+permissions, and events expected by OpenHands Enterprise.
+
+```bash
+git clone https://github.com/OpenHands/OpenHands-Cloud.git
+cd OpenHands-Cloud
+./scripts/create_github_app/create_github_app.py \
+  --base-domain <your-base-domain>
+```
+
+Use the base domain without the `app.` or `auth.` prefix. For example:
+
+```bash
+./scripts/create_github_app/create_github_app.py \
+  --base-domain openhands.example.com
+```
+
+Pass `--org <github-org>` to create the app under a GitHub organization instead
+of your personal account. If the installation uses the **Legacy** hostname mode,
+also pass `--dns-layout nested` so the OAuth callback uses
+`auth.app.<your-base-domain>` instead of `auth.<your-base-domain>`.
+
+The script starts a temporary callback server on port `9876`, opens GitHub's App
+creation page, and asks you to create the app. After creation, it opens the app's
+installation page.
+
+Save these values from the script output:
+
+- GitHub App Client ID
+- GitHub App Client Secret
+- GitHub App ID
+- GitHub App Slug
+- GitHub App Webhook Secret
+- GitHub App Private Key, saved under `scripts/create_github_app/keys/`
+
+<Warning>
+  Store the client secret, webhook secret, and private key securely. Do not commit
+  them to a repository.
+</Warning>
+
+### App Configuration
+
+The helper configures these URLs:
+
+| GitHub App setting | URL |
+|---|---|
+| Homepage URL | `https://app.<your-base-domain>` |
+| OAuth callback URL | `https://auth.<your-base-domain>/realms/allhands/broker/github/endpoint` |
+| Webhook URL | `https://app.<your-base-domain>/integration/github/events` |
+
+The OAuth callback URL above is for the default **Simple** hostname mode. The
+helper uses `auth.app.<your-base-domain>` when run with `--dns-layout nested` for
+the **Legacy** mode. The OAuth callback handles user sign-in, while the webhook
+URL receives issue and pull request events; these URLs are not interchangeable.
+
+The app subscribes to these events:
+
+- Issue comments
+- Pull requests
+- Pull request review comments
+
+The app requests write access to repository contents, issues, pull requests,
+repository webhooks, commit statuses, Actions, and workflows. It also requests
+read access to metadata, user email addresses, and organization events.
+
+## Step 2: Install the GitHub App
+
+On the installation page opened by the helper script:
+
+1. Select the GitHub user or organization that owns the repositories.
+2. Choose **All repositories** or select the repositories that should use OpenHands.
+3. Review the requested permissions.
+4. Select **Install**.
+
+You can change repository access later from the GitHub App's installation settings.
+OpenHands receives events only for repositories included in the installation.
+
+<Note>
+  Installing multiple OpenHands GitHub Apps on the same repository causes each app
+  to receive the same `@openhands` mention. This can start duplicate conversations
+  and produce duplicate acknowledgements, reviews, and completion comments.
+</Note>
+
+## Step 3: Configure OpenHands Enterprise
+
+Open the Replicated Admin Console and find **GitHub Authentication** in the
+application configuration.
+
+1. Enable **GitHub Authentication**.
+2. Enter the **GitHub App Client ID**.
+3. Enter the **GitHub App Client Secret**.
+4. Enter the numeric **GitHub App ID**.
+5. Enter the **GitHub App Slug**.
+6. Enter the **GitHub App Webhook Secret**.
+7. Upload the **GitHub App Private Key** (`.pem`).
+8. Save the configuration and deploy the new version.
+9. Wait for the deployment to reach **Ready**.
+
+The [Enterprise Quick Start](/enterprise/quick-start) covers the surrounding
+installation and deployment steps.
+
+## Step 4: Sign In with GitHub
+
+Each user must sign in to OpenHands with GitHub before invoking the resolver.
+The first sign-in links the GitHub identity to the user's OpenHands account and
+stores the authorization needed to perform repository operations as that user.
+
+If a GitHub user who has not linked an OpenHands account mentions `@openhands`,
+the bot responds with instructions to sign in before starting a job.
+
+## Use the Built-In Resolver
+
+Mention `@openhands` in an issue, pull request comment, or inline pull request
+review comment. You can also add the `openhands` label to an issue. Include the
+task after the mention, for example:
+
+```text
+@openhands explain why this test is failing
+```
+
+```text
+@openhands /codereview
+```
+
+The resolver starts a job only when:
+
+- The GitHub App is installed for the repository.
+- GitHub can deliver a valid webhook to the OpenHands webhook URL.
+- The triggering user has signed in to OpenHands with GitHub.
+- The triggering user has write access to the repository.
+
+When a job starts, OpenHands:
+
+1. Adds an eyes reaction to the triggering issue or comment.
+2. Creates an OpenHands conversation with the issue or pull request context.
+3. Posts an `I'm on it!` acknowledgement as the GitHub App and links to the conversation.
+4. Runs the task using the triggering user's GitHub authorization.
+5. Posts the conversation's final response as a completion comment from the GitHub App.
+
+The acknowledgement and completion comment are part of the built-in resolver.
+They are not custom event automations.
+
+## Control Pull Request Reviews
+
+GitHub conversations include the built-in GitHub skill, which explains how the
+agent should use the GitHub API. Use `@openhands /codereview` when you want to
+invoke the built-in code review skill explicitly instead of relying on the agent
+to interpret a general `@openhands review` request.
+
+Add repository or organization skills when your team needs consistent review
+guidance. For example, create `.agents/skills/custom-codereview-guide.md` to tell
+the agent to submit informational reviews instead of approvals:
+
+```markdown
+---
+name: custom-codereview-guide
+description: Apply this repository's GitHub pull request review policy.
+triggers:
+- /codereview
+---
+
+# GitHub Review Policy
+
+When submitting a GitHub pull request review:
+
+- Always use `event: COMMENT`.
+- Never use `event: APPROVE` or `event: REQUEST_CHANGES`.
+- Put all findings in the formal review body or inline review comments.
+- Keep the final response brief and point readers to the formal review instead of repeating it.
+```
+
+Do not name this skill `code-review`; that name conflicts with the built-in review
+skill. Keep the `/codereview` trigger so both skills activate for the same request.
+Start a new resolver conversation after committing the skill because skills do
+not retroactively change a conversation that is already running.
+
+See [Code Review](/openhands/usage/use-cases/code-review#customization) for more
+customization examples and [Skills and Plugins](/enterprise/skills-and-plugins)
+for repository and organization-wide distribution options.
+
+### Review and Comment Identity
+
+The built-in resolver intentionally uses different credentials for different actions:
+
+| Action | GitHub identity |
+|---|---|
+| Eyes reaction | GitHub App bot |
+| `I'm on it!` acknowledgement | GitHub App bot |
+| Repository changes and formal pull request reviews | Triggering user |
+| Completion comment | GitHub App bot |
+
+There is currently no supported setting that makes formal reviews run as the
+GitHub App bot. If your organization requires reviews to have a machine identity,
+use an [OpenHands code review automation](/openhands/usage/use-cases/code-review#option-b-openhands-automation-org-wide)
+with a dedicated bot credential.
+
+### Completion Comments
+
+The built-in resolver posts the agent's final response as a completion comment.
+There is currently no Admin Console setting to disable this comment while keeping
+the built-in resolver enabled.
+
+A repository or organization skill can reduce duplication by telling the agent
+to keep its final response brief and refer readers to the formal review. A skill
+cannot disable the resolver's completion callback itself.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| **Login with GitHub** is not visible | Confirm **GitHub Authentication** is enabled and the updated configuration has been deployed. |
+| GitHub OAuth redirects fail | Confirm the callback URL uses `https://auth.<your-base-domain>/realms/allhands/broker/github/endpoint` for **Simple** mode or `https://auth.app.<your-base-domain>/realms/allhands/broker/github/endpoint` for **Legacy** mode. Recreate the app or update its callback URL if the helper was run with the wrong DNS layout. |
+| GitHub reports failed webhook deliveries | Confirm GitHub can reach `https://app.<your-base-domain>/integration/github/events`, the TLS certificate is trusted, and the webhook secret matches the Admin Console value. |
+| `@openhands` is ignored | Confirm the app is installed for the repository, the sender has write access, and the sender has signed in to OpenHands with GitHub. |
+| OpenHands posts duplicate acknowledgements or reviews | Check whether more than one OpenHands GitHub App is installed for the repository. |
+| The acknowledgement is from the bot but the review is from a user | This is expected. The app posts resolver status messages, while repository operations use the triggering user's GitHub authorization. |
+| A review is submitted as **Approve** instead of **Comment** | Add repository or organization guidance that tells the agent to use `event: COMMENT`, then start a new resolver conversation. |
+| The review and completion comment repeat the same content | Add a skill that keeps the final response brief. The completion comment cannot currently be disabled through the Admin Console. |
+| OpenHands can read the repository but cannot post a review | Confirm the app and user authorization include write access to pull requests, and confirm the user can review the pull request in GitHub. |
+
+## Related Documentation
+
+- [Enterprise Quick Start](/enterprise/quick-start)
+- [Skills and Plugins](/enterprise/skills-and-plugins)
+- [Code Review](/openhands/usage/use-cases/code-review)
