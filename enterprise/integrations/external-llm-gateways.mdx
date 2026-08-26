@@ -1,0 +1,630 @@
+---
+title: External LLM Gateways
+description: Chain OpenHands Enterprise to an existing LiteLLM or Bifrost gateway so LLM traffic flows through your existing routing, cost tracking, and audit layer.
+icon: network
+---
+
+Many organizations already run an LLM gateway (LiteLLM, Bifrost, or a similar
+OpenAI-compatible proxy) to route, rate-limit, audit, and track cost across
+multiple LLM providers. OpenHands Enterprise (OHE) ships with its own built-in
+LiteLLM instance, and that built-in instance can forward requests to your
+existing gateway instead of calling LLM providers directly.
+
+This guide walks an operator through configuring the built-in LiteLLM to
+forward to an external gateway, for both single-model and multi-model setups.
+
+<Info>
+  This guide is for **OpenHands Enterprise** operators who want to chain the
+  built-in LiteLLM to an external gateway. If you are using OpenHands Cloud or
+  the OSS build and want to point OpenHands at your own LiteLLM proxy directly,
+  see [LiteLLM Proxy](/openhands/usage/llms/litellm-proxy) instead. That path
+  does not involve the built-in LiteLLM.
+</Info>
+
+## Overview
+
+OHE does not point the OpenHands runtime directly at an external gateway. Instead,
+the built-in LiteLLM forwards requests to the external gateway, which in turn
+forwards to the actual LLM provider:
+
+```text
+OpenHands Runtime
+  │
+  ▼
+Built-in LiteLLM (runs inside the OHE cluster)
+  │
+  ▼  (forwards as OpenAI-compatible HTTP)
+External Gateway (your LiteLLM or Bifrost)
+  │
+  ▼
+LLM Provider (Anthropic, OpenAI, Bedrock, Azure, etc.)
+```
+
+This design means:
+
+- OHE never needs credentials for the underlying LLM providers.
+- Your gateway keeps full control of provider keys, routing rules, cost tracking,
+  and audit logs.
+- Only one secret is exchanged: an API key or virtual key for your gateway, which
+  the built-in LiteLLM uses to authenticate.
+
+## What you need from the gateway owner
+
+For each model you want to expose to OHE, you need three pieces of information
+from whoever administers the external gateway:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| **Gateway URL** | Base URL of the gateway, reachable from the OHE cluster | `http://litellm.internal:4000` or `https://bifrost.corp.example.com:8080` |
+| **Gateway Key** | An API key or virtual key on the gateway that authorizes chat/completions calls | `sk-litellm-vk-abc123...` |
+| **Model Name** | The model name as the gateway expects it in the `model` field of the request body | `claude-sonnet-4-5-20250929` (LiteLLM) or `anthropic/claude-sonnet-4-5-20250929` (Bifrost) |
+
+No provider credentials, AWS keys, or Azure endpoints are needed on the OHE
+side. Those all stay on the external gateway.
+
+## Prerequisites
+
+Before you start, confirm:
+
+- **OHE is installed and reachable.** You can sign in at
+  `https://app.<your-base-domain>`.
+- **The external gateway is reachable from the OHE cluster.** The built-in
+  LiteLLM pod makes outbound HTTP/S calls to the gateway, so DNS and network
+  paths must resolve from inside the `openhands` namespace.
+- **You have the built-in LiteLLM master key.** This is needed for the admin
+  API path (testing only) and for verifying the config. Retrieve it with:
+
+  ```bash
+  kubectl -n openhands exec deploy/openhands-litellm -- printenv PROXY_MASTER_KEY
+  ```
+
+- **You have cluster access** to edit Helm values or apply config changes, and
+  can restart the LiteLLM pod.
+
+## Configure the built-in LiteLLM
+
+There are two ways to add gateway-forwarding models to the built-in LiteLLM.
+For production, use the **Helm values**. Use the **admin API** only for light
+testing. It does not survive pod restarts or upgrades and is not recommended
+for regular use.
+
+### Option 1: Admin API (testing only)
+
+<Warning>
+  Models added via the admin API are stored in the LiteLLM database and take
+  effect immediately, but **they are lost when the LiteLLM pod restarts or the
+  cluster is upgraded**. Use this path only to test that a gateway connection
+  works, then move validated models to the Helm values (Option 2) for
+  production.
+</Warning>
+
+```bash
+# Add a model that forwards to an external LiteLLM gateway
+curl -X POST http://<built-in-litellm>:4000/model/new \
+  -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "claude-sonnet-4-5-via-gateway",
+    "litellm_params": {
+      "model": "litellm_proxy/claude-sonnet-4-5-20250929",
+      "api_base": "http://<external-gateway>:4000",
+      "api_key": "<gateway-key>"
+    }
+  }'
+```
+
+Models added this way appear immediately in `GET /v1/models` and are usable
+right away. No pod restart is needed.
+
+### Option 2: Helm values (production)
+
+For production, add model entries to the OpenHands Helm chart's
+`proxy_config.model_list`. These survive pod restarts and cluster upgrades.
+
+<Tabs>
+  <Tab title="Replicated (VM/embedded cluster)">
+    1. Open the Replicated admin console at `https://<admin-console-host>:30000`.
+    2. Navigate to the LiteLLM config section and edit the `model_list` YAML.
+    3. Add one entry per model (see the config snippets in
+       [Gateway-specific configuration](#gateway-specific-configuration) below).
+    4. Save and deploy. Replicated will roll the LiteLLM pod with the new config.
+  </Tab>
+  <Tab title="Standalone Helm">
+    Edit `values.yaml` for the `openhands` chart:
+
+    ```yaml
+    proxy_config:
+      model_list:
+        # ... existing models ...
+
+        # Forward to an external LiteLLM gateway
+        - model_name: claude-sonnet-4-5-via-gateway
+          litellm_params:
+            model: litellm_proxy/claude-sonnet-4-5-20250929
+            api_base: http://<external-gateway>:4000
+            api_key: os.environ/EXTERNAL_GATEWAY_KEY
+
+        # Forward to an external Bifrost gateway
+        - model_name: claude-sonnet-4-5-via-bifrost
+          litellm_params:
+            model: openai/anthropic/claude-sonnet-4-5-20250929
+            api_base: http://<bifrost>:8080/v1
+            api_key: os.environ/BIFROST_KEY
+    ```
+
+    Then supply the keys as a Kubernetes secret and redeploy:
+
+    ```bash
+    kubectl -n openhands create secret generic external-gw-keys \
+      --from-literal=EXTERNAL_GATEWAY_KEY='<gateway-key>' \
+      --from-literal=BIFROST_KEY='<bifrost-key>'
+
+    helm upgrade openhands ./charts/openhands -f values.yaml -n openhands
+    ```
+  </Tab>
+</Tabs>
+
+## Gateway-specific configuration
+
+The `model` and `api_base` fields differ depending on whether the external
+gateway is LiteLLM or Bifrost.
+
+### LiteLLM as the external gateway
+
+Use the `litellm_proxy/` model prefix. This tells the built-in LiteLLM to
+forward to another LiteLLM instance and preserve LiteLLM-specific features
+(virtual key headers, spend tracking, team/org metadata).
+
+```yaml
+- model_name: <any-friendly-name-for-openhands>
+  litellm_params:
+    model: litellm_proxy/<model-name-on-external-gateway>
+    api_base: http://<external-gateway>:4000    # no /v1 suffix
+    api_key: <external-gateway-key>
+```
+
+<Note>
+  The `api_base` should **not** include `/v1`. LiteLLM appends the
+  `/v1/chat/completions` path automatically.
+</Note>
+
+### Bifrost as the external gateway
+
+Use the `openai/` model prefix. Bifrost is OpenAI-compatible, so the built-in
+LiteLLM treats it as an OpenAI-compatible endpoint.
+
+```yaml
+- model_name: <any-friendly-name-for-openhands>
+  litellm_params:
+    model: openai/<provider>/<model-on-bifrost>
+    api_base: http://<bifrost>:8080/v1          # include /v1
+    api_key: <bifrost-key>
+```
+
+Key differences from LiteLLM:
+
+- `api_base` **must** include `/v1`. Bifrost does not auto-append it.
+- The model name on Bifrost uses the `provider/model` convention (for example,
+  `anthropic/claude-sonnet-4-5-20250929`), so the full `model` field becomes
+  `openai/anthropic/claude-sonnet-4-5-20250929`.
+
+## Multi-model gateways
+
+Gateways typically host many models across different providers, sizes, and
+routing rules. There are two patterns for exposing them to OHE.
+
+### Pattern A: Explicit per-model entries (recommended)
+
+Add one `model_list` entry per model you want to expose. Each entry maps a
+friendly name (what OHE users see in the dropdown) to a model on the external
+gateway. This works identically for LiteLLM and Bifrost gateways.
+
+```yaml
+proxy_config:
+  model_list:
+    - model_name: claude-sonnet-4-5
+      litellm_params:
+        model: litellm_proxy/claude-sonnet-4-5-20250929
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/EXTERNAL_GW_KEY
+
+    - model_name: claude-haiku-4-5
+      litellm_params:
+        model: litellm_proxy/claude-haiku-4-5-20251001
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/EXTERNAL_GW_KEY
+
+    - model_name: gpt-4o
+      litellm_params:
+        model: litellm_proxy/gpt-4o
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/EXTERNAL_GW_KEY
+```
+
+All three entries point at the same `api_base` and use the same `api_key`.
+Only the upstream model name differs. OHE users see three models in the
+dropdown: `claude-sonnet-4-5`, `claude-haiku-4-5`, `gpt-4o`.
+
+This pattern is explicit, easy to audit, and gives you control over which
+models are exposed and what they are named.
+
+### Pattern B: Wildcard passthrough (not recommended)
+
+<Warning>
+  Pattern B is **not recommended** for production. It floods the OHE model
+  dropdown with hundreds of models that do not exist on the external gateway,
+  and it requires users to type exact model names in a specific format. Use
+  Pattern A unless you have a specific reason to allow arbitrary model names.
+</Warning>
+
+LiteLLM supports a wildcard model entry that forwards any model name to the
+upstream gateway without pre-declaring each one:
+
+```yaml
+proxy_config:
+  model_list:
+    - model_name: "*"
+      litellm_params:
+        model: openai/*
+        api_base: http://<bifrost>:8080/v1
+        api_key: os.environ/BIFROST_KEY
+```
+
+Tested behavior of this pattern:
+
+- **The OHE model dropdown becomes unusable.** `GET /v1/models` on the built-in
+  LiteLLM returns 200+ entries: the explicitly configured models, a literal
+  `*`, and the entire LiteLLM internal OpenAI model registry (models like
+  `openai/gpt-4o`, `openai/gpt-5`, and so on). These OpenAI models do **not**
+  exist on the external gateway. They are LiteLLM's known model names,
+  auto-populated because of the `openai/*` prefix. Users see a flooded
+  dropdown where most entries fail when selected.
+- **Users must type the exact `provider/model` format.** A call to
+  `claude-opus-4-8` fails with a 400 error. A call to
+  `anthropic/claude-opus-4-8` succeeds and is forwarded to the gateway. The
+  user must know the gateway's model naming convention in advance.
+- **Typo protection moves to the gateway.** Unknown model names are forwarded
+  verbatim and rejected by the external gateway, not by the built-in LiteLLM.
+
+The one advantage of Pattern B is that when the external gateway adds a new
+model, it works immediately without a config change on the OHE side. That
+convenience rarely outweighs the cost of a broken dropdown and the need for
+users to know exact model strings.
+
+## Model discovery
+
+OHE discovers available models by calling `GET /v1/models` on the built-in
+LiteLLM. This endpoint returns every model in the `model_list`, both those in
+the Helm config and any added via the admin API for testing.
+
+```bash
+curl http://<built-in-litellm>:4000/v1/models \
+  -H "Authorization: Bearer $PROXY_MASTER_KEY"
+```
+
+For production, models should be in the Helm config so they survive pod
+restarts and cluster upgrades. Models added via the admin API appear
+immediately but are lost on restart. Use that path only for testing.
+
+## Verified capabilities
+
+The following OHE agent capabilities have been tested and confirmed working
+through both LiteLLM and Bifrost external gateways:
+
+| Capability | LiteLLM gateway | Bifrost gateway |
+|-----------|-----------------|-----------------|
+| Basic chat completions | Yes | Yes |
+| Tool and function calling | Yes | Yes |
+| Streaming responses | Yes | Yes |
+| Multi-step agent loops (tool call, result, next response) | Yes | Yes |
+| Token usage tracking | Yes | Yes |
+| Multiple models on same gateway | Yes | Yes |
+
+## Identity and cost attribution
+
+A common reason to chain through an external gateway is cost attribution
+and audit: the gateway owner needs to know which OpenHands user,
+team, or project generated each LLM call so they can route spend to
+the right cost center. This section is a set of recipes. Pick the one
+that matches your scenario.
+
+### What the OpenHands runtime sends by default
+
+The runtime calls the built-in LiteLLM using the OpenAI Python SDK.
+By default the request carries:
+
+- Standard OpenAI SDK headers (`x-stainless-*`, `authorization`).
+- An OpenAI `user` field in the request body, set to the OpenHands
+  user identifier. The built-in LiteLLM records this in its own spend
+  logs but does not forward it to the upstream gateway in the request
+  body.
+
+No `X-OpenHands-User-Id` or similar identity header is attached
+automatically. Everything below adds attribution to that baseline.
+
+### Recipe 1: Per-team attribution with per-key model entries
+
+**Use when** you have a small number of teams or projects and want
+the external gateway to attribute spend by API key.
+
+**How.** Create one API key per team on the external gateway. Add one
+model entry per key in the built-in LiteLLM config:
+
+```yaml
+proxy_config:
+  model_list:
+    - model_name: claude-sonnet-4-5-team-alpha
+      litellm_params:
+        model: litellm_proxy/claude-sonnet-4-5-20250929
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/TEAM_ALPHA_KEY
+
+    - model_name: claude-sonnet-4-5-team-beta
+      litellm_params:
+        model: litellm_proxy/claude-sonnet-4-5-20250929
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/TEAM_BETA_KEY
+```
+
+Users on each team select their model in the OHE model dropdown. The
+gateway sees the team's key and attributes spend accordingly.
+
+**What appears at the gateway.** The team's `Authorization: Bearer
+<team_key>` header. Standard gateway spend reporting by key.
+
+**Limits.**
+
+- No header forwarding or runtime changes needed.
+- Does not scale to many users because each user needs their own
+  entry and key. Best for a small number of teams or projects.
+
+### Recipe 2: Per-user or per-profile attribution with `extra_headers`
+
+**Use when** you want each LLM call from a specific OpenHands user
+or team to carry identity headers the gateway can read. Works for
+both web UI and API conversations.
+
+**How.** Two steps.
+
+1. Enable header forwarding on the built-in LiteLLM. In your Helm
+   values or Replicated config:
+
+   ```yaml
+   proxy_config:
+     general_settings:
+       forward_client_headers_to_llm_api: true
+   ```
+
+   In the Replicated admin console this is the **Enable Forwarding
+   Client Headers Through LiteLLM to LLM Providers** checkbox under
+   Advanced Options.
+
+2. Set `extra_headers` on the LLM profile. In the OpenHands web UI,
+   open Settings, LLM, Advanced Options, and edit the **Extra
+   Headers** field. Or POST to the profile API:
+
+   ```bash
+   curl -X POST "https://app.<your-domain>/api/v1/settings/profiles/Default" \
+     -H "X-Session-API-Key: $OH_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "preserve_existing_api_key": true,
+       "llm": {
+         "model": "openai/claude-sonnet-4-5-via-gateway",
+         "base_url": "http://openhands-litellm:4000/v1",
+         "extra_headers": {
+           "X-OpenHands-User-Id": "alice",
+           "X-OpenHands-Project": "trade-confirm-demo"
+         }
+       }
+     }'
+   ```
+
+For per-user attribution today, create one LLM profile per user and
+set that user's identifier in the profile's `extra_headers`. Users
+select their own profile from the profile dropdown.
+
+**What appears at the gateway.** Every LLM call from a conversation
+using this profile arrives with the headers you set. The gateway
+reads them and attributes spend accordingly.
+
+**Verified.**
+
+- The `extra_headers` field is exposed on the LLM profile schema in
+  the OHE app and persists through the profile API round-trip.
+- The SDK forwards `llm.extra_headers` to LiteLLM on every call.
+- The built-in LiteLLM forwards headers starting with `x-` (and
+  `anthropic-*`, excluding `x-stainless-*`) to the upstream gateway
+  when `forward_client_headers_to_llm_api: true`. Tested end-to-end
+  with a capture service standing in for the upstream gateway.
+
+**Limits.**
+
+- Headers are static per profile, not per user, so per-user
+  attribution scales with the number of profiles.
+- The header name `x-litellm-session-id` is reserved by the SDK for
+  conversation tracing (see [Trace calls back to a conversation](#trace-calls-back-to-a-conversation)).
+  Setting that key in `extra_headers` is overwritten at call time.
+
+### Recipe 3: Static gateway auth headers with `custom_llm_extra_headers`
+
+**Use when** the external gateway requires a static auth or routing
+header on every request, and your LLM provider setting is Custom LLM.
+
+**How.**
+
+1. In the Replicated admin console, set LLM Provider to **Custom LLM**.
+2. Under Advanced Options, enable **Custom LLM Extra HTTP Headers**.
+3. Enter a JSON object mapping header names to values:
+
+   ```json
+   {"Ocp-Apim-Subscription-Key": "abc123", "X-Tenant-Id": "prod"}
+   ```
+
+4. Deploy. The built-in LiteLLM injects these headers on every
+   outbound request to the gateway.
+
+**What appears at the gateway.** The headers you configured, on every
+outbound request, identical for every user.
+
+**Limits.**
+
+- Gated on the Custom LLM provider. Not available for Anthropic,
+  OpenAI, Bedrock, Azure, or Vertex provider settings.
+- Static values, same for every user. Not a per-user attribution
+  mechanism.
+- Values are rendered as plaintext in the LiteLLM ConfigMap.
+
+### Recipe 4: LiteLLM spend log metadata
+
+**Use when** the external gateway is also LiteLLM and you want
+structured metadata (user, project, cost center) captured on both the
+built-in and upstream LiteLLM spend logs, so you can query and join
+them.
+
+**How.** Enable header forwarding as in Recipe 2. Then set the
+`x-litellm-spend-logs-metadata` header on the LLM profile's
+`extra_headers`. LiteLLM parses this header as a JSON string and
+stores it in the spend log row:
+
+```bash
+curl -X POST "https://app.<your-domain>/api/v1/settings/profiles/Default" \
+  -H "X-Session-API-Key: $OH_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "preserve_existing_api_key": true,
+    "llm": {
+      "model": "openai/claude-sonnet-4-5-via-gateway",
+      "base_url": "http://openhands-litellm:4000/v1",
+      "extra_headers": {
+        "x-litellm-spend-logs-metadata": "{\"openhands_user_id\":\"alice\",\"project\":\"trade-confirm-demo\"}"
+      }
+    }
+  }'
+```
+
+**What appears at the gateway.** The header on every request, and
+the parsed metadata in LiteLLM's spend database on both sides of the
+chain.
+
+**Limits.**
+
+- Only LiteLLM gateways interpret the JSON natively. Bifrost sees the
+  header but does not parse it.
+- The value is a JSON string, not a nested object. Serialize before
+  putting it in `extra_headers`.
+
+### Recipe 5: Batch reconciliation with conversation tags
+
+**Use when** you can reconcile gateway spend with OpenHands
+conversations after the fact and do not need per-call attribution
+visible at the gateway.
+
+**How.** Tag conversations with your external identifiers when you
+start them via the API. Tag keys must be lowercase alphanumeric (no
+underscores or hyphens); values are strings up to 256 characters:
+
+```bash
+curl -X PATCH "$CONVERSATION_URL" \
+  -H "X-Session-API-Key: $SESSION_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"tags": {"costcenter": "trade-confirm-demo", "externalproject": "proj-42"}}'
+```
+
+Export gateway spend logs filtered by time and model. Export the
+OpenHands conversation list filtered by tag. Join by timestamp and
+model. See the
+[conversation-tags example](https://github.com/jpshackelford/oh-examples/tree/main/conversation-tags)
+for a working round-trip.
+
+**What appears at the gateway.** Nothing. Tags live on the OpenHands
+conversation record and never touch the LLM request.
+
+**Limits.** Not real-time. Reconciliation is a batch job.
+
+### Choosing a recipe
+
+| Scenario | Recipe |
+|----------|--------|
+| Per-team attribution, few teams | Recipe 1 |
+| Per-user attribution, small number of users | Recipe 2 |
+| Static gateway auth header, Custom LLM provider | Recipe 3 |
+| Metadata in LiteLLM spend logs on both sides of the chain | Recipe 4 |
+| Batch reconciliation after the fact | Recipe 5 |
+
+Recipes are not mutually exclusive. A common combination is Recipe 1
+(per-team keys) plus Recipe 2 (per-user headers within a team).
+
+### Trace calls back to a conversation
+
+Independent of attribution, the SDK stamps every LLM request with
+`x-litellm-session-id: <conversation_id>`. When
+`forward_client_headers_to_llm_api: true`, this header reaches the
+external gateway. It is useful for:
+
+- Correlating a spend log row on the gateway to the OpenHands
+  conversation that produced it.
+- Joining logs across the built-in and external LiteLLM instances.
+- Debugging which conversation is generating traffic.
+
+It is not an attribution mechanism. The value is a conversation ID,
+not a user ID. Use it together with one of the recipes above when you
+need both attribution and traceability.
+
+## Security notes
+
+- The external gateway key is stored as a Kubernetes secret in the OHE cluster.
+  Limit access to that secret to the LiteLLM pod's service account.
+- The built-in LiteLLM logs request and response metadata (model, token counts,
+  latency) but not prompt or response content by default. The external gateway
+  is the place to enforce content-level audit logging if needed.
+- If the external gateway is outside the OHE cluster, use HTTPS and ensure the
+  LiteLLM pod can resolve and reach the gateway's DNS name.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Model not found (404 from built-in LiteLLM)">
+    - Verify the model appears in `GET /v1/models` on the built-in LiteLLM.
+    - If added via admin API, check the response from `/model/new` for errors.
+    - If added via Helm values, verify the pod restarted after the values
+      change.
+  </Accordion>
+
+  <Accordion title="401 from external gateway">
+    - Verify the `api_key` in `litellm_params` is a valid key on the external
+      gateway.
+    - For Bifrost, check that `enforceAuthOnInference` is either `false` (for
+      testing) or that a valid virtual key is configured.
+  </Accordion>
+
+  <Accordion title="400 model not found from external gateway">
+    The `model` field in `litellm_params` must match what the external gateway
+    expects:
+    - For LiteLLM gateways: use the `model_name` from the gateway's config,
+      for example `litellm_proxy/claude-sonnet-4-5-20250929`.
+    - For Bifrost: use `provider/model`, for example
+      `openai/anthropic/claude-sonnet-4-5-20250929`.
+  </Accordion>
+
+  <Accordion title="Tool calls not working">
+    - Verify the model supports tool/function calling (some smaller models do
+      not).
+    - Test directly against the external gateway (bypass the built-in LiteLLM)
+      to isolate whether the issue is in the gateway or the chaining.
+  </Accordion>
+
+  <Accordion title="Model dropdown shows hundreds of OpenAI models I did not configure">
+    This means a wildcard (`model_name: "*"`) entry is in the `model_list`.
+    The `openai/*` prefix causes LiteLLM to auto-populate its internal OpenAI
+    model registry into `/v1/models`. Remove the wildcard entry and use
+    explicit per-model entries (Pattern A) instead.
+  </Accordion>
+</AccordionGroup>
+
+## Reference
+
+- OpenHands LLM configuration overview: [LLM Configuration](/openhands/usage/llms/llms)
+- LiteLLM proxy (OSS/Cloud path, no built-in LiteLLM): [LiteLLM Proxy](/openhands/usage/llms/litellm-proxy)
+- LiteLLM model config reference: [LiteLLM docs](https://docs.litellm.ai/docs/proxy/configs)
+- Bifrost configuration reference: [Bifrost docs](https://docs.bifrost.maxim.ai)

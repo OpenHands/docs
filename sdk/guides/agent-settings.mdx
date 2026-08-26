@@ -57,6 +57,39 @@ This is useful when:
 - Letting users edit agent configuration in a form-based UI
 - Rehydrating the same agent setup in another process
 
+## Load Persisted Settings
+
+`model_validate` only accepts payloads that already match the current schema. Use `from_persisted` for data written by an older SDK version: it applies the registered schema migrations first, then validates the migrated payload against the class you call it on.
+
+```python icon="python" focus={1}
+restored = OpenHandsAgentSettings.from_persisted(payload)
+```
+
+`from_persisted` is defined on `AgentSettingsBase`, so it is a concrete-variant loader: `OpenHandsAgentSettings.from_persisted()` returns an `OpenHandsAgentSettings` and `ACPAgentSettings.from_persisted()` returns an `ACPAgentSettings`. When you do not know which variant a payload holds, use `validate_agent_settings` (also in `openhands.sdk.settings`) instead — it dispatches across the settings union.
+
+Passing an already-validated instance of that variant returns it unchanged, so its secrets are preserved without a lossy serialization round trip.
+
+<Note>
+The deprecated `agent_kind="llm"` discriminator is only rewritten while migrating between schema versions. A payload that is already at the current schema version but still carries `agent_kind="llm"` is therefore rejected by `OpenHandsAgentSettings.from_persisted`. Load those payloads with `validate_agent_settings`, which canonicalizes the discriminator unconditionally.
+</Note>
+
+### Encrypted Payloads
+
+Secret-bearing fields only decrypt when you pass the same validation context that was used to write them.
+
+```python icon="python" focus={2}
+persisted = settings.model_dump(mode="json", context={"cipher": cipher})
+restored = OpenHandsAgentSettings.from_persisted(persisted, context={"cipher": cipher})
+```
+
+### Errors
+
+| Exception | Raised when |
+|-----------|-------------|
+| `TypeError` | The payload is not a mapping or `BaseModel`, or its `schema_version` is not an integer. |
+| `ValueError` | `schema_version` is negative, newer than the supported version, or has no registered migration. |
+| `pydantic.ValidationError` | The migrated payload is invalid for the class you called `from_persisted` on. |
+
 ## Create an Agent from Settings
 
 Once validated, create a working agent directly from the settings object.
