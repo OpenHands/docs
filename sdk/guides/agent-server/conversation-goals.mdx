@@ -1,0 +1,80 @@
+---
+title: Conversation Goals
+description: Add a resumable goal strategy to a normal agent-server conversation.
+---
+
+A goal is an optional strategy on a normal remote conversation. It does **not** create a special conversation type, a fork, or a separate history. The agent-server keeps using the same conversation events and adds a background driver that audits progress toward the objective.
+
+Use this for UI flows such as a `/goal` command: the user sets an objective, the agent keeps working toward it, and the UI can show progress with stop/resume controls.
+
+## Behavior
+
+When a client starts a goal, the agent-server:
+
+1. Finds the live conversation `EventService`.
+2. Rejects the request if the conversation or another goal is already running.
+3. Creates a `GoalController` from the objective and `max_iterations`.
+4. Starts a background task and returns immediately.
+5. Emits `ConversationStateUpdateEvent` with `key="goal"` and `status="running"`.
+6. Sends the objective as a normal user message into the same conversation history.
+7. Runs the agent, judges the resulting events, and either emits `complete` / `capped` or sends a follow-up prompt and loops.
+
+A normal user message interrupts the active goal before that new user input is appended. This lets the user take control without losing the goal state.
+
+## Endpoints
+
+All endpoints are under the agent-server API prefix.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/conversations/{conversation_id}/goal` | Set a goal and start the background driver. |
+| `POST /api/conversations/{conversation_id}/goal/stop` | Stop the active goal and record it as resumable. |
+| `POST /api/conversations/{conversation_id}/goal/resume` | Resume the most recent interrupted goal. |
+
+Start requests include the objective and an optional iteration cap:
+
+```json
+{
+  "objective": "Refactor the authentication flow and verify tests pass",
+  "max_iterations": 10
+}
+```
+
+`max_iterations` defaults to `10` and must be at least `1`.
+
+## Status Events
+
+Clients should render goal progress from streamed `ConversationStateUpdateEvent` events where `key == "goal"`. The `value` includes:
+
+| Field | Meaning |
+| --- | --- |
+| `active` | Whether the goal driver is still active. |
+| `status` | `running`, `complete`, `capped`, or `interrupted`. |
+| `iteration` | Current audit round. |
+| `max_iterations` | Iteration cap for this goal. |
+| `objective` | Original objective. |
+| `verdict` | Optional judge feedback for the latest round. |
+
+These status events are persisted with the conversation events, so resume can work after a server restart.
+
+## Stop and Resume
+
+`POST /goal/stop` cancels the background goal driver if one is running. The cancel path records a `status="interrupted"` goal event, so the UI can stop showing the goal as active and the goal can be resumed later. It does not delete conversation history.
+
+`POST /goal/resume` reads the last persisted goal status. It only resumes statuses that are not terminal; a goal with `status="complete"` or `status="capped"` is not resumable. Resume rebuilds the controller with the same objective and stored iteration, then continues with a resume prompt.
+
+<Note>
+Stopping is graceful. If a model call is already in flight, it may finish before the conversation becomes idle.
+</Note>
+
+## Error Handling
+
+| Case | Result |
+| --- | --- |
+| Conversation not found | `404` |
+| Conversation already running | `409` |
+| Another goal already running | `409` |
+| No resumable goal | `400` |
+| Invalid objective or iteration cap | `400` / validation error |
+
+There is no dedicated `GET /goal` endpoint. To restore UI state on load, read the conversation events and use the latest `ConversationStateUpdateEvent` with `key="goal"`.

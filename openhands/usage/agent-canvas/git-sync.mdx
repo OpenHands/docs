@@ -1,0 +1,114 @@
+---
+title: Sync Automations with Git
+description: Back up, share, and edit Agent Canvas automations through a Git repository.
+---
+
+Git Sync keeps the automations on an Agent Canvas backend synchronized with a Git repository. It gives you version history, an off-host backup, and a reviewable workflow for changing automations through pull requests.
+
+<Warning>
+  Automation definitions can contain prompts, repository names, scripts, and other sensitive configuration. Use a private repository unless you are certain every synchronized file is safe to publish.
+</Warning>
+
+## How Git Sync Works
+
+Each sync cycle pulls the configured branch, imports changes from Git into the Automation Server, exports local automation changes, and pushes a commit when the synchronized files changed.
+
+By default, each automation is stored in its own directory under the configured path:
+
+```text
+automations/
+└── daily-code-review/
+    ├── automation.yaml
+    └── tarball/
+        └── ...
+```
+
+The `automation.yaml` file stores the automation configuration. Files from an uploaded automation bundle are expanded under `tarball/` so Git can show meaningful diffs.
+
+<Note>
+  Git Sync is bidirectional. A change made in Agent Canvas is exported to Git, while a change merged into the synchronized branch is imported into Agent Canvas during the next cycle. If the same automation has pending local changes, the local version takes precedence for that cycle.
+</Note>
+
+## Requirements
+
+Before configuring Git Sync, make sure you have:
+
+- A healthy Agent Canvas backend with a version of Automation Server that supports Git Sync
+- Permission to manage automations on that backend
+- A Git repository and branch dedicated to the synchronized automation files
+- An HTTPS access token with read and write access when the repository is private
+
+Git Sync is not available for cloud backends. If the page reports that the backend does not support Git Sync, [update Agent Canvas](/openhands/usage/agent-canvas/setup#update-agent-canvas) and restart it.
+
+## Configure Git Sync
+
+1. Open the `Automate` view in Agent Canvas.
+2. Select `Git Sync` near the top of the automation list.
+3. Configure the repository:
+   - `Repository URL`: The HTTPS clone URL, such as `https://github.com/example/automation-backup.git`.
+   - `Branch`: The branch Git Sync pulls from and pushes to. The default is `main`. Git Sync creates the branch during the first cycle if it does not exist.
+   - `Path`: The repository-relative directory that holds automation files. The default is `automations`.
+   - `Access token`: Required for private repositories. The token needs permission to read and push repository contents.
+4. Set `Sync every (seconds)`:
+   - Enter `0` to sync only when you select `Sync now`.
+   - Enter a positive number to run automatic sync cycles at that interval.
+5. Optionally set the commit author name and email. Leave these fields blank to use the backend defaults.
+6. Optionally enter an encryption key. See [Encrypt Synchronized Files](#encrypt-synchronized-files) before enabling this option.
+7. Turn on `Enable Git Sync`.
+8. Select `Save and sync now`.
+
+Before saving a changed repository URL, branch, or token, Agent Canvas checks whether it can reach the repository. This check does not verify push permission, so the first sync can still fail if the token is read-only. If the check cannot reach the repository, correct the settings or select the save action again to store them anyway.
+
+After the cycle completes, the **Sync Status** section shows the latest commit, last sync time, pending local changes, and any error returned by Git.
+
+## Encrypt Synchronized Files
+
+An encryption key encrypts each automation file before it is committed. The repository then contains ciphertext instead of readable YAML and script content.
+
+<Warning>
+  Store the encryption key in a password manager or another secure location. Agent Canvas cannot read or restore encrypted automation files without the same key.
+</Warning>
+
+Encryption protects the contents stored in Git, but it also prevents normal code review and meaningful diffs. Use it when repository-level access controls are not sufficient for the sensitivity of your automation definitions.
+
+The access token and encryption key entered in Agent Canvas are encrypted before the Automation Server stores them. Leaving either secret field blank keeps its current value. Use the corresponding clear option when you intend to remove a stored secret.
+
+## Edit Automations Through Git
+
+Use a pull request when you want to review automation changes before Agent Canvas imports them:
+
+1. Create a branch from the synchronized branch.
+2. Edit the automation's `automation.yaml` or files under `tarball/`.
+3. Open and review a pull request.
+4. Merge the pull request into the synchronized branch.
+5. Wait for the next automatic cycle or select `Sync now`.
+6. Open the automation in Agent Canvas and confirm the imported configuration before running it.
+
+Git Sync validates imported automation fields. It skips an invalid automation directory and reports the problem in Automation Server logs rather than applying a partial configuration.
+
+<Note>
+  If file encryption is enabled, edit automations in Agent Canvas instead. Encrypted repository files are not directly editable or reviewable.
+</Note>
+
+## Pause or Run Sync Manually
+
+Turn off `Enable Git Sync` and save to pause synchronization without deleting the repository configuration. Turn it on again to resume.
+
+Select `Sync now` to start a cycle immediately. The request schedules the cycle in the background, and the activity row follows it until it succeeds or fails. If another cycle is already running, Agent Canvas follows that cycle instead of starting a duplicate.
+
+## Troubleshooting
+
+| Problem | What to Check |
+|---------|---------------|
+| Git Sync is not available | Confirm the active backend is local, healthy, and running a current Automation Server version. |
+| Repository check fails | Confirm the HTTPS URL, branch name, network access, and token. Select save again only if you intentionally want to keep settings that the check cannot verify. |
+| Repository check passes but push fails | Give the access token write permission for repository contents and confirm branch protection permits the configured workflow. |
+| Sync reports a non-fast-forward or divergence error | Update the synchronized branch through reviewed pull requests and avoid another process writing directly to it while Agent Canvas has an unpushed commit. |
+| Encrypted files cannot be imported | Restore the exact encryption key used to write them. A different or missing key cannot decrypt the repository contents. |
+| Changes do not sync automatically | Confirm Git Sync is enabled and `Sync every (seconds)` is greater than `0`, or use `Sync now`. |
+
+## Related Guides
+
+- [Manage Automations](/openhands/usage/agent-canvas/managing-automations)
+- [Install Agent Canvas](/openhands/usage/agent-canvas/setup)
+- [Connect and Manage Backends](/openhands/usage/agent-canvas/backends)

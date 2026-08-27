@@ -1,0 +1,129 @@
+---
+title: Deferred Init (Warm-Pool)
+description: Pre-warm agent-server pods before a user is matched, then activate them at runtime with POST /api/init.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+In **warm-pool deployments** server pods are booted before a user is matched to
+one. The pod starts in a *dormant* state — stateless services (tool preload,
+VSCode, etc.) come up normally, but all `/api/*` routes return `503` until
+`POST /api/init` delivers the per-user runtime configuration (credentials,
+workspace paths, session keys).
+
+This pattern reduces cold-start latency for users while keeping per-user data
+out of the image.
+
+## State Machine
+
+```
+dormant ──(POST /api/init)──▶ initializing ──▶ ready
+   ▲                               │
+   └───────────(on error)──────────┘
+```
+
+| State | `/health`, `/ready` | `GET /api/init` | `POST /api/init` | `/api/*` |
+|---|---|---|---|---|
+| `dormant` | `200` | `200` `state: dormant` | `200` → starts init | `503` |
+| `initializing` | `200` | `200` `state: initializing` | `400` (already running) | `503` |
+| `ready` | `200` | `200` `state: ready` | `400` (already done) | live |
+
+When `deferred_init` is `false` (the default), the `/api/init` endpoints return
+`404` and all `/api/*` routes are live immediately.
+
+## Enabling Dormant Mode
+
+Set the `OH_DEFERRED_INIT` environment variable when starting the server:
+
+```bash
+OH_DEFERRED_INIT=true OH_SECRET_KEY=<bootstrap-secret> python -m openhands.agent_server
+```
+
+The `OH_SECRET_KEY` value is used to authenticate `POST /api/init` via the
+`X-Init-API-Key` request header. The orchestrator already holds this key for
+encryption purposes, so no additional secret distribution is required.
+
+## Checking the Init State
+
+`GET /api/init` is unauthenticated and returns the current state at any time:
+
+```bash
+curl http://localhost:8000/api/init
+# {"state":"dormant","error":null}
+```
+
+## Activating the Server
+
+Send `POST /api/init` with the `X-Init-API-Key` header set to the bootstrap
+secret. The body is an `InitRequest` and all fields are optional — only the
+values you provide override the dormant configuration:
+
+```python icon="python"
+import httpx
+
+client = httpx.Client(base_url="http://localhost:8000")
+
+resp = client.post(
+    "/api/init",
+    json={
+        # Credentials that should not be baked into the warm image arrive here.
+        "env": {"LLM_API_KEY": user_api_key},
+        # Point at the user's mounted workspace.
+        "conversations_path": "/mnt/user-workspace/conversations",
+        # Lock down the API to this user's session key.
+        "session_api_keys": [user_session_key],
+    },
+    headers={"X-Init-API-Key": BOOTSTRAP_SECRET_KEY},
+)
+assert resp.json()["state"] == "ready"
+```
+
+`InitRequest` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `session_api_keys` | `list[str]` | Per-user API keys for subsequent `/api/*` calls |
+| `secret_key` | `str` | Encryption secret (defaults to first `session_api_key`) |
+| `conversations_path` | `path` | Where conversations are persisted |
+| `bash_events_dir` | `path` | Where bash events are persisted |
+| `env` | `dict[str, str]` | Process env vars set before services start (e.g. credentials) |
+| `webhooks` | `list` | Per-user webhooks for event streaming |
+| `web_url` | `str` | External server URL for root-path calculation |
+| `allow_cors_origins` | `list[str]` | CORS origins added to the localhost allowlist |
+| `max_concurrent_runs` | `int` | Override conversation-step concurrency limit |
+
+## Error Handling
+
+If initialization fails, the state rolls back to `dormant` and the error is
+stored in `GET /api/init` response's `error` field. The orchestrator can then
+retry `POST /api/init`:
+
+```bash
+curl http://localhost:8000/api/init
+# {"state":"dormant","error":"ConversationService failed to start: ..."}
+```
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/16_deferred_init.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/16_deferred_init.py)
+</Note>
+
+This example walks through the full warm-pool lifecycle: starting a dormant
+server, verifying the `503` gate, activating it via `POST /api/init`, and
+running a conversation on the ready server.
+
+```python icon="python" expandable examples/02_remote_agent_server/16_deferred_init.py
+<placeholder — auto-synced from agent-sdk>
+```
+
+<RunExampleCode path_to_script="examples/02_remote_agent_server/16_deferred_init.py"/>
+
+## Next Steps
+
+- **[Local Agent Server](/sdk/guides/agent-server/local-server)** — Run a server in the same process
+- **[Docker Sandbox](/sdk/guides/agent-server/docker-sandbox)** — Isolated Docker-based deployment
+- **[Settings & Secrets API](/sdk/guides/secrets)** — Manage per-user secrets securely
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)** — Architecture and deployment options
