@@ -13210,6 +13210,39 @@ This is useful when:
 - Letting users edit agent configuration in a form-based UI
 - Rehydrating the same agent setup in another process
 
+## Load Persisted Settings
+
+`model_validate` only accepts payloads that already match the current schema. Use `from_persisted` for data written by an older SDK version: it applies the registered schema migrations first, then validates the migrated payload against the class you call it on.
+
+```python icon="python" focus={1}
+restored = OpenHandsAgentSettings.from_persisted(payload)
+```
+
+`from_persisted` is defined on `AgentSettingsBase`, so it is a concrete-variant loader: `OpenHandsAgentSettings.from_persisted()` returns an `OpenHandsAgentSettings` and `ACPAgentSettings.from_persisted()` returns an `ACPAgentSettings`. When you do not know which variant a payload holds, use `validate_agent_settings` (also in `openhands.sdk.settings`) instead — it dispatches across the settings union.
+
+Passing an already-validated instance of that variant returns it unchanged, so its secrets are preserved without a lossy serialization round trip.
+
+<Note>
+The deprecated `agent_kind="llm"` discriminator is only rewritten while migrating between schema versions. A payload that is already at the current schema version but still carries `agent_kind="llm"` is therefore rejected by `OpenHandsAgentSettings.from_persisted`. Load those payloads with `validate_agent_settings`, which canonicalizes the discriminator unconditionally.
+</Note>
+
+### Encrypted Payloads
+
+Secret-bearing fields only decrypt when you pass the same validation context that was used to write them.
+
+```python icon="python" focus={2}
+persisted = settings.model_dump(mode="json", context={"cipher": cipher})
+restored = OpenHandsAgentSettings.from_persisted(persisted, context={"cipher": cipher})
+```
+
+### Errors
+
+| Exception | Raised when |
+|-----------|-------------|
+| `TypeError` | The payload is not a mapping or `BaseModel`, or its `schema_version` is not an integer. |
+| `ValueError` | `schema_version` is negative, newer than the supported version, or has no registered migration. |
+| `pydantic.ValidationError` | The migrated payload is invalid for the class you called `from_persisted` on. |
+
 ## Create an Agent from Settings
 
 Once validated, create a working agent directly from the settings object.
@@ -18191,9 +18224,9 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 
 ## Exit Codes
 
-Command hooks (shell scripts) signal their result through their exit code —
-[agent-based hooks](#agent-based-hooks) return a JSON decision instead. The SDK
-matches the
+Command hooks (shell scripts) signal their result through their exit code.
+[Prompt-based hooks](#prompt-based-hooks) and
+[agent-based hooks](#agent-based-hooks) return a JSON decision instead. The SDK matches the
 [Claude Code hook contract](https://docs.claude.com/en/docs/claude-code/hooks):
 
 - **`0` — success.** The operation proceeds. `stdout` is parsed as JSON for
@@ -18217,6 +18250,20 @@ policy must exit with `2`.
 - Registration points: subscribe to events or attach pre/post hooks around LLM calls and tool execution
 - Isolation: hooks run outside the agent loop logic, avoiding core modifications
 - Composition: enable or disable hooks per environment (local vs. prod)
+
+## Execution Modes
+
+Hook definitions support three execution modes:
+
+| `type` | Evaluator | Tool access | Best for |
+|--------|-----------|-------------|----------|
+| `command` (default) | Shell command | Through the script | Deterministic checks and integrations |
+| `prompt` | One LLM completion | No | Semantic decisions based only on the hook event |
+| `agent` | Short-lived sub-agent | Optional allowlist | Decisions that require workspace investigation |
+
+Use the least powerful mode that can make the decision. Command hooks are the
+most deterministic. Prompt hooks add model judgment with one completion. Agent
+hooks add an agent loop and tools when the event payload is not enough.
 
 ## Ready-to-run Example
 
@@ -18456,6 +18503,149 @@ fi
 exit 0
 ```
 </Accordion>
+
+
+## Prompt-based Hooks
+
+Set `type="prompt"` to evaluate a hook event with one LLM completion. Prompt
+hooks are useful when a decision needs semantic judgment but all required
+context is already present in the `HookEvent` payload. For example, a
+`PreToolUse` policy can evaluate the intent of a terminal command without
+starting a tool-using sub-agent.
+
+```python
+HookDefinition(
+    type=HookType.PROMPT,
+    name="terminal-safety",
+    prompt="Deny terminal commands that recursively delete files ...",
+    timeout=30,
+)
+```
+
+Key fields on a prompt `HookDefinition`:
+
+- `name` — identifies the hook in logs, events, and its stable
+  `prompt-hook:<name>` metrics bucket.
+- `prompt` — the trusted policy used to evaluate each matching event.
+- `timeout` — the timeout applied to the copied hook LLM.
+
+The hook uses the conversation's current LLM, including changes made through
+model or profile switching. The executor copies that LLM so the hook has an
+isolated timeout, usage ID, and metrics. Hook spend is merged back into the
+parent conversation's metrics. The SDK selects Chat Completions or the Responses
+API from the model's capabilities. Prompt hooks are single-shot and non-streaming,
+regardless of the parent LLM's streaming setting.
+
+The policy is placed in system context. The serialized event is sent in a
+separate user message and marked as untrusted data, so instructions embedded in
+tool input or output are not treated as hook policy. The model is asked to
+return the shared hook result contract:
+
+```json
+{"decision": "allow" | "deny", "reason": "<short explanation>"}
+```
+
+If the conversation has no LLM, the provider call fails, or the response does
+not contain a valid decision, the hook falls open with `decision="allow"` and
+`success=False`. This lets consumers distinguish an execution failure from a
+deliberate allow verdict.
+
+<Warning>
+Prompt hooks cannot inspect files, run commands, or access conversation history
+beyond data included in the hook event. Use an [agent-based hook](#agent-based-hooks)
+when the evaluator must gather more context before deciding.
+</Warning>
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/57_prompt_hooks](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/57_prompt_hooks/)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/57_prompt_hooks/main.py
+"""OpenHands Agent SDK - prompt-based hooks example.
+
+Evaluates two synthetic PreToolUse events with one LLM completion each. The
+commands are only event data: this example never executes them.
+"""
+
+import os
+import tempfile
+from pathlib import Path
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM
+from openhands.sdk.conversation.conversation_stats import ConversationStats
+from openhands.sdk.hooks import (
+    HookConfig,
+    HookDefinition,
+    HookManager,
+    HookMatcher,
+    HookType,
+)
+
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+
+llm = LLM(
+    usage_id="agent",
+    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    api_key=SecretStr(api_key),
+)
+
+TERMINAL_POLICY = """Evaluate the semantic intent of a terminal command.
+Deny commands that recursively delete files, read credentials or sensitive
+system files, modify the host system, or exfiltrate data. Allow read-only
+workspace inspection, builds, and test commands. When uncertain, deny and give
+a concise reason."""
+
+hook_config = HookConfig(
+    pre_tool_use=[
+        HookMatcher(
+            matcher="terminal",
+            hooks=[
+                HookDefinition(
+                    type=HookType.PROMPT,
+                    name="terminal-safety",
+                    prompt=TERMINAL_POLICY,
+                    timeout=30,
+                )
+            ],
+        )
+    ]
+)
+
+cases = [
+    ("python -m pytest -q", True),
+    ("find / -type f -delete", False),
+]
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    stats = ConversationStats()
+    manager = HookManager(
+        config=hook_config,
+        working_dir=str(Path(tmpdir)),
+        session_id="prompt-hook-example",
+        llm=llm,
+        conversation_stats=stats,
+    )
+
+    for command, expected_to_continue in cases:
+        should_continue, results = manager.run_pre_tool_use(
+            tool_name="terminal",
+            tool_input={"command": command},
+        )
+        result = results[0]
+        verdict = "ALLOW" if should_continue else "DENY"
+        print(f"{verdict:5} {command}")
+        print(f"      {result.reason}")
+        assert should_continue is expected_to_continue
+
+    cost = stats.get_combined_metrics().accumulated_cost
+    print(f"\nEXAMPLE_COST: {cost}")
+```
+<RunExampleCode path_to_script="examples/01_standalone_sdk/57_prompt_hooks/main.py"/>
 
 
 ## Agent-based Hooks
@@ -25801,6 +25991,56 @@ agent_context = AgentContext(skills=list(skills.values()))
 - **[MCP Integration](/sdk/guides/mcp)** - Connect external tool servers
 - **[Confirmation Mode](/sdk/guides/security)** - Add execution approval
 
+### Structured Output
+Source: https://docs.openhands.dev/sdk/guides/structured-output.md
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+Pass a Pydantic model (or a JSON Schema dict) as a tool's `response_schema`. Its fields are merged into the schema the LLM sees, so the model must populate them when it calls that tool, and the reply is validated on receipt — no prompting for a format, no output parsing.
+
+```python
+class ProjectFacts(BaseModel):
+    description: str = Field(description="One-paragraph description of the project.")
+    facts: list[str] = Field(description="Three concise, distinct facts.")
+
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name="FinishTool", params={"response_schema": ProjectFacts})],
+)
+```
+
+The tool keeps its own arguments — `FinishTool` still takes `message`, now alongside `description` and `facts`. This works on any tool, including [custom](/sdk/guides/custom-tools) and [MCP](/sdk/guides/mcp) tools.
+
+## Reading results
+
+Resolved tools live on `agent.tools_map`. Use `parse_last_response()` for the most recent call, or `parse_response(action)` for a specific one:
+
+```python
+finish_tool = agent.tools_map["finish"]
+facts = cast(ProjectFacts | None, finish_tool.parse_last_response(conversation.state.events))
+```
+
+`parse_last_response()` returns `None` if the tool has not been called. With a JSON Schema dict instead of a model, both methods return a validated `dict`.
+
+<Note>
+`parse_last_response()` re-reads the tool call, so it works after a conversation is persisted and reloaded. `action.structured_output` is in-memory only — it is not serialized with the event and comes back `None` after a round-trip, so prefer the parse methods.
+</Note>
+
+## Constraints
+
+- **Reserved names.** A schema may not declare `kind`, `security_risk`, `structured_output`, or `summary`, nor reuse one of the tool's own field names (e.g. `message` on `FinishTool`). Both raise a `ValueError` when the tool is resolved.
+- **One tool per spec.** A spec that resolves to a tool set is rejected; attach the schema to the individual tool instead.
+- **Scoped to its tool.** A model may try to send the schema fields when calling *other* tools; those calls are rejected as unexpected arguments and the agent retries.
+
+## Ready-to-run Example
+
+```python icon="python" expandable examples/01_standalone_sdk/56_structured_output.py
+# content is auto-synced
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/56_structured_output.py"/>
+
 ### Task Tool Set
 Source: https://docs.openhands.dev/sdk/guides/task-tool-set.md
 
@@ -29030,7 +29270,7 @@ If you choose OpenHands, the setup flow also configures the LLM profile that the
 ### Agent Canvas Architecture
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/architecture.md
 
-Agent Canvas is the open-source browser client and control center for OpenHands conversations and automations. It presents backend state and sends requests to backend services; it is not an agent runtime or sandbox. Agent Server or an ACP agent process executes tools, and the selected workspace or sandbox provides the execution boundary.
+Agent Canvas is the open-source browser client and control center for OpenHands conversations and automations. It presents backend state and sends requests to backend services; it is not an agent runtime or sandbox. Agent Server or an ACP agent CLI executes tools, and the selected workspace or sandbox provides the execution boundary.
 
 ## Core Components
 
@@ -29041,39 +29281,10 @@ Agent Canvas is the open-source browser client and control center for OpenHands 
 | **Automation Server** | Stores schedules and event triggers, tracks runs, and dispatches conversations | [`OpenHands/automation`](https://github.com/OpenHands/automation) |
 | **Workspace or sandbox** | Defines which files, processes, credentials, and networks an agent can access | Deployment-specific |
 
-Sandbox Server is a community-driven standalone API and sandbox control plane. It is not a core Agent Canvas backend or a supported deployment option. [Learn more about Sandbox Server](https://github.com/OpenHands/sandbox-server).
+Sandbox Server is a community-driven standalone API and sandbox control plane. [Learn more about Sandbox Server](https://github.com/OpenHands/sandbox-server).
 
 ## Service Relationships
 
-```mermaid
-%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 45}} }%%
-flowchart TB
-    Browser["Browser"] --> Canvas["Agent Canvas<br/>browser client"]
-
-    subgraph Backend["Selected backend"]
-        AgentServer["Agent Server"] -->|execute agent and tools| Workspace["Workspace or sandbox"]
-        Automation["Automation Server"] -->|dispatch conversation| AgentServer
-    end
-
-    Canvas -->|conversations and settings| AgentServer
-    Canvas -->|schedules, events, and runs| Automation
-
-    subgraph Platform["OpenHands Cloud or Enterprise"]
-        ControlPlane["Platform control plane"] -->|create and manage| Sandbox["Conversation sandbox"]
-        Sandbox -->|hosts| PlatformAgentServer["Agent Server"]
-    end
-
-    Canvas -.->|managed backend| PlatformAgentServer
-
-    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
-    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
-    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
-    classDef service fill:#e9f9ef,stroke:#2f855a,stroke-width:2px
-    class Canvas primary
-    class AgentServer,Automation,PlatformAgentServer secondary
-    class Workspace,Sandbox tertiary
-    class ControlPlane service
-```
 
 The normal browser path is **Browser → Agent Canvas → selected backend**. Agent Server owns conversation execution. Automation Server owns scheduled and event-driven run lifecycle. A backend distribution can expose both services behind one URL, but they remain separate responsibilities.
 
@@ -29096,17 +29307,16 @@ The launcher supports split modes:
 
 Docker and Helm packages can also bundle the client and backend services. A bundled deployment changes how services are installed, not which component owns execution or isolation.
 
-## Execution And Isolation
+## Execution and Isolation
 
 When you send a message, Agent Canvas sends it to the selected backend. Agent Server starts or resumes the conversation, runs the selected agent, invokes tools, updates backend state, and streams events to Canvas.
 
 The workspace determines the execution boundary:
 
-| Workspace type | Execution and isolation boundary |
-|----------------|----------------------------------|
-| **Local process** | Agent Server and tools run directly on the backend host without container isolation. |
+| Execution environment | Execution and isolation boundary |
+|-----------------------|----------------------------------|
+| **Host process** | Agent Server and tools run directly on the backend host without container isolation. If the backend is remote, that host—not the browser's machine—is the execution boundary. |
 | **Docker or Kubernetes** | Agent Server and tools run inside the configured container or pod with its mounts and network policy. |
-| **Remote Agent Server** | Agent Server runs on another machine or in a separate container, with the workspace boundary configured there. |
 | **OpenHands Cloud or Enterprise** | The managed platform creates and operates the conversation sandbox that hosts Agent Server. |
 
 Connecting Canvas to a remote backend does not grant the browser direct access to that backend's filesystem. Canvas displays files and terminal output returned by Agent Server.
@@ -29127,14 +29337,14 @@ Switching backends changes which backend-managed conversations, settings, automa
 | Pattern | Relationship |
 |---------|--------------|
 | **Local all-in-one** | The launcher starts Canvas and local backend services on one machine. |
-| **Remote Agent Server** | Canvas connects to an Agent Server running on another machine or in a separate container on the same machine. |
-| **Self-hosted backend services** | You deploy Agent Server, and optionally Automation Server, on a VM, Docker host, Kubernetes cluster, or Modal. |
+| **Self-hosted backend services** | You deploy Agent Server, and optionally Automation Server, in another process, on a VM, in Docker or Kubernetes, or on Modal. Canvas connects to the deployment as a remote backend. |
 | **Managed platform** | Canvas connects to OpenHands Cloud or OpenHands Enterprise, which operate their backend and sandbox infrastructure. |
 
 ## Next Steps
 
 - [Install Agent Canvas](/openhands/usage/agent-canvas/setup)
 - [Connect And Manage Backends](/openhands/usage/agent-canvas/backends)
+- [Connect To A Remote Backend](/openhands/usage/agent-canvas/backend-setup/remote)
 - [Self-Host On A VM](/openhands/usage/agent-canvas/backend-setup/vm)
 - [Use Docker](/openhands/usage/agent-canvas/backend-setup/docker)
 - [Agent Server Overview](/sdk/guides/agent-server/overview)
@@ -29151,6 +29361,7 @@ A Cloud backend is a good fit when you want to:
 - Run agents without tying up local resources
 - Use OpenHands Cloud's managed sandboxes and integrations
 - Keep your local machine for development while offloading agent work
+- Easy Phone & Tablet Access so you can code on the go
 
 ## Prerequisites
 
@@ -29847,7 +30058,7 @@ Switch between them from the backend selector depending on what you're working o
 ### Modal Backend
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backend-setup/modal.md
 
-Deploy [Agent Server](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server) on [Modal](https://modal.com) as a remote backend for Agent Canvas. Canvas runs locally on your machine while Agent Server runs on Modal and executes code inside the container—the same execution model as the backend started by `npx @openhands/agent-canvas`.
+Deploy [OpenHands](https://github.com/OpenHands/OpenHands) on [Modal](https://modal.com) as a remote backend for Agent Canvas. Canvas runs locally on your machine while the Agent Canvas Backend runs on Modal and executes code inside the container—the same execution model as the backend started by `npx @openhands/agent-canvas`.
 
 <Warning>
   The agent server runs with full access to the container's filesystem, environment, and network. Anyone with the API key can execute arbitrary code on your Modal container. Keep the API key secret and rotate it if it's ever exposed.
@@ -30204,10 +30415,10 @@ Agent Canvas does not distinguish a remote backend by where it runs. It connects
 A remote backend must provide:
 
 - An accessible Agent Server URL.
-- An API key when the backend requires authentication.
+- An API key.
 - A workspace or sandbox where Agent Server can execute tools.
 
-To use scheduled or event-driven automations, the backend must also provide Automation Server.
+To use scheduled or event-driven automations, the backend must also provide an Automation Server.
 
 ## Connect To A Remote Backend
 
@@ -30582,27 +30793,46 @@ Before exposing Agent Canvas beyond an SSH tunnel:
 ### Backends
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/backends.md
 
-A **backend** provides Agent Server and, when automations are enabled, Automation Server. Agent Server runs conversations and tools in a workspace: the folder, mounted project directory, container, or cloud sandbox where the agent reads and writes files. Automation Server manages schedules, events, and run lifecycle. Agent Canvas connects to these services and displays the state of whichever backend is selected.
+A **backend** provides [Agent Server](/sdk/guides/agent-server/overview#what-is-a-remote-agent-server) and, when automations are enabled, Automation Server. Agent Server runs conversations and tools in a workspace: the folder, mounted project directory, container, or cloud sandbox where the agent reads and writes files. Automation Server manages schedules, events, and run lifecycle. Agent Canvas connects to these services and displays the state of whichever backend is selected.
 
 ## Connecting to a Backend
 
 Any Agent Canvas frontend can connect to any Agent Canvas backend. Use the backend switcher in the UI to open **Manage Backends**, where you can add, edit, or remove entries. Each entry stores a display name, host URL, and an API key for authentication.
 
+![Agent Canvas Add Backend dialog on the Agent Server tab with synthetic display name, host URL, and masked API key fields.](/openhands/static/img/agent-canvas-add-backend-agent-server.png)
+
 Settings, LLM configuration, MCP servers, and automations are all scoped to the active backend — switching backends switches all of these.
+
+"Remote" describes how Canvas connects to a backend, not where that backend runs. A remote backend can be a separate process on the same machine, a self-hosted deployment on a VM or container platform, or a managed Cloud or Enterprise service.
 
 ## Recommended Setups
 
 | Setup | When to use | How |
 |-------|-------------|-----|
 | **Default local** | Quick local work on your machine | Run `agent-canvas`—a local backend is created automatically. |
-| **Remote Agent Server** | An Agent Server on another machine or in a separate local container | Add its host URL and API key in `Manage Backends`. See [Remote Backend](/openhands/usage/agent-canvas/backend-setup/remote). |
-| **Self-hosted VM** | Always-on server, more powerful hardware, team-shared access, or a full self-hosted Canvas | Run `agent-canvas --backend-only --public` for backend-only mode, or `agent-canvas --public` for the full UI and backend. See [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm). |
+| **Self-hosted backend** | A separate local process or container, an always-on VM, more powerful hardware, or team-shared access | Deploy the backend services, then add their host URL and API key in `Manage Backends`. See [Remote Backend](/openhands/usage/agent-canvas/backend-setup/remote) and [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm). |
 | **Cloud or Enterprise** | Managed backend and sandbox infrastructure | Connect from `Manage Backends`. See [Cloud Backend](/openhands/usage/agent-canvas/backend-setup/cloud). |
 
 ### Conversations
 Source: https://docs.openhands.dev/openhands/usage/agent-canvas/conversations.md
 
 A conversation is a single agent session on the active backend. It has its own message history, tool calls, file changes, selected agent profile, and conversation-specific plugins.
+
+## Child Conversations
+
+When an agent uses `launch_child_conversation`, Agent Canvas can launch a child conversation on a local or Cloud target. Local children can use either an isolated worktree or the parent's shared workspace. Cloud children use the repository and branch selected for the launch.
+
+The child remains linked to its parent, and its result is returned to the parent conversation. Agent Canvas validates the launch inputs before creating the child conversation.
+
+## Conversation List Controls
+
+Use the conversation list controls to manage automation runs and visible tags:
+
+- Choose `All`, `Hide`, or `Only` to include, exclude, or show only automation-run conversations. You can further select individual automation names, including unnamed automations.
+- Pinned conversations remain visible when automation-run filtering would otherwise hide them.
+- Enable the `Tags` preference to show conversation tag chips. Tags are off by default; when there are more tags than fit, Agent Canvas shows a `+N` chip with the remaining count.
+
+Agent Canvas omits reserved tags and raw automation IDs from the chips. LLM metadata is also hidden by default.
 
 ## Follow Agent Activity
 
@@ -30611,6 +30841,20 @@ While an agent is running, the composer shows a live activity chip for its curre
 ## Handle a Failed Message
 
 If a message fails to send, select `Retry` to send it again or `Dismiss` to remove the failed message bubble. Dismissing a message does not restore its text to the composer.
+
+## Inline Markdown Artifact Previews
+
+When an agent creates a Markdown file, Agent Canvas renders it inline as a height-limited rich preview with an internal scrollbar instead of showing only the raw file content. Select `View` to open the full file in the Files drawer.
+
+## Context Window Usage and Manual Compaction
+
+Agent Canvas shows a context-window meter in the composer that visualizes how much of the model's available context is in use. The meter fills as the conversation grows.
+
+Click the meter to open the usage preview, then click "Usage" to see the full usage panel which shows token usage and provider balance details. You can manually compact the conversation to reduce context by selecting "Compact context" in the usage preview or usage panel.
+
+<Note>
+  The meter only appears for models that report a context window size. Models that do not report one will not show a meter.
+</Note>
 
 ## Branch From a Message
 
@@ -30724,6 +30968,29 @@ The export is generated locally in your browser from the events Agent Canvas alr
 
 <Note>
   For very large conversations, Agent Canvas loads the full event history before generating the file. This may take a moment. On cloud backends, the export uses the events the app currently has loaded.
+</Note>
+
+## Archive a Conversation
+
+Archiving a conversation hides it from the sidebar list without deleting it. The conversation's full history stays on the backend, and you can unarchive it at any time.
+
+**To archive a conversation:**
+
+1. Open the conversation card menu in the sidebar.
+2. Select `Archive`.
+3. Confirm in the dialog that appears.
+
+The conversation disappears from the default sidebar list. An archived conversation shows an `Archived` chip when revealed.
+
+**To view or restore archived conversations:**
+
+1. Open the panel filter menu in the sidebar.
+2. Enable `Show archived`.
+3. Archived conversations reappear with an `Archived` chip.
+4. Open an archived conversation's menu and select `Unarchive` to restore it to the default list.
+
+<Note>
+  Archive state is stored per backend in your browser's local storage. It does not sync across browsers or machines. The `Delete all` action still deletes archived conversations, including hidden ones. Archiving is non-destructive, but deleting is permanent.
 </Note>
 
 ## Related Guides
@@ -30877,8 +31144,8 @@ Agent Canvas separates **Customize** from **Settings**.
 
 Open the top-level `Customize` area to manage:
 
-- [Skills](/overview/skills)
 - [MCP Servers](/openhands/usage/settings/mcp-settings)
+- [Skills](/overview/skills)
 - [Plugins](/openhands/usage/agent-canvas/plugins)
 
 Use the section navigation inside `Customize` to switch between these pages.
@@ -30921,9 +31188,10 @@ The `Settings` area currently includes the following sections:
 | `Application` | UI-level preferences and app behavior |
 | `Secrets` | Stored secrets used by the active backend |
 
-On local backends, the `LLM` page also includes an `Available Profiles` area for saved profiles.
 
-In `Settings > Application`, the **Conversation titles** setting selects the LLM profile used to generate conversation titles. **Automatic** uses the active local LLM profile; you can choose another saved profile, like a small, cheap LLM, when you want titles generated independently from the model selected for agent work. The same page shows the installed Agent Canvas version, update availability, and a **Check for updates** button.
+In `Settings > Application`, the **Conversation titles** setting selects the LLM profile used to generate conversation titles. **Automatic** uses the active local LLM profile; you can choose another saved profile, like a small, cheap LLM, when you want titles generated independently from the model selected for agent work.
+
+The main settings nav also shows the installed version of Agent Canvas with a manual **Check for updates** button. When an update is available click on the tile to view details and update information.
 
 Use `Settings > Agent` to choose the active Agent Profile for new conversations. OpenHands profiles reference LLM profiles from `Settings > LLM`; ACP profiles use the external agent's own model configuration.
 
@@ -31095,7 +31363,19 @@ Use an OpenHands LLM API key when you want Agent Canvas to access models through
 2. In the **Basic** tab, select `OpenHands`, choose a model, and add the key.
 3. Save the profile and start a new conversation.
 
+While using OpenHands as your LLM provider you will see OpenHands-routed model IDs as marked as`Free`. These models change as we have promotional periods where we can offer them without any additional token cost.
+
+The `Free` label applies only to those full `openhands/` routes. Endpoints from other providers with similar model names may have separate billing. The label remains visible after you select one of these models.
+
+When you create a local LLM profile, the form initially selects `openhands/kimi-k3` and derives the profile name `kimi-k3`. You can change either value before saving.
+
 For key details and available models, see [OpenHands LLM Provider](/openhands/usage/llms/openhands-llms).
+
+### Pre-Save Validation
+
+When you save an LLM profile, the configuration is validated against the backend before it is persisted. If validation fails — for example, because the API key is rejected or the model is unavailable — the save is blocked and the backend error is shown. The save button displays a validating state while the check runs.
+
+Older backends that do not support validation (they return a `404` for the validation endpoint) skip this check and save normally.
 
 ### Local OpenAI-Compatible Endpoint
 
@@ -31130,6 +31410,8 @@ LLM profiles are separate from [Agent Profiles](/openhands/usage/agent-canvas/ag
 ### Manage Saved Profiles
 
 The available profiles list shows each profile's name, configured model, and whether it is active. Use a profile's menu to edit or rename it, set it as the active profile for new conversations, or delete it when you no longer need it.
+
+![Agent Canvas LLM settings showing two synthetic saved profiles, one marked as the default, with its profile actions menu open.](/openhands/static/img/agent-canvas-llm-profiles-manager.png)
 
 ## Switching Profiles in a Conversation
 
@@ -31183,7 +31465,7 @@ The **Automate** view in Agent Canvas is the in-app control center for your auto
 
 ## Browse and inspect automations
 
-Open the **Automate** tab in the sidebar to see all automations on the active backend. Each row shows the automation name, trigger type, and enabled state.
+Open the **Automate** tab in the sidebar to see all automations on the active backend. Each row shows the automation name, trigger type, and enabled state. When the active backend is healthy but has no automations, the Automate pane remains available and includes an option to add one.
 
 Click an automation to open its detail view. The detail view shows:
 
@@ -31195,6 +31477,12 @@ Click an automation to open its detail view. The detail view shows:
 ### Run Statuses
 
 A run can be `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`, or `SKIPPED`. A `SKIPPED` run can occur when the backend reaches its concurrency limit. Future backend statuses appear as a neutral status badge so they do not prevent you from viewing the automation.
+
+### Activity Log Costs and Exports
+
+The Activity Log displays a completed run's reported LLM cost in USD to four decimal places. A measured zero cost appears as `$0.0000`; when the backend does not report a cost, no cost appears in the log.
+
+Use the Activity Log export controls to download run data as CSV or JSON. Both formats include a raw numeric `cost` field for every run. An unavailable cost is exported as `null`.
 
 ## Enable and disable automations
 
@@ -31256,6 +31544,9 @@ You can import an automation from a JSON file previously exported by Agent Canva
 2. Click **Import automation** at the top of the list.
 3. Pick the `.json` file to import.
 4. Review the preview — it shows the automation's name, trigger type, and prompt.
+
+![Agent Canvas import automation dialog previewing the Weekly Documentation Review name, schedule, and prompt before import](/openhands/static/img/agent-canvas-automation-import-preview.png)
+
 5. Confirm to create the automation.
 
 Imported automations are created **disabled**. After importing, open the automation from the list, review its configuration, and enable it when ready.
@@ -31343,16 +31634,27 @@ You can also test a preview build of the native desktop app. [Try the desktop pr
 
 Agent Canvas is the browser client. It connects to backend services that own execution and persistent state:
 
-| Component | Responsibility |
-|-----------|----------------|
-| **Agent Canvas** | Displays conversations, files, terminals, settings, backends, and automations. |
-| **Agent Server** | Runs conversations, agents, tools, and workspace operations. |
-| **Automation Server** | Manages schedules, event triggers, dispatch, and run history. |
-| **Workspace or sandbox** | Defines which files, processes, credentials, and networks the agent can access. |
+| Concept | What It Means | Why It Matters |
+|-------|---------------|----------------|
+| **Browser UI** | The web interface you open in your browser. | This is where you chat, inspect files, manage settings, and configure automations. |
+| **Backend** | The agent server that runs conversations, tools, settings, secrets, and automations. | This determines where the agent runs and what machine or sandbox it can access. |
+| **Workspace** | The folder, repository, container mount, or cloud sandbox the agent works in. | This determines which files the agent can read and write. |
+| **Agent and model** | The OpenHands agent or an ACP agent, plus the model credentials it uses. | This determines which LLM or provider receives conversation context and powers the agent. |
 
-<Warning>
-  Agent Canvas does not execute tools or provide sandbox isolation. Agent Server or an ACP process executes tools, and the selected workspace or sandbox provides the execution boundary.
-</Warning>
+```mermaid
+flowchart LR
+    browser["Browser UI"] --> backend["Selected backend"]
+    backend --> conversation["Conversation and agent"]
+    conversation --> model["Model access"]
+    conversation --> workspace["Workspace and tools"]
+
+    classDef primary fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
+    classDef secondary fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
+    classDef tertiary fill:#fff4df,stroke:#b7791f,stroke-width:2px
+    class browser primary
+    class backend,conversation secondary
+    class model,workspace tertiary
+```
 
 The `agent-canvas` launcher can package the client and backend services into one local stack. You can also run the client separately and connect it to services on a VM, in Docker or Kubernetes, or through OpenHands Cloud or OpenHands Enterprise.
 
@@ -31532,7 +31834,7 @@ Agent Canvas ships with a set of pre-built automations for the most common agent
 
 ---
 
-Backends created by the `agent-canvas` launcher include Automation Server, so they can run agents on a schedule or in response to external events. Other backends must provide a compatible automation service for these features.
+Backends created by the `agent-canvas` launcher include Automation Server, so they can run agents on a schedule or in response to external events.
 
 ## What You Can Do
 
@@ -31556,6 +31858,10 @@ In practice, new automation setup starts in one of two ways:
 For recommended automations that support a direct form setup, Agent Canvas checks the active backend's capabilities and any prerequisites, then guides you through the required input fields, a review step, and creation. If direct form setup is unavailable, it offers a conversation-assisted setup instead. Review the proposed configuration before creating an automation.
 
 For a detailed walkthrough, see [Creating Automations](/openhands/usage/automations/creating-automations).
+
+<Note>
+  Some recommended automations depend on integrations that cannot be auto-installed as MCP servers on this backend (for example, Jira's HTTP/OpenAPI-only integration). These appear on the recommendation card with a `Needs external setup` label. The `MCPs to connect` count only covers integrations the install flow can connect automatically. You must configure externally-hosted integrations yourself before the automation can use them.
+</Note>
 
 Automations run against the active backend. Use [Manage Backends](/openhands/usage/agent-canvas/backends) to see and switch which backend your automations run on.
 
@@ -31922,7 +32228,7 @@ Source: https://docs.openhands.dev/openhands/usage/agent-canvas/setup.md
 The `agent-canvas` launcher can run the Canvas client with Agent Server, Automation Server, and ingress as an all-in-one local stack. Use npm or npx for direct local execution, or Docker for a containerized stack with explicit project mounts. You can also run the client separately and connect it to an existing backend.
 
 <Warning>
-  Agent Server and ACP processes can run shell commands, read files, write files, and use connected tools. Agent Canvas is the client and does not provide isolation. Treat the machine, container, or sandbox where the backend runs as trusted infrastructure. Before exposing backend services to a network you do not control, review [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm).
+  Treat agents and ACP processes as untrusted: they can run shell commands, read files, write files, and use connected tools within their execution environment. Agent Canvas is the client and does not provide isolation. If the backend runs directly on your machine, the agent can act with your user account's permissions. Use a container, sandbox, or VM to define a tighter boundary. Before exposing backend services to a network you do not control, review [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm).
 </Warning>
 
 ## Choose An Install Method
@@ -32515,6 +32821,11 @@ Common causes:
 - A LiteLLM proxy token is invalid.
 - An OpenAI-compatible provider needs the provider, model, base URL, and key to line up.
 
+Agent Canvas classifies conversation errors and presents them with distinct banner variants:
+
+- **Recoverable errors** (such as authentication failures) are shown with a warning banner, indicating you can take action — for example, updating an API key or switching models.
+- **Internal errors** are shown with an error banner, indicating a problem that may require restarting the conversation or backend.
+
 For model setup details, see:
 
 - [Manage LLM Profiles](/openhands/usage/agent-canvas/llm-profiles)
@@ -32660,7 +32971,7 @@ https://github.com/OpenHands/OpenHands/assets/38853559/f592a192-e86c-4f48-ad31-d
 
 _Example of CodeActAgent with `gpt-4-turbo-2024-04-09` performing a data science task (linear regression)_.
 
-### Sandbox Server REST API (V1)
+### REST API (V1)
 Source: https://docs.openhands.dev/openhands/usage/api/v1.md
 
 The [OpenHands Sandbox Server](https://github.com/OpenHands/sandbox-server) is the standalone API and sandbox control plane extracted from the former OpenHands monorepo. It exposes conversation and sandbox resources without bundling a frontend.
@@ -32675,7 +32986,7 @@ Sandbox Server V1 REST endpoints are mounted under:
 
 - <code>/api/v1</code>
 
-Use these endpoints to integrate with the Sandbox Server control plane. Agent Canvas is the browser client for compatible deployments; Sandbox Server itself does not include a frontend.
+Use these endpoints to integrate with the Sandbox Server control plane. Sandbox Server itself does not include a frontend.
 
 ## Key resources
 
@@ -32741,7 +33052,7 @@ When asking OpenHands to create an automation, include:
 - **What it should do**: Describe the task clearly
 - **When it should run**: Daily, weekly, every hour, etc.
 - **Timezone** (optional): Defaults to UTC if not specified
-- **Run timeout** (optional): Defaults to 10 minutes; maximum 30 minutes
+- **Run timeout** (optional): Defaults to 10 minutes; the maximum depends on your deployment
 - **Name** (optional): The agent can suggest one based on your description
 - **Plugins** (optional): Mention specific plugins if you need extended capabilities
 
@@ -33166,7 +33477,7 @@ Update the "Weekly Cleanup" automation to run on Sundays at 2 AM UTC
 Set the "Weekly Cleanup" automation timeout to 20 minutes
 ```
 
-Timeouts can be up to 30 minutes. Runs that exceed their timeout fail automatically.
+The maximum timeout depends on your deployment. Runs that exceed their timeout fail automatically.
 
 ## Running Manually
 
@@ -33195,6 +33506,8 @@ Each run creates a conversation that automatically appears in your conversations
 - **View in the OpenHands UI** to see what happened
 - **Continue** if you want to interact with the sandbox
 - **Debug** if something went wrong
+
+In an automation's `Activity Log`, use `Export JSON` or `Export CSV` to download its complete run history.
 
 <Tip>
 Automations are user-scoped, so all your automation runs appear alongside your regular conversations. Look for them in your conversations list after each scheduled run.
@@ -36393,15 +36706,15 @@ AWS Bedrock provides access to foundation models from Amazon and third-party pro
 
 ### Environment Variables
 
-When running OpenHands with Docker, set the following environment variables using `-e`:
+When running Agent Canvas with the [official Docker image](/openhands/usage/agent-canvas/backend-setup/docker), add these options to the documented `docker run` command:
 
 ```bash
-docker run -it --pull=always \
-    -e LLM_AWS_ACCESS_KEY_ID="your-access-key-id" \
-    -e LLM_AWS_SECRET_ACCESS_KEY="your-secret-access-key" \
-    -e LLM_AWS_REGION_NAME="us-east-1" \
-    ...
+--env LLM_AWS_ACCESS_KEY_ID="your-access-key-id" \
+--env LLM_AWS_SECRET_ACCESS_KEY="your-secret-access-key" \
+--env LLM_AWS_REGION_NAME="us-east-1"
 ```
+
+The official `ghcr.io/openhands/agent-canvas:latest` image includes the AWS SDK for Python (`boto3`).
 
 <Note>
 Make sure you have enabled the Bedrock models you want to use in the AWS Console. Go to **Amazon Bedrock** → **Model access** and request access to the models you need.
@@ -36409,58 +36722,81 @@ Make sure you have enabled the Bedrock models you want to use in the AWS Console
 
 ### UI Configuration
 
-In the OpenHands UI Settings under the `LLM` tab:
+In Agent Canvas:
 
-1. Enable `Advanced` options
-2. Set the following:
-   - `Custom Model` to the Bedrock model ID (see [Model IDs](#model-ids))
-   - Leave `Base URL` empty (Bedrock uses AWS endpoints automatically)
-   - Leave `API Key` empty (authentication is handled via AWS credentials)
+1. Open `Settings > LLM` and enable the `Advanced` options.
+2. Set `Custom Model` to the Bedrock model or inference profile ID. See [Model IDs](#model-ids).
+3. Leave `Base URL` empty because Bedrock uses AWS endpoints automatically.
+4. Leave `API Key` empty because authentication is handled through your AWS credentials.
+5. Save the profile and start a new conversation to test it.
+
+See [Manage LLM Profiles](/openhands/usage/agent-canvas/llm-profiles) for more information about profile settings.
 
 ### Model IDs
 
 Bedrock model IDs are managed by AWS and may change over time. Use the exact **Model ID** from the AWS Console or the AWS documentation (no `bedrock/` prefix).
 
 Example format:
+
 - `Custom Model`: `anthropic.claude-3-5-sonnet-20241022-v2:0`
 
 For a complete list of available models, see the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html).
 
 ### Cross-Region Inference
 
-Some Bedrock models can be invoked across regions by prefixing the model ID with the target region (for example, `us.`):
+Some models must be invoked through a cross-region inference profile rather than their direct foundation model ID. Inference profile IDs include a geographic prefix such as `us.`.
 
-- `Custom Model`: `<region>.<model-id>`
+For example, use:
 
-No additional environment variable configuration is needed—keep using your normal Bedrock setup and credentials.
+- `Custom Model`: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+
+instead of the direct model ID:
+
+- `anthropic.claude-sonnet-4-5-20250929-v1:0`
+
+No additional environment variables are required. Keep using the AWS region where you configured Bedrock access and your existing credentials. See [Increase throughput with cross-region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for supported profiles and regions.
 
 ### Using IAM Roles (Alternative to Access Keys)
 
-If running OpenHands on AWS infrastructure (EC2, ECS, Lambda), you can use IAM roles instead of access keys:
+If running OpenHands on AWS infrastructure such as EC2, ECS, or Lambda, you can use IAM roles instead of access keys:
 
-1. Attach an IAM role with Bedrock permissions to your compute resource
-2. Omit the `LLM_AWS_ACCESS_KEY_ID` and `LLM_AWS_SECRET_ACCESS_KEY` environment variables
-3. The AWS SDK will automatically use the instance role credentials
+1. Attach an IAM role with Bedrock permissions to your compute resource.
+2. Omit the `LLM_AWS_ACCESS_KEY_ID` and `LLM_AWS_SECRET_ACCESS_KEY` environment variables.
+3. The AWS SDK automatically uses the instance role credentials.
 
 ### Troubleshooting
 
 #### "No module named 'boto3'" Error
 
 If you encounter this error:
-```
+
+```text
 litellm.APIConnectionError: No module named 'boto3'
 ModuleNotFoundError: No module named 'boto3'
 ```
 
-This means you're using an older version of the OpenHands Docker image that doesn't include the AWS SDK. Update to the latest version:
+First identify how you installed Agent Canvas:
 
-```bash
-docker pull docker.openhands.dev/openhands/openhands:latest
+- **Docker:** The current `ghcr.io/openhands/agent-canvas:latest` image includes `boto3`. Pull the latest image and recreate the container:
+
+  ```bash
+  docker pull ghcr.io/openhands/agent-canvas:latest
+  ```
+
+- **npm or npx:** The Python environment managed by the npm distribution may not include the optional Bedrock dependency. Follow [OpenHands issue #16578](https://github.com/OpenHands/OpenHands/issues/16578) for the package fix. Use the official Agent Canvas Docker image if you need Bedrock while that issue remains open.
+
+Do not install `boto3` into a temporary uv archive environment because Agent Canvas may recreate that environment.
+
+#### On-Demand Throughput Is Not Supported
+
+Some foundation model IDs cannot be invoked directly and return an error similar to:
+
+```text
+Invocation of model ID ... with on-demand throughput isn't supported.
+Retry your request with the ID or ARN of an inference profile that contains this model.
 ```
 
-<Note>
-This issue is resolved in recent OpenHands releases. If you still see it, upgrade to `latest` (or a recent release tag).
-</Note>
+Use the corresponding inference profile ID or ARN, such as `us.anthropic.claude-sonnet-4-5-20250929-v1:0`. This error does not indicate a credential, model access, or `boto3` problem.
 
 #### Access Denied Errors
 
@@ -38285,6 +38621,12 @@ for new conversations.
 Alternatively, you can click the `Add LLM Profile` button in the Available Profiles section to create a new profile
 directly.
 
+<Note>
+When saving a local LLM profile, the configuration is validated against the backend before it is persisted. If validation
+fails (for example, an invalid API key or unavailable model), the save is blocked and the error is shown. Older backends
+that do not support validation skip this check and save normally.
+</Note>
+
 ### Managing LLM Profiles
 
 You can manage your saved profiles in the `Available Profiles` section of the LLM settings page. Each profile shows:
@@ -38618,7 +38960,7 @@ Other options include:
 
 In Agent Canvas, open `Customize > MCP Servers` to manage installed MCP servers. Use the control on an installed server card to disable it without deleting its configuration or saved credentials. Disabled servers are unavailable to new conversations until you enable them again.
 
-Use the editor's delete action only when you want to remove the server configuration. Editing a disabled server does not enable it.
+Adding, editing, renaming, or deleting one server does not remove saved credentials for your other servers. Use the editor's delete action only when you want to remove that server configuration. Editing a disabled server does not enable it.
 
 ## OAuth Authentication
 
@@ -39647,6 +39989,251 @@ After creating the automation:
 - [GitHub Integration](/openhands/usage/cloud/github-installation) - Set up GitHub integration for OpenHands Cloud
 - [Skills Documentation](/overview/skills) - Learn more about OpenHands skills
 
+### Agent-Driven Daily Workflow
+Source: https://docs.openhands.dev/openhands/usage/use-cases/daily-workflow.md
+
+<iframe
+  width="100%"
+  height="500"
+  src="https://www.youtube.com/embed/S_wap45Iq8U"
+  title="Performing Your Daily Workflow with AI Agents"
+  frameborder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowfullscreen
+/>
+
+This guide shows how to use the OpenHands Agent Canvas as a daily development work queue. The agent gathers work from GitHub and Slack, organizes it by urgency, gives you one task at a time, and can dispatch separate agents for work that can happen in parallel.
+
+The video above demonstrates the same workflow for readers who prefer a video walkthrough. You do not need to watch it to follow this guide.
+
+## What you will build
+
+At the end of this guide, one Agent Canvas conversation will:
+
+1. Collect pull requests, issues, notifications, and relevant Slack activity.
+2. Produce a prioritized report with links and a recommended first task.
+3. Help you complete that task or start a separate agent to work on another task.
+4. Continue with the next task when you are ready.
+
+## Prerequisites
+
+
+- [Install and start Agent Canvas](/openhands/usage/agent-canvas/setup).
+- Complete [first-time setup](/openhands/usage/agent-canvas/first-time-setup), including an OpenHands agent profile, a connected backend, and an LLM.
+- A GitHub account with access to the repositories you want to review.
+- A Slack workspace and permission to create or install a Slack app.
+
+![Agent Canvas MCP library showing built-in GitHub and Slack integrations](/openhands/static/img/daily-workflow-mcp-library-clean.png)
+
+The MCP library lists built-in integrations, including GitHub and Slack. Choose the HTTP Slack integration shown here when following this guide.
+The workflow can use other MCP integrations, such as Linear or Jira, but the examples below use GitHub and Slack.
+
+
+
+## Step 1: Connect GitHub
+
+The agent needs GitHub access to find assigned issues, pull requests that need your attention, review requests, notifications, and CI results.
+
+### Create a GitHub token
+
+1. Open [GitHub Developer Settings](https://github.com/settings/tokens).
+2. Select **Fine-grained tokens** and choose **Generate new token**.
+3. Give the token a name, select **Only select repositories** when possible, and set an expiration date.
+4. Grant the minimum permissions for the work you want the agent to do:
+
+| Purpose | Permissions |
+|---|---|
+| Gather and report work | `Metadata: read`, `Contents: read`, `Issues: read`, `Pull requests: read`, `Actions: read`, `Checks: read` |
+| Work on code or issues | Add `Contents: write` and `Issues: write` |
+| Update pull requests or post reviews | Add `Pull requests: write` |
+
+5. Generate the token and copy it. GitHub shows it only once.
+
+![Agent Canvas GitHub MCP server setup dialog](/openhands/static/img/daily-workflow-github-mcp.png)
+
+The GitHub server dialog shows where to enter the server token and save it as a backend secret.
+### Add the GitHub MCP server
+
+Use the backend where this conversation will run. The MCP server and its saved secret belong to that backend.
+
+1. In Agent Canvas, confirm the correct backend in the backend switcher.
+2. Open **Customize** in the left navigation.
+3. Open **MCP Servers**.
+4. Select **GitHub** from the MCP library.
+5. Paste the token into the token field.
+6. Leave the option to create a secret enabled, then save the server.
+7. Wait for the server card to report a healthy connection.
+
+See [MCP server settings](/openhands/usage/settings/mcp-settings) for general configuration and troubleshooting details. Do not paste tokens into the conversation itself.
+
+## Step 2: Connect Slack
+
+Slack access lets the agent find mentions, threads, and messages that need your response. The bot can read only channels it can access.
+
+### Create and install a Slack app
+
+1. Open the [Slack API dashboard](https://api.slack.com/apps) and select **Create New App** → **From scratch**.
+2. Choose the workspace where the app will read messages.
+3. In **OAuth & Permissions**, add these bot scopes:
+
+| Scope | Purpose |
+|---|---|
+| `channels:read` | List public channels |
+| `channels:history` | Read public-channel messages |
+| `groups:history` | Read private-channel messages where the bot is a member |
+| `users:read` | Resolve people mentioned in messages |
+| `chat:write` | Allow the agent to post replies when you explicitly ask it to |
+
+4. Select **Install to Workspace**, approve the permissions, and copy the **Bot User OAuth Token**.
+5. Invite the bot to each channel it should monitor. The bot cannot read channels it has not joined.
+6. Find your workspace ID from your Slack workspace URL or [Slack's workspace-ID guide](https://slack.com/help/articles/221769328-Locate-your-Slack-URL-or-ID).
+
+![Agent Canvas Slack MCP server setup dialog](/openhands/static/img/daily-workflow-slack-http.png)
+
+The built-in Slack integration dialog shows the workspace ID and bot-token fields, along with the option to save each value as a secret.
+### Add the Slack MCP server
+
+The same **Customize → MCP Servers** screen is used for Slack.
+
+1. In Agent Canvas, open **Customize** → **MCP Servers**.
+2. Select **Slack** from the MCP library.
+3. Paste the bot token and enter the workspace ID.
+4. Keep secret creation enabled and save the server.
+5. Wait for a healthy connection, then verify that the bot can access the channels you want to search.
+
+## Step 3: Start the daily workflow conversation
+
+
+Create a new conversation in Agent Canvas and send this prompt:
+
+![Agent Canvas new conversation with the daily workflow prompt](/openhands/static/img/daily-workflow-prompt.png)
+
+```
+Do my daily workflow using the connected GitHub and Slack MCP servers.
+
+Gather:
+- pull requests that need my attention or review
+- assigned issues
+- GitHub notifications and failing CI
+- Slack mentions, threads, and messages that need a response
+
+Group the results by urgency. For every item, include its title, why it matters,
+and a direct link. End with the single highest-priority task for me to start.
+Do not make changes or send messages without asking me first.
+```
+
+
+
+If you use Linear, Jira, or another connected service, add it explicitly to the prompt. For example:
+
+```
+Also check my assigned Linear issues and current cycle.
+```
+
+The agent may ask clarifying questions, such as which repositories or Slack channels to include. Answer those questions before asking it to produce the final report.
+
+## Step 4: Read the prioritized report
+
+Ask for a report in this format if the first response is not organized clearly:
+
+```
+Organize the results into:
+1. Immediate action
+2. PRs waiting for my response
+3. PRs requesting my review
+4. Assigned issues
+5. Slack highlights
+6. GitHub notifications
+
+Sort each section by urgency. Include direct links and finish by recommending one first task.
+```
+
+A useful report looks like this:
+
+```text
+## Immediate action
+- Fix failing CI on PR #123 — blocking the release — <link>
+
+## PRs waiting for my response
+- Address requested changes on PR #456 — <link>
+
+## PRs requesting my review
+- Review PR #789 — changes authentication behavior — <link>
+
+## Assigned issues
+- Document the new API behavior — <link>
+
+## Slack highlights
+- Reply to the deployment question in #engineering — <link>
+
+## GitHub notifications
+- Workflow failure on repository-name — <link>
+
+## First task
+Fix the failing CI on PR #123.
+```
+
+The report is a starting point, not a guarantee that every source contains actionable work. Ask the agent to search a specific repository, channel, or date range when an important item is missing.
+
+## Step 5: Work through one task at a time
+
+When the agent recommends a task:
+
+1. Ask for links if the report does not include them: `Give me the links for that task.`
+2. Tell the agent whether you want investigation, implementation, or only a summary.
+3. Set the safety boundary before it changes anything. For example:
+
+```
+Inspect the failing CI on PR #123, explain the root cause, and propose a fix.
+Do not edit files, push changes, or comment on GitHub until I approve the plan.
+```
+
+4. After reviewing the result, ask it to implement the approved change, run the relevant checks, and report what changed.
+5. When the task is complete, ask:
+
+```
+I finished that task. Re-check the remaining work and give me the next highest-priority item.
+```
+
+The agent can inspect and edit files in its configured workspace, but its ability to push code, update GitHub, or post to Slack depends on the permissions granted to the MCP servers and the confirmation policy you use.
+
+## Step 6: Dispatch parallel work
+
+Use a separate agent only for work that is independent of the task you are handling. For example:
+
+```
+Start a separate agent to inspect the failing CI and unaddressed review comments
+on my other open pull requests. It may modify files in its own workspace and
+run tests, but it must not push, merge, or post comments. Return a summary and
+proposed changes when finished.
+```
+
+Before dispatching, specify:
+
+- Which repositories, pull requests, or issues it may access
+- Whether it may edit files
+- Which tests it should run
+- Whether it may push branches or post comments
+- What it should return when finished
+
+Keep related changes in separate workspaces or branches to avoid overwriting your active work. Review a subagent's summary and diff before asking it to push or make external changes. You can continue the original conversation while the separate agent runs, then inspect its conversation from the Agent Canvas conversation list.
+
+## Troubleshooting
+
+- **The agent cannot find GitHub work:** confirm the GitHub MCP server is healthy, the token includes the required repositories, and the token has not expired.
+- **Slack results are empty:** confirm the bot is installed in the workspace and invited to each channel you want to search.
+- **The agent reports no tools:** start a new conversation after adding or changing an MCP server; MCP configuration is loaded when a conversation starts.
+- **The report is too broad:** name the repositories, Slack channels, date range, or task categories to include.
+- **The agent tries to act too early:** state that it must ask for approval before editing files, pushing, or posting messages.
+
+## Reference
+
+- [Daily workflow video](https://youtu.be/S_wap45Iq8U) — optional video walkthrough
+- [Agent Canvas overview](/openhands/usage/agent-canvas/overview)
+- [Agent Canvas first-time setup](/openhands/usage/agent-canvas/first-time-setup)
+- [MCP server settings](/openhands/usage/settings/mcp-settings)
+- [Agent Canvas configuration](/openhands/usage/agent-canvas/customize-and-settings)
+
 ### Dependency Upgrades
 Source: https://docs.openhands.dev/openhands/usage/use-cases/dependency-upgrades.md
 
@@ -40277,6 +40864,13 @@ Each use case can be implemented in different ways—as a one-off conversation, 
     href="/openhands/usage/use-cases/dependency-upgrades"
   >
     Automate dependency updates, handle breaking changes, and validate applications.
+  </Card>
+  <Card
+    title="Agent-Driven Daily Workflow"
+    icon="list-check"
+    href="/openhands/usage/use-cases/daily-workflow"
+  >
+    Orchestrate your entire daily development routine through AI agents — from triage to task execution to parallel remediation.
   </Card>
   <Card
     title="Spark Migrations"
@@ -41026,11 +41620,11 @@ OpenHands to access your repositories:
 - [Learn about the Cloud UI](/openhands/usage/cloud/cloud-ui).
 - [Use the Cloud API](/openhands/usage/cloud/cloud-api) to programmatically interact with OpenHands.
 
-### Cloud API
+### Cloud API Overview
 Source: https://docs.openhands.dev/openhands/usage/cloud/cloud-api.md
 
 For the available API endpoints, refer to the
-[OpenHands API Reference](https://docs.openhands.dev/api-reference).
+[OpenHands API Reference](/openhands/usage/cloud/api-reference/conversations/start-app-conversation).
 
 ## Obtaining an API Key
 
@@ -41531,101 +42125,6 @@ If you're running into issues and need a higher limit for your use case, please 
    ```
 
 3. **Update response handling**: The V1 API returns a start task object. The conversation ID is in the `app_conversation_id` field (available when status is `READY`), or use the `id` field for the start task ID.
-
----
-
-## Legacy API (V0) - Deprecated
-
-<Warning>
-  The V0 API is deprecated since version 1.0.0 and will be removed on **April 1, 2026**.
-  New integrations should use the V1 API documented above.
-</Warning>
-
-### Starting a New Conversation (V0)
-
-<Tabs>
-  <Tab title="cURL">
-    ```bash
-    curl -X POST "https://app.all-hands.dev/api/conversations" \
-      -H "Authorization: Bearer YOUR_API_KEY" \
-      -H "Content-Type: application/json" \
-      -d '{
-        "initial_user_msg": "Check whether there is any incorrect information in the README.md file and send a PR to fix it if so.",
-        "repository": "yourusername/your-repo"
-      }'
-    ```
-  </Tab>
-  <Tab title="Python (with requests)">
-    ```python
-    import requests
-
-    api_key = "YOUR_API_KEY"
-    url = "https://app.all-hands.dev/api/conversations"
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "initial_user_msg": "Check whether there is any incorrect information in the README.md file and send a PR to fix it if so.",
-        "repository": "yourusername/your-repo"
-    }
-
-    response = requests.post(url, headers=headers, json=data)
-    conversation = response.json()
-
-    print(f"Conversation Link: https://app.all-hands.dev/conversations/{conversation['conversation_id']}")
-    print(f"Status: {conversation['status']}")
-    ```
-  </Tab>
-  <Tab title="TypeScript/JavaScript (with fetch)">
-    ```typescript
-    const apiKey = "YOUR_API_KEY";
-    const url = "https://app.all-hands.dev/api/conversations";
-
-    const headers = {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    };
-
-    const data = {
-      initial_user_msg: "Check whether there is any incorrect information in the README.md file and send a PR to fix it if so.",
-      repository: "yourusername/your-repo"
-    };
-
-    async function startConversation() {
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: headers,
-          body: JSON.stringify(data)
-        });
-
-        const conversation = await response.json();
-
-        console.log(`Conversation Link: https://app.all-hands.dev/conversations/${conversation.conversation_id}`);
-        console.log(`Status: ${conversation.status}`);
-
-        return conversation;
-      } catch (error) {
-        console.error("Error starting conversation:", error);
-      }
-    }
-
-    startConversation();
-    ```
-  </Tab>
-</Tabs>
-
-#### Response (V0)
-
-```json
-{
-  "status": "ok",
-  "conversation_id": "abc1234"
-}
-```
 
 ### Cloud UI
 Source: https://docs.openhands.dev/openhands/usage/cloud/cloud-ui.md
@@ -43061,59 +43560,193 @@ At some point, we may transfer custody of OpenHands to an open source foundation
 ### Contributing
 Source: https://docs.openhands.dev/overview/contributing.md
 
-# Contributing To OpenHands
+# Contributing to OpenHands
 
-OpenHands is developed across several repositories. Choose the repository that owns the component you want to change, then follow that repository's setup and contribution guidance.
+Welcome to the OpenHands community! We're building the future of AI-powered software development, and we'd love for you to be part of this journey.
 
-## Find The Right Repository
+## Our Vision: Free as in Freedom
 
-| Area | Repository | Guidance | Issues | License |
-|------|------------|----------|--------|---------|
-| **Agent Canvas** | [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) | [README](https://github.com/OpenHands/OpenHands#quickstart) and [development docs](https://github.com/OpenHands/OpenHands/tree/main/docs) | [Issues](https://github.com/OpenHands/OpenHands/issues) | [License](https://github.com/OpenHands/OpenHands/blob/main/LICENSE) |
-| **Software Agent SDK and Agent Server** | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) | [Development guide](https://github.com/OpenHands/software-agent-sdk/blob/main/DEVELOPMENT.md) and [contribution guide](https://github.com/OpenHands/software-agent-sdk/blob/main/CONTRIBUTING.md) | [Issues](https://github.com/OpenHands/software-agent-sdk/issues) | [License](https://github.com/OpenHands/software-agent-sdk/blob/main/LICENSE) |
-| **Sandbox Server** | [`OpenHands/sandbox-server`](https://github.com/OpenHands/sandbox-server) | [README](https://github.com/OpenHands/sandbox-server#local-development) | [Issues](https://github.com/OpenHands/sandbox-server/issues) | [License](https://github.com/OpenHands/sandbox-server/blob/main/LICENSE) |
-| **OpenHands CLI** | [`OpenHands/OpenHands-CLI`](https://github.com/OpenHands/OpenHands-CLI) | [Contribution guide](https://github.com/OpenHands/OpenHands-CLI/blob/main/CONTRIBUTING.md) | [Issues](https://github.com/OpenHands/OpenHands-CLI/issues) | [License](https://github.com/OpenHands/OpenHands-CLI/blob/main/LICENSE) |
-| **Documentation** | [`OpenHands/docs`](https://github.com/OpenHands/docs) | [Repository guide](https://github.com/OpenHands/docs/blob/main/AGENTS.md) | [Issues](https://github.com/OpenHands/docs/issues) | Check the repository before reuse |
-| **Evaluations and benchmarks** | [`OpenHands/benchmarks`](https://github.com/OpenHands/benchmarks) | [Contribution guide](https://github.com/OpenHands/benchmarks/blob/main/CONTRIBUTING.md) | [Issues](https://github.com/OpenHands/benchmarks/issues) | [License](https://github.com/OpenHands/benchmarks/blob/main/LICENSE) |
+The OpenHands community is built around the belief that **AI and AI agents are going to fundamentally change the way we build software**, and if this is true, we should do everything we can to make sure that the benefits provided by such powerful technology are **accessible to everyone**.
 
-OpenHands Enterprise development is maintained privately. For an Enterprise support request or product question, use your support channel or [contact the OpenHands team](https://openhands.dev/enterprise).
+We believe in the power of open source to democratize access to cutting-edge AI technology. Just as the internet transformed how we share information, we envision a world where AI-powered development tools are available to every developer, regardless of their background or resources.
 
-<Note>
-  The former OpenHands monorepo is preserved in the read-only [`OpenHands/legacy`](https://github.com/OpenHands/legacy) repository. Route active Canvas, SDK, Agent Server, Sandbox Server, CLI, and evaluation work to the repositories above.
-</Note>
+If this resonates with you, we'd love to have you join us in our quest!
 
-## Start Contributing
+## 🚀 Getting Started
 
-1. Open the repository that owns your change.
-2. Read its `README`, `AGENTS.md`, and contribution or development guide when present.
-3. Search the repository's existing issues and pull requests.
-4. For a substantial change, open or join an issue before implementation so maintainers can confirm the direction.
-5. Run the repository's required formatting, linting, and tests before opening a pull request.
+Ready to contribute? Here's your path to making an impact:
 
-Good first issues are labeled per repository. Browse the [OpenHands organization repositories](https://github.com/orgs/OpenHands/repositories), or ask in the [OpenHands Slack community](https://openhands.dev/joinslack) if you are unsure where a change belongs.
+### 1. Quick Wins
+Start with these easy contributions:
+- **Use OpenHands** and [report issues](https://github.com/OpenHands/OpenHands/issues) you encounter
+- **Give feedback** using the thumbs-up/thumbs-down buttons after each session
+- **Star our repository** on [GitHub](https://github.com/OpenHands/OpenHands)
+- **Share OpenHands** with other developers
 
-## Pull Request Guidance
+### 2. Set Up Your Development Environment
+Follow our setup guide:
+- **Requirements**: Node.js 22+, uv
+- **Quick setup**: 
+```
+git clone https://github.com/OpenHands/OpenHands.git
+cd OpenHands
+npm install
+```
+- **Run locally**: `npm run dev` to start the application
 
-Keep pull requests focused on one component and explain:
+*Full details in [Development Guide](https://github.com/OpenHands/OpenHands/blob/main/docs/DEVELOPMENT.md)*
 
-- What changed and why
-- Which issue the change addresses
-- How you tested it
-- Any user-facing behavior or compatibility impact
-- Screenshots for visible Agent Canvas changes
+### 3. Find Your First Issue
+Look for beginner-friendly opportunities:
+- Browse [good first issues](https://github.com/OpenHands/OpenHands/labels/good%20first%20issue)
+- Ask in [Slack](https://openhands.dev/joinslack) what needs help
 
-Follow the target repository's title, changelog, and review requirements. Architecture and agent-behavior changes usually need more design discussion than small bug fixes or documentation corrections.
+Issues labeled `ready-for-dev` meet the automated readiness criteria (clear reproduction, acceptance criteria) for development work — see [Issue Triage and the ready-for-dev Gate](/overview/issue-lifecycle) for how issues get labeled and what the pull request description check requires.
 
-## Other Ways To Contribute
+### 4. Join the Community
+Connect with other contributors in our [Slack Community](https://openhands.dev/joinslack). You can connect with OpenHands contributors, maintainers, and more!
 
-- Report reproducible issues in the repository that owns the affected component.
-- Improve guides and API documentation in [`OpenHands/docs`](https://github.com/OpenHands/docs).
-- Add or improve evaluations in [`OpenHands/benchmarks`](https://github.com/OpenHands/benchmarks).
-- Answer questions and share feedback in the [OpenHands Slack community](https://openhands.dev/joinslack).
+## 📋 How to Contribute Code
 
-## Community Standards
+### Pull Request Process
+We welcome pull requests across our public repositories! Here's how we evaluate them:
 
-Follow the community and contribution guidance in the repository you are changing. Be respectful, provide enough context for maintainers to reproduce problems, and keep technical discussion focused on the proposed change.
+#### Small Improvements
+- Quick review and approval for obvious improvements
+- Make sure CI tests pass
+- Include clear description of changes
+
+#### Core Agent Changes
+We're more careful with agent changes since they affect user experience:
+- **Accuracy** - Does it make the agent better at solving problems?
+- **Efficiency** - Does it improve speed or reduce resource usage?
+- **Code Quality** - Is the code maintainable and well-tested?
+
+*Discuss major changes in [GitHub issues](https://github.com/OpenHands/OpenHands/issues) or [Slack](https://openhands.dev/joinslack) first!*
+
+### Pull Request Guidelines
+We recommend the following for smooth reviews but they're not required. Just know that the more you follow these guidelines, the more likely you'll get your PR reviewed faster and reduce the quantity of revisions.
+
+**Title Format:**
+- `feat: Add new agent capability`
+- `fix: Resolve memory leak in runtime`
+- `docs: Update installation guide`
+- `style: Fix code formatting`
+- `refactor: Simplify authentication logic`
+- `test: Add unit tests for parser`
+
+**Description:**
+- Explain what the PR does and why
+- Link to related issues
+- Include screenshots for UI changes
+- Add changelog entry for user-facing changes
+
+## What Can You Build?
+
+There are countless ways to contribute to OpenHands. Whether you're a seasoned developer, a researcher, a designer, or someone just getting started, there's a place for you in our community.
+
+*Small fixes are always welcome! For bigger changes, join our [Slack](https://openhands.dev/joinslack) first.*
+
+### Frontend & UI/UX
+Make OpenHands more beautiful and user-friendly:
+React & TypeScript Development - Improve the web interface
+UI/UX Design - Enhance user experience and accessibility
+Mobile Responsiveness - Make OpenHands work great on all devices
+Component Libraries - Build reusable UI components
+
+*Small fixes are always welcome! For bigger changes, join our `#agent-canvas` channel in [Slack](https://openhands.dev/joinslack) first.
+
+
+### Agent Development
+Help make our AI agents smarter and more capable:
+- **Prompt Engineering** - Improve how agents understand and respond
+- **New Agent Types** - Create specialized agents for different tasks
+- **Agent Evaluation** - Develop better ways to measure agent performance
+- **Multi-Agent Systems** - Enable agents to work together
+
+*We use [SWE-bench](https://www.swebench.com/) to evaluate our agents. Join our  [Slack](https://openhands.dev/joinslack) to learn more.*
+
+### Backend & Infrastructure
+Build the foundation that powers OpenHands:
+- **Python Development** - Core functionality and APIs
+- **Runtime Systems** - Docker containers and sandboxes
+- **Cloud Integrations** - Support for different cloud providers
+- **Performance Optimization** - Make everything faster and more efficient
+
+### Testing & Quality Assurance
+Help us maintain high quality:
+- **Unit Testing** - Write tests for new features
+- **Integration Testing** - Ensure components work together
+- **Bug Hunting** - Find and report issues
+- **Performance Testing** - Identify bottlenecks and optimization opportunities
+
+### Documentation & Education
+Help others learn and contribute:
+- **Technical Documentation** - API docs, guides, and tutorials
+- **Video Tutorials** - Create learning content
+- **Translation** - Make OpenHands accessible in more languages
+- **Community Support** - Help other users and contributors
+
+### Research & Innovation
+Push the boundaries of what's possible:
+- **Academic Research** - Publish papers using OpenHands
+- **Benchmarking** - Develop new evaluation methods
+- **Experimental Features** - Try cutting-edge AI techniques
+- **Data Analysis** - Study how developers use AI tools
+
+## Becoming a Maintainer
+
+For contributors who have made significant and sustained contributions to the project, there is a possibility of joining the maintainer team.
+The process for this is as follows:
+
+1. Any contributor who has made sustained and high-quality contributions to the codebase can be nominated by any maintainer. If you feel that you may qualify you can reach out to any of the maintainers that have reviewed your PRs and ask if you can be nominated.
+2. Once a maintainer nominates a new maintainer, there will be a discussion period among the maintainers for at least 3 days.
+3. If no concerns are raised the nomination will be accepted by acclamation, and if concerns are raised there will be a discussion and possible vote.
+
+Note that just making many PRs does not immediately imply that you will become a maintainer. We will be looking at sustained high-quality contributions over a period of time, as well as good teamwork and adherence to our [Code of Conduct](https://github.com/OpenHands/OpenHands/blob/main/CODE_OF_CONDUCT.md).
+
+## License
+
+OpenHands is released under the **MIT License**, which means:
+
+### You Can:
+- **Use** OpenHands for any purpose, including commercial projects
+- **Modify** the code to fit your needs
+- **Share** your modifications
+- **Distribute** or sell copies of OpenHands
+
+### You Must:
+- **Include** the original copyright notice and license text
+- **Preserve** the license in any substantial portions you use
+
+### No Warranty:
+- OpenHands is provided "as is" without warranty
+- Contributors are not liable for any damages
+
+*Full license text: [LICENSE](https://github.com/OpenHands/OpenHands/blob/main/LICENSE)*
+
+**Special Note:** Content in the `enterprise/` directory has a separate license, and we cannot accept external pull requests for changes to this directory at this time. See `enterprise/LICENSE` for details.
+
+## Ready to make your first contribution?
+
+1. **⭐ Star** our [GitHub repository](https://github.com/OpenHands/OpenHands)
+2. **🔧 Set up** your development environment using our [Development Guide](https://github.com/OpenHands/OpenHands/blob/main/Development.md)
+3. **💬 Join** our [Slack community](https://openhands.dev/joinslack) to meet other contributors
+4. **🎯 Find** a [good first issue](https://github.com/OpenHands/OpenHands/labels/good%20first%20issue) to work on
+5. **📝 Read** our [Code of Conduct](https://github.com/OpenHands/OpenHands/blob/main/CODE_OF_CONDUCT.md)
+
+## Need Help?
+
+Don't hesitate to ask for help:
+- **Slack**: [Join our community](https://openhands.dev/joinslack) for real-time support
+- **GitHub Issues**: [Open an issue](https://github.com/OpenHands/OpenHands/issues) for bugs or feature requests
+- **Email**: Contact us at [contact@openhands.dev](mailto:contact@openhands.dev)
+
+---
+
+Thank you for considering contributing to OpenHands! Together, we're building tools that will democratize AI-powered software development and make it accessible to developers everywhere. Every contribution, no matter how small, helps us move closer to that vision. 
+
+Welcome to the community! 🎉
 
 ### FAQs
 Source: https://docs.openhands.dev/overview/faqs.md
@@ -43355,31 +43988,31 @@ The [Software Agent SDK](/sdk) is a composable Python library for building agent
 
 [OpenHands Cloud](/openhands/usage/cloud/openhands-cloud) is the managed commercial service for running OpenHands without operating your own backend and sandbox infrastructure. It provides hosted execution, integrations, collaboration, access controls, usage reporting, and budget management.
 
-[Sign in with your GitHub account](https://app.all-hands.dev) to try it.
+[Open Agent Canvas](https://app.all-hands.dev/canvas) to sign in and try it.
 
 ## OpenHands Enterprise
 
-[OpenHands Enterprise](/enterprise) provides commercial capabilities and support for organizations that need licensed self-hosting or managed deployment options. Enterprise development lives in a private repository rather than a public `enterprise/` directory.
+[OpenHands Enterprise](/enterprise) provides commercial capabilities and support for organizations that need licensed self-hosting or managed deployment options.
 
 Learn more at [openhands.dev/enterprise](https://openhands.dev/enterprise).
 
 ## Sandbox Server
 
-[Sandbox Server](https://github.com/OpenHands/sandbox-server) is the community supported standalone OpenHands API and sandbox control plane. It creates and manages sandboxed environments that host Agent Server. It does not bundle a frontend but can be configured to use Agent Canvas as its browser client.
-
+[Sandbox Server](https://github.com/OpenHands/sandbox-server) is the community-supported standalone OpenHands API and sandbox control plane. It creates and manages sandboxed environments that host Agent Server. It can be configured to use Agent Canvas as its browser client.
 
 ## Component And Repository Map
 
 | Component | Responsibility | Source |
 |-----------|----------------|--------|
 | **Agent Canvas** | Browser client and control center | [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) |
-| **Software Agent SDK and Agent Server** | Agent framework and remote execution API | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) |
+| **Software Agent SDK** | Agent framework, tools, conversations, and workspaces | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) |
+| **Agent Server** | Remote agent execution API | [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-agent-server) |
 | **Automation Server** | Scheduled and event-driven automation lifecycle | [`OpenHands/automation`](https://github.com/OpenHands/automation) |
+| **Sandbox Server** | Standalone API and sandbox control plane | [`OpenHands/sandbox-server`](https://github.com/OpenHands/sandbox-server) |
 | **Documentation** | Documentation for the OpenHands ecosystem | [`OpenHands/docs`](https://github.com/OpenHands/docs) |
 | **Evaluations** | Benchmark and evaluation infrastructure | [`OpenHands/benchmarks`](https://github.com/OpenHands/benchmarks) |
 
 Each public repository includes its own license. Check the repository you use or modify instead of assuming one license applies to the entire ecosystem.
-
 
 ## Legacy
 
@@ -43402,6 +44035,118 @@ The archived [`OpenHands/legacy`](https://github.com/OpenHands/legacy) snapshot 
 ## Community
 
 Explore all [OpenHands repositories](https://github.com/orgs/OpenHands/repositories) and [join us on Slack](https://openhands.dev/joinslack).
+
+### Issue Triage and the ready-for-dev Gate
+Source: https://docs.openhands.dev/overview/issue-lifecycle.md
+
+# Issue Triage and the ready-for-dev Gate
+
+OpenHands uses automated labeling and readiness checks to route issues toward development. Understanding this lifecycle helps you file issues that are picked up quickly and open pull requests that pass validation on the first try.
+
+Two repositories are covered here:
+
+- **OpenHands/OpenHands** (the monorepo: app, CLI, and Agent Canvas frontend)
+- **OpenHands/software-agent-sdk** (the Agent SDK)
+
+## What Happens After You File an Issue
+
+The labeling pipeline differs between the two repositories, but both converge on the same readiness check.
+
+<Tabs>
+  <Tab title="OpenHands/OpenHands (monorepo)">
+    1. **Type label at creation.** The issue form templates apply the type label (`bug` or `enhancement`) when the issue is created.
+    2. **Topic and priority labels.** The all-hands-bot app adds topic and priority labels later.
+    3. **Readiness check.** Once a type label is present, the issue readiness workflow evaluates the body against the type-specific criteria below and applies the `ready-for-dev` label within about a minute if they are met.
+
+    <Note>
+      When your agent files an issue, it might forget to check the templates, in which case the issue will have no labels. The all-hands-bot app usually adds a type label within about an hour here too — but if it abstains, the issue waits for a human triager. Only once a type label is present does the readiness check run.
+    </Note>
+  </Tab>
+  <Tab title="OpenHands/software-agent-sdk">
+    1. **Type, topic, and priority labels.** The all-hands-bot app applies a type label (`bug` or `enhancement`) plus topic and priority labels, typically within about an hour of filing.
+    2. **Readiness check.** As soon as the type label lands, the issue readiness workflow evaluates the body and applies `ready-for-dev` within about a minute if the criteria below are met.
+
+    <Note>
+      The bot can abstain from assigning a type label when it cannot classify the issue confidently. If your issue sits with no type label, the reliable remedy is to recreate it through the web issue form, which sets the type label at creation.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Filing Tips
+
+- **File through the web form when you can.** It is the deterministic path: the type label is set at creation and the readiness check runs within about a minute.
+- **SDK issues filed via CLI or API** usually still get labeled by the bot within about an hour, with the abstention risk noted above.
+- **Monorepo issues filed via CLI or API** start unlabeled; the triage bot usually types them within about an hour, and only an abstention waits on a human.
+
+## Readiness Criteria
+
+The readiness check parses the issue body into sections using `###` (h3) headings — the same headings the issue forms render for each field — and evaluates the sections for the issue's type.
+
+<Warning>
+  Only `###` headings are parsed. If you write the sections as `##` (h2) headings, every section parses as empty and the issue never gets `ready-for-dev` — with no hint that the heading level is the reason. Keep the `###` headings exactly as the form renders them.
+</Warning>
+
+### Bug Reports
+
+The bug criteria differ between the two repositories:
+
+**OpenHands/OpenHands (monorepo)** — all three must hold:
+
+1. **`### Steps to Reproduce`** is filled in and references a supported run method: `agent-canvas`, `npm run`, or `app.all-hands.dev/canvas`.
+2. **`### Actual Behavior`** contains an embedded screenshot or video of the bug (a dragged-in file, a GitHub attachment, or a video link). A screenshot attached to a different field does not count — the evidence must be inside the Actual Behavior section.
+3. **`### Acceptance Criteria`** contains at least one checklist item (`- [ ] …`) so the fix is verifiable.
+
+**OpenHands/software-agent-sdk** — both must hold:
+
+1. **`### Actual Behavior`** shows the problem as a runnable command or snippet referencing `python`, `pytest`, `uv`, or `pip`.
+2. **`### Acceptance Criteria`** contains at least one checklist item (`- [ ] …`).
+
+### Enhancements
+
+An issue labeled `enhancement` is ready for development when both of the following hold:
+
+1. **`### Desired Behavior`** is filled in.
+2. **`### Acceptance Criteria`** contains at least one checklist item (`- [ ] …`).
+
+<Note>
+  An empty optional form field renders as `_No response_`, which the check treats as empty.
+</Note>
+
+You can run the same check locally against a draft body before filing, using the script in each repository:
+
+```bash
+python .github/scripts/check_issue_readiness.py --body-file /tmp/issue.md --labels bug
+```
+
+## The Pull Request Description Gate
+
+In the monorepo, a workflow validates the PR description before review. It enforces the PR template plus a link back to a ready issue:
+
+- **First line is `HUMAN:`.** The first visible line of the description must be `HUMAN:` alone on the line, followed by a short human-written note (at least 20 characters), followed by the `AGENT:` marker from the template. Both markers must be present.
+- **Template sections are filled in.** The `## Why`, `## Summary`, and `## How to Test` sections must be kept and contain content.
+- **The human-tested checkbox.** If the `A human has tested these changes` checkbox is present, it must be checked.
+- **Frontend changes need visual evidence.** If the PR touches frontend code, the description must include a screenshot or video.
+- **Bug fixes need reproduction evidence.** If the PR is marked as a Bug fix, the description must include a screenshot or video showing the bug before the fix and the result after — this applies even when no frontend code was touched (a terminal capture is fine).
+- **A linked issue with `ready-for-dev`.** The body must reference at least one issue (for example `Fixes #123`), and at least one referenced issue must carry the `ready-for-dev` label.
+- **The PR type must match the linked issue.** A "Bug fix" PR must link an issue labeled `bug`; a "Feature" PR must link one labeled `enhancement`.
+
+You can run the same validation locally before opening the PR:
+
+```bash
+python .github/scripts/check_pr_description.py --body-file /tmp/pr-body.md --files-file /tmp/pr-files.txt
+```
+
+## Common Pitfalls
+
+- **Using `##` instead of `###` headings in an issue.** The readiness parser only reads `###` headings; `##` sections parse as empty and the sections read as missing with no hint of the real cause. See [Readiness Criteria](#readiness-criteria).
+- **Putting the screenshot in the wrong field.** For bug reports, the screenshot or video must be embedded in `### Actual Behavior`. Attaching it elsewhere in the issue does not satisfy the check.
+- **Skipping reproduction evidence on a non-frontend bug fix.** The before/after evidence requirement for Bug fix PRs applies regardless of which files changed.
+- **Filing a monorepo issue via CLI or API.** It starts unlabeled and the readiness check cannot run until a human triager adds a type label. Use the web form for the deterministic path.
+- **Waiting on a stuck SDK issue.** If the triage bot abstains from assigning a type, recreate the issue through the web form rather than waiting.
+
+## Related
+
+- [Contributing](/overview/contributing) — how to get started contributing to OpenHands
 
 ### Model Context Protocol (MCP)
 Source: https://docs.openhands.dev/overview/model-context-protocol.md
@@ -45573,6 +46318,7 @@ Enterprise customers receive:
 
 ## Additional Resources
 
+- [Sizing Guide](/enterprise/sizing-guide) — Size a deployment from peak concurrent sandboxes
 - [OpenHands Documentation](/overview/introduction) — Learn how to use OpenHands
 - [SDK Documentation](/sdk/index) — Build custom agents with the OpenHands SDK
 - [Pricing](https://openhands.dev/pricing) — Compare all OpenHands plans
@@ -46174,6 +46920,32 @@ is `RUNNING`:
 | `FINISHED` | Task completed successfully |
 | `ERROR` | Task encountered an error |
 | `STUCK` | Agent appears to be stuck |
+
+## Conversation Lifecycle Limits
+
+Running conversations are subject to time-based limits that free up cluster
+resources. Two of these are configurable in the admin console under
+**Sandbox Configuration** (see
+[Admin Console Configuration](/enterprise/vm-install/admin-console-configuration)):
+
+- **Idle Time (seconds)** — After a conversation has been idle (no agent or user
+  activity) for this long, its sandbox is **paused**, releasing CPU and memory.
+  Activity resets the idle timer, so an actively-working agent is not paused for
+  idleness. A paused conversation is resumed automatically on next access.
+- **Deletion Time (seconds)** — After a conversation has been **paused** for this
+  long, it and its storage are permanently deleted and can no longer be resumed.
+
+<Note>
+  Separately from the idle timeout, a single running session is capped at a
+  maximum of **12 hours**. This cap applies even to a continuously-active
+  conversation: once a session has been running for 12 hours it is force-paused.
+  Resuming the conversation starts a new 12-hour window. This maximum session
+  duration is not currently configurable.
+</Note>
+
+Because these limits are deployment-wide, they cannot be set per conversation or
+per Agent Profile. Agent Profiles configure the agent's model, tools, and
+behavior, not sandbox lifetime.
 
 ## Read-Only Conversations
 
@@ -47090,6 +47862,634 @@ when the job starts and when it completes.
 | Bitbucket webhook deliveries do not reach OpenHands | Confirm the Bitbucket Data Center network can reach the OpenHands app URL. |
 | Bitbucket API calls fail with TLS errors | Upload the Bitbucket Data Center CA certificate in **Additional Trusted CA Certificates** and redeploy. |
 
+### External LLM Gateways
+Source: https://docs.openhands.dev/enterprise/integrations/external-llm-gateways.md
+
+Many organizations already run an LLM gateway (LiteLLM, Bifrost, or a similar
+OpenAI-compatible proxy) to route, rate-limit, audit, and track cost across
+multiple LLM providers. OpenHands Enterprise (OHE) ships with its own built-in
+LiteLLM instance, and that built-in instance can forward requests to your
+existing gateway instead of calling LLM providers directly.
+
+This guide walks an operator through configuring the built-in LiteLLM to
+forward to an external gateway, for both single-model and multi-model setups.
+
+<Info>
+  This guide is for **OpenHands Enterprise** operators who want to chain the
+  built-in LiteLLM to an external gateway. If you are using OpenHands Cloud or
+  the OSS build and want to point OpenHands at your own LiteLLM proxy directly,
+  see [LiteLLM Proxy](/openhands/usage/llms/litellm-proxy) instead. That path
+  does not involve the built-in LiteLLM.
+</Info>
+
+## Overview
+
+OHE does not point the OpenHands runtime directly at an external gateway. Instead,
+the built-in LiteLLM forwards requests to the external gateway, which in turn
+forwards to the actual LLM provider:
+
+```text
+OpenHands Runtime
+  │
+  ▼
+Built-in LiteLLM (runs inside the OHE cluster)
+  │
+  ▼  (forwards as OpenAI-compatible HTTP)
+External Gateway (your LiteLLM or Bifrost)
+  │
+  ▼
+LLM Provider (Anthropic, OpenAI, Bedrock, Azure, etc.)
+```
+
+This design means:
+
+- OHE never needs credentials for the underlying LLM providers.
+- Your gateway keeps full control of provider keys, routing rules, cost tracking,
+  and audit logs.
+- Only one secret is exchanged: an API key or virtual key for your gateway, which
+  the built-in LiteLLM uses to authenticate.
+
+## What you need from the gateway owner
+
+For each model you want to expose to OHE, you need three pieces of information
+from whoever administers the external gateway:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| **Gateway URL** | Base URL of the gateway, reachable from the OHE cluster | `http://litellm.internal:4000` or `https://bifrost.corp.example.com:8080` |
+| **Gateway Key** | An API key or virtual key on the gateway that authorizes chat/completions calls | `sk-litellm-vk-abc123...` |
+| **Model Name** | The model name as the gateway expects it in the `model` field of the request body | `claude-sonnet-4-5-20250929` (LiteLLM) or `anthropic/claude-sonnet-4-5-20250929` (Bifrost) |
+
+No provider credentials, AWS keys, or Azure endpoints are needed on the OHE
+side. Those all stay on the external gateway.
+
+## Prerequisites
+
+Before you start, confirm:
+
+- **OHE is installed and reachable.** You can sign in at
+  `https://app.<your-base-domain>`.
+- **The external gateway is reachable from the OHE cluster.** The built-in
+  LiteLLM pod makes outbound HTTP/S calls to the gateway, so DNS and network
+  paths must resolve from inside the `openhands` namespace.
+- **You have the built-in LiteLLM master key.** This is needed for the admin
+  API path (testing only) and for verifying the config. Retrieve it with:
+
+  ```bash
+  kubectl -n openhands exec deploy/openhands-litellm -- printenv PROXY_MASTER_KEY
+  ```
+
+- **You have cluster access** to edit Helm values or apply config changes, and
+  can restart the LiteLLM pod.
+
+## Configure the built-in LiteLLM
+
+There are two ways to add gateway-forwarding models to the built-in LiteLLM.
+For production, use the **Helm values**. Use the **admin API** only for light
+testing. It does not survive pod restarts or upgrades and is not recommended
+for regular use.
+
+### Option 1: Admin API (testing only)
+
+<Warning>
+  Models added via the admin API are stored in the LiteLLM database and take
+  effect immediately, but **they are lost when the LiteLLM pod restarts or the
+  cluster is upgraded**. Use this path only to test that a gateway connection
+  works, then move validated models to the Helm values (Option 2) for
+  production.
+</Warning>
+
+```bash
+# Add a model that forwards to an external LiteLLM gateway
+curl -X POST http://<built-in-litellm>:4000/model/new \
+  -H "Authorization: Bearer $PROXY_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_name": "claude-sonnet-4-5-via-gateway",
+    "litellm_params": {
+      "model": "litellm_proxy/claude-sonnet-4-5-20250929",
+      "api_base": "http://<external-gateway>:4000",
+      "api_key": "<gateway-key>"
+    }
+  }'
+```
+
+Models added this way appear immediately in `GET /v1/models` and are usable
+right away. No pod restart is needed.
+
+### Option 2: Helm values (production)
+
+For production, add model entries to the OpenHands Helm chart's
+`proxy_config.model_list`. These survive pod restarts and cluster upgrades.
+
+<Tabs>
+  <Tab title="Replicated (VM/embedded cluster)">
+    1. Open the Replicated admin console at `https://<admin-console-host>:30000`.
+    2. Navigate to the LiteLLM config section and edit the `model_list` YAML.
+    3. Add one entry per model (see the config snippets in
+       [Gateway-specific configuration](#gateway-specific-configuration) below).
+    4. Save and deploy. Replicated will roll the LiteLLM pod with the new config.
+  </Tab>
+  <Tab title="Standalone Helm">
+    Edit `values.yaml` for the `openhands` chart:
+
+    ```yaml
+    proxy_config:
+      model_list:
+        # ... existing models ...
+
+        # Forward to an external LiteLLM gateway
+        - model_name: claude-sonnet-4-5-via-gateway
+          litellm_params:
+            model: litellm_proxy/claude-sonnet-4-5-20250929
+            api_base: http://<external-gateway>:4000
+            api_key: os.environ/EXTERNAL_GATEWAY_KEY
+
+        # Forward to an external Bifrost gateway
+        - model_name: claude-sonnet-4-5-via-bifrost
+          litellm_params:
+            model: openai/anthropic/claude-sonnet-4-5-20250929
+            api_base: http://<bifrost>:8080/v1
+            api_key: os.environ/BIFROST_KEY
+    ```
+
+    Then supply the keys as a Kubernetes secret and redeploy:
+
+    ```bash
+    kubectl -n openhands create secret generic external-gw-keys \
+      --from-literal=EXTERNAL_GATEWAY_KEY='<gateway-key>' \
+      --from-literal=BIFROST_KEY='<bifrost-key>'
+
+    helm upgrade openhands ./charts/openhands -f values.yaml -n openhands
+    ```
+  </Tab>
+</Tabs>
+
+## Gateway-specific configuration
+
+The `model` and `api_base` fields differ depending on whether the external
+gateway is LiteLLM or Bifrost.
+
+### LiteLLM as the external gateway
+
+Use the `litellm_proxy/` model prefix. This tells the built-in LiteLLM to
+forward to another LiteLLM instance and preserve LiteLLM-specific features
+(virtual key headers, spend tracking, team/org metadata).
+
+```yaml
+- model_name: <any-friendly-name-for-openhands>
+  litellm_params:
+    model: litellm_proxy/<model-name-on-external-gateway>
+    api_base: http://<external-gateway>:4000    # no /v1 suffix
+    api_key: <external-gateway-key>
+```
+
+<Note>
+  The `api_base` should **not** include `/v1`. LiteLLM appends the
+  `/v1/chat/completions` path automatically.
+</Note>
+
+### Bifrost as the external gateway
+
+Use the `openai/` model prefix. Bifrost is OpenAI-compatible, so the built-in
+LiteLLM treats it as an OpenAI-compatible endpoint.
+
+```yaml
+- model_name: <any-friendly-name-for-openhands>
+  litellm_params:
+    model: openai/<provider>/<model-on-bifrost>
+    api_base: http://<bifrost>:8080/v1          # include /v1
+    api_key: <bifrost-key>
+```
+
+Key differences from LiteLLM:
+
+- `api_base` **must** include `/v1`. Bifrost does not auto-append it.
+- The model name on Bifrost uses the `provider/model` convention (for example,
+  `anthropic/claude-sonnet-4-5-20250929`), so the full `model` field becomes
+  `openai/anthropic/claude-sonnet-4-5-20250929`.
+
+## Multi-model gateways
+
+Gateways typically host many models across different providers, sizes, and
+routing rules. There are two patterns for exposing them to OHE.
+
+### Pattern A: Explicit per-model entries (recommended)
+
+Add one `model_list` entry per model you want to expose. Each entry maps a
+friendly name (what OHE users see in the dropdown) to a model on the external
+gateway. This works identically for LiteLLM and Bifrost gateways.
+
+```yaml
+proxy_config:
+  model_list:
+    - model_name: claude-sonnet-4-5
+      litellm_params:
+        model: litellm_proxy/claude-sonnet-4-5-20250929
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/EXTERNAL_GW_KEY
+
+    - model_name: claude-haiku-4-5
+      litellm_params:
+        model: litellm_proxy/claude-haiku-4-5-20251001
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/EXTERNAL_GW_KEY
+
+    - model_name: gpt-4o
+      litellm_params:
+        model: litellm_proxy/gpt-4o
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/EXTERNAL_GW_KEY
+```
+
+All three entries point at the same `api_base` and use the same `api_key`.
+Only the upstream model name differs. OHE users see three models in the
+dropdown: `claude-sonnet-4-5`, `claude-haiku-4-5`, `gpt-4o`.
+
+This pattern is explicit, easy to audit, and gives you control over which
+models are exposed and what they are named.
+
+### Pattern B: Wildcard passthrough (not recommended)
+
+<Warning>
+  Pattern B is **not recommended** for production. It floods the OHE model
+  dropdown with hundreds of models that do not exist on the external gateway,
+  and it requires users to type exact model names in a specific format. Use
+  Pattern A unless you have a specific reason to allow arbitrary model names.
+</Warning>
+
+LiteLLM supports a wildcard model entry that forwards any model name to the
+upstream gateway without pre-declaring each one:
+
+```yaml
+proxy_config:
+  model_list:
+    - model_name: "*"
+      litellm_params:
+        model: openai/*
+        api_base: http://<bifrost>:8080/v1
+        api_key: os.environ/BIFROST_KEY
+```
+
+Tested behavior of this pattern:
+
+- **The OHE model dropdown becomes unusable.** `GET /v1/models` on the built-in
+  LiteLLM returns 200+ entries: the explicitly configured models, a literal
+  `*`, and the entire LiteLLM internal OpenAI model registry (models like
+  `openai/gpt-4o`, `openai/gpt-5`, and so on). These OpenAI models do **not**
+  exist on the external gateway. They are LiteLLM's known model names,
+  auto-populated because of the `openai/*` prefix. Users see a flooded
+  dropdown where most entries fail when selected.
+- **Users must type the exact `provider/model` format.** A call to
+  `claude-opus-4-8` fails with a 400 error. A call to
+  `anthropic/claude-opus-4-8` succeeds and is forwarded to the gateway. The
+  user must know the gateway's model naming convention in advance.
+- **Typo protection moves to the gateway.** Unknown model names are forwarded
+  verbatim and rejected by the external gateway, not by the built-in LiteLLM.
+
+The one advantage of Pattern B is that when the external gateway adds a new
+model, it works immediately without a config change on the OHE side. That
+convenience rarely outweighs the cost of a broken dropdown and the need for
+users to know exact model strings.
+
+## Model discovery
+
+OHE discovers available models by calling `GET /v1/models` on the built-in
+LiteLLM. This endpoint returns every model in the `model_list`, both those in
+the Helm config and any added via the admin API for testing.
+
+```bash
+curl http://<built-in-litellm>:4000/v1/models \
+  -H "Authorization: Bearer $PROXY_MASTER_KEY"
+```
+
+For production, models should be in the Helm config so they survive pod
+restarts and cluster upgrades. Models added via the admin API appear
+immediately but are lost on restart. Use that path only for testing.
+
+## Verified capabilities
+
+The following OHE agent capabilities have been tested and confirmed working
+through both LiteLLM and Bifrost external gateways:
+
+| Capability | LiteLLM gateway | Bifrost gateway |
+|-----------|-----------------|-----------------|
+| Basic chat completions | Yes | Yes |
+| Tool and function calling | Yes | Yes |
+| Streaming responses | Yes | Yes |
+| Multi-step agent loops (tool call, result, next response) | Yes | Yes |
+| Token usage tracking | Yes | Yes |
+| Multiple models on same gateway | Yes | Yes |
+
+## Identity and cost attribution
+
+A common reason to chain through an external gateway is cost attribution
+and audit: the gateway owner needs to know which OpenHands user,
+team, or project generated each LLM call so they can route spend to
+the right cost center. This section is a set of recipes. Pick the one
+that matches your scenario.
+
+### What the OpenHands runtime sends by default
+
+The runtime calls the built-in LiteLLM using the OpenAI Python SDK.
+By default the request carries:
+
+- Standard OpenAI SDK headers (`x-stainless-*`, `authorization`).
+- An OpenAI `user` field in the request body, set to the OpenHands
+  user identifier. The built-in LiteLLM records this in its own spend
+  logs but does not forward it to the upstream gateway in the request
+  body.
+
+No `X-OpenHands-User-Id` or similar identity header is attached
+automatically. Everything below adds attribution to that baseline.
+
+### Recipe 1: Per-team attribution with per-key model entries
+
+**Use when** you have a small number of teams or projects and want
+the external gateway to attribute spend by API key.
+
+**How.** Create one API key per team on the external gateway. Add one
+model entry per key in the built-in LiteLLM config:
+
+```yaml
+proxy_config:
+  model_list:
+    - model_name: claude-sonnet-4-5-team-alpha
+      litellm_params:
+        model: litellm_proxy/claude-sonnet-4-5-20250929
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/TEAM_ALPHA_KEY
+
+    - model_name: claude-sonnet-4-5-team-beta
+      litellm_params:
+        model: litellm_proxy/claude-sonnet-4-5-20250929
+        api_base: http://<external-gateway>:4000
+        api_key: os.environ/TEAM_BETA_KEY
+```
+
+Users on each team select their model in the OHE model dropdown. The
+gateway sees the team's key and attributes spend accordingly.
+
+**What appears at the gateway.** The team's `Authorization: Bearer
+<team_key>` header. Standard gateway spend reporting by key.
+
+**Limits.**
+
+- No header forwarding or runtime changes needed.
+- Does not scale to many users because each user needs their own
+  entry and key. Best for a small number of teams or projects.
+
+### Recipe 2: Per-user or per-profile attribution with `extra_headers`
+
+**Use when** you want each LLM call from a specific OpenHands user
+or team to carry identity headers the gateway can read. Works for
+both web UI and API conversations.
+
+**How.** Two steps.
+
+1. Enable header forwarding on the built-in LiteLLM. In your Helm
+   values or Replicated config:
+
+   ```yaml
+   proxy_config:
+     general_settings:
+       forward_client_headers_to_llm_api: true
+   ```
+
+   In the Replicated admin console this is the **Enable Forwarding
+   Client Headers Through LiteLLM to LLM Providers** checkbox under
+   Advanced Options.
+
+2. Set `extra_headers` on the LLM profile. In the OpenHands web UI,
+   open Settings, LLM, Advanced Options, and edit the **Extra
+   Headers** field. Or POST to the profile API:
+
+   ```bash
+   curl -X POST "https://app.<your-domain>/api/v1/settings/profiles/Default" \
+     -H "X-Session-API-Key: $OH_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "preserve_existing_api_key": true,
+       "llm": {
+         "model": "openai/claude-sonnet-4-5-via-gateway",
+         "base_url": "http://openhands-litellm:4000/v1",
+         "extra_headers": {
+           "X-OpenHands-User-Id": "alice",
+           "X-OpenHands-Project": "trade-confirm-demo"
+         }
+       }
+     }'
+   ```
+
+For per-user attribution today, create one LLM profile per user and
+set that user's identifier in the profile's `extra_headers`. Users
+select their own profile from the profile dropdown.
+
+**What appears at the gateway.** Every LLM call from a conversation
+using this profile arrives with the headers you set. The gateway
+reads them and attributes spend accordingly.
+
+**Verified.**
+
+- The `extra_headers` field is exposed on the LLM profile schema in
+  the OHE app and persists through the profile API round-trip.
+- The SDK forwards `llm.extra_headers` to LiteLLM on every call.
+- The built-in LiteLLM forwards headers starting with `x-` (and
+  `anthropic-*`, excluding `x-stainless-*`) to the upstream gateway
+  when `forward_client_headers_to_llm_api: true`. Tested end-to-end
+  with a capture service standing in for the upstream gateway.
+
+**Limits.**
+
+- Headers are static per profile, not per user, so per-user
+  attribution scales with the number of profiles.
+- The header name `x-litellm-session-id` is reserved by the SDK for
+  conversation tracing (see [Trace calls back to a conversation](#trace-calls-back-to-a-conversation)).
+  Setting that key in `extra_headers` is overwritten at call time.
+
+### Recipe 3: Static gateway auth headers with `custom_llm_extra_headers`
+
+**Use when** the external gateway requires a static auth or routing
+header on every request, and your LLM provider setting is Custom LLM.
+
+**How.**
+
+1. In the Replicated admin console, set LLM Provider to **Custom LLM**.
+2. Under Advanced Options, enable **Custom LLM Extra HTTP Headers**.
+3. Enter a JSON object mapping header names to values:
+
+   ```json
+   {"Ocp-Apim-Subscription-Key": "abc123", "X-Tenant-Id": "prod"}
+   ```
+
+4. Deploy. The built-in LiteLLM injects these headers on every
+   outbound request to the gateway.
+
+**What appears at the gateway.** The headers you configured, on every
+outbound request, identical for every user.
+
+**Limits.**
+
+- Gated on the Custom LLM provider. Not available for Anthropic,
+  OpenAI, Bedrock, Azure, or Vertex provider settings.
+- Static values, same for every user. Not a per-user attribution
+  mechanism.
+- Values are rendered as plaintext in the LiteLLM ConfigMap.
+
+### Recipe 4: LiteLLM spend log metadata
+
+**Use when** the external gateway is also LiteLLM and you want
+structured metadata (user, project, cost center) captured on both the
+built-in and upstream LiteLLM spend logs, so you can query and join
+them.
+
+**How.** Enable header forwarding as in Recipe 2. Then set the
+`x-litellm-spend-logs-metadata` header on the LLM profile's
+`extra_headers`. LiteLLM parses this header as a JSON string and
+stores it in the spend log row:
+
+```bash
+curl -X POST "https://app.<your-domain>/api/v1/settings/profiles/Default" \
+  -H "X-Session-API-Key: $OH_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "preserve_existing_api_key": true,
+    "llm": {
+      "model": "openai/claude-sonnet-4-5-via-gateway",
+      "base_url": "http://openhands-litellm:4000/v1",
+      "extra_headers": {
+        "x-litellm-spend-logs-metadata": "{\"openhands_user_id\":\"alice\",\"project\":\"trade-confirm-demo\"}"
+      }
+    }
+  }'
+```
+
+**What appears at the gateway.** The header on every request, and
+the parsed metadata in LiteLLM's spend database on both sides of the
+chain.
+
+**Limits.**
+
+- Only LiteLLM gateways interpret the JSON natively. Bifrost sees the
+  header but does not parse it.
+- The value is a JSON string, not a nested object. Serialize before
+  putting it in `extra_headers`.
+
+### Recipe 5: Batch reconciliation with conversation tags
+
+**Use when** you can reconcile gateway spend with OpenHands
+conversations after the fact and do not need per-call attribution
+visible at the gateway.
+
+**How.** Tag conversations with your external identifiers when you
+start them via the API. Tag keys must be lowercase alphanumeric (no
+underscores or hyphens); values are strings up to 256 characters:
+
+```bash
+curl -X PATCH "$CONVERSATION_URL" \
+  -H "X-Session-API-Key: $SESSION_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"tags": {"costcenter": "trade-confirm-demo", "externalproject": "proj-42"}}'
+```
+
+Export gateway spend logs filtered by time and model. Export the
+OpenHands conversation list filtered by tag. Join by timestamp and
+model. See the
+[conversation-tags example](https://github.com/jpshackelford/oh-examples/tree/main/conversation-tags)
+for a working round-trip.
+
+**What appears at the gateway.** Nothing. Tags live on the OpenHands
+conversation record and never touch the LLM request.
+
+**Limits.** Not real-time. Reconciliation is a batch job.
+
+### Choosing a recipe
+
+| Scenario | Recipe |
+|----------|--------|
+| Per-team attribution, few teams | Recipe 1 |
+| Per-user attribution, small number of users | Recipe 2 |
+| Static gateway auth header, Custom LLM provider | Recipe 3 |
+| Metadata in LiteLLM spend logs on both sides of the chain | Recipe 4 |
+| Batch reconciliation after the fact | Recipe 5 |
+
+Recipes are not mutually exclusive. A common combination is Recipe 1
+(per-team keys) plus Recipe 2 (per-user headers within a team).
+
+### Trace calls back to a conversation
+
+Independent of attribution, the SDK stamps every LLM request with
+`x-litellm-session-id: <conversation_id>`. When
+`forward_client_headers_to_llm_api: true`, this header reaches the
+external gateway. It is useful for:
+
+- Correlating a spend log row on the gateway to the OpenHands
+  conversation that produced it.
+- Joining logs across the built-in and external LiteLLM instances.
+- Debugging which conversation is generating traffic.
+
+It is not an attribution mechanism. The value is a conversation ID,
+not a user ID. Use it together with one of the recipes above when you
+need both attribution and traceability.
+
+## Security notes
+
+- The external gateway key is stored as a Kubernetes secret in the OHE cluster.
+  Limit access to that secret to the LiteLLM pod's service account.
+- The built-in LiteLLM logs request and response metadata (model, token counts,
+  latency) but not prompt or response content by default. The external gateway
+  is the place to enforce content-level audit logging if needed.
+- If the external gateway is outside the OHE cluster, use HTTPS and ensure the
+  LiteLLM pod can resolve and reach the gateway's DNS name.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Model not found (404 from built-in LiteLLM)">
+    - Verify the model appears in `GET /v1/models` on the built-in LiteLLM.
+    - If added via admin API, check the response from `/model/new` for errors.
+    - If added via Helm values, verify the pod restarted after the values
+      change.
+  </Accordion>
+
+  <Accordion title="401 from external gateway">
+    - Verify the `api_key` in `litellm_params` is a valid key on the external
+      gateway.
+    - For Bifrost, check that `enforceAuthOnInference` is either `false` (for
+      testing) or that a valid virtual key is configured.
+  </Accordion>
+
+  <Accordion title="400 model not found from external gateway">
+    The `model` field in `litellm_params` must match what the external gateway
+    expects:
+    - For LiteLLM gateways: use the `model_name` from the gateway's config,
+      for example `litellm_proxy/claude-sonnet-4-5-20250929`.
+    - For Bifrost: use `provider/model`, for example
+      `openai/anthropic/claude-sonnet-4-5-20250929`.
+  </Accordion>
+
+  <Accordion title="Tool calls not working">
+    - Verify the model supports tool/function calling (some smaller models do
+      not).
+    - Test directly against the external gateway (bypass the built-in LiteLLM)
+      to isolate whether the issue is in the gateway or the chaining.
+  </Accordion>
+
+  <Accordion title="Model dropdown shows hundreds of OpenAI models I did not configure">
+    This means a wildcard (`model_name: "*"`) entry is in the `model_list`.
+    The `openai/*` prefix causes LiteLLM to auto-populate its internal OpenAI
+    model registry into `/v1/models`. Remove the wildcard entry and use
+    explicit per-model entries (Pattern A) instead.
+  </Accordion>
+</AccordionGroup>
+
+## Reference
+
+- OpenHands LLM configuration overview: [LLM Configuration](/openhands/usage/llms/llms)
+- LiteLLM proxy (OSS/Cloud path, no built-in LiteLLM): [LiteLLM Proxy](/openhands/usage/llms/litellm-proxy)
+- LiteLLM model config reference: [LiteLLM docs](https://docs.litellm.ai/docs/proxy/configs)
+- Bifrost configuration reference: [Bifrost docs](https://docs.bifrost.maxim.ai)
+
 ### Jira Data Center
 Source: https://docs.openhands.dev/enterprise/integrations/jira-data-center.md
 
@@ -47779,6 +49179,10 @@ OpenHands Enterprise consists of several components deployed as Kubernetes workl
 
 ## Guides
 
+<Card title="Sizing Guide" icon="ruler" href="/enterprise/sizing-guide">
+  Size your node pools, volume storage, and database from peak concurrent sandboxes.
+</Card>
+
 <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
   End-to-end installation instructions using your OpenHands Enterprise license.
 </Card>
@@ -47801,6 +49205,10 @@ OpenHands Enterprise consists of several components deployed as Kubernetes workl
 
 <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
   Configure memory, CPU, and storage for optimal performance.
+</Card>
+
+<Card title="Upgrade Guidance" icon="circle-up" href="/enterprise/k8s-install/upgrade-guidance">
+  Generic advice for upgrading the Kubernetes cluster underneath OpenHands.
 </Card>
 
 ## Request Access
@@ -48660,6 +50068,9 @@ For production deployments, we recommend integrating with a monitoring solution
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Sizing Guide" icon="ruler" href="/enterprise/sizing-guide">
+    Translate peak concurrent sandboxes into node pools, storage, and database size.
+  </Card>
   <Card title="K8s Install Overview" icon="dharmachakra" href="/enterprise/k8s-install/index">
     Return to the Kubernetes installation overview.
   </Card>
@@ -48755,6 +50166,103 @@ The output should be `sysbox-runc`.
     Deploy OpenHands once the cluster is ready.
   </Card>
 </CardGroup>
+
+### Upgrade Guidance
+Source: https://docs.openhands.dev/enterprise/k8s-install/upgrade-guidance.md
+
+A few OpenHands-specific properties may make a cluster upgrade more high-touch than usual. Sandboxes run on a [Sysbox](/enterprise/k8s-install/sysbox) node pool. The pods in this node pool carry a zero-tolerance [pod disruption budget](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) which means that typical upgrade operations will hang indefinitely while those pods refuse eviction.
+
+This page collects general guidance that applies on any managed Kubernetes offering (GKE, EKS, AKS) or on self-managed clusters. See the information below in an advisory capacity, rather than a runbook.
+
+Upgrade in this order: control plane first, then your ordinary node pools, then the Sysbox pool. Never let nodes run ahead of the control plane. Only the sysbox node pool may need special handling 
+
+## Control Plane
+
+A plain upgrade is fine. Follow the usual pre-upgrade best practices for your platform, such as:
+
+- **Review removed and deprecated APIs** for the target version and confirm nothing you deploy still uses them. Most managed platforms surface this for you — GKE deprecation insights, `kubectl get --raw /metrics | grep apiserver_requested_deprecated_apis`, or a tool like [Pluto](https://github.com/FairwindsOps/pluto) against your manifests.
+- **Move one minor version at a time** and check the version skew policy of your provider before you start.
+- **Expect the upgrade to be one-way.** No managed platform lets you roll a control plane back, so verify on a non-production cluster first if you have one.
+
+OpenHands itself is unaffected by a control-plane upgrade. Sandboxes keep running throughout.
+
+## Non-Sandbox Node Pools
+
+Also a plain upgrade. A standard surge upgrade is appropriate here — the platform brings up new nodes, drains the old ones, and your workloads reschedule.
+
+Expect roughly the same behavior you would see when upgrading OpenHands itself: server and supporting pods restart, in-flight requests may blip, and the UI briefly reconnects. If your OpenHands deployment runs a single replica, that blip is a short outage. Scale up beforehand if you need to avoid it — see [Resource Limits](/enterprise/k8s-install/resource-limits) for replica and autoscaling settings.
+
+Running sandboxes are not affected, since they live on the Sysbox pool.
+
+## Sysbox Node Pool
+
+This is the pool that needs a decision. Sandbox pods refuse eviction while they are alive, so a plain drain will not complete — the upgrade hangs rather than fails, often with no obvious signal beyond a node stuck in `SchedulingDisabled`.
+
+Pick a branch based on whether you can tolerate interrupting active conversations.
+
+<Tabs>
+  <Tab title="Maintenance window (in-place)">
+    Simpler and needs no extra capacity, but it ends active conversations.
+
+    1. **Cordon the Sysbox nodes** so no new sandboxes land on them, and lower the pool's autoscaler ceiling if it has one.
+    2. **Drain the remaining sandboxes.** Either wait for active conversations to finish, or end them. The upgrade will not proceed while sandbox pods are still alive, so getting to zero is the gating step — not an optimization.
+    3. **Confirm the pool is empty** before starting:
+
+       ```bash
+       kubectl get pods -n openhands -o wide --field-selector spec.nodeName=<node>
+       ```
+
+    4. **Run a plain upgrade** on the pool once no sandbox pods remain.
+
+    Communicate the window to your users. From their side, an ended sandbox looks like a conversation that stopped working.
+  </Tab>
+  <Tab title="Zero disruption (blue/green)">
+    Stand up a second Sysbox pool at the target version and let the old one drain by attrition. No running sandbox is ever evicted, so the disruption budget never comes into play.
+
+    1. **Create a new Sysbox pool** at the target version, alongside the existing one. Install Sysbox on it as usual — see [Installing Sysbox](/enterprise/k8s-install/sysbox).
+    2. **Verify the new pool functionally, not just that nodes report `Ready`.** A node can be `Ready` with Sysbox not installed correctly. Confirm the RuntimeClass is registered and land one real sandbox on the new pool before steering anything to it:
+
+       ```bash
+       kubectl get runtimeclass sysbox-runc
+       kubectl get pods -n openhands -o wide | grep <new-node-name>
+       ```
+
+    3. **Cordon the old pool and lower its autoscaler ceiling.** New sandboxes then schedule onto the new pool while existing ones keep running where they are.
+    4. **Wait for the old pool to empty** as conversations finish and their sandboxes terminate. How long that takes is a function of your conversation lifetimes, not the upgrade.
+    5. **Delete the old pool** once no sandbox pods remain on it.
+
+    <Note>
+      This approach needs enough capacity for both pools at once, at least briefly. On a large pool that can mean a meaningful number of extra instances — reserve the capacity ahead of the window if your cloud supports reservations, since instance stockouts are a more common cause of a stalled cutover than anything Kubernetes does.
+    </Note>
+  </Tab>
+</Tabs>
+
+### Pod Disruption Budgets
+
+The sandbox disruption budget only interferes when active sandboxes are in play. Once no sandbox pods are running, it is inert and the pool upgrades like any other. That is why both branches above converge on the same thing: get the pool to zero sandboxes, by attrition or by ending them, and the rest is ordinary.
+
+If an upgrade appears to hang, check what is still holding the budget:
+
+```bash
+kubectl get pdb -A
+kubectl get pods -n openhands -o wide
+```
+
+## Upgrading OpenHands Itself
+
+Cluster upgrades are independent of OpenHands releases. To upgrade the OpenHands Enterprise chart, see [Install with Helm](/enterprise/k8s-install/installation) and the [Release Notes](/enterprise/release-notes).
+
+Avoid changing both at once: upgrade the cluster, verify sandboxes still launch, and only then move the application version.
+
+## Additional Info
+
+<Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/sysbox">
+  Requirements and installation for the sandbox node pool runtime.
+</Card>
+
+<Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+  Size the application and sandbox workloads before planning capacity.
+</Card>
 
 ### Plugin Marketplace
 Source: https://docs.openhands.dev/enterprise/plugin-marketplace.md
@@ -48998,6 +50506,10 @@ Before you begin, make sure you have the following ready:
 
 You will need a VM to host OpenHands Enterprise. Choose one of the options below to provision your infrastructure.
 
+<Note>
+  The requirements below are the trial baseline, which comfortably supports about 15 concurrent sandboxes. For a larger rollout, pick your VM from the [Sizing Guide](/enterprise/sizing-guide) before provisioning.
+</Note>
+
 <Tabs>
   <Tab title="AWS with Terraform (Recommended)">
     We provide a [Terraform module](https://github.com/All-Hands-AI/OpenHands-Cloud/tree/main/terraform/aws) that provisions a properly configured environment
@@ -49029,6 +50541,17 @@ You will need a VM to host OpenHands Enterprise. Choose one of the options below
       | **OS** | Linux (x86-64 architecture) |
       | **Init system** | systemd |
       | **Access** | Root access (sudo) required |
+
+      <Note>
+        We recommend **Ubuntu 24.04 LTS**. The default **Sandbox Isolation** runtime
+        (Sysbox) is best supported on Ubuntu and requires **Linux kernel 6.3 or newer**,
+        which Ubuntu 24.04 provides. Very new, non-LTS releases (for example, Ubuntu 25.10
+        or later) may ship kernels that are not yet supported by Sysbox and can cause
+        sandbox containers to fail during startup. If you do not need Docker inside the
+        sandbox, you can instead select the standard runtime under **Sandbox Isolation** in
+        the installer, which does not require a Sysbox-compatible kernel. See
+        [Docker in Sandbox](/enterprise/docker-in-sandbox) for details.
+      </Note>
     </Accordion>
 
     <Accordion title="Network requirements">
@@ -49401,6 +50924,152 @@ OpenHands Enterprise is now running. You can open a repository or start a new co
 
 ### Release Notes
 Source: https://docs.openhands.dev/enterprise/release-notes.md
+
+## 0.45.0
+
+This release introduces **Canvas Extensions**, a major new capability that enables installing, managing, and refreshing extensions with manifest support and persistent storage. The Agent SDK saw significant improvements with conversation error classification, accumulated LLM cost tracking, and observability enhancements including detached traces for delegate conversations. The Automation component was modernized with the retirement of the standalone frontend, enhanced preset metadata, and LLM cost tracking. Critical stability fixes addressed S3/MinIO silent truncation issues, improved CSP compatibility for the Monaco diff viewer, and enhanced secrets handling across the platform.
+
+### Enterprise Server
+
+#### Features
+* feat: migrate existing managed MiniMax M2.7 settings to the GLM 5.2 default by @juanmichelini in https://github.com/OpenHands/enterprise/pull/140
+
+#### Bug Fixes
+* fix(sandbox): OHE-3021 : honor OH_SANDBOX_MAX_NUM_SANDBOXES in RemoteSandboxServiceInjector fallback by @tofarr in https://github.com/OpenHands/enterprise/pull/153
+* fix: self-host Monaco so the diff viewer works under CSP by @hieptl in https://github.com/OpenHands/enterprise/pull/155
+* fix: stop silent truncation of archived and shared conversations on S3/MinIO by @hieptl in https://github.com/OpenHands/enterprise/pull/158
+* fix: stop surfacing Git provider token required errors for SSO-only users by @hieptl in https://github.com/OpenHands/enterprise/pull/159
+* fix(s3 file store): OHE-3079 : paginate list_objects_v2 to avoid silent truncation at 1000 keys by @tofarr in https://github.com/OpenHands/enterprise/pull/157
+* fix: redirect Automations sidebar icon to /canvas/automations by @hieptl in https://github.com/OpenHands/enterprise/pull/162
+
+---
+
+### Software Agent SDK
+
+#### Features
+* feat(llm): verify kimi-for-coding (Kimi Code membership) by @georgeglarson in https://github.com/OpenHands/software-agent-sdk/pull/4150
+* feat(sdk): classify conversation errors by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/4316
+* feat: report accumulated LLM cost in the automation completion callback by @hieptl in https://github.com/OpenHands/software-agent-sdk/pull/4311
+* feat(agent-server): Canvas Extensions manifest and containment [1/4] by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4361
+* feat(sdk): track requested_ref alongside resolved_ref in InstallationInfo [2/4] by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4375
+* feat(agent-server): Canvas Extensions installation persistence [3/4] by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4364
+* feat(agent-server): Canvas Extensions staged refresh (check/apply) [4/4] by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4374
+
+#### Bug Fixes
+* fix(sdk): respect subscription validator composition by @Sehlani042 in https://github.com/OpenHands/software-agent-sdk/pull/3953
+* fix(agent-server): keep secrets out of workspace persistence by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/3990
+* fix(acp): surface Claude Opus 5 in Claude Code model picker by @nicolasdmolina in https://github.com/OpenHands/software-agent-sdk/pull/4326
+* fix: PATCH /api/settings loads the profile's LLM when setting active_profile by @emmanuel-adu in https://github.com/OpenHands/software-agent-sdk/pull/4319
+* fix(git): demote expected command failures to debug by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/4341
+* fix(sdk): nudge before hard-terminating on a repeating action-error pattern by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4332
+* fix(mcp): reconcile live agent tool snapshots by @Shimada666 in https://github.com/OpenHands/software-agent-sdk/pull/4367
+* fix(observability): mark utility LLM spans (title generation, ask_agent) by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/4359
+* fix(observability): give delegate conversations their own detached Laminar trace by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/4378
+* fix(browser): a browser tool that cannot start should not fail the conversation by @onatozmenn in https://github.com/OpenHands/software-agent-sdk/pull/4342
+* fix(observability): keep the conversation object out of TOOL span input by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/4379
+
+#### Maintenance
+* chore(ci): remove QA Changes workflows by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4299
+* refactor(llm): add LiteLLM-backed provider abstraction by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/2363
+* chore(sdk): deprecate AgentBase.model_dump_succint by @AzeelSajjad in https://github.com/OpenHands/software-agent-sdk/pull/4328
+* refactor(observability): stop depending on lmnr to propagate trace context into tool workers by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/4360
+* test: stop ambient LMNR env vars deciding what the tracing tests measure by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/4390
+* chore: remove deprecated features past their 1.41.0 removal deadline by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/4394
+
+---
+
+### Automation
+
+#### Features
+* feat: retire the standalone automation frontend by @hieptl in https://github.com/OpenHands/automation/pull/284
+* feat: report the configured automation timeout cap by @neubig in https://github.com/OpenHands/automation/pull/296
+* feat: record accumulated LLM cost per automation run by @hieptl in https://github.com/OpenHands/automation/pull/280
+* feat: set descriptive titles on automation-born conversations by @hieptl in https://github.com/OpenHands/automation/pull/312
+* feat: add generic preset metadata field to Automation model by @hieptl in https://github.com/OpenHands/automation/pull/313
+* feat: add template provenance, idempotent enablement, and first-run outcome to presets by @hieptl in https://github.com/OpenHands/automation/pull/322
+
+#### Bug Fixes
+* fix: normalize SQLite telemetry timestamps by @Linxiushen in https://github.com/OpenHands/automation/pull/301
+* fix: default FILE_STORE to local instead of gcs by @neubig in https://github.com/OpenHands/automation/pull/314
+
+---
+
+### OpenHands Cloud (Helm Chart)
+
+#### Features
+* feat(chart): OHE-3021 : expose OH_SANDBOX_MAX_NUM_SANDBOXES as a ConfigOption by @tofarr in https://github.com/OpenHands/OpenHands-Cloud/pull/1035
+
+---
+
+## 0.41.0
+
+This release advances the **Agent Canvas** rollout with a new homepage banner and an updated Canvas build, and sets GLM 5.2 as the default model for SaaS deployments. The remainder of the release focuses on Codex authentication handling, secrets and settings reliability, and a range of stability fixes across the Enterprise Server and Helm charts.
+
+### Enterprise Server
+
+#### Features
+* feat: set SaaS default model to GLM 5.2 by @juanmichelini in https://github.com/OpenHands/enterprise/pull/89
+* feat: Add Agent Canvas homepage banner by @malhotra5 in https://github.com/OpenHands/enterprise/pull/124
+* feat: expose observability fields on app conversations by @juanmichelini in https://github.com/OpenHands/enterprise/pull/130
+
+#### Bug Fixes
+* fix(frontend): wire Export CSV buttons on Usage & Monitoring Overview and Models tabs by @saurya in https://github.com/OpenHands/enterprise/pull/78
+* fix: Pass pod security context from runtime-api warm configs to sandbox start by @tofarr in https://github.com/OpenHands/enterprise/pull/108
+* fix: skip default CSP on FastAPI docs paths (OHE-2815) by @tofarr in https://github.com/OpenHands/enterprise/pull/118
+* fix(settings): keep active LLM profile selected during updates by @saurya in https://github.com/OpenHands/enterprise/pull/107
+* fix(enterprise): Fix 405 error when uploading files before conversation is ready by @jpelletier1 in https://github.com/OpenHands/enterprise/pull/134
+* fix: propagate registered marketplaces to conversations by @tofarr in https://github.com/OpenHands/enterprise/pull/126
+* fix(app-server): serialize secrets writes to fix lost-write race (OHE-3052) by @tofarr in https://github.com/OpenHands/enterprise/pull/133
+* fix: load_settings should show meta for secrets by @tofarr in https://github.com/OpenHands/enterprise/pull/138
+* fix(enterprise): make POST /api/organizations/provision-user idempotent (OHE-2980) by @tofarr in https://github.com/OpenHands/enterprise/pull/117
+* fix: validate Codex auth secrets on save by @simonrosenberg in https://github.com/OpenHands/enterprise/pull/141
+* fix(app-server): pre-flight Codex credentials by @simonrosenberg in https://github.com/OpenHands/enterprise/pull/139
+
+#### Maintenance
+* chore(enterprise): enforce PostgreSQL-only migrations by @simonrosenberg in https://github.com/OpenHands/enterprise/pull/95
+
+---
+
+### Runtime API
+
+#### Features
+* feat(helm): add generic-device-plugin DaemonSet for FUSE support by @tofarr in https://github.com/OpenHands/runtime-api/pull/685
+
+#### Bug Fixes
+* fix: resolve real service-account email for GCS URL signing by @jlav in https://github.com/OpenHands/runtime-api/pull/686
+
+#### Maintenance
+* chore: PLTF-3242 Emit cleanup backlog/throughput counts as a structured log summary by @aivong-openhands in https://github.com/OpenHands/runtime-api/pull/665
+* build(deps): bump aiohttp from 3.13.4 to 3.14.1 by @dependabot[bot] in https://github.com/OpenHands/runtime-api/pull/680
+* build(deps): bump ddtrace from 3.5.1 to 4.8.2 by @dependabot[bot] in https://github.com/OpenHands/runtime-api/pull/687
+* build(deps): bump awscli from 1.44.38 to 1.44.78 by @dependabot[bot] in https://github.com/OpenHands/runtime-api/pull/689
+* build(deps): bump pyasn1 from 0.6.3 to 0.6.4 by @dependabot[bot] in https://github.com/OpenHands/runtime-api/pull/688
+
+---
+
+### OpenHands Cloud (Helm Chart)
+
+#### Features
+* feat(charts): device-plugin subchart for kvm/fuse passthrough by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/1006
+* feat(openhands): PLTF-1247 offer Valkey as an opt-in cache backend by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1007
+* feat(agent-canvas): bump chart image tag to 1.10.0 by @hieptl in https://github.com/OpenHands/OpenHands-Cloud/pull/1024
+
+#### Bug Fixes
+* fix(budget-maintenance): disable cronjob until fixed image ships by @saurya in https://github.com/OpenHands/OpenHands-Cloud/pull/999
+* fix(replicated): preserve Keycloak identity provider timeout by @ak684 in https://github.com/OpenHands/OpenHands-Cloud/pull/1001
+* fix: disable email changes for Replicated installs by @ak684 in https://github.com/OpenHands/OpenHands-Cloud/pull/1002
+* fix(rustfs): PLTF-1250 make the bundled store deployable when enabled by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1010
+* fix(charts): pass fuse_s3_mount through warm-runtimes configmap by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/1011
+* fix(build): PLTF-1250 stop shipping Chart.yaml.bak in released charts by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1013
+* fix(build): PLTF-1250 restore Chart.lock after packaging by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1014
+* fix(charts)!: OHE-3033 durable automation package storage by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/1015
+* fix(charts): restore the nested sandbox hostname default by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/1021
+* fix(litellm-helm): bump default image tag to 1.94.1 for memory fix by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1023
+* fix(budget-maintenance): re-enable cronjob with 1.49.1 by @saurya in https://github.com/OpenHands/OpenHands-Cloud/pull/1018
+
+#### Maintenance
+* chore: bump Agent Canvas chart image to 1.9.0 by @malhotra5 in https://github.com/OpenHands/OpenHands-Cloud/pull/1009
+* chore: add storage-lifetime and naming checks to the code-review skill by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/1016
 
 ## 0.36.1
 
@@ -49778,6 +51447,107 @@ Several additional Jira Cloud and Data CEnter enhancements have been made to imp
 * ci: PLTF-3193 dispatch development chart bumps after publish by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/843
 * test: PLTF-1257 helm-unittest setup by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/894
 * chore: add CODEOWNERS by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/878
+
+### Sizing Guide
+Source: https://docs.openhands.dev/enterprise/sizing-guide.md
+
+OpenHands Enterprise deployments are sized primarily based on expected **peak concurrent sandboxes** — the largest number of sandboxes you expect to be running at the same time. Keep in mind that one user can have multiple sandboxes running at one time.
+
+<Note>
+  The **Users** column in the tables below is a rough translation of peak sandboxes into headcount, not an input. Size on peak sandboxes; the user estimate is a very rough guide
+</Note>
+
+## Planning Unit
+
+Both tables below are built from the same per-sandbox allocation:
+
+| Resource | Per sandbox |
+|----------|-------------|
+| CPU | 0.5 vCPU |
+| Memory | 4 GiB |
+| Node disk | 10 GiB |
+| Volume storage | 10 GiB |
+
+If you raise the sandbox defaults (for large monorepos or memory-hungry builds), scale the totals in the tables by the same factor. See [Resource Limits](/enterprise/k8s-install/resource-limits) for how to change these values.
+
+## Installation Modes
+
+This guide covers the two supported installation modes:
+
+<CardGroup cols={2}>
+  <Card title="Embedded Cluster (Single VM)" icon="server" href="/enterprise/quick-start">
+    The installer builds a single-node k0s cluster on a VM you provide. Fixed capacity, configured through the Admin Console, everything bundled on one machine.
+  </Card>
+  <Card title="Helm (Existing Kubernetes)" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Install into a cluster you already run, with standard Kubernetes elasticity and autoscaling.
+  </Card>
+</CardGroup>
+
+## Replicated Embedded Cluster — Single VM
+
+Machine sizes below are based on the peak sandboxes, so feel free to size up or down based on expected usage.
+
+| Peak sandboxes | Users (estimate) | VM | Example machine types | Data disk (starting recommendation) |
+|----------------|------------------|----|-----------------------|-------------------------------------|
+| **5** | ~25 | 8 vCPU / 32 GiB | `e2-standard-8`, `m6i.2xlarge`, `D8s_v5` | 500 GiB SSD |
+| **15** | ~60 | 16 vCPU / 64 GiB | `n2-standard-16`, `m6i.4xlarge`, `D16s_v5` | 1 TiB SSD |
+| **30** | ~125 | 32 vCPU / 128 GiB | `n2-standard-32`, `m6i.8xlarge`, `D32s_v5` | 1.5 TiB SSD |
+| **50** | ~250 | 64 vCPU / 256 GiB | `n2-standard-64`, `m6i.16xlarge`, `D64s_v5` | 3 TiB SSD |
+| **100** | ~400 | 96 vCPU / 384 GiB | `n2-standard-96`, `m6i.24xlarge`, `D96s_v5` | 4 TiB SSD |
+| **Above 100** | — | Use a Kubernetes install, or contact us for a sizing consultation | — | — |
+
+The 16 vCPU / 64 GiB row matches the minimum VM in the [Quick Start](/enterprise/quick-start) system requirements. Trials that stay below roughly 15 concurrent sandboxes are well served by that baseline.
+
+<Warning>
+  **Put the data disk on a separate expandable volume, not the boot disk.** Sandbox volumes on a single VM are host directories that consume actual bytes rather than preallocating, so the disk grows with real usage and is meant to be resized in place as demand increases.
+</Warning>
+
+## Replicated Helm Installation
+
+Use two node pools: a tainted pool that runs **only** sandboxes, and an untainted pool that runs everything else. This keeps a burst of sandboxes from evicting platform components.
+
+Recommended node pools:
+
+- **Sandbox pool**: 16 vCPU / 64 GiB / 400 GiB SSD
+- **Platform pool**: 8 vCPU / 32 GiB / 100 GiB
+
+| Peak sandboxes | Users (estimate) | Sandbox nodes (min–max) | Platform nodes | Volume storage (start) | PostgreSQL (in-cluster by default) |
+|----------------|------------------|-------------------------|----------------|------------------------|------------------------------------|
+| **10** | ~50 | 1–1 | 2 | 1 TiB | 2 vCPU / 8 GiB — fits the platform pool |
+| **25** | ~125 | 1–3 | 2 | 2.5 TiB | 2 vCPU / 8 GiB — fits the platform pool |
+| **50** | ~250 | 1–5 | 2 | 5 TiB | 2 vCPU / 8 GiB — fits the platform pool |
+| **100** | ~500 | 1–10 | 3 | 10 TiB | 4 vCPU / 16 GiB — fits the platform pool |
+| **200** | ~1,000 | 2–20 | 3 | 20 TiB | 4 vCPU / 16 GiB — fits the platform pool |
+| **500** | ~2,500 | 3–48 | 4 | 50 TiB | 8 vCPU / 32 GiB — **needs a dedicated node** |
+| **1,000** | ~5,000 | 5–96 | 5 | 100 TiB | 16 vCPU / 64 GiB — **needs a dedicated node** |
+
+Notes on the table:
+
+- **Minimum node counts assume autoscaling.** If your cluster cannot scale up quickly, raise the minimum toward your typical daily peak so users don't wait on node provisioning.
+- **PostgreSQL** is deployed in-cluster by default. At 500 peak sandboxes and above, give it a dedicated node — or use [External PostgreSQL](/enterprise/external-postgres) and size it with your database team.
+
+## Adjusting After Rollout
+
+- Track sandbox pod count over time and size to the observed peak, plus headroom.
+- Watch memory usage against limits to catch OOMKills, and usage against requests to catch evictions. See [Resource Limits](/enterprise/k8s-install/resource-limits) for the metrics and the settings to change.
+- Grow volume storage before it fills. Sandbox workspaces are deleted with their sandbox, but their usage and retention may outstrip initial storage numbers
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/enterprise/quick-start">
+    Provision a VM and install OpenHands Enterprise.
+  </Card>
+  <Card title="Kubernetes Installation" icon="dharmachakra" href="/enterprise/k8s-install/index">
+    Deploy into an existing cluster with Helm.
+  </Card>
+  <Card title="Resource Limits" icon="gauge-high" href="/enterprise/k8s-install/resource-limits">
+    Tune CPU, memory, and storage for the application server and sandboxes.
+  </Card>
+  <Card title="Conversations and Sandboxes" icon="boxes-stacked" href="/enterprise/conversations-and-sandboxes">
+    Understand how conversations map onto sandboxes and how placement affects capacity.
+  </Card>
+</CardGroup>
 
 ### Skills and Plugins
 Source: https://docs.openhands.dev/enterprise/skills-and-plugins.md
@@ -50251,6 +52021,14 @@ See [External PostgreSQL](/enterprise/external-postgres) for version, encoding, 
 | `Warm Runtime Count` | Number of ready sandboxes kept for faster conversation startup. Set to `0` for cold starts only. |
 | `Additional Host Path Mounts` | Host paths mounted into every sandbox, one per line as `host_path:container_path[:ro\|rw]`. |
 | `Enable /dev/kvm passthrough (QEMU/KVM)` | Makes host KVM acceleration available inside sandboxes. The node must expose `/dev/kvm`. |
+
+<Note>
+  `Idle Time` and `Deletion Time` control when idle and paused conversations are
+  reclaimed. A single running session is additionally capped at 12 hours
+  regardless of these values; this maximum is not currently configurable. See
+  [Conversations and Sandboxes](/enterprise/conversations-and-sandboxes) for the
+  full conversation lifecycle.
+</Note>
 
 Resource requests are scheduling reservations. Multiply per-sandbox requests by the expected concurrent sandbox count and leave capacity for the platform services.
 
