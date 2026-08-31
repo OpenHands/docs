@@ -1,0 +1,174 @@
+---
+title: Canvas Extensions (Beta)
+description: Add trusted custom pages and integrated tools to Agent Canvas without forking the application.
+---
+
+Canvas Extensions let you add custom pages to Agent Canvas without changing the Agent Canvas source code. An extension can provide an integrated dashboard, project tool, or other browser interface that connects to the active Agent Server.
+
+<Warning>
+  Canvas Extensions are a beta feature. The name and extension API may change as the feature develops.
+</Warning>
+
+## What Canvas Extensions Add
+
+The initial beta supports **custom pages**. When you enable an extension, its pages appear in the Agent Canvas sidebar and open inside the application.
+
+An extension page can:
+
+- Render a browser-based interface inside Agent Canvas
+- Add nested routes below its declared page path
+- Navigate to other Agent Canvas pages
+- Make authenticated HTTP requests to the active Agent Server
+- Read metadata about the extension and active backend
+
+The current beta does not support conversation tabs, arbitrary interface slots, themes, visualizer replacement, or direct Agent Server WebSocket connections.
+
+Canvas Extensions change the Agent Canvas interface. They are different from [skills](/overview/skills), which give agents instructions and knowledge, and [plugins](/openhands/usage/agent-canvas/plugins), which package agent capabilities and configuration.
+
+## Availability
+
+Canvas Extensions are managed by the active Agent Server and are currently available with supported local backends. They are not available when an OpenHands Cloud backend is active.
+
+Each backend has its own installed extensions, files, versions, and enabled states. Switching backends replaces the extensions shown in Agent Canvas.
+
+If `Customize > Extensions` reports that the feature is unavailable, update the Agent Server connected to Agent Canvas. A backend without the Canvas Extensions API cannot install or run extensions.
+
+## Install an Extension
+
+Open `Customize > Extensions`, then select `Add extension`.
+
+<Tabs>
+  <Tab title="Git Repository">
+    1. Enter the Git source, such as `github:owner/repository`.
+    2. Optionally enter a branch, tag, or commit in `Ref`.
+    3. If the extension is not at the repository root, enter its directory in `Repo path`.
+    4. Select `Add extension`.
+  </Tab>
+  <Tab title="Backend-Local Path">
+    1. Enter the absolute path to the extension directory.
+    2. Select `Add extension`.
+
+    The path is resolved on the Agent Server machine. A path on the computer running your browser will not work unless that computer also runs the Agent Server and exposes the same path.
+  </Tab>
+</Tabs>
+
+One Add extension operation installs one extension package. If a repository contains several extensions, add each manifest directory separately with its own `Repo path`.
+
+New extensions are installed **disabled**. Review the source, resolved revision, manifest details, and contributed pages before enabling one.
+
+## Enable and Manage Extensions
+
+To run an installed extension:
+
+1. Open `Customize > Extensions`.
+2. Find the installed extension and enable it.
+3. Review and accept the trusted-code notice.
+4. Open its new item in the Agent Canvas sidebar.
+
+You can disable an extension without restarting Agent Canvas. Its navigation items and mounted pages are removed immediately. Re-enable it to load the extension again, or uninstall it to remove the installation from the active backend.
+
+### Trust Model
+
+Enabling an extension runs its JavaScript in the same browser context as Agent Canvas. The beta does not isolate extensions in an iframe or worker and does not enforce fine-grained permissions.
+
+Only enable extensions whose code and resolved revision you trust. An enabled extension has the browser authority available to Agent Canvas and can use an authenticated helper to call the active Agent Server.
+
+## Build an Extension
+
+An extension is a directory containing:
+
+- `canvas-extension.json` at the extension root
+- One self-contained browser ESM entrypoint inside that root
+- Any source files or build configuration needed to produce the entrypoint
+
+The current package format uses manifest schema `1` and host API `1`.
+
+### Create the Manifest
+
+```json canvas-extension.json
+{
+  "schema_version": 1,
+  "name": "example-dashboard",
+  "display_name": "Example dashboard",
+  "version": "0.1.0",
+  "description": "A project dashboard for Agent Canvas.",
+  "entrypoint": "extension.js",
+  "contributes": {
+    "pages": [
+      {
+        "id": "dashboard",
+        "title": "Dashboard",
+        "path": "/dashboard",
+        "nav_label": "Dashboard"
+      }
+    ]
+  }
+}
+```
+
+Use lowercase letters, numbers, and hyphens for extension names and page IDs. Page paths must start with `/`, and every page ID and path must be unique within the extension.
+
+The `entrypoint` must stay inside the extension root. Bundle dependencies, CSS, and required assets into one browser ESM file; unresolved package imports and external runtime chunks cannot be loaded.
+
+### Register the Page
+
+Export an `activate` function from the entrypoint and register each page declared in the manifest:
+
+```js extension.js
+export function activate(host) {
+  if (host.apiVersion !== "1") {
+    throw new Error("This extension requires host API 1.");
+  }
+
+  return host.registerPage("dashboard", ({ container, path }) => {
+    const page = document.createElement("section");
+    page.setAttribute("aria-label", "Example dashboard");
+    page.textContent = path ? `Dashboard route: ${path}` : "Dashboard";
+    container.append(page);
+
+    return () => page.remove();
+  });
+}
+```
+
+The page ID passed to `registerPage` must match a page declared in `canvas-extension.json`. Return cleanup functions for registered pages, DOM nodes, timers, listeners, and other effects so the extension can be disabled or reloaded safely.
+
+Agent Canvas mounts this example at:
+
+```text
+/extensions/example-dashboard/dashboard
+```
+
+For a nested URL such as `/extensions/example-dashboard/dashboard/services`, the page receives `services` as its relative `path`.
+
+### Connect to the Agent Server
+
+Use `host.agentServer.request` for authenticated requests to the backend that owns the extension:
+
+```js
+const serverInfo = await host.agentServer.request({
+  method: "GET",
+  path: "/server_info",
+});
+```
+
+Request paths must be root-relative, begin with exactly one `/`, and must not be full URLs. Do not derive backend URLs or authentication credentials from Agent Canvas internals.
+
+The beta host API does not expose the backend origin or a WebSocket authentication capability. Use the authenticated HTTP helper, polling where appropriate, or a backend-owned bridge instead of opening a direct Agent Server WebSocket.
+
+## Design for the Beta Lifecycle
+
+Agent Canvas may activate, mount, and dispose an extension repeatedly when you enable or disable it, update it, reconnect, or switch backends. Extension pages should:
+
+- Render only inside the supplied page container
+- Scope styles to an extension-specific root element
+- Clean up all DOM nodes, styles, timers, listeners, observers, and subscriptions
+- Prevent late asynchronous responses from updating an unmounted page
+- Handle loading, empty, malformed-response, and error states
+- Remain keyboard accessible and usable on narrow screens
+
+## Learn More
+
+- [Canvas Extensions specification](https://github.com/OpenHands/OpenHands/blob/main/specs/canvas-extensions.md)
+- [Minimal extension fixture](https://github.com/OpenHands/OpenHands/tree/main/src/fixtures/canvas-extensions/demo-page)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)
