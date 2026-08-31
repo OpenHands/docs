@@ -1,87 +1,87 @@
 ---
 title: Prompt Token Composition
-description: Break down prompt tokens per LLM call into system prompt, tool schemas, conversation history, and the latest message.
+description: Break down prompt tokens per LLM call into system prompt, tool schemas, conversation history, and the latest message with the offline composition report.
 ---
 
 ## Overview
 
-When enabled, every LLM call records a per-call decomposition of its prompt tokens, so you can see where the input budget goes on each step of an agent run:
+The prompt composition report is an **offline analysis script** in the [software-agent-sdk repository](https://github.com/OpenHands/software-agent-sdk/blob/main/scripts/prompt_composition_report.py). It reads the completion logs written by the SDK during a run and rebuilds, for every LLM call, a decomposition of its prompt tokens, so you can see where the input budget went on each step of an agent run:
 
 - `system_prompt_tokens` - Tokens in system messages
-- `tool_tokens` - Tokens in the tool schemas included with the call
+- `tool_schema_tokens` - Tokens in the tool schemas included with the call
 - `history_tokens` - Tokens in conversation history (all non-system messages except the latest one)
 - `latest_message_tokens` - Tokens in the latest observation or user message
 
-Recording is **opt-in**: set `enable_prompt_composition=True` on the LLM. When off (the default), no tokenization pass runs and no records are appended. When on, the decomposition is computed on every call - both the Chat Completions and Responses API paths - and recorded into the LLM's [Metrics](/sdk/guides/metrics). On the Responses API path, the decomposition is computed on the finalized payload (instructions plus input items), so the record reflects what the provider received.
+Because the analysis runs after the fact on logged payloads, it adds **no runtime cost and no runtime API surface** - there is nothing to enable on the LLM beyond completion logging, which the SDK already supports. On the Responses API path, the decomposition is computed on the finalized logged payload (instructions plus input items), so the report reflects what the provider received.
 
-```python icon="python" focus={4}
+A typical question this answers: how many prompt tokens per call are re-sent tool schemas? That number is the baseline for evaluating deferred tool loading (see [software-agent-sdk#4083](https://github.com/OpenHands/software-agent-sdk/issues/4083)).
+
+## Enable Completion Logging
+
+Run your agent with `log_completions=True` so each LLM call is written to a JSON log file:
+
+```python icon="python" focus={4-5}
 llm = LLM(
     model="anthropic/claude-sonnet-4-5-20250929",
     api_key=SecretStr(os.getenv("LLM_API_KEY")),
-    enable_prompt_composition=True,
+    log_completions=True,
+    log_completions_folder="logs/completions",
 )
 ```
 
-## Accessing the Composition
+`log_completions_folder` defaults to `logs/completions`. Each call lands in its own `*.json` file containing the finalized request payload (messages and OpenAI-format tool schemas on the Chat Completions path; `instructions`, `input`, and Responses-format tool schemas on the Responses API path) plus the provider-reported usage, latency, and timestamp. The report accepts either a single folder of log files or a directory containing several such run folders.
 
-With the flag enabled, each call appends one `PromptComposition` record to `llm.metrics.prompt_compositions`. The most recent record is available as `llm.metrics.latest_prompt_composition` (`None` when the flag is off):
+## Run the Report
 
-```python icon="python"
-conversation.run()
+From the root of the `software-agent-sdk` repository:
 
-composition = llm.metrics.latest_prompt_composition
-assert composition is not None
-print(f"System prompt:  {composition.system_prompt_tokens}")
-print(f"Tool schemas:   {composition.tool_tokens}")
-print(f"History:        {composition.history_tokens}")
-print(f"Latest message: {composition.latest_message_tokens}")
+```bash icon="terminal"
+uv run python scripts/prompt_composition_report.py --root logs/completions
 ```
 
-Each record carries the `response_id` of its call. Join records with the provider-reported usage in `llm.metrics.token_usages` by `response_id` rather than by position - the two lists can diverge when a composition is skipped or a response carries no usage:
+- `--root` (required) - A run folder of `*.json` completion logs, or a root directory containing run folders.
+- `--out DIR` - Also write the per-call rows to `calls.jsonl` and the aggregate numbers to `summary.json` in `DIR`.
+- `--no-chart` - Skip the text visualization on stdout.
 
-```python icon="python"
-usage_by_id = {u.response_id: u for u in llm.metrics.token_usages}
+The script prints a stacked bar per call (`S`=system, `T`=tool_schema, `H`=history, `L`=latest) and a trend table over the call sequence:
 
-for composition in llm.metrics.prompt_compositions:
-    usage = usage_by_id.get(composition.response_id)
-    if usage is None:
-        continue
-    estimated = (
-        composition.system_prompt_tokens
-        + composition.tool_tokens
-        + composition.history_tokens
-        + composition.latest_message_tokens
-    )
-    print(
-        f"{composition.response_id}: estimated {estimated}, "
-        f"provider reported {usage.prompt_tokens}"
-    )
+```text icon="terminal"
+   seq  composition                                         est_total   provider
+     0  SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSTTLL                        675        702
+     1  SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSTTHHHHLL                    754        784
+     2  SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSTTHHHHHHHHHHLL              870        904
 ```
 
-Agent steps that send tools as native function-calling schemas have `tool_tokens > 0`. Auxiliary calls that pass no tools - for example the [context condenser](/sdk/guides/context-condenser) or title generation - are recorded with `tool_tokens == 0`.
+Each `calls.jsonl` row carries `seq`, `usage` (provider-reported, joined by response id), `composition` (the four estimated buckets), `latency_s`, and `tool_schema_counted`. The `summary.json` aggregates per-bucket averages and the `est_provider_median_ratio` - the median of estimated-total over provider-reported `prompt_tokens` across calls, which shows how much of the billed prompt the breakdown covers.
+
+Agent steps that send tools as native function-calling schemas show `tool_schema_tokens > 0`. Auxiliary calls that pass no tools - for example the [context condenser](/sdk/guides/context-condenser) or title generation - show `tool_schema_tokens == 0`.
 
 <Note>
-    On models without native function calling, the SDK renders tool schemas into the prompt text instead of sending them as tool parameters. Those agent steps are recorded with `tool_tokens == 0` and the schema tokens appear in the message buckets instead.
+    On models without native function calling, the SDK renders tool schemas into the prompt text instead of sending them as tool parameters. The report detects this from the log and leaves `tool_schema_tokens` at 0 for those calls; the schema tokens appear in the message buckets instead, with no double counting.
 </Note>
+
+<Warning>
+    Completion logs written by SDK versions before tool schemas were logged in finalized form record only tool names and descriptions, not parameter schemas. The report cannot reconstruct the tool bucket from those and flags the affected rows with `tool_schema_counted=false` (marked `*` in the chart) rather than miscounting them; flagged calls are excluded from the est/provider median ratio. Re-run with a current SDK to populate the bucket.
+</Warning>
 
 ## Estimates vs Provider-Reported Usage
 
-Composition counts are **client-side estimates**, computed with the model's tokenizer before the request is sent. The provider-reported `TokenUsage` remains the authoritative accounting:
+Composition counts are **client-side estimates**, computed offline with the model's tokenizer from the logged payload. The provider-reported usage in each log remains the authoritative accounting:
 
 - `is_estimate` is `True` on records produced by the client-side estimator.
 - Each component is counted independently, so per-message framing overhead is included in every component and the components do not necessarily sum exactly to the provider-reported `prompt_tokens`.
 - Tool schema counts follow litellm's `token_counter` serialization convention for tools, which can differ from the provider's wire-format tokenization.
 - For models litellm has no tokenizer mapping for, counts use litellm's fallback tokenizer and may deviate more from the provider's counts.
-- When token counting fails or is disabled (for example `litellm.disable_token_counter`), composition recording is skipped for that call; the call itself is unaffected.
+- When token counting fails or is disabled (for example `litellm.disable_token_counter`), the affected log file is skipped and counted under `skipped_files` in the summary; other calls are unaffected.
 - Buckets follow the wire, not the logical prompt: in subscription mode the system prompt is folded into the first user message before transport, so those tokens are counted in `history_tokens` or `latest_message_tokens` rather than `system_prompt_tokens` on that path.
 
 <Tip>
-    Treat the composition as a breakdown of *where* prompt tokens go, and `token_usages` as the record of *how many* tokens the provider billed.
+    Treat the composition as a breakdown of *where* prompt tokens go, and the provider-reported usage as the record of *how many* tokens the provider billed.
 </Tip>
 
 ## Performance
 
-The estimator's cost scales linearly with prompt size: roughly 10-20 ms per call on a typical agent payload, measured at ~31 ms for a ~100K-token prompt and ~61 ms for ~190K tokens (19 tools, gpt-4o tokenizer) - negligible next to network latency. Because the feature is opt-in, this cost is only paid when `enable_prompt_composition=True`.
+The counting cost is paid at analysis time, not during the agent run. It scales linearly with prompt size: roughly 10-20 ms per call on a typical agent payload, measured at ~31 ms for a ~100K-token prompt and ~61 ms for ~190K tokens (19 tools, gpt-4o tokenizer).
 
 ## Next Steps
 
