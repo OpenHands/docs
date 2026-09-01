@@ -59,6 +59,52 @@ Configuration is passed via `-e` flags on `docker run`:
   The agent server can execute arbitrary shell commands inside the container. If exposing it beyond localhost, set `LOCAL_BACKEND_API_KEY` to a strong secret.
 </Warning>
 
+## Let the Agent Use Docker
+
+By default the agent cannot run containers: `docker` is installed in the image, but the
+daemon cannot start inside an unprivileged container. If the agent tries, it fails with
+`error creating default "bridge" network: operation not permitted`.
+
+That matters for tasks where a container is part of the workflow — building a `Dockerfile`
+and running it to confirm the change works, bringing up a `docker compose` stack to
+reproduce a bug, or using a toolchain that is only published as an image. Without a
+daemon the agent can edit those files but cannot verify them.
+
+To enable it, start the container with `--privileged`:
+
+```bash
+docker run -it --rm \
+  --privileged \
+  -p 8000:8000 \
+  -v ~/.openhands:/home/openhands/.openhands \
+  -v ~/projects:/projects \
+  ghcr.io/openhands/agent-canvas:latest
+```
+
+<Warning>
+  `--privileged` gives the container broad access to the host kernel, which substantially
+  weakens the isolation between the agent and your machine. The agent can execute
+  arbitrary shell commands, so grant this only on a host you are willing to expose and
+  only when the agent genuinely needs to run containers.
+</Warning>
+
+Verify from inside the container:
+
+```bash
+docker exec -it <container> docker info
+```
+
+<Note>
+  There is no safer middle ground. The Docker daemon needs kernel capabilities that are
+  granted by the host when the container starts, so they cannot be acquired later — and
+  rootless Docker does not avoid this: the daemon starts, but containers it creates fail
+  to launch (`error mounting "proc" to rootfs: operation not permitted`).
+
+  OpenHands Enterprise solves this differently, running each sandbox under a hardened
+  runtime that provides kernel-level isolation so nested containers run unprivileged. See
+  [Running Docker in the Agent Sandbox](/enterprise/docker-in-sandbox).
+</Note>
+
 ## Connect from the Frontend
 
 Start the frontend separately and point it at the container:
@@ -82,3 +128,4 @@ Then add the Docker backend:
 - [Local Backend](/openhands/usage/agent-canvas/backend-setup/local)
 - [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm)
 - [Kubernetes (Helm)](/openhands/usage/agent-canvas/backend-setup/kubernetes)
+- [Running Docker in the Agent Sandbox](/enterprise/docker-in-sandbox) — how Enterprise does this without `--privileged`
