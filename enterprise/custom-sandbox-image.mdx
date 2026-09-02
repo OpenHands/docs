@@ -148,15 +148,19 @@ pick their environment without any redeployment.
 
 **Requirements:**
 
-- OpenHands Enterprise **0.28.0 or later**.
+- An OpenHands Enterprise release with warm runtime configuration overlays enabled.
 - `kubectl` access to the cluster. On a Replicated VM install, get a shell with
   `sudo /var/lib/embedded-cluster/bin/openhands shell`; on a Helm install, use your normal kubeconfig.
 - Custom images built and pushed as described above (all on the agent-server version your release expects).
 
 ### How It Works
 
-- The Runtime API stores warm runtime configurations in its database. You manage them with the
-  admin REST endpoints (`PUT` / `DELETE /api/admin/warm-runtime-configs/{name}`).
+- The installer-managed configuration remains the base configuration. Configurations saved through the
+  Runtime API are overlaid by name: a new name adds a pool, while an existing name overrides that
+  installer-managed entry.
+- You manage database configurations with the admin REST endpoints
+  (`PUT` / `DELETE /api/admin/warm-runtime-configs/{name}`). Deleting an override reveals the
+  installer-managed entry again.
 - A reconciler job runs **every minute** and creates or removes warm sandbox pods so each
   configuration has `count` unclaimed pods ready.
 - The OpenHands application polls the configuration list (cached for 60 seconds) and exposes each
@@ -167,39 +171,30 @@ pick their environment without any redeployment.
 
 Changes take effect within about a minute, with no application restarts and no redeployments.
 
-<Warning>
-  **The first configuration you save takes over warm pool management.** While the Runtime API database
-  holds *any* configurations, the installer-managed default pool (from the Admin Console
-  **Sandbox Configuration** section) is ignored entirely, and the Admin Console image settings stop
-  affecting warm pools. Always re-declare the default image as one of your configurations
-  (Step 3 below does this). To hand control back to the installer, delete **all** configurations
-  (see [Reverting](#reverting-to-installer-managed-configuration)).
-</Warning>
+<Note>
+  The installer-managed `v1_current` pool remains active when you add API-managed configurations. Do
+  not save a `v1_current` configuration unless you intentionally want to override the installer default.
 
-### Step 1: Set the Admin Password
+  If you configured multiple images on an earlier release, you may already have a `v1_current` database
+  entry that was needed to preserve the default pool. After upgrading, delete that override once to
+  return `v1_current` to installer management. Your other API-managed pools remain active.
+</Note>
 
-The Runtime API's admin endpoints authenticate with an admin password. On Replicated installs the
-`admin-password` secret exists but is **empty by default**, so set one before using the admin API:
+### Step 1: Confirm the Admin Password
 
-```bash
-ADMIN_PASSWORD=$(openssl rand -base64 24)
+The Runtime API's admin endpoints authenticate with an admin password. Replicated generates a durable
+password during installation and stores it in the `admin-password` secret. The helper script in Step 2
+reads that secret, so you do not need to copy the generated password.
 
-kubectl -n openhands patch secret admin-password \
-  -p '{"stringData":{"admin-password":"'"$ADMIN_PASSWORD"'"}}'
+To choose your own password:
 
-# Restart runtime-api to pick up the new password
-kubectl -n openhands rollout restart deployment -l app.kubernetes.io/name=runtime-api
-kubectl -n openhands rollout status deployment -l app.kubernetes.io/name=runtime-api
+1. Open the `Admin Console` and select `Config`.
+2. In `Sandbox Configuration`, set `Runtime API Admin Password`.
+3. Select `Save config`, then deploy the new configuration.
 
-echo "Save this in your password manager: $ADMIN_PASSWORD"
-```
-
-<Warning>
-  **Re-apply the password after every Admin Console deploy.** The `admin-password` secret is rendered
-  by the application chart, so any config change or upgrade deployed through the Admin Console resets
-  it to empty. Your warm runtime configurations are stored in the database and survive deploys; only
-  the password needs re-patching (followed by the `rollout restart` above).
-</Warning>
+The value persists across later deploys. Changing it automatically restarts runtime-api so the new
+password takes effect. For a Helm installation, populate the chart's `admin-password` Secret before
+using the admin endpoints and restart runtime-api after changing it.
 
 ### Step 2: Save the Helper Script
 
@@ -324,6 +319,7 @@ esac
 
 ```bash
 chmod +x warm-runtime-configs.sh
+./warm-runtime-configs.sh list
 ```
 
 <Note>
@@ -331,6 +327,10 @@ chmod +x warm-runtime-configs.sh
   deleting use the admin password via a challenge-response login that returns a 24-hour JWT. The script
   handles both.
 </Note>
+
+List responses identify each configuration's `source`. On an installation where `v1_current` is not
+overridden, it appears with `"source": "file"`. If no API configurations have been saved and the list
+is empty or omits `source`, upgrade OpenHands Enterprise before continuing.
 
 ### Step 3: Start From the Installer's Default Configuration
 
@@ -348,16 +348,8 @@ kubectl -n openhands get configmap openhands-runtime-api-warm-runtimes \
 (If the ConfigMap has a different name in your install, find it with
 `kubectl -n openhands get configmap | grep warm-runtimes`.)
 
-First, re-declare the default image so its pool survives the takeover described above. Name it
-`v1_current`; the application treats the configuration with that name as the system default:
-
-```bash
-jq '.count = 1' default-config.json > v1_current.json
-./warm-runtime-configs.sh save v1_current v1_current.json
-```
-
-Then derive each custom image configuration from the same template, changing only the image and the
-pool size:
+The installer-managed `v1_current` entry remains live and follows Admin Console changes. Derive each
+custom image configuration from the exported template, changing only the image and pool size:
 
 ```bash
 jq '.image = "ghcr.io/your-org/openhands-php:8.4-v1" | .count = 1' \
@@ -380,8 +372,10 @@ jq '.image = "ghcr.io/your-org/openhands-php:8.4-v1" | .count = 1' \
 | `run_as_group` | integer | No | Group ID for the pod security context (default `10001`) |
 | `fs_group` | integer | No | Filesystem group ID for the pod security context (default `10001`) |
 
-The configuration name comes from the URL path (the `save <name>` argument), not the body. Saving an
-existing name overwrites it.
+The configuration name comes from the URL path (the `save <name>` argument), not the body. Saving
+creates or replaces a database entry. If an installer-managed entry has the same name, the database
+entry overrides it. List responses also include a read-only `source` field: `file` for installer-managed
+entries and `db` for API-managed entries and overrides. Do not add `source` to a saved configuration.
 
 <Tip>
   Set `count` explicitly. Every warm pod reserves the full sandbox resource envelope (including 10Gi of
@@ -466,11 +460,15 @@ jq '.image = "ghcr.io/your-org/openhands-php:8.4-v2"' php-web.json > php-web-v2.
 ```
 
 Within a minute the reconciler stops the old pods and starts pods on the new image. Delete a
-configuration to remove its pool:
+database-only configuration to remove its pool:
 
 ```bash
 ./warm-runtime-configs.sh delete php-web
 ```
+
+If the deleted name overrides an installer-managed entry, the underlying entry becomes effective again
+instead of disappearing. Confirm the result with `./warm-runtime-configs.sh list`; its `source` changes
+from `db` to `file`.
 
 Keep superseded image tags available in your registry while conversations that used them can still
 resume: a paused conversation resumes on its **original** image. Delete old tags only after the
@@ -479,38 +477,42 @@ conversations that used them are gone (by default, stopped sandboxes are cleaned
 ### After Upgrading OpenHands Enterprise
 
 <Warning>
-  Your saved configurations are **frozen snapshots**; upgrades do not touch them. Each release expects
-  a specific agent-server version and may add or change sandbox environment variables, and only the
-  installer-managed default template picks those up. After every OpenHands Enterprise upgrade:
+  API-managed configurations are **frozen snapshots**; upgrades do not touch them. The installer-managed
+  `v1_current` entry updates automatically unless a database entry with that name overrides it. Each
+  release expects a specific agent-server version and may add or change sandbox environment variables.
+  After every OpenHands Enterprise upgrade:
 
   1. Rebuild your custom images on the release's new agent-server base version.
   2. Re-export the default template (Step 3) from the refreshed ConfigMap.
-  3. Re-save `v1_current` and re-derive each custom configuration from the new template.
+  3. Re-derive and save each API-managed custom configuration from the new template.
+  4. If you intentionally override `v1_current`, refresh or delete that override so the new
+     installer-managed entry can take effect.
 
   Skipping this leaves configurations pointing at the previous agent-server version, and new
   conversations fail with a version mismatch error until the configurations are updated.
 </Warning>
 
-### Reverting to Installer-Managed Configuration
+### Return an Entry to Installer Management
 
-Delete **all** configurations and the Runtime API falls back to the installer-managed default from
-the Admin Console on the next reconciler cycle:
+Delete a same-named database override to restore the installer-managed entry on the next reconciler
+cycle. For example, if `v1_current` was intentionally overridden:
 
 ```bash
-./warm-runtime-configs.sh delete php-web
 ./warm-runtime-configs.sh delete v1_current
-./warm-runtime-configs.sh list   # should print []
+./warm-runtime-configs.sh list   # v1_current now reports "source": "file"
 ```
 
-The application's image list then falls back to the single default image as well.
+Other API-managed configurations continue running. Delete them individually when you no longer want
+their pools or images in the application's selector.
 
 ### Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| `HTTP 403: Admin functionality is disabled` | The runtime-api deployment has no admin password wired at all (non-standard install). On Replicated installs the secret exists; set it per Step 1. |
-| `HTTP 401` on login | Wrong password, or the challenge expired (challenges are single-use and expire after 5 minutes; the script fetches a fresh one per call). If a previously working password fails after an Admin Console deploy, the secret was reset; re-apply Step 1. |
+| `HTTP 403: Admin functionality is disabled` | The runtime-api deployment has no admin password, or the configured value is empty. On Replicated installs, set `Runtime API Admin Password` per Step 1 and deploy. |
+| `HTTP 401` on login | Wrong password, or the challenge expired. Challenges are single-use and expire after 5 minutes; the script fetches a fresh one per call. |
 | `HTTP 401: ...provide a valid API key...` on list | The list endpoint authenticates with `X-API-Key`, not the admin JWT. Use the helper script. |
+| Installer-managed default is missing from the list | The release does not include overlay support, or the overlay is not enabled. Upgrade OpenHands Enterprise and confirm that the list reports `source` before saving configurations. |
 | Saved a config but the dropdown does not show it | The application caches the list for 60 seconds; wait a minute and reload. Also confirm with `./warm-runtime-configs.sh list`. |
 | No warm pods appear | Read the latest reconciler job log (Step 4). Look for image pull errors or scheduling failures. |
 | Warm pods `Pending` | Insufficient node resources. Every warm pod reserves the full sandbox resource envelope; lower the pool `count`s or add capacity. |
@@ -538,9 +540,19 @@ GET /api/warm-runtime-configs
 X-API-Key: {api-key}
 ```
 
-Returns `200` with `{"configs": [{name, image, working_dir, command, environment, count, run_as_user, run_as_group, fs_group, ...}, ...]}`.
-Only configurations saved through this API are listed; the installer-managed default (active only
-while this list is empty) does not appear.
+Returns `200` with the effective configuration set:
+
+```json
+{
+  "configs": [
+    {"name": "v1_current", "image": "...", "source": "file"},
+    {"name": "php-web", "image": "...", "source": "db"}
+  ]
+}
+```
+
+Installer-managed entries have `source: "file"`. API-managed entries have `source: "db"`; a database
+entry with the same name replaces the file entry in this effective list.
 
 **Create or update a configuration** (admin):
 
@@ -561,7 +573,8 @@ DELETE /api/admin/warm-runtime-configs/{name}
 Authorization: Bearer {admin-jwt}
 ```
 
-Returns `200` with a confirmation message, or `404` if no configuration has that name.
+Returns `200` with a confirmation message, or `404` if no database configuration has that name. When
+the deleted name also exists in the installer-managed file, that file entry becomes effective again.
 
 ## Reference
 
