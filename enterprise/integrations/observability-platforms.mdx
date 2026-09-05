@@ -1,0 +1,489 @@
+---
+title: External Observability Platforms
+description: Send OpenHands Enterprise conversation traces to your own OTLP-compatible observability platform such as Langfuse, Honeycomb, or Tempo.
+icon: chart-line
+---
+
+OpenHands Enterprise (OHE) ships with [Laminar](/enterprise/analytics) as its
+built-in tracing backend. Every conversation emits OpenTelemetry traces that
+flow to the in-cluster Laminar service. If your organization already operates a
+different OpenTelemetry-compatible observability platform — Langfuse, Honeycomb,
+Tempo, Datadog, or any backend that speaks OTLP — you can redirect all OHE
+conversation traces to it without modifying OHE source or patching the Helm
+chart. The change is a set of environment variables on the runtime pod.
+
+This guide walks an operator through pointing OHE at an external observability
+platform and confirms what you get versus the built-in Laminar experience.
+
+<Info>
+  This guide is for **OpenHands Enterprise** operators who want to use an
+  external OTLP backend instead of, or in addition to, the bundled Laminar. If
+  you want to enable the bundled Laminar, see
+  [Analytics](/enterprise/analytics) instead. To route LLM traffic through an
+  external gateway (a separate concern from trace export), see
+  [External LLM Gateways](/enterprise/integrations/external-llm-gateways). For
+  SDK-level tracing concepts and the full list of OTLP backends the OpenHands
+  SDK supports, see [Observability & Tracing](/sdk/guides/observability).
+</Info>
+
+## Overview
+
+OHE's tracing layer is the Laminar Python SDK (`lmnr`), which is a thin wrapper
+over the OpenTelemetry SDK. The `lmnr` SDK respects standard
+`OTEL_EXPORTER_OTLP_TRACES_*` environment variables whenever its own
+Laminar-specific `LMNR_BASE_URL` is not set. That gives you a clean switch with
+no code changes:
+
+```text
+OpenHands Runtime (lmnr SDK + OpenTelemetry SDK)
+  │
+  ├── LMNR_BASE_URL set?  ──►  routes to in-cluster Laminar  (default)
+  │
+  └── LMNR_BASE_URL unset? ──►  reads OTEL_EXPORTER_OTLP_TRACES_*  ──►  your backend
+                                                                  (Langfuse, Honeycomb, …)
+```
+
+There are two integration paths:
+
+- **Direct (recommended).** Point the runtime straight at your OTLP/HTTP
+  backend. No extra infrastructure. Use this when your backend speaks OTLP/HTTP,
+  which Langfuse, Honeycomb, Tempo, and Datadog all do.
+- **Collector tap (optional).** Put an OpenTelemetry Collector between the
+  runtime and your backend. Use this when you need batching, retry, fan-out to
+  multiple backends, or a non-OTLP destination.
+
+Both paths leave OHE stock. The only change is pod environment variables.
+
+## Prerequisites
+
+Before you start, confirm:
+
+- **OHE is installed and reachable.** You can sign in at
+  `https://app.<your-base-domain>`.
+- **Your observability backend is reachable from the OHE cluster.** The runtime
+  pod makes outbound HTTP/S calls to the backend, so DNS and network paths must
+  resolve from inside the `openhands` namespace.
+- **You have an ingest endpoint and credentials on your backend.** You need the
+  OTLP traces URL and whatever auth the backend expects (an API key, Basic auth,
+  or a bearer token).
+- **You have cluster access** to edit Helm values or the Replicated Admin
+  Console, and can restart the runtime pod.
+
+## Choose your backend
+
+The configuration is the same for every OTLP/HTTP backend. Only the endpoint
+URL, auth header, and protocol differ.
+
+<CardGroup cols={2}>
+  <Card title="Langfuse" icon="chart-simple" href="#langfuse">
+    Self-hosted or Cloud. OTLP/HTTP with Basic auth. Maps OHE LLM spans to
+    Langfuse generations with model, tokens, and cost.
+  </Card>
+  <Card title="Honeycomb" icon="chart-column" href="#honeycomb">
+    OTLP/HTTP with a header API key. High-cardinality distributed tracing.
+  </Card>
+  <Card title="Grafana Tempo" icon="chart-line" href="#tempo">
+    OTLP/gRPC or HTTP. Open-source trace storage, queried from Grafana.
+  </Card>
+  <Card title="Generic OTLP" icon="diagram-project" href="#generic-otlp">
+    Any backend that accepts OTLP. Jaeger, Datadog, New Relic, Splunk, and more.
+  </Card>
+</CardGroup>
+
+## How tracing works in OHE
+
+The runtime pod sets these environment variables by default when Laminar is
+enabled (see [Analytics](/enterprise/analytics)):
+
+```yaml
+LMNR_BASE_URL: "http://laminar-app-server-service"
+LMNR_FORCE_HTTP: "true"
+LMNR_HTTP_PORT: "8000"
+LMNR_PROJECT_API_KEY: "<your-laminar-key>"
+```
+
+The `lmnr` SDK resolves its trace exporter like this:
+
+1. If `LMNR_BASE_URL` is set, the SDK routes to Laminar and **ignores** any
+   `OTEL_EXPORTER_OTLP_TRACES_*` variables. This is the default state.
+2. If `LMNR_BASE_URL` is **not** set, the SDK falls back to the standard
+   OpenTelemetry environment variables and emits OTLP directly to whatever
+   endpoint you configure.
+
+<Warning>
+  The switch is `LMNR_BASE_URL`. As long as it is set, the runtime keeps
+  sending traces to Laminar and ignores your `OTEL_*` variables. To redirect
+  traces to your own backend, you must unset `LMNR_BASE_URL` (and the other
+  `LMNR_*` connection variables) **and** set the `OTEL_EXPORTER_OTLP_TRACES_*`
+  variables. Setting only the `OTEL_*` variables while Laminar is still
+  enabled has no effect.
+</Warning>
+
+The SDK reads these variables in standard OpenTelemetry precedence (highest
+first): `OTEL_EXPORTER_OTLP_TRACES_*`, then `OTEL_EXPORTER_OTLP_*`, then
+`OTEL_*`. Setting the `_TRACES_` variants is the most explicit and recommended
+form.
+
+## Configure OHE
+
+Pick the path that matches how OHE is deployed.
+
+<Tabs>
+  <Tab title="Standalone Helm (Kubernetes)">
+    Disable the bundled Laminar and set the OpenTelemetry exporter variables
+    under the top-level `env` block in your `values.yaml`:
+
+    ```yaml
+    laminar:
+      enabled: false
+
+    env:
+      # Unset the Laminar connection variables explicitly so no chart
+      # default re-injects them:
+      LMNR_BASE_URL: ""
+      LMNR_PROJECT_API_KEY: ""
+      LMNR_FORCE_HTTP: ""
+      LMNR_HTTP_PORT: ""
+
+      # Point the OpenTelemetry SDK at your backend:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://<your-backend>/api/public/otel/v1/traces"
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS: "Authorization=Basic <base64(user:pass)>"
+    ```
+
+    Supply any secret values (API keys, Basic auth strings) as a Kubernetes
+    secret rather than committing them in `values.yaml`:
+
+    ```bash
+    kubectl -n openhands create secret generic observability-auth \
+      --from-literal=OTLP_AUTH_HEADER='Authorization=Basic <base64(user:pass)>'
+    ```
+
+    Then reference the secret in `values.yaml` and redeploy:
+
+    ```yaml
+    env:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://<your-backend>/api/public/otel/v1/traces"
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+      OTEL_EXPORTER_OTLP_TRACES_HEADERS:
+        valueFrom:
+          secretKeyRef:
+            name: observability-auth
+            key: OTLP_AUTH_HEADER
+    ```
+
+    ```bash
+    helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+      --namespace openhands \
+      --values values.yaml
+    ```
+
+    Restart the runtime pod after the upgrade so the new environment is picked
+    up:
+
+    ```bash
+    kubectl -n openhands rollout restart deploy/openhands
+    ```
+  </Tab>
+
+  <Tab title="Replicated VM (Admin Console)">
+    The Replicated Admin Console exposes the Laminar configuration fields (see
+    [Analytics](/enterprise/analytics)) but does not currently expose
+    `OTEL_EXPORTER_OTLP_TRACES_*` fields directly. To redirect traces to your
+    own backend on a VM install:
+
+    1. In the **Analytics Configuration** section, **uncheck Enable Analytics**
+       so the installer stops setting the `LMNR_*` variables.
+    2. Use the Replicated **Custom Environment Variables** feature (Advanced
+       Options) to add the three `OTEL_EXPORTER_OTLP_TRACES_*` variables above.
+    3. Save and deploy. The runtime pod restarts with the new environment.
+
+    <Note>
+      If your OHE version's Admin Console does not expose a custom environment
+      variable section, this path is not available on VM installs without a
+      support escalation. The Helm (Kubernetes) path is fully supported. Check
+      your release notes or contact OpenHands support for the custom-env
+      availability on your version.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Backend-specific configuration
+
+The three values you need differ per backend: the endpoint URL, the auth
+header, and the protocol.
+
+### Langfuse {#langfuse}
+
+Langfuse v3 and v4 expose an OTLP/HTTP ingestion endpoint. Authentication is
+HTTP Basic, with the Langfuse **public key** as the username and the **secret
+key** as the password.
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://<langfuse-host>/api/public/otel/v1/traces"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: "Authorization=Basic <base64(publicKey:secretKey)>"
+```
+
+Compute the Basic auth value with:
+
+```bash
+echo -n "pk-lf-xxxxxxxx:sk-lf-yyyyyyyy" | base64
+```
+
+<Note>
+  Langfuse v4 self-hosted installs default to **events-only mode**, which
+  accepts traces on `/api/public/otel/v1/traces` but does not expose the
+  legacy `GET /api/public/traces` endpoint. Read trace data with
+  `GET /api/public/v2/observations` instead. The Langfuse UI reads from the
+  same store, so traces appear in the UI regardless of mode.
+</Note>
+
+Langfuse maps the OpenTelemetry `gen_ai.*` semantic conventions that the `lmnr`
+SDK emits onto its own observation model, so LLM calls render as **GENERATION**
+observations with model, token usage, and input/output content. See
+[What you get](#what-you-get) below.
+
+### Honeycomb {#honeycomb}
+
+Honeycomb accepts OTLP/HTTP with the API key in the `x-honeycomb-team` header.
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://api.honeycomb.io/v1/traces"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: "x-honeycomb-team=<your-honeycomb-api-key>"
+```
+
+Set the Honeycomb dataset by adding `x-honeycomb-dataset=<your-dataset>` to the
+headers value, comma-separated.
+
+### Grafana Tempo {#tempo}
+
+Tempo accepts OTLP over gRPC or HTTP. For gRPC:
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://<tempo-host>:4317"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "grpc/protobuf"
+```
+
+For HTTP:
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://<tempo-host>:4318/v1/traces"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+```
+
+Tempo does not require auth on the OTLP receiver by default. If you put Tempo
+behind a gateway that requires auth, add the header to
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`.
+
+### Generic OTLP {#generic-otlp}
+
+For any backend that accepts OTLP (Jaeger, Datadog, New Relic, Splunk
+Observability, and others), set the endpoint and protocol your backend
+documents, plus any auth header it requires:
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://<your-backend>/v1/traces"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: "<key>=<value>,<key2>=<value2>"
+```
+
+Headers are comma-separated `key=value` pairs, URL-encoded. Most backends
+accept a single `Authorization` or `X-API-Key` header.
+
+## What you get
+
+A single OHE conversation produces one trace with a nested span tree. The
+shape is the same whether the traces land in Laminar or in your external
+backend:
+
+<Tree>
+  <Tree.Folder name="conversation" defaultOpen>
+    <Tree.Folder name="conversation.run" defaultOpen>
+      <Tree.Folder name="agent.step" defaultOpen>
+        <Tree.File name="llm.completion" />
+        <Tree.File name="tool.execute" />
+      </Tree.Folder>
+      <Tree.Folder name="agent.step" defaultOpen>
+        <Tree.File name="llm.completion" />
+      </Tree.Folder>
+    </Tree.Folder>
+  </Tree.Folder>
+</Tree>
+
+Each conversation is grouped under a single trace ID (the OpenHands
+conversation UUID), so all spans from one conversation — across every agent
+step, LLM call, and tool execution — appear together.
+
+For LLM spans, the `lmnr` SDK emits standard OpenTelemetry `gen_ai.*` semantic
+conventions:
+
+| Attribute | Meaning |
+|-----------|---------|
+| `gen_ai.request.model` | Model name (for example, `claude-sonnet-4-5-20250929`) |
+| `gen_ai.usage.input_tokens` | Prompt tokens |
+| `gen_ai.usage.output_tokens` | Completion tokens |
+| `gen_ai.input.messages` | The request messages (JSON) |
+| `gen_ai.output` / `gen_ai.completion` | The response content |
+| `openinference.span.kind` | Span classification: `LLM`, `TOOL`, `AGENT`, `CHAIN` |
+
+Backends that understand these conventions render LLM calls as first-class
+generation spans with model, token usage, and prompt content. In Langfuse,
+LLM spans become **GENERATION** observations; tool spans become **TOOL**
+observations; the conversation root becomes an **AGENT** observation. The
+nesting, trace ID, session ID, and user ID are all preserved.
+
+### Cost calculation
+
+Laminar computes cost from the token usage on each LLM span. External backends
+do the same, but only when the model is registered in the backend's model
+catalog with pricing. If a model is missing from the catalog, the span still
+appears with token counts, but cost is blank.
+
+<Note>
+  After pointing OHE at Langfuse, add each model your runtime uses (for example,
+  `claude-sonnet-4-5-20250929`, `gpt-4o`) to Langfuse's **Settings → Models**
+  table with input and output token prices. Until you do, cost columns are
+  empty even though token usage is captured.
+</Note>
+
+## Optional: OTel Collector tap
+
+If you want batching, retry, fan-out to multiple backends, or a non-OTLP
+destination, deploy an OpenTelemetry Collector in the `openhands` namespace and
+point the runtime at it instead of directly at your backend.
+
+```text
+OpenHands Runtime ──►  OTel Collector  ──►  your backend(s)
+                       (batch, retry,      (Langfuse, Tempo, …)
+                        fan-out, filter)
+```
+
+Point the runtime at the collector's OTLP receiver:
+
+```yaml
+env:
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://otel-collector.openhands.svc:4318/v1/traces"
+  OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf"
+```
+
+Collector config (`otel-collector-config.yaml`):
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlphttp/langfuse:
+    endpoint: http://<langfuse-host>/api/public/otel
+    headers:
+      Authorization: "Basic <base64(publicKey:secretKey)>"
+  # Add a second exporter to dual-sink into Laminar or another backend.
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/langfuse]
+```
+
+This is also how you keep Laminar running as a secondary sink while sending
+traces to your own platform: add a second exporter pointing at the in-cluster
+Laminar service.
+
+## Keep Laminar and add a second backend
+
+If you want traces in **both** Laminar and your own backend, do not unset
+`LMNR_BASE_URL`. Instead, deploy an OTel Collector as above and configure the
+runtime to send to the collector, with the collector exporting to both
+Laminar and your backend. This preserves the built-in Laminar experience
+(including the Admin Console Traces tab and Laminar signals) while mirroring
+the same traces to your platform.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Traces still go to Laminar, not my backend">
+    `LMNR_BASE_URL` is still set. As long as it is present, the `lmnr` SDK
+    routes to Laminar and ignores `OTEL_*` variables. Confirm the runtime pod
+    does not have `LMNR_BASE_URL` set:
+
+    ```bash
+    kubectl -n openhands exec deploy/openhands -- printenv | grep -E 'LMNR_|OTEL_'
+    ```
+
+    You should see the `OTEL_*` variables and **no** `LMNR_BASE_URL`. If
+    `LMNR_BASE_URL` is still present, the Laminar block in your `values.yaml`
+    or Admin Console is still enabled. Disable it and restart the pod.
+  </Accordion>
+
+  <Accordion title="No traces appear in my backend">
+    - Confirm the endpoint URL is reachable from inside the cluster:
+
+      ```bash
+      kubectl -n openhands exec deploy/openhands -- \
+        curl -sS -o /dev/null -w "%{http_code}" \
+        http://<your-backend>/api/public/otel/v1/traces
+      ```
+
+      A `405` (Method Not Allowed) on `GET` is fine — it means the endpoint
+      exists. A timeout or connection refused means DNS or network policy is
+      blocking the path.
+
+    - Confirm the auth header is correct. Most OTLP backends return `401` for
+      a bad key. Langfuse requires HTTP Basic with `publicKey:secretKey`;
+      a bearer token returns `401 Invalid public key`.
+    - Confirm the protocol matches your endpoint. Most backends require
+      `http/protobuf`. Use `grpc/protobuf` only if your backend exposes a
+      gRPC OTLP receiver.
+  </Accordion>
+
+  <Accordion title="Traces appear but cost is blank">
+    The token usage is captured, but the model is not in your backend's model
+    catalog. Add the model with pricing in your backend's settings (in
+    Langfuse, **Settings → Models**). See [Cost calculation](#cost-calculation).
+  </Accordion>
+
+  <Accordion title="LLM spans show tokens but no input/output content">
+    The `lmnr` SDK emits input content under `gen_ai.input.messages` and output
+    under `gen_ai.completion` (or `gen_ai.output` depending on the provider
+    instrumentation). If your backend maps a different attribute name, the
+    content field is blank while token counts still populate. This is a
+    backend-side mapping difference, not an OHE issue. Real OHE conversations
+    use the `lmnr` Anthropic and OpenAI auto-instrumentation, which emits the
+    standard attribute names.
+  </Accordion>
+
+  <Accordion title="VM install has no OTEL env var fields">
+    The Replicated Admin Console does not currently expose
+    `OTEL_EXPORTER_OTLP_TRACES_*` fields directly. Uncheck **Enable Analytics**
+    to clear the `LMNR_*` variables, then use the Replicated custom environment
+    variable feature to add the `OTEL_*` variables. If your version does not
+    expose custom environment variables, contact OpenHands support.
+  </Accordion>
+</AccordionGroup>
+
+## Reference
+
+- Built-in Laminar setup: [Analytics](/enterprise/analytics)
+- SDK tracing concepts and OTLP backends: [Observability & Tracing](/sdk/guides/observability)
+- OpenTelemetry OTLP exporter environment variables: [OTEL spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/#exporter-configuration)
+- Langfuse OTLP ingestion: [Langfuse docs](https://langfuse.com/docs/tracing-data/otel/overview)
+- OpenTelemetry Collector configuration: [OTel Collector docs](https://opentelemetry.io/docs/collector/configuration/)
