@@ -48,10 +48,11 @@ Replicated VM deployment.
 ### Base Image
 
 ```dockerfile
-FROM ghcr.io/openhands/agent-server:1.41.0-python
+FROM ghcr.io/openhands/agent-server:1.46.0-python
 ```
 
-Pin a specific version tag to ensure reproducible builds. Check
+This example matches OpenHands Enterprise 0.64.0. Pin a specific version tag to ensure reproducible
+builds, and replace it with the tag expected by your installed release. Check
 [ghcr.io/openhands/agent-server](https://github.com/OpenHands/OpenHands/pkgs/container/agent-server)
 for available tags.
 
@@ -148,7 +149,7 @@ pick their environment without any redeployment.
 
 **Requirements:**
 
-- An OpenHands Enterprise release with warm runtime configuration overlays enabled.
+- OpenHands Enterprise **0.63.0 or later**. The first Stable-channel release with this behavior is **0.64.0**.
 - `kubectl` access to the cluster. On a Replicated VM install, get a shell with
   `sudo /var/lib/embedded-cluster/bin/openhands shell`; on a Helm install, use your normal kubeconfig.
 - Custom images built and pushed as described above (all on the agent-server version your release expects).
@@ -182,11 +183,12 @@ Changes take effect within about a minute, with no application restarts and no r
 
 ### Step 1: Confirm the Admin Password
 
-The Runtime API's admin endpoints authenticate with an admin password. Replicated generates a durable
-password during installation and stores it in the `admin-password` secret. The helper script in Step 2
-reads that secret, so you do not need to copy the generated password.
+The Runtime API's admin endpoints authenticate with an admin password. A fresh installation of OpenHands
+Enterprise 0.63.0 or later generates a durable password and stores it in the `admin-password` secret. An
+installation upgraded from an earlier release may still have an empty value. The helper script in Step 2
+reads the secret and reports an error before a save or delete when the value is empty.
 
-To choose your own password:
+To initialize an empty password or choose your own:
 
 1. Open the `Admin Console` and select `Config`.
 2. In `Sandbox Configuration`, set `Runtime API Admin Password`.
@@ -368,14 +370,18 @@ jq '.image = "ghcr.io/your-org/openhands-php:8.4-v1" | .count = 1' \
 | `command` | array | Yes | Agent-server start command (copy from the default) |
 | `environment` | object | Yes | Environment variables the sandbox boots with (copy from the default) |
 | `count` | integer | No | Warm pods to keep ready for this image (**default: 3** when omitted) |
-| `run_as_user` | integer | No | User ID for the pod security context (default `10001`) |
-| `run_as_group` | integer | No | Group ID for the pod security context (default `10001`) |
-| `fs_group` | integer | No | Filesystem group ID for the pod security context (default `10001`) |
+| `run_as_user` | integer | No | Copy from the installer default (currently `10001`) so warm pods match application start requests |
+| `run_as_group` | integer | No | Copy from the installer default (currently `10001`) so warm pods match application start requests |
+| `fs_group` | integer | No | Copy from the installer default (currently `10001`) so warm pods match application start requests |
 
 The configuration name comes from the URL path (the `save <name>` argument), not the body. Saving
 creates or replaces a database entry. If an installer-managed entry has the same name, the database
 entry overrides it. List responses also include a read-only `source` field: `file` for installer-managed
 entries and `db` for API-managed entries and overrides. Do not add `source` to a saved configuration.
+
+The application uses the image reference as the sandbox spec ID. Give every selectable configuration a
+distinct image reference; configurations that share an image reference cannot be selected independently,
+even if their commands or environments differ.
 
 <Tip>
   Set `count` explicitly. Every warm pod reserves the full sandbox resource envelope (including 10Gi of
