@@ -202,6 +202,24 @@ things genuinely worth highlighting like notable features, and don't enumerate i
 config flags. If the release contains only bug fixes and maintenance, just say something like
 "This release was focused on stability and maintenance fixes."
 
+**The summary paragraph is for users, not developers.** Only include things a customer would
+recognize and care about when reading the release notes — new UI, new capabilities they can use,
+new integrations, behavior changes that affect them, or admin/org features they can act on.
+**Do not include developer-facing or internal plumbing items**, even if they are prominent in the
+underlying changelog. Examples of what to exclude from the summary (even when present in the
+categorized bullet lists below):
+
+- Internal APIs, admin-only lifecycle endpoints, or other backend-only surfaces
+- Feature-flag mechanisms, config plumbing, database schema/indexing changes
+- Build args, image variants, Docker layer refactors, CronJob splits, cleanup jobs
+- ACP provider additions, agent-server internals, SDK refactors
+- Secret-masking, subprocess env handling, and other security plumbing
+- CI/test/infra changes and dependency bumps
+- New model support unless it materially changes what a user can select in the product
+
+When in doubt, ask: "would a customer skimming release notes notice or care?" If not, leave it out
+of the summary. It still belongs in the categorized bullet lists below, just not in the intro.
+
 **Page structure:**
 
 ```mdx
