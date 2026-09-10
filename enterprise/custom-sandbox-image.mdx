@@ -195,134 +195,21 @@ using the admin endpoints and restart runtime-api after changing it.
 
 ### Step 2: Save the Helper Script
 
-The Runtime API is not exposed outside the cluster by default, so the script below runs each API call
-inside the runtime-api pod with `kubectl exec`. It reads the admin password and API key from their
-Kubernetes secrets. Save it as `warm-runtime-configs.sh`:
+The Runtime API is not exposed outside the cluster by default. Download the maintained
+[`warm-runtime-configs.sh`](https://github.com/OpenHands/runtime-api/blob/main/scripts/warm-runtime-configs.sh)
+helper, which runs each API call inside the runtime-api pod with `kubectl exec`:
 
 ```bash
-#!/usr/bin/env bash
-# warm-runtime-configs.sh - manage warm runtime configurations.
-#
-# Usage:
-#   ./warm-runtime-configs.sh list
-#   ./warm-runtime-configs.sh save <name> <config.json>
-#   ./warm-runtime-configs.sh delete <name>
-set -euo pipefail
-
-NAMESPACE="${NAMESPACE:-openhands}"
-COMMAND="${1:?usage: $0 list|save|delete}"
-CONFIG_NAME="${2:-}"
-CONFIG_FILE="${3:-}"
-
-POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=runtime-api \
-  -o jsonpath='{.items[0].metadata.name}')
-ADMIN_PASSWORD=$(kubectl get secret admin-password -n "$NAMESPACE" \
-  -o jsonpath='{.data.admin-password}' | base64 -d)
-API_KEY=$(kubectl get secret default-api-key -n "$NAMESPACE" \
-  -o jsonpath='{.data.default-api-key}' | base64 -d)
-
-if [ "$COMMAND" != "list" ] && [ -z "$ADMIN_PASSWORD" ]; then
-  echo "Error: admin password is not set. See the setup instructions." >&2
-  exit 1
-fi
-
-PYSCRIPT='
-import binascii, hashlib, json, os, sys, urllib.error, urllib.request
-
-API_URL = "http://localhost:5000"
-
-def req(path, method="GET", data=None, headers=None):
-    h = {"Content-Type": "application/json", **(headers or {})}
-    r = urllib.request.Request(f"{API_URL}{path}", method=method, headers=h)
-    if data is not None:
-        r.data = json.dumps(data).encode()
-    try:
-        with urllib.request.urlopen(r) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        sys.exit(f"HTTP {e.code}: {e.read().decode()}")
-
-def admin_token():
-    chal = req("/api/admin/challenge")
-    dk = hashlib.pbkdf2_hmac(
-        "sha256",
-        os.environ["ADMIN_PASSWORD"].encode(),
-        (chal["salt"] + chal["challenge"]).encode(),
-        chal["iterations"],
-        dklen=32,
-    )
-    resp = req(
-        "/api/admin/login",
-        "POST",
-        {"challenge": chal["challenge"], "hash": binascii.hexlify(dk).decode()},
-    )
-    return resp["token"]
-
-action = os.environ["ACTION"]
-name = os.environ.get("CONFIG_NAME", "")
-
-if action == "list":
-    configs = req(
-        "/api/warm-runtime-configs",
-        headers={"X-API-Key": os.environ["API_KEY"]},
-    )["configs"]
-    print(json.dumps(configs, indent=2))
-elif action == "save":
-    body = json.load(sys.stdin)
-    token = admin_token()
-    saved = req(
-        f"/api/admin/warm-runtime-configs/{name}",
-        "PUT",
-        body,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    print("Saved", saved["name"], "image:", saved["image"], "count:", saved.get("count"))
-elif action == "delete":
-    token = admin_token()
-    resp = req(
-        f"/api/admin/warm-runtime-configs/{name}",
-        "DELETE",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    print(resp["message"])
-'
-
-case "$COMMAND" in
-  list)
-    kubectl exec -n "$NAMESPACE" "$POD" -- \
-      env ACTION=list API_KEY="$API_KEY" python3 -c "$PYSCRIPT"
-    ;;
-  save)
-    if [ -z "$CONFIG_NAME" ] || [ ! -f "$CONFIG_FILE" ]; then
-      echo "usage: $0 save <name> <config.json>" >&2; exit 1
-    fi
-    kubectl exec -i -n "$NAMESPACE" "$POD" -- \
-      env ACTION=save CONFIG_NAME="$CONFIG_NAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-      python3 -c "$PYSCRIPT" < "$CONFIG_FILE"
-    ;;
-  delete)
-    if [ -z "$CONFIG_NAME" ]; then
-      echo "usage: $0 delete <name>" >&2; exit 1
-    fi
-    kubectl exec -n "$NAMESPACE" "$POD" -- \
-      env ACTION=delete CONFIG_NAME="$CONFIG_NAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-      python3 -c "$PYSCRIPT"
-    ;;
-  *)
-    echo "Unknown command: $COMMAND (valid: list, save, delete)" >&2; exit 1
-    ;;
-esac
-```
-
-```bash
+curl -fsSLo warm-runtime-configs.sh \
+  https://raw.githubusercontent.com/OpenHands/runtime-api/main/scripts/warm-runtime-configs.sh
 chmod +x warm-runtime-configs.sh
 ./warm-runtime-configs.sh list
 ```
 
 <Note>
-  Listing uses the regular API key (`X-API-Key` header, from the `default-api-key` secret). Saving and
-  deleting use the admin password via a challenge-response login that returns a 24-hour JWT. The script
-  handles both.
+  The helper uses `DEFAULT_API_KEY` and `ADMIN_PASSWORD` from the runtime-api pod without printing or
+  copying either value. Listing authenticates with the regular API key. Saving and deleting use the
+  admin password via a challenge-response login that returns a 24-hour JWT.
 </Note>
 
 List responses identify each configuration's `source`. When `v1_current` is not overridden, it appears
