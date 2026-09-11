@@ -1,0 +1,87 @@
+---
+title: Test MCP Config
+description: Validate MCP server configurations against a live sandbox before wiring them into a conversation — catch bad URLs, auth failures, and connection errors early.
+---
+
+**Source:** [`test-mcp-config/`](https://github.com/jpshackelford/oh-examples/tree/main/test-mcp-config)
+
+When you configure an MCP server in the OpenHands UI, there's no feedback on whether it actually connects. A bad URL or wrong token causes the server's tools to silently disappear from the agent's toolset. This example uses the agent-server's `POST /api/mcp/test` endpoint to validate a config end-to-end before using it.
+
+<Note>
+Requires agent-server 1.29.0 / OpenHands 1.8.0 or later. Older runtimes return 404.
+</Note>
+
+## How It Works
+
+```
+POST /api/v1/sandboxes              # 1. Start a sandbox (no conversation needed)
+GET  /api/v1/sandboxes?id=<id>      # 2. Poll until RUNNING
+POST {agent}/api/mcp/test           # 3. Validate the MCP config
+DELETE /api/v1/sandboxes/<id>       # 4. Clean up
+```
+
+The `POST /api/mcp/test` endpoint connects to a single MCP server, lists its tools, and optionally calls a specific tool to verify credentials. It returns HTTP 200 in both success and failure cases — a connection failure is an expected validation result, not a server error.
+
+## Response Format
+
+```json
+// Success
+{"ok": true, "tools": ["list_issues", "create_issue"], "tool_result": null}
+
+// Failure
+{"ok": false, "error": "Client failed to connect: connection refused", "error_kind": "connection"}
+```
+
+`error_kind` is one of: `timeout`, `connection`, or `unknown`. Auth failures (e.g., a `401`) currently return as `unknown` — read `error` for the full message.
+
+## Usage
+
+```bash
+export OH_API_KEY="your-api-key"
+pip install requests
+
+# Validate a streamable-HTTP server with a bearer token
+python test_mcp_config.py \
+    --url https://mcp.example.com/mcp \
+    --type shttp \
+    --server-api-key "$TOKEN"
+
+# Also invoke a specific tool to exercise the credentials
+python test_mcp_config.py \
+    --url https://mcp.example.com/mcp \
+    --header "Authorization=Bearer $TOKEN" \
+    --tool-call list_resources
+
+# Validate a local stdio (subprocess) server
+python test_mcp_config.py \
+    --type stdio \
+    --command "uvx mcp-server-fetch"
+```
+
+## Supported Transport Types
+
+| Type | `--type` flag | Typical use |
+|------|--------------|-------------|
+| Streamable HTTP | `shttp` | Remote HTTP MCP servers |
+| Server-Sent Events | `sse` | Older HTTP MCP servers |
+| Stdio (subprocess) | `stdio` | Local CLI-based MCP servers |
+
+## Multiple Configs at Once
+
+Pass a JSON file with multiple server configurations to validate them all in one run:
+
+```bash
+python test_mcp_config.py --config servers.json
+```
+
+```json servers.json
+[
+  {"url": "https://linear.mcp.example.com/mcp", "type": "shttp", "api_key": "lin_xxx"},
+  {"url": "https://github.mcp.example.com/mcp", "type": "shttp", "api_key": "ghp_xxx"}
+]
+```
+
+## See Also
+
+- [Per-Conversation Secrets](/cookbook/per-conversation-secrets) — Use per-conversation secrets to supply MCP server auth tokens at runtime
+- [Start a Sandbox](/cookbook/start-sandbox) — How sandbox creation and polling works
