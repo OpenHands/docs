@@ -1,13 +1,27 @@
 ---
 title: OpenAI-Compatible Endpoint
-description: Call an OpenHands agent-server through the OpenAI Chat Completions protocol.
+description: Call an OpenHands agent-server through the OpenAI Chat Completions or Responses protocol.
 ---
 
 import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
-The agent-server exposes an OpenAI-compatible `/v1/chat/completions` endpoint so clients that already speak the OpenAI protocol can call an OpenHands agent.
+The agent-server exposes an OpenAI-compatible API surface under `/v1` with two endpoints:
+
+- `POST /v1/chat/completions` — the OpenAI Chat Completions protocol.
+- `POST /v1/responses` — the OpenAI Responses protocol (newer, stateless-first).
 
 Use this when you want an existing chat UI, IDE integration, evaluation harness, voice platform, or another agent to treat OpenHands as an OpenAI-style backend while still getting the full agent runtime behind the request.
+
+## How It Works
+
+Both endpoints are protocol adapters over the **same full OpenHands agent**, not a thin wrapper around a raw LLM call. Each request:
+
+1. Loads the OpenHands agent configured by the named profile.
+2. Starts (or, for Chat Completions, optionally reuses) an OpenHands conversation.
+3. Runs the agent's complete internal tool loop to completion.
+4. Returns only the final assistant text as an OpenAI-shaped response.
+
+The mental model is **"access an agent conversation as if it were a model"**: you send a prompt, the agent does its work (including executing tools in its workspace), and you receive one response when it finishes. Internal tool activity is not exposed as OpenAI tool calls.
 
 ## What to Configure
 
@@ -21,10 +35,12 @@ Most OpenAI-compatible clients ask for the same three fields:
 
 For example, a saved LLM profile named `gateway_demo` appears as the OpenAI model `openhands_gateway_demo`.
 
-The gateway accepts the same session key in either OpenHands or OpenAI-compatible form:
+Authentication maps OpenAI-style bearer tokens onto the agent-server's existing session key mechanism. The gateway accepts the same session key in either form:
 
 - `X-Session-API-Key: <key>`
 - `Authorization: Bearer <key>`
+
+Both are validated against the configured session API keys — there is no second credential system. When the server is configured without session keys, it remains unauthenticated just like the native agent-server API.
 
 ## Prepare a Profile
 
@@ -55,7 +71,19 @@ curl "$AGENT_SERVER_URL/v1/models" \
   -H "Authorization: Bearer $SESSION_API_KEY"
 ```
 
-## Client Recipes
+## Chat Completions (`POST /v1/chat/completions`)
+
+This is the long-standing endpoint. Each request runs a full OpenHands agent to completion and returns the final assistant text in a standard Chat Completions shape.
+
+Supported request fields:
+
+- `model` — required; must be an `openhands_<profile_name>` exposed via `GET /v1/models`.
+- `messages` — a standard list. The last `user` message becomes the agent's task; `system` and `developer` messages are folded into the agent's system context.
+- `stream` — `true` returns a server-sent events stream; `false` (default) returns a single response.
+
+The response includes a `X-OpenHands-ServerConversation-ID` header. Send that header on a follow-up request to continue the same server-side OpenHands conversation instead of starting a new one.
+
+### Client Recipes
 
 <Tabs>
 <Tab title="curl">
@@ -157,7 +185,6 @@ For Open WebUI, LibreChat, Chatbot UI, and similar OpenAI-compatible frontends, 
 - **Base URL**: `https://YOUR_AGENT_SERVER/v1`
 - **API key**: your agent-server session API key
 - **Model**: `openhands_<profile_name>`
-- **Streaming**: disabled for now
 
 If the UI can store a response header and send a custom request header, persist `X-OpenHands-ServerConversation-ID` per chat thread and send it on follow-up turns. If it cannot, each request starts a new OpenHands conversation and works best for one-shot tasks.
 
@@ -194,9 +221,9 @@ Return `reply_text` to the voice or webhook platform. Keep the mapping for as lo
 </Tab>
 </Tabs>
 
-## Conversation State
+### Conversation State
 
-The OpenAI Chat Completions protocol usually sends full message history on every request. The OpenHands gateway does not reconstruct agent history from prior assistant messages. Instead:
+The Chat Completions protocol usually sends full message history on every request, but the gateway does **not** reconstruct agent history from prior assistant messages. Instead:
 
 - Omit `X-OpenHands-ServerConversation-ID` to start a new OpenHands conversation.
 - Read `X-OpenHands-ServerConversation-ID` from the response.
@@ -204,11 +231,128 @@ The OpenAI Chat Completions protocol usually sends full message history on every
 
 When reusing a conversation, send the newest user turn in `messages`. The server-side OpenHands conversation owns the previous agent state, tool activity, and workspace context.
 
-## Current Limitations
+## Responses (`POST /v1/responses`)
 
-- Only non-streaming Chat Completions requests are supported. Requests with `stream: true` return `400` until streaming support is added.
-- The response contains the final assistant text only. Internal OpenHands tool activity is not exposed as OpenAI tool calls.
-- OpenAI request fields that are not needed by the gateway are ignored or rejected intentionally by the server implementation.
+The newer Responses endpoint targets the OpenAI Responses API — a better fit for agent-shaped traffic, with typed input/output items. It is **stateless-first** by design.
+
+### Mental Model
+
+Every request starts a **fresh** OpenHands conversation and runs the full agent to completion. There is no server-side continuation handle: to carry context forward, clients replay prior input and output items into the next request's `input`.
+
+```bash
+curl "$AGENT_SERVER_URL/v1/responses" \
+  -H "Authorization: Bearer $SESSION_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$OPENHANDS_MODEL\",
+    \"instructions\": \"Answer briefly.\",
+    \"input\": \"Summarize this repository in one sentence.\",
+    \"store\": false
+  }"
+```
+
+Response:
+
+```json
+{
+  "id": "resp_…",
+  "object": "response",
+  "created_at": 1726000000.0,
+  "completed_at": 1726000120.0,
+  "model": "openhands_gateway_demo",
+  "instructions": "Answer briefly.",
+  "output": [
+    {
+      "id": "msg_…",
+      "type": "message",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        { "type": "output_text", "text": "This repository is …", "annotations": [] }
+      ]
+    }
+  ],
+  "parallel_tool_calls": false,
+  "previous_response_id": null,
+  "status": "completed",
+  "tool_choice": "none",
+  "tools": [],
+  "usage": {
+    "input_tokens": 123,
+    "input_tokens_details": { "cached_tokens": 0 },
+    "output_tokens": 45,
+    "output_tokens_details": { "reasoning_tokens": 0 },
+    "total_tokens": 168
+  }
+}
+```
+
+The response also carries the `X-OpenHands-ServerConversation-ID` header, but unlike Chat Completions you **cannot** pass it back to continue that conversation — the Responses surface ignores it. Use the header only to correlate the response with the underlying OpenHands conversation through the native agent-server API.
+
+### Replaying Context
+
+To maintain context across Responses calls, replay the previous assistant output items (and any system/developer context) into the next request's `input`:
+
+```python
+import os
+from typing import cast
+
+from openai import OpenAI
+from openai.types.responses import ResponseInputItemParam
+
+client = OpenAI(
+    api_key=os.environ["SESSION_API_KEY"],
+    base_url=f"{os.environ['AGENT_SERVER_URL']}/v1",
+)
+
+first = client.responses.create(
+    model=os.environ["OPENHANDS_MODEL"],
+    instructions="You are reviewing this repository.",
+    input="Summarize the project structure.",
+    store=False,
+)
+
+second = client.responses.create(
+    model=os.environ["OPENHANDS_MODEL"],
+    input=[
+        {"role": "developer", "content": "You are reviewing this repository."},
+        {"role": "user", "content": "Summarize the project structure."},
+        *[
+            item.model_dump(mode="json", exclude_none=True)
+            for item in cast(list[ResponseInputItemParam], first.output)
+        ],
+        {"role": "user", "content": "Now list the main packages."},
+    ],
+    store=False,
+)
+```
+
+### How Input Is Interpreted
+
+- Top-level `instructions` and any `system`/`developer` input items become the agent's **system context**.
+- The remaining input items become the agent's user prompt. A single `user` item is sent as-is; multiple non-system items are wrapped in `<message role="…">` tags so their roles are preserved.
+- `model` must be an `openhands_<profile_name>` exposed via `GET /v1/models`.
+
+### Not Supported Yet
+
+The following OpenAI Responses features are intentionally rejected or ignored. Status codes and wording are exact.
+
+| Feature | Behavior |
+| --- | --- |
+| `previous_response_id` | Rejected with `400` — `"previous_response_id is not supported; replay input items instead"`. |
+| `store: true` | Rejected with `400` — `"Persistent response storage (store=True) is not supported yet"`. There is no retrievable Responses object and no `GET /v1/responses/{id}`. |
+| `stream: true` | Rejected with `400` — `"Streaming responses are not supported yet"`. |
+| `tools`, `tool_choice`, `parallel_tool_calls` | Accepted but **ignored** — the caller's declared tools do not replace OpenHands' internal tool loop. |
+| `temperature` and other generation-tuning fields | Accepted but **ignored**. |
+
+<Warning>
+Setting `store: false` (the default) is **not** a data-retention control. It only signals that no Responses object is retained. The backing OpenHands conversation still follows the agent-server's normal persistence policy.
+</Warning>
+
+## Current Limitations (Both Endpoints)
+
+- The response contains the final assistant text only. Internal OpenHands tool activity is not exposed as OpenAI tool calls or Responses output items.
+- OpenAI request fields the gateway does not need are either ignored or rejected intentionally by the server implementation. Declared tools and generation-tuning fields do not change agent behavior.
 
 ## Ready-to-run example
 
