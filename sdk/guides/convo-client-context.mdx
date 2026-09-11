@@ -1,0 +1,51 @@
+---
+title: Client Message Context
+description: Attach client-generated context to a user message without changing its visible content.
+---
+
+Use `client_context` when an SDK client needs to provide current environment details with a user turn. The context is persisted in the user `MessageEvent.extended_content` and included when that event is converted to LLM input. The original message content remains separate.
+
+```python
+from openhands.sdk import TextContent
+
+conversation.send_message(
+    "Inspect the running services.",
+    client_context=[
+        TextContent(
+            text="<RUNTIME_SERVICES>API: http://runtime:8000</RUNTIME_SERVICES>"
+        )
+    ],
+)
+```
+
+This is useful for context owned by the client rather than the agent configuration, such as:
+
+- Runtime URLs that may change after a conversation moves.
+- UI capabilities available for the current session.
+- Workspace or deployment metadata relevant to the next turn.
+
+Attach the context to the first applicable user message. If the environment changes later, attach the updated context to the next user message.
+
+<Warning>
+  `client_context` is not a security boundary. It is stored with the conversation and should not contain secrets.
+</Warning>
+
+## Remote Agent Server
+
+The same field is available on the initial message in `POST /api/conversations` and on later messages in `POST /api/conversations/{conversation_id}/events`:
+
+```json
+{
+  "role": "user",
+  "content": [{ "type": "text", "text": "Inspect the running services." }],
+  "client_context": [
+    {
+      "type": "text",
+      "text": "<RUNTIME_SERVICES>API: http://runtime:8000</RUNTIME_SERVICES>"
+    }
+  ],
+  "run": true
+}
+```
+
+The server maps `client_context` to `MessageEvent.extended_content`. Consumers that render the visible message should continue to use `MessageEvent.llm_message.content`; LLM conversion includes both fields.
