@@ -1,0 +1,80 @@
+---
+title: Browser Conversation Event Streams
+description: Subscribe to Agent Server events through the TypeScript SDK with authentication, reconnects, and cleanup.
+---
+
+<Note>
+This guide accompanies [software-agent-sdk #5012](https://github.com/OpenHands/software-agent-sdk/issues/5012).
+The API is unreleased. Publish this guide with the SDK release containing that change.
+</Note>
+
+Use `ConversationEventStream` when your browser application already manages
+conversation state and needs event frames and connection lifecycle callbacks.
+The TypeScript client lives in `clients/typescript` in the software-agent-sdk
+repository. It owns the wire protocol for both local and Docker conversations;
+your application owns rendering and workflow decisions.
+
+## Subscribe To Events
+
+Import the transport from the secondary `clients` entrypoint. Supply the Agent
+Server base URL, conversation ID, and session credential from your connection
+configuration. Keep any reverse-proxy path prefix in the base URL.
+
+```typescript
+import {
+  ConversationEventStream,
+  buildConversationEventStreamUrl,
+} from '@openhands/typescript-client/clients';
+
+const stream = new ConversationEventStream({
+  url: buildConversationEventStreamUrl(agentServerUrl, conversationId),
+  sessionApiKey,
+  queryParams: { resend_mode: 'all' },
+  reconnect: { enabled: true, maxAttempts: 10 },
+  onMessage: (frame) => handleEvent(JSON.parse(frame.data)),
+  onStateChange: (state) => renderConnectionState(state),
+});
+stream.start();
+
+// Once connected, send a message and start the agent loop.
+stream.send(JSON.stringify({
+  role: 'user',
+  content: [{ type: 'text', text: 'Check the project tests' }],
+  run: true,
+}));
+
+// Dispose when the owner unmounts or changes conversations.
+stream.stop();
+```
+
+The example assumes your application supplies the connection values,
+`handleEvent`, and `renderConnectionState`. Call `send` only after the connection
+is open, such as from a user action enabled by `state.isConnected`.
+
+Authentication is the first frame sent after the socket opens, before `onOpen`
+is called. Credentials never appear in the URL. Passing credentials in URL user
+information or a `session_api_key` query parameter is rejected.
+
+## Replay And Connection State
+
+After loading history over REST, use
+`queryParams: { resend_mode: 'since', after_timestamp: lastTimestamp }` to replay
+from a known timestamp. Deduplicate events in application state because replay
+can overlap existing history. The transport delivers frames through `onMessage`
+and retains no history.
+
+`onStateChange` reports `isConnected`, `isReconnecting`, `attemptCount`, and
+`error`. `onOpen`, `onClose`, and `onError` expose connection lifecycle events.
+Reconnects use exponential backoff from one second to a 30-second base delay,
+plus up to 30% jitter. A successful connection resets the attempt counter.
+Stalled handshakes close after 10 seconds.
+
+`updateOptions` refreshes callbacks and future authentication without reconnecting.
+Call `reconnect()` to replace the connection immediately and reset its retry
+budget. `stop()` cancels both handshake and reconnect timers and closes the
+socket. Late events from replaced sockets cannot change the active connection.
+
+`send()` throws while disconnected. Applications that queue messages while a
+conversation starts can fall back to `ConversationClient.sendEvent` over REST.
+The transport requires a Web-standard global `WebSocket` when started and has no
+Node-specific imports.
