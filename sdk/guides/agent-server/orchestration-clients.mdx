@@ -1,0 +1,114 @@
+---
+title: Agent Server Orchestration Clients
+description: Use public SDK clients to provision and control automation conversations without owning runtime HTTP contracts.
+---
+
+<Note>
+This guide accompanies [software-agent-sdk #5010](https://github.com/OpenHands/software-agent-sdk/pull/5010).
+Use a build containing that change and the server's conversation-scoped runtime APIs.
+Publish this guide with the corresponding SDK release.
+</Note>
+
+Use `Conversation` and `Workspace` for ordinary agent applications. Use
+`AgentServerClient` or `AsyncAgentServerClient` when a dispatcher must create a
+conversation from a saved profile, start a bundle without waiting for it, inspect
+its command result, or release its runtime while retaining history.
+
+The SDK owns HTTP routes, authentication headers, and conversation scope. The
+caller owns scheduling, admission limits, workflow selection, and completion
+policy. Canvas uses the TypeScript client for the same API boundary.
+
+## Provision and Dispatch a Conversation
+
+The server advertises `conversation_runtime`. A dispatcher selects the appropriate
+workspace location, then supplies the same run environment to the bundle in both
+local and Docker modes. The automation itself does not branch on workspace kind.
+
+```python
+import os
+from pathlib import Path
+from uuid import uuid4
+
+from openhands.sdk.client import AsyncAgentServerClient
+
+
+async def dispatch(bundle: bytes):
+    server = AsyncAgentServerClient(
+        os.environ["AGENT_SERVER_URL"], os.environ["SESSION_API_KEY"]
+    )
+    conversation_id = str(uuid4())
+    try:
+        info = await server.get_server_info()
+        isolated = info["conversation_runtime"] == "docker"
+        working_dir = "/workspace" if isolated else str(
+            Path(os.environ["WORKSPACE_BASE"]) / conversation_id
+        )
+        await server.create_conversation(
+            conversation_id=conversation_id,
+            agent_profile_id=os.environ["AGENT_PROFILE_ID"],
+            working_dir=working_dir,
+            title="Scheduled automation",
+            tags={"automationrun": conversation_id},
+        )
+        runtime = server.runtime(conversation_id)
+        await runtime.upload(f"{working_dir}/bundle.tar.gz", bundle)
+        # A dispatcher extracts the bundle and supplies its configured environment
+        # before starting its entrypoint. Keep command construction in the dispatcher.
+        return conversation_id, working_dir
+    finally:
+        await server.aclose()
+```
+
+`runtime.start(command, timeout=...)` returns a command record immediately.
+`runtime.get_output(command_id)` returns the latest matching output page; an empty
+page or an output with no exit code means the command has not completed.
+`runtime.execute(command, timeout=..., cwd=...)` waits for a foreground command.
+Always verify the actual command's exit code before accepting completion.
+
+## The Bundle Interface
+
+Supply `AGENT_SERVER_URL`, `SESSION_API_KEY`, `AUTOMATION_CONVERSATION_ID`, and
+`WORKSPACE_BASE` to each bundle. The same code works in either workspace:
+
+```python
+import os
+from openhands.sdk.client import AgentServerClient
+
+server = AgentServerClient(
+    os.environ["AGENT_SERVER_URL"], os.environ["SESSION_API_KEY"]
+)
+conversation_id = os.environ["AUTOMATION_CONVERSATION_ID"]
+try:
+    state = server.get_conversation(conversation_id)
+    print(state["execution_status"])
+    # A workflow can use send_message(), get_errors(), and interrupt() while
+    # applying its own bounded completion/recovery policy.
+finally:
+    server.close()
+```
+
+Both clients expose the same control operations. Their runtime clients expose
+upload, execute, start, output retrieval, credential handoff, and release.
+An explicit conversation UUID binds runtime operations to that conversation.
+Calling `runtime()` without an ID selects the legacy host runtime; lifecycle
+operations are unavailable in that unscoped form.
+
+## Credentials and Lifecycle Ownership
+
+Only a trusted orchestrator should call `runtime.get_session_key()`. On a Docker
+server supporting credential handoff, it returns the selected inner runtime's key.
+The dispatcher supplies that key and the runtime-reachable server URL to the
+worker. Keep the outer control-plane key outside the worker.
+
+Local workspaces retain the local server's credential boundary and are not
+security sandboxes. Use Docker isolation and role-scoped external-service grants
+when running untrusted repository code.
+
+After a Docker run has stopped and its result is recorded, the dispatcher calls
+`runtime.release()`. This releases that runtime while preserving conversation
+history. A missing runtime is treated as already released; other failures are
+reported. A persistent local server should be retained by its owner.
+
+An HTTP client supplied through `http_client=` remains caller-owned. Otherwise,
+call `close()` or `aclose()` to release the SDK client's connections. None of these
+methods chooses a workflow, posts an acceptance decision, or schedules a run.
