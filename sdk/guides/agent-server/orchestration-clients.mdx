@@ -9,10 +9,10 @@ Use a build containing that change and the server's conversation-scoped runtime 
 Publish this guide with the corresponding SDK release.
 </Note>
 
-Use `RemoteConversation` to create an agent conversation from a saved profile or
-connect to an existing conversation. Use `RemoteWorkspace` for its files,
-commands, and runtime lifecycle. `AsyncRemoteWorkspace` provides the same
-workspace operations for async callers.
+Use `RemoteConversation.create` to create an agent conversation from a saved
+profile and `RemoteConversation.attach` to connect to an existing conversation.
+Use `RemoteWorkspace` for its files, commands, and runtime lifecycle.
+`AsyncRemoteWorkspace` provides the same workspace operations for async callers.
 
 The SDK owns HTTP routes, authentication headers, and conversation scope. The
 caller owns scheduling, admission limits, workflow selection, and completion
@@ -32,6 +32,8 @@ from contextlib import closing
 from uuid import UUID, uuid4
 
 from openhands.sdk import RemoteConversation, RemoteWorkspace
+from openhands.sdk.conversation.request import StartConversationRequest
+from openhands.sdk.workspace import LocalWorkspace
 from openhands.tools import register_default_tools
 
 register_default_tools()
@@ -44,19 +46,22 @@ with RemoteWorkspace(
     working_dir=working_dir,
     runtime_conversation_id=conversation_id,
 ) as workspace:
-    with closing(RemoteConversation(
-        agent=None,
-        agent_profile_id=UUID(os.environ["AGENT_PROFILE_ID"]),
+    with closing(RemoteConversation.create(
         workspace=workspace,
-        conversation_id=conversation_id,
+        request=StartConversationRequest(
+            agent_profile_id=UUID(os.environ["AGENT_PROFILE_ID"]),
+            workspace=LocalWorkspace(working_dir=working_dir),
+            conversation_id=conversation_id,
+            tags={"automationrun": str(conversation_id)},
+        ),
         visualizer=None,
-        tags={"automationrun": str(conversation_id)},
     )) as conversation:
         conversation.set_title("Scheduled automation")
         workspace.file_upload(b"Prepared by the dispatcher\n", f"{working_dir}/input.txt")
 ```
 
-The server resolves the saved profile. The dispatcher does not load its model,
+`create` sends a typed creation request directly to the server. The server
+resolves the saved profile. The dispatcher does not load its model,
 tools, or secret values. `runtime_conversation_id` binds the workspace's existing
 file, command, and Git operations to that conversation and cannot be changed
 on the workspace instance. Omitting it selects the legacy host workspace;
@@ -111,8 +116,7 @@ with RemoteWorkspace(
     api_key=os.environ["SESSION_API_KEY"],
     working_dir=os.environ["WORKSPACE_BASE"],
 ) as workspace:
-    with closing(RemoteConversation(
-        agent=None,
+    with closing(RemoteConversation.attach(
         workspace=workspace,
         conversation_id=UUID(os.environ["AUTOMATION_CONVERSATION_ID"]),
         visualizer=None,
@@ -122,11 +126,10 @@ with RemoteWorkspace(
         print(get_agent_final_response(conversation.state.events))
 ```
 
-With `agent=None` and an existing conversation ID, the ordinary constructor
-connects to the server-resolved agent, including ACP agents. A missing or
-inaccessible conversation fails; this form does not create a conversation or
-reload its profile. Run completion, callbacks, structured events, and errors
-follow the existing conversation lifecycle. Read `conversation.state.events`
+`attach` fetches an existing conversation and connects to its server-resolved
+agent, including ACP agents. A missing or inaccessible conversation fails;
+attachment never creates a conversation or reloads its profile. Run completion,
+callbacks, structured events, and errors follow the existing conversation lifecycle. Read `conversation.state.events`
 for the event history.
 
 `delete_on_close` defaults to `False`, so closing this handle preserves the
