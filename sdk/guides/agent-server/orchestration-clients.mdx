@@ -1,6 +1,6 @@
 ---
-title: Agent Server Orchestration Clients
-description: Use public SDK clients to provision and control automation conversations without owning runtime HTTP contracts.
+title: Orchestrate Agent Server Conversations
+description: Create conversations from agent profiles and control their workspaces with the existing SDK APIs.
 ---
 
 <Note>
@@ -9,61 +9,86 @@ Use a build containing that change and the server's conversation-scoped runtime 
 Publish this guide with the corresponding SDK release.
 </Note>
 
-Use `Conversation` and `Workspace` for ordinary agent applications. Use
-`AgentServerClient` or `AsyncAgentServerClient` when a dispatcher must create a
-conversation from a saved profile, start a bundle without waiting for it, inspect
-its command result, or release its runtime while retaining history.
+Use `RemoteConversation` to create an agent conversation from a saved profile or
+connect to an existing conversation. Use `RemoteWorkspace` for its files,
+commands, and runtime lifecycle. `AsyncRemoteWorkspace` provides the same
+workspace operations for async callers.
 
 The SDK owns HTTP routes, authentication headers, and conversation scope. The
 caller owns scheduling, admission limits, workflow selection, and completion
 policy. Canvas uses the TypeScript client for the same API boundary.
 
-## Provision and Dispatch a Conversation
+## Create a Conversation From a Saved Profile
 
-The server advertises `conversation_runtime`. A dispatcher selects the appropriate
-workspace location, then supplies the same run environment to the bundle in both
-local and Docker modes. The automation itself does not branch on workspace kind.
+A dispatcher selects a unique conversation ID and workspace directory. Use
+`/workspace` for a Docker conversation, or an absolute local run directory for a
+local server. `workspace.get_server_info()["conversation_runtime"]` reports the
+server's configured runtime mode. This selection belongs to the dispatcher;
+the automation bundle receives the same environment in either mode.
 
 ```python
 import os
-from pathlib import Path
-from uuid import uuid4
+from contextlib import closing
+from uuid import UUID, uuid4
 
-from openhands.sdk.client import AsyncAgentServerClient
+from openhands.sdk import RemoteConversation, RemoteWorkspace
+from openhands.tools import register_default_tools
 
+register_default_tools()
+conversation_id = uuid4()
+working_dir = os.environ["WORKSPACE_BASE"]
 
-async def dispatch(bundle: bytes):
-    server = AsyncAgentServerClient(
-        os.environ["AGENT_SERVER_URL"], os.environ["SESSION_API_KEY"]
-    )
-    conversation_id = str(uuid4())
-    try:
-        info = await server.get_server_info()
-        isolated = info["conversation_runtime"] == "docker"
-        working_dir = "/workspace" if isolated else str(
-            Path(os.environ["WORKSPACE_BASE"]) / conversation_id
-        )
-        await server.create_conversation(
-            conversation_id=conversation_id,
-            agent_profile_id=os.environ["AGENT_PROFILE_ID"],
-            working_dir=working_dir,
-            title="Scheduled automation",
-            tags={"automationrun": conversation_id},
-        )
-        runtime = server.runtime(conversation_id)
-        await runtime.upload(f"{working_dir}/bundle.tar.gz", bundle)
-        # A dispatcher extracts the bundle and supplies its configured environment
-        # before starting its entrypoint. Keep command construction in the dispatcher.
-        return conversation_id, working_dir
-    finally:
-        await server.aclose()
+with RemoteWorkspace(
+    host=os.environ["AGENT_SERVER_URL"],
+    api_key=os.environ["SESSION_API_KEY"],
+    working_dir=working_dir,
+    runtime_conversation_id=conversation_id,
+) as workspace:
+    with closing(RemoteConversation(
+        agent=None,
+        agent_profile_id=UUID(os.environ["AGENT_PROFILE_ID"]),
+        workspace=workspace,
+        conversation_id=conversation_id,
+        visualizer=None,
+        tags={"automationrun": str(conversation_id)},
+    )) as conversation:
+        conversation.set_title("Scheduled automation")
+        workspace.file_upload(b"Prepared by the dispatcher\n", f"{working_dir}/input.txt")
 ```
 
-`runtime.start(command, timeout=...)` returns a command record immediately.
-`runtime.get_output(command_id)` returns the latest matching output page; an empty
-page or an output with no exit code means the command has not completed.
-`runtime.execute(command, timeout=..., cwd=...)` waits for a foreground command.
-Always verify the actual command's exit code before accepting completion.
+The server resolves the saved profile. The dispatcher does not load its model,
+tools, or secret values. `runtime_conversation_id` binds the workspace's existing
+file, command, and Git operations to that conversation and cannot be changed
+on the workspace instance. Omitting it selects the legacy host workspace;
+runtime credential handoff and release require an explicit conversation scope.
+
+## Start and Observe a Bundle
+
+After uploading and extracting its bundle, a dispatcher starts the configured
+entrypoint with `workspace.start_command(command, timeout=...)`. This returns a
+command ID without waiting. `workspace.get_command_output(command_id)` returns
+the latest matching output record; `None` or a missing exit code means the
+command has not completed. Always inspect the actual command's exit code before
+accepting completion. `workspace.execute_command(...)` remains the foreground
+operation and returns a `CommandResult`.
+
+Async callers use the same scope and operations:
+
+```python
+import os
+
+from openhands.sdk.workspace import AsyncRemoteWorkspace
+
+
+async def start_worker(conversation_id, working_dir, command):
+    async with AsyncRemoteWorkspace(
+        host=os.environ["AGENT_SERVER_URL"],
+        api_key=os.environ["SESSION_API_KEY"],
+        working_dir=working_dir,
+        runtime_conversation_id=conversation_id,
+    ) as workspace:
+        return await workspace.start_command(command, timeout=2400)
+```
 
 ## The Bundle Interface
 
@@ -86,32 +111,28 @@ with RemoteWorkspace(
     api_key=os.environ["SESSION_API_KEY"],
     working_dir=os.environ["WORKSPACE_BASE"],
 ) as workspace:
-    with closing(RemoteConversation.attach(
-        workspace, UUID(os.environ["AUTOMATION_CONVERSATION_ID"])
+    with closing(RemoteConversation(
+        agent=None,
+        workspace=workspace,
+        conversation_id=UUID(os.environ["AUTOMATION_CONVERSATION_ID"]),
+        visualizer=None,
     )) as conversation:
         conversation.send_message("Perform the configured workflow.")
         conversation.run(timeout=2400)
         print(get_agent_final_response(conversation.state.events))
 ```
 
-`attach` reads the existing server-resolved agent, including an ACP agent. It
-fails if the conversation is missing or inaccessible; it does not create a new
-conversation or reload profile settings and secrets. Run completion, callbacks,
-events, and errors follow the ordinary SDK conversation lifecycle. Closing the
-attachment preserves the server conversation and the caller-owned workspace.
-Call `register_default_tools()` before attaching so standard tool event schemas,
-including browser events, can be decoded. Register any additional custom tools
-used by the remote agent as well.
+With `agent=None` and an existing conversation ID, the ordinary constructor
+connects to the server-resolved agent, including ACP agents. A missing or
+inaccessible conversation fails; this form does not create a conversation or
+reload its profile. Run completion, callbacks, structured events, and errors
+follow the existing conversation lifecycle. Read `conversation.state.events`
+for the event history.
 
-Both clients expose `set_title(conversation_id, title)` and
-`search_events(conversation_id, kind=..., limit=..., page_id=...)`. Event searches
-return the server page unchanged, including raw structured tool arguments and
-`next_page_id`, in newest-first order. `get_errors` uses the same event search.
-Their runtime clients expose
-upload, execute, start, output retrieval, credential handoff, and release.
-An explicit conversation UUID binds runtime operations to that conversation.
-Calling `runtime()` without an ID selects the legacy host runtime; lifecycle
-operations are unavailable in that unscoped form.
+`delete_on_close` defaults to `False`, so closing this handle preserves the
+server conversation and the caller-owned workspace. Register the remote agent's
+tool schemas before connecting: `register_default_tools()` covers standard
+tools, including browser events; register additional custom tools separately.
 
 ## Select Secrets With an Agent Profile
 
@@ -145,7 +166,7 @@ issue repository-scoped credentials appropriate to each automation's role.
 
 ## Credentials and Lifecycle Ownership
 
-Only a trusted orchestrator should call `runtime.get_session_key()`. On a Docker
+Only a trusted orchestrator should call `workspace.get_runtime_session_key()`. On a Docker
 server supporting credential handoff, it returns the selected inner runtime's key.
 The dispatcher supplies that key and the runtime-reachable server URL to the
 worker. Keep the outer control-plane key outside the worker.
@@ -155,10 +176,11 @@ security sandboxes. Use Docker isolation and role-scoped external-service grants
 when running untrusted repository code.
 
 After a Docker run has stopped and its result is recorded, the dispatcher calls
-`runtime.release()`. This releases that runtime while preserving conversation
+`workspace.release_runtime()`. This releases that runtime while preserving conversation
 history. A missing runtime is treated as already released; other failures are
 reported. A persistent local server should be retained by its owner.
 
-An HTTP client supplied through `http_client=` remains caller-owned. Otherwise,
-call `close()` or `aclose()` to release the SDK client's connections. None of these
-methods chooses a workflow, posts an acceptance decision, or schedules a run.
+Workspace context managers close their own HTTP connections. Closing a
+conversation handle does not release its runtime or delete history unless
+`delete_on_close=True` was explicitly selected. These SDK operations do not
+choose a workflow, post an acceptance decision, or schedule another run.
