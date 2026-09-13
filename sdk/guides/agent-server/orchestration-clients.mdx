@@ -72,20 +72,33 @@ Supply `AGENT_SERVER_URL`, `SESSION_API_KEY`, `AUTOMATION_CONVERSATION_ID`, and
 
 ```python
 import os
-from openhands.sdk.client import AgentServerClient
+from contextlib import closing
+from uuid import UUID
 
-server = AgentServerClient(
-    os.environ["AGENT_SERVER_URL"], os.environ["SESSION_API_KEY"]
-)
-conversation_id = os.environ["AUTOMATION_CONVERSATION_ID"]
-try:
-    state = server.get_conversation(conversation_id)
-    print(state["execution_status"])
-    # A workflow can use send_message(), get_errors(), and interrupt() while
-    # applying its own bounded completion/recovery policy.
-finally:
-    server.close()
+import openhands.tools  # Register standard tool event schemas.
+from openhands.sdk import RemoteConversation, RemoteWorkspace
+from openhands.sdk.conversation.response_utils import get_agent_final_response
+
+with RemoteWorkspace(
+    host=os.environ["AGENT_SERVER_URL"],
+    api_key=os.environ["SESSION_API_KEY"],
+    working_dir=os.environ["WORKSPACE_BASE"],
+) as workspace:
+    with closing(RemoteConversation.attach(
+        workspace, UUID(os.environ["AUTOMATION_CONVERSATION_ID"])
+    )) as conversation:
+        conversation.send_message("Perform the configured workflow.")
+        conversation.run(timeout=2400)
+        print(get_agent_final_response(conversation.state.events))
 ```
+
+`attach` reads the existing server-resolved agent, including an ACP agent. It
+fails if the conversation is missing or inaccessible; it does not create a new
+conversation or reload profile settings and secrets. Run completion, callbacks,
+events, and errors follow the ordinary SDK conversation lifecycle. Closing the
+attachment preserves the server conversation and the caller-owned workspace.
+Import the tool packages used by the remote agent so their event schemas are
+registered, just as when constructing an agent locally.
 
 Both clients expose the same control operations. Their runtime clients expose
 upload, execute, start, output retrieval, credential handoff, and release.
@@ -100,7 +113,7 @@ changes tracked in [SDK #5014](https://github.com/OpenHands/software-agent-sdk/i
 Keep this section unpublished until that integration is released.
 
 Set `secret_refs` on the saved agent profile to an explicit list of secret names,
-for example `["REVIEWER_GITHUB_GRANT"]`. The profile stores names only. A launch
+for example `["GITHUB_REVIEWER_TOKEN"]`. The profile stores names only. A launch
 using that profile receives the selected saved secrets without the dispatcher
 copying every secret into the request. An empty list permits no user secrets;
 `null` preserves the existing request-only, unrestricted behavior.
