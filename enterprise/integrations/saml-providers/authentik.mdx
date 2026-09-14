@@ -1,0 +1,127 @@
+---
+title: Authentik
+description: Configure Authentik as a SAML identity provider for OpenHands Enterprise.
+icon: key
+---
+
+This guide walks through configuring [Authentik](https://goauthentik.io/) as a
+SAML identity provider for OpenHands Enterprise. It is a provider-specific
+companion to the [SAML SSO](/enterprise/integrations/saml-sso) guide. Follow the
+steps here first, then use the values from the [last section](#values-for-openhands)
+to complete [Step 2 of the SAML SSO guide](/enterprise/integrations/saml-sso#step-2-enable-saml-sso).
+
+## Prerequisites
+
+- An Authentik instance reachable over HTTPS with a certificate from a trusted
+  certificate authority. OpenHands fetches the metadata server-side and rejects
+  untrusted or self-signed TLS certificates.
+- Authentik administrator access.
+- Your OpenHands Authentication hostname, which is `auth.<your-openhands-domain>`
+  by default. The examples below use `auth.openhands.example.com`.
+
+## Step 1: Create a SAML Provider
+
+1. In the Authentik admin interface, go to **Applications → Providers** and
+   choose **Create**.
+2. Select **SAML Provider** and choose **Next**.
+3. Configure the provider with these values:
+
+   | Field | Value |
+   | --- | --- |
+   | Name | `Provider for OpenHands` |
+   | Authorization flow | `default-provider-authorization-implicit-consent` |
+   | ACS URL | `https://auth.openhands.example.com/realms/allhands/broker/enterprise_sso/endpoint` |
+   | Audience | `https://auth.openhands.example.com/realms/allhands` |
+   | Service Provider Binding | `Post` |
+   | NameID Property Mapping | `Authentik default SAML Mapping: Email` |
+
+   <Note>
+     `enterprise_sso` and `allhands` are fixed values that OpenHands expects. Do
+     not change them. Replace only the `auth.openhands.example.com` hostname.
+   </Note>
+
+4. Under **Advanced protocol settings**, set the **Signing Certificate** to
+   `authentik Self-signed Certificate` (or any certificate keypair you prefer).
+
+   <Warning>
+     The signing certificate is required. Authentik leaves this field blank by
+     default, and without it the published metadata contains no signing
+     certificate. OpenHands then refuses to create the SSO provider and users
+     fall back to the built-in login page. This is the most common cause of a
+     failed Authentik integration.
+   </Warning>
+
+5. Choose **Finish**.
+
+## Step 2: Attach Property Mappings
+
+OpenHands provisions accounts from the SAML assertion and requires an email
+address. Confirm the provider releases the standard identity attributes.
+
+1. Edit the provider you just created.
+2. Under **Property mappings**, ensure at least these built-in mappings are
+   selected:
+   - `Authentik default SAML Mapping: Email` (required)
+   - `Authentik default SAML Mapping: Name` (recommended)
+   - `Authentik default SAML Mapping: Username` (recommended)
+3. Save the provider.
+
+## Step 3: Create an Application
+
+1. Go to **Applications → Applications** and choose **Create**.
+2. Configure the application:
+
+   | Field | Value |
+   | --- | --- |
+   | Name | `OpenHands` |
+   | Slug | `openhands` |
+   | Provider | `Provider for OpenHands` |
+   | Launch URL | `https://app.<your-openhands-domain>` |
+
+3. Choose **Create**.
+
+The application slug becomes part of the metadata URL, so keep it consistent
+with the value you use in the next section.
+
+## Step 4: Restrict Access (Optional)
+
+By default every Authentik user can sign in to the application. To limit access,
+open the application's **Policy / Group / User Bindings** tab and bind the
+group(s) that should have access. Leaving this empty allows all Authentik users,
+which is convenient for initial testing.
+
+## Step 5: Create a Test User
+
+SSO authenticates against Authentik, so you need at least one Authentik user
+with an email address.
+
+1. Go to **Directory → Users** and choose **Create**.
+2. Set a username and an **email address** (required for account provisioning in
+   OpenHands).
+3. Set a password for the user, or use the existing `akadmin` account.
+
+## Values for OpenHands
+
+Use these values to complete
+[Step 2 of the SAML SSO guide](/enterprise/integrations/saml-sso#step-2-enable-saml-sso).
+Replace the hostname and slug with your own.
+
+| OpenHands setting | Value |
+| --- | --- |
+| SAML Metadata URL | `https://<your-authentik-host>/application/saml/openhands/metadata/` |
+| Identity Provider Display Name | e.g. `Company SSO (via Authentik)` |
+
+<Note>
+  Use the bare `.../metadata/` URL. OpenHands fetches it server-side, where
+  Authentik serves the raw XML directly, so no `?download` suffix is needed. If
+  you open that URL in a browser you may be redirected to the Authentik login;
+  that redirect does not affect OpenHands' server-side fetch.
+</Note>
+
+To inspect the metadata yourself and confirm it contains a signing certificate,
+add `?download` and follow redirects:
+
+```bash
+curl -sL "https://<your-authentik-host>/application/saml/openhands/metadata/?download" \
+  | grep -c X509Certificate   # expect >= 1
+```
