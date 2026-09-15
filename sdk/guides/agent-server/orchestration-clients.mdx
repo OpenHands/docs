@@ -9,9 +9,11 @@ Use a build containing that change and the server's conversation-scoped runtime 
 Publish this guide with the corresponding SDK release.
 </Note>
 
-Use `RemoteConversation.create` to create an agent conversation from a saved
-profile and `RemoteConversation.attach` to connect to an existing conversation.
-Use `RemoteWorkspace` for its files, commands, and runtime lifecycle.
+Use `RemoteConversationControl` when a service only needs to create a conversation
+or submit work. It uses HTTP without loading agent state, tool packages, event
+history, or a WebSocket. Use `RemoteConversation` inside the agent runtime when a
+process needs interactive state and callbacks. Use `RemoteWorkspace` for files,
+commands, and runtime lifecycle.
 `AsyncRemoteWorkspace` provides the same workspace operations for async callers.
 
 The SDK owns HTTP routes, authentication headers, and conversation scope. The
@@ -28,15 +30,12 @@ the automation bundle receives the same environment in either mode.
 
 ```python
 import os
-from contextlib import closing
 from uuid import UUID, uuid4
 
-from openhands.sdk import RemoteConversation, RemoteWorkspace
+from openhands.sdk import RemoteConversationControl, RemoteWorkspace
 from openhands.sdk.conversation.request import StartConversationRequest
 from openhands.sdk.workspace import LocalWorkspace
-from openhands.tools import register_default_tools
 
-register_default_tools()
 conversation_id = uuid4()
 working_dir = os.environ["WORKSPACE_BASE"]
 
@@ -46,7 +45,7 @@ with RemoteWorkspace(
     working_dir=working_dir,
     runtime_conversation_id=conversation_id,
 ) as workspace:
-    with closing(RemoteConversation.create(
+    conversation = RemoteConversationControl.create(
         workspace=workspace,
         request=StartConversationRequest(
             agent_profile_id=UUID(os.environ["AGENT_PROFILE_ID"]),
@@ -54,15 +53,14 @@ with RemoteWorkspace(
             conversation_id=conversation_id,
             tags={"automationrun": str(conversation_id)},
         ),
-        visualizer=None,
-    )) as conversation:
-        conversation.set_title("Scheduled automation")
-        workspace.file_upload(b"Prepared by the dispatcher\n", f"{working_dir}/input.txt")
+    )
+    workspace.file_upload(b"Prepared by the dispatcher\n", f"{working_dir}/input.txt")
 ```
 
-`create` sends a typed creation request directly to the server. The server
-resolves the saved profile. The dispatcher does not load its model,
-tools, or secret values. `runtime_conversation_id` binds the workspace's existing
+`RemoteConversationControl.create` sends the typed request and retains only the
+returned conversation ID. The server resolves the saved profile. The dispatcher
+does not load its model, tools, events, or secret values. `runtime_conversation_id`
+binds the workspace's existing
 file, command, and Git operations to that conversation and cannot be changed
 on the workspace instance. Omitting it selects the legacy host workspace;
 runtime credential handoff and release require an explicit conversation scope.
@@ -136,6 +134,21 @@ for the event history.
 server conversation and the caller-owned workspace. Register the remote agent's
 tool schemas before connecting: `register_default_tools()` covers standard
 tools, including browser events; register additional custom tools separately.
+
+A webhook or scheduler that only needs to append a turn can avoid attachment:
+
+```python
+from openhands.sdk import RemoteConversationControl
+
+control = RemoteConversationControl(workspace, conversation_id)
+control.send_message("Review the latest pull request update.", run=True)
+status = control.get_execution_status()
+```
+
+The control client deliberately does not expose events or agent state. Attach a
+`RemoteConversation` in a process that has the agent's tool packages when those
+interactive features are needed. Services can poll `get_execution_status()` with
+their existing scheduler or watchdog instead of creating another SDK wait loop.
 
 ## Select Secrets With an Agent Profile
 
