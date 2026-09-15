@@ -1,0 +1,127 @@
+---
+title: Workspace Isolation
+description: Enforce directory boundaries with PreToolUse hooks — prevent agents from navigating or writing outside their assigned workspace, essential for running multiple conversations in parallel.
+---
+
+**Source:** [`workspace-isolation/`](https://github.com/jpshackelford/oh-examples/tree/main/workspace-isolation)
+
+When you run multiple OpenHands conversations in parallel on a local machine, each agent works in a different directory. Without isolation, agents can accidentally `cd` into a sibling project, delete the wrong files, or write test output that collides with another agent's work.
+
+This example enforces directory boundaries with `PreToolUse` hooks on both the `terminal` and `file_editor` tools.
+
+<Note>
+In OpenHands Cloud, each conversation gets its own container — workspace isolation is already guaranteed. This example is primarily useful for local setups running multiple conversations in parallel.
+</Note>
+
+## What Gets Blocked
+
+### Terminal Commands
+
+| Operation | Blocked? |
+|-----------|----------|
+| `cd`, `pushd`, `popd` to a path outside the workspace | ✅ Blocked |
+| `rm`, `mv`, `cp`, `chmod`, `mkdir`, etc. targeting external paths | ✅ Blocked |
+| Output redirection (`>`, `>>`) to external paths | ✅ Blocked |
+| Read operations (`cat`, `grep`) of external files | ✅ Allowed |
+| Any operation inside the workspace | ✅ Allowed |
+
+### File Editor Operations
+
+| Operation | Blocked? |
+|-----------|----------|
+| `view` (read-only) anywhere | ✅ Always allowed |
+| `create`, `str_replace`, `insert`, `undo_edit` outside workspace | ✅ Blocked |
+
+## The `# read-only` Escape Hatch
+
+Add `# read-only` to a command to allow reading system files outside the workspace:
+
+```bash
+cat /etc/os-release  # read-only   ← allowed
+uname -a             # read-only   ← allowed
+echo "data" > /tmp/output.txt  # read-only   ← still blocked (write operation)
+```
+
+## How the Hooks Work
+
+Two hooks in the `sandbox-enforcer` plugin work together:
+
+**Terminal hook** — extracts the command name and target path, checks whether the path is inside the workspace:
+
+```bash
+input=$(cat)
+workspace="${OPENHANDS_PROJECT_DIR:-$PWD}"
+
+# Extract command and check if cd/write ops target outside workspace
+cmd=$(printf '%s' "$input" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | head -1 | sed 's/.*: *"//' | sed 's/"$//')
+
+# [navigation check, write-op check, redirect check]
+# ...
+
+exit 0  # Allow if nothing matched
+```
+
+**File editor hook** — always allows `view`, blocks write commands that target paths outside the workspace.
+
+Both hooks use `OPENHANDS_PROJECT_DIR` (set by OpenHands Cloud/Enterprise) or fall back to `$PWD`.
+
+## Try It
+
+<Tabs>
+  <Tab title="Via API">
+    ```bash
+    cd ../load-plugin
+
+    # This will be blocked (navigating outside workspace)
+    python load_plugin.py \
+      --repo-path workspace-isolation/sandbox-enforcer \
+      --message "Navigate to /tmp and list the files there"
+
+    # This will be allowed (stays in workspace)
+    python load_plugin.py \
+      --repo-path workspace-isolation/sandbox-enforcer \
+      --message "List all files in the current directory"
+    ```
+  </Tab>
+  <Tab title="Via Badge">
+    Click the badge in the [example README](https://github.com/jpshackelford/oh-examples/tree/main/workspace-isolation) to open a conversation with the plugin pre-loaded.
+  </Tab>
+</Tabs>
+
+## Local Multi-Agent Setup
+
+```bash
+mkdir -p ~/projects/{web-app,api-server,cli-tool}
+
+# Start three conversations, each with isolation enforced
+python load_plugin.py --workdir ~/projects/web-app \
+    --repo-path workspace-isolation/sandbox-enforcer \
+    --message "Refactor the auth module"
+
+python load_plugin.py --workdir ~/projects/api-server \
+    --repo-path workspace-isolation/sandbox-enforcer \
+    --message "Add rate limiting"
+```
+
+Each agent stays in its assigned directory.
+
+## Limitations
+
+This is a heuristic-based implementation. For production multi-tenant use, see [jpshackelford/lxa](https://github.com/jpshackelford/lxa/blob/main/src/hooks/sandbox.py), which uses Python with full `pathlib` path resolution, symlink following, and `shlex` parsing.
+
+| Limitation | Impact |
+|------------|--------|
+| No full shell parsing | Complex quoting might bypass detection |
+| No symlink resolution | A symlink inside the workspace can point outside |
+| Fails open | If the hook can't parse input, it allows the operation |
+
+## Why Inline Shell
+
+Hook scripts in plugins run with the working directory set to the agent's workspace — there's no plugin-root path variable. External script files (`hooks/scripts/check.sh`) won't resolve at runtime. The hooks inline the POSIX-sh logic directly as a `command` string in `hooks.json`. Reference copies of the same scripts in `hooks/scripts/` exist for readability.
+
+## See Also
+
+- [Command Blacklist](/cookbook/command-blacklist) — Block specific dangerous commands
+- [Command Whitelist](/cookbook/command-whitelist) — Allow only approved commands
+- [Hooks](/openhands/usage/customization/hooks) — Full hooks documentation
