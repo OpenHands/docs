@@ -37,8 +37,21 @@ Send these attribute statements with the SAML response:
 
 Assign the application to the users and groups that should have access to
 OpenHands. Then copy the application's SAML metadata URL, sometimes called the
-entity descriptor or federation metadata URL. It must be an HTTPS URL, and you
-need it in the next step.
+entity descriptor or federation metadata URL. It must be an HTTPS URL served
+with a certificate from a trusted certificate authority (OpenHands fetches the
+metadata server-side and rejects untrusted or self-signed TLS certificates). You
+need this URL in the next step.
+
+<Warning>
+  Your identity provider must **sign SAML assertions** and publish a **signing
+  certificate** in its metadata. OpenHands validates the assertion signature, so
+  the metadata must contain an entity ID, a single sign-on service URL, and a
+  signing certificate. If the signing certificate is missing, OpenHands skips
+  creating the SSO provider and users fall back to the built-in login page. Most
+  identity providers include the signing certificate by default, but some
+  require you to explicitly assign a signing certificate to the SAML
+  application.
+</Warning>
 
 ## Step 2: Enable SAML SSO
 
@@ -77,6 +90,39 @@ the new metadata.
 ## Step 3: Verify Sign-In
 
 1. Open `https://app.<your-openhands-domain>` in a private browser window.
-2. Choose **Connect to Enterprise SSO**.
+2. Choose the Enterprise SSO button. Its label is the **Identity Provider
+   Display Name** you configured (for example, `Company SSO`).
 3. Complete sign-in with your identity provider.
 4. Confirm you return to OpenHands signed in.
+
+## Troubleshooting
+
+### The SSO button shows the OpenHands login form instead of your identity provider
+
+This means OpenHands did not create the SSO provider from your metadata. The
+most common cause is a missing signing certificate in the identity provider's
+SAML metadata. Confirm the metadata includes a signing certificate (see the
+warning in [Step 1](#step-1-register-openhands-with-your-identity-provider)),
+then save and deploy again.
+
+You can inspect the metadata for a signing certificate by downloading it and
+checking for an `X509Certificate` element inside a `KeyDescriptor` with
+`use="signing"`:
+
+```bash
+curl -sL "https://idp.example.com/saml/metadata" | grep -c X509Certificate
+```
+
+A result of `0` means no certificate is published, and SSO provisioning will
+fail.
+
+### OpenHands cannot fetch the metadata URL
+
+OpenHands fetches the metadata URL server-side. Make sure the URL is reachable
+from the cluster and is served with a certificate from a trusted certificate
+authority. Self-signed or untrusted TLS certificates cause the fetch to fail.
+
+### Sign-in succeeds but no account is created
+
+The SAML response is missing the `email` attribute. Configure your identity
+provider to release `email` (see [Step 1](#step-1-register-openhands-with-your-identity-provider)).
