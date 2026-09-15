@@ -167,39 +167,80 @@ pick their environment without any redeployment.
 
 Changes take effect within about a minute, with no application restarts and no redeployments.
 
-<Warning>
-  **The first configuration you save takes over warm pool management.** While the Runtime API database
-  holds *any* configurations, the installer-managed default pool (from the Admin Console
-  **Sandbox Configuration** section) is ignored entirely, and the Admin Console image settings stop
-  affecting warm pools. Always re-declare the default image as one of your configurations
-  (Step 3 below does this). To hand control back to the installer, delete **all** configurations
-  (see [Reverting](#reverting-to-installer-managed-configuration)).
-</Warning>
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    Warm runtime configurations work in **overlay mode** on Replicated installs. API-managed
+    configs layer on top of the installer's ConfigMap entries rather than replacing them: the
+    installer's default `v1_current` pool keeps running while you add new custom entries alongside
+    it. Saving an API config with the same name as a ConfigMap entry overrides that entry;
+    deleting it reverts to the ConfigMap value.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    <Warning>
+      **The first configuration you save takes over warm pool management.** While the Runtime API
+      database holds *any* configurations, the installer-managed default pool is ignored entirely,
+      and Admin Console image settings stop affecting warm pools. Always re-declare the default
+      image as one of your configurations (Step 3 below does this). To hand control back to the
+      installer, delete **all** configurations (see
+      [Reverting](#reverting-to-installer-managed-configuration)).
 
-### Step 1: Set the Admin Password
+      To enable overlay mode instead (so API configs layer on top of the installer pool rather
+      than replacing it, matching the Replicated behavior), add
+      `runtime-api.env.WARM_RUNTIME_CONFIG_OVERLAY: "1"` to your `values.yaml` and run
+      `helm upgrade`.
+    </Warning>
+  </Tab>
+</Tabs>
 
-The Runtime API's admin endpoints authenticate with an admin password. On Replicated installs the
-`admin-password` secret exists but is **empty by default**, so set one before using the admin API:
+### Step 1: Verify the Admin Password
 
-```bash
-ADMIN_PASSWORD=$(openssl rand -base64 24)
+The Runtime API admin endpoints require an admin password stored in the `admin-password` Kubernetes
+secret. The helper script (Step 2) reads this secret automatically, so no manual step is needed
+for a standard installation — but the setup differs by install type.
 
-kubectl -n openhands patch secret admin-password \
-  -p '{"stringData":{"admin-password":"'"$ADMIN_PASSWORD"'"}}'
+<Tabs>
+  <Tab title="VM Install (Admin Console)">
+    The password is **auto-generated** at install (`{{repl RandomString 32}}`) and already in
+    the secret. The helper script reads it automatically — no action required.
 
-# Restart runtime-api to pick up the new password
-kubectl -n openhands rollout restart deployment -l app.kubernetes.io/name=runtime-api
-kubectl -n openhands rollout status deployment -l app.kubernetes.io/name=runtime-api
+    To set a memorable password, or to rotate the generated one:
 
-echo "Save this in your password manager: $ADMIN_PASSWORD"
-```
+    1. Open the **Admin Console** at `https://admin.<your-base-domain>:30000`.
+    2. Navigate to **Config → Sandbox Configuration → Runtime API Admin Password**.
+    3. Enter your new password and click **Save config**, then **Deploy**.
 
-<Warning>
-  **Re-apply the password after every Admin Console deploy.** The `admin-password` secret is rendered
-  by the application chart, so any config change or upgrade deployed through the Admin Console resets
-  it to empty. Your warm runtime configurations are stored in the database and survive deploys; only
-  the password needs re-patching (followed by the `rollout restart` above).
-</Warning>
+    The Admin Console updates the secret and rolls out the runtime-api automatically. The
+    password persists across all future Admin Console deploys.
+
+    <Warning>
+      Do not use `kubectl patch` to set the password. The Admin Console manages the
+      `admin-password` secret and overwrites it on every deploy, so a patched value is lost the
+      next time you save any config change.
+    </Warning>
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    The password was set when you created the `admin-password` secret during installation:
+
+    ```bash
+    kubectl -n openhands create secret generic admin-password \
+      --from-literal=admin-password=<random-string>
+    ```
+
+    The helper script reads it automatically — no action required.
+
+    To rotate the password:
+
+    ```bash
+    kubectl -n openhands delete secret admin-password
+    kubectl -n openhands create secret generic admin-password \
+      --from-literal=admin-password=$(openssl rand -base64 24)
+    kubectl -n openhands rollout restart deployment -l app.kubernetes.io/name=runtime-api
+    kubectl -n openhands rollout status deployment -l app.kubernetes.io/name=runtime-api
+    ```
+
+    Store the new value in your password manager before running the first command.
+  </Tab>
+</Tabs>
 
 ### Step 2: Save the Helper Script
 
@@ -348,13 +389,23 @@ kubectl -n openhands get configmap openhands-runtime-api-warm-runtimes \
 (If the ConfigMap has a different name in your install, find it with
 `kubectl -n openhands get configmap | grep warm-runtimes`.)
 
-First, re-declare the default image so its pool survives the takeover described above. Name it
-`v1_current`; the application treats the configuration with that name as the system default:
+Save `v1_current` as an API-managed config. The application treats the configuration with that name
+as the system default when no user has picked a preference:
 
 ```bash
 jq '.count = 1' default-config.json > v1_current.json
 ./warm-runtime-configs.sh save v1_current v1_current.json
 ```
+
+<Note>
+  **VM installs (Replicated):** The installer's `v1_current` pool continues running while you
+  add API-managed entries — no takeover occurs. Saving `v1_current` here overrides the ConfigMap
+  entry so the API manages it explicitly; you can skip this sub-step if you do not need to change
+  the default image or want the installer to continue owning that entry.
+
+  **Helm installs:** This step is required. It re-declares the default pool so it survives the
+  takeover described above.
+</Note>
 
 Then derive each custom image configuration from the same template, changing only the image and the
 pool size:
@@ -379,6 +430,7 @@ jq '.image = "ghcr.io/your-org/openhands-php:8.4-v1" | .count = 1' \
 | `run_as_user` | integer | No | User ID for the pod security context (default `10001`) |
 | `run_as_group` | integer | No | Group ID for the pod security context (default `10001`) |
 | `fs_group` | integer | No | Filesystem group ID for the pod security context (default `10001`) |
+| `fuse_s3_mount` | boolean | No | When `true`, the sandbox mounts `/workspace` from object storage via FUSE rather than a PVC. Requires the FUSE device plugin and `FUSEY_*` env vars on runtime-api. Leave unset (`false`) for standard PVC-backed sandboxes. |
 
 The configuration name comes from the URL path (the `save <name>` argument), not the body. Saving an
 existing name overwrites it.
@@ -493,8 +545,8 @@ conversations that used them are gone (by default, stopped sandboxes are cleaned
 
 ### Reverting to Installer-Managed Configuration
 
-Delete **all** configurations and the Runtime API falls back to the installer-managed default from
-the Admin Console on the next reconciler cycle:
+Delete **all** API-managed configurations. The Runtime API then uses only the installer's ConfigMap
+entries on the next reconciler cycle:
 
 ```bash
 ./warm-runtime-configs.sh delete php-web
@@ -502,16 +554,25 @@ the Admin Console on the next reconciler cycle:
 ./warm-runtime-configs.sh list   # should print []
 ```
 
-The application's image list then falls back to the single default image as well.
+The application's image list then reflects only the installer-managed defaults.
+
+<Note>
+  **VM installs (Replicated):** The installer's `v1_current` pool was never replaced — overlay mode
+  kept it running throughout. Deleting all API-managed configs simply lifts any overrides, and the
+  ConfigMap entries continue as the sole source.
+
+  **Helm installs:** Deleting all API-managed configs hands warm pool management back to the
+  installer's ConfigMap. The Admin Console image settings resume affecting the pool.
+</Note>
 
 ### Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| `HTTP 403: Admin functionality is disabled` | The runtime-api deployment has no admin password wired at all (non-standard install). On Replicated installs the secret exists; set it per Step 1. |
-| `HTTP 401` on login | Wrong password, or the challenge expired (challenges are single-use and expire after 5 minutes; the script fetches a fresh one per call). If a previously working password fails after an Admin Console deploy, the secret was reset; re-apply Step 1. |
+| `HTTP 403: Admin functionality is disabled` | The runtime-api deployment has no admin password configured (non-standard install). See Step 1 for your install type. |
+| `HTTP 401` on login | Wrong password, or the challenge expired (challenges are single-use and expire after 5 minutes; the script fetches a fresh one per call). To check the current password: `kubectl get secret admin-password -n openhands -o jsonpath='{.data.admin-password}' \| base64 -d`. On Replicated installs, the password only changes if you update it in the Admin Console and deploy. |
 | `HTTP 401: ...provide a valid API key...` on list | The list endpoint authenticates with `X-API-Key`, not the admin JWT. Use the helper script. |
-| Saved a config but the dropdown does not show it | The application caches the list for 60 seconds; wait a minute and reload. Also confirm with `./warm-runtime-configs.sh list`. |
+| Saved a config but the dropdown does not show it | The app server caches the config list for 60 seconds; the UI caches it for up to 5 minutes. Wait up to 5 minutes, or navigate away from and back to the Settings page to prompt a fresh fetch. Confirm the config was saved with `./warm-runtime-configs.sh list`. |
 | No warm pods appear | Read the latest reconciler job log (Step 4). Look for image pull errors or scheduling failures. |
 | Warm pods `Pending` | Insufficient node resources. Every warm pod reserves the full sandbox resource envelope; lower the pool `count`s or add capacity. |
 | Conversations cold-start despite warm pods | Pool exhausted or configuration recently changed; see [How Warm Pods Are Claimed](#how-warm-pods-are-claimed). |
@@ -538,9 +599,14 @@ GET /api/warm-runtime-configs
 X-API-Key: {api-key}
 ```
 
-Returns `200` with `{"configs": [{name, image, working_dir, command, environment, count, run_as_user, run_as_group, fs_group, ...}, ...]}`.
-Only configurations saved through this API are listed; the installer-managed default (active only
-while this list is empty) does not appear.
+Returns `200` with `{"configs": [{name, image, working_dir, command, environment, count,
+run_as_user, run_as_group, fs_group, fuse_s3_mount, source, ...}, ...]}`.
+
+The `source` field is `'db'` for API-managed entries and `'file'` for ConfigMap entries. On
+Replicated installs (overlay mode), the list is the full effective set — ConfigMap entries merged
+with same-named API entries overriding them. On Helm installs (legacy mode, default), only API-saved
+entries are returned while the database contains any rows; the installer's ConfigMap entries do not
+appear in the list.
 
 **Create or update a configuration** (admin):
 
