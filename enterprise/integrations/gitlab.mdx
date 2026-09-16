@@ -1,0 +1,232 @@
+---
+title: GitLab
+description: Configure GitLab authentication and repository webhooks for OpenHands Enterprise.
+icon: code-branch
+---
+
+This guide explains how to connect GitLab to a self-hosted OpenHands Enterprise
+installation. The integration lets users sign in with GitLab, open
+repositories, and invoke OpenHands from issue and merge request comments.
+
+<Info>
+  For OpenHands Cloud, see [GitLab Integration](/openhands/usage/cloud/gitlab-installation).
+  This page covers the OAuth application and resolver configuration for OpenHands Enterprise.
+</Info>
+
+## Overview
+
+A self-hosted installation needs its own GitLab OAuth application so GitLab can
+send events to your domain. Setup has three parts:
+
+1. Create a GitLab Application for the installation.
+2. Enable GitLab in the OpenHands Enterprise configuration and deploy.
+3. Have each user sign in to OpenHands with GitLab before they invoke `@openhands`.
+
+The integration uses the signed-in user's GitLab authorization for repository
+operations, including merge request comments and branch creation. OpenHands
+installs repository webhooks automatically so it can receive issue and merge
+request events.
+
+## Prerequisites
+
+Before you start, confirm:
+
+- OpenHands Enterprise is reachable at `https://app.<your-base-domain>`.
+- The authentication service is reachable at `https://auth.<your-base-domain>`
+  when using the default **Simple** hostname mode.
+- Both hostnames use publicly trusted TLS certificates.
+- You can create a GitLab Application under a GitLab Group or user account.
+- Users who will trigger OpenHands have access to the GitLab projects they want
+  to use.
+- Network access from OpenHands to GitLab for API calls, and from GitLab back to
+  the OpenHands app URL for webhook delivery.
+- If you are using self-managed GitLab with an internal or self-signed
+  certificate, upload the issuing CA in the OpenHands Enterprise Admin Console
+  under **Additional Trusted CA Certificates** before deploying.
+
+## Step 1: Create a GitLab Application
+
+Create an OAuth application in GitLab so OpenHands can authenticate users and
+access repositories.
+
+1. Go to your GitLab Group (or user account).
+2. Navigate to **Settings > Applications**.
+3. Set the **Redirect URI** to:
+
+   ```text
+   https://<your-auth-hostname>/realms/allhands/broker/gitlab/endpoint
+   ```
+
+   Replace `<your-auth-hostname>` with your installation's Authentication
+   hostname (`auth.<your-openhands-domain>` by default), for example:
+
+   ```text
+   https://auth.openhands.example.com/realms/allhands/broker/gitlab/endpoint
+   ```
+
+   Replace only the hostname. Leave the rest of the path unchanged.
+
+4. Select the following scopes: `api`, `read_user`, `write_repository`,
+   `openid`, `email`, `profile`.
+5. Save the application.
+6. Note the **Client ID** and **Client Secret** provided by GitLab.
+
+<Warning>
+  Store the client secret securely. Do not commit it to a repository.
+</Warning>
+
+<Note>
+  The `api` scope is required so OpenHands can list repositories, install
+  webhooks, and post comments. The `write_repository` scope is required for Git
+  operations such as branch creation.
+</Note>
+
+## Step 2: Configure OpenHands Enterprise
+
+Pick the path that matches how OpenHands Enterprise is deployed.
+
+<Tabs>
+  <Tab title="Replicated">
+    Open the Replicated Admin Console for your OpenHands Enterprise installation
+    and go to the application configuration page.
+
+    In **GitLab Authentication**:
+
+    1. Enable **GitLab Authentication**.
+    2. Enter the **GitLab Host**. Leave it at `gitlab.com` for GitLab SaaS, or
+       enter the hostname of your self-managed GitLab instance.
+    3. Enter the **GitLab Client ID**.
+    4. Enter the **GitLab Client Secret**.
+    5. Save and deploy the updated configuration.
+
+    <Warning>
+      The GitLab Host must be a bare hostname, for example
+      `gitlab.example.com`. Do not include `https://`.
+    </Warning>
+  </Tab>
+
+  <Tab title="Standalone Helm">
+    First, create a Kubernetes secret containing the GitLab OAuth credentials:
+
+    ```bash
+    kubectl create secret generic gitlab-app -n openhands \
+      --from-literal=client-id=<your-gitlab-client-id> \
+      --from-literal=client-secret=<your-gitlab-client-secret>
+    ```
+
+    Then set GitLab values in your `site-values.yaml` file:
+
+    ```yaml
+    gitlab:
+      enabled: true
+      # Host for self-hosted GitLab (e.g. gitlab.example.com). Defaults to gitlab.com.
+      host: ""
+    ```
+
+    Leave `host` empty for GitLab SaaS (`gitlab.com`). For self-managed GitLab,
+    set it to the bare hostname, for example `gitlab.example.com`.
+
+    The `gitlab-app` Kubernetes secret provides the client ID and client secret.
+    When the chart is deployed, a job runs to configure the Keycloak realm with
+    the identity provider credentials you provided.
+
+    Then redeploy the chart:
+
+    ```bash
+    helm upgrade --install openhands --namespace openhands \
+      oci://ghcr.io/openhands/helm-charts/openhands -f site-values.yaml
+    ```
+  </Tab>
+</Tabs>
+
+## Step 3: Sign In with GitLab
+
+After the deployment is completed, users choose **Sign in with GitLab** on your
+app's login page.
+
+On first sign-in, users may be asked to accept OpenHands terms and complete an
+offline access flow. After sign-in, OpenHands stores the user's GitLab token so
+it can list repositories and run resolver jobs as that user.
+
+## Install Repository Webhooks
+
+To trigger OpenHands on GitLab repositories, repository administrators can
+install the OpenHands webhook from **Settings > Integrations** within the
+OpenHands app. For each project or group that should support `@openhands`
+comments, click **Install**. If a webhook already exists, click **Reinstall** to
+refresh it.
+
+<Note>
+  Group webhooks require a GitLab
+  [Premium or Ultimate tier subscription](https://docs.gitlab.com/user/project/integrations/webhooks/#group-webhooks).
+  For personal projects, project-level webhooks are used.
+</Note>
+
+OpenHands creates or updates a repository webhook that delivers issue and merge
+request events. The signing secret is generated and stored by OpenHands.
+
+## Use the Built-In Resolver
+
+Mention `@openhands` in an issue, merge request comment, or inline merge request
+review comment. You can also add the `openhands` label to an issue. Include the
+task after the mention, for example:
+
+```text
+@openhands explain why this test is failing
+```
+
+The resolver starts a job only when:
+
+- The repository webhook is installed and active.
+- The mentioning GitLab user has signed in to OpenHands with GitLab.
+- The mentioning user has access to the repository.
+
+When a job starts, OpenHands:
+
+1. Comments on the issue or merge request to let you know it is working on it,
+   with a link to track progress.
+2. Creates an OpenHands conversation with the issue or merge request context.
+3. Runs the task using the triggering user's GitLab authorization.
+4. For issues, opens a merge request if it determines that the issue has been
+   resolved.
+5. Comments with a summary of the performed tasks and a link to the
+   conversation.
+
+### Working with Issues
+
+On your repository, label an issue with `openhands` or add a message starting
+with `@openhands`. OpenHands will:
+
+1. Comment on the issue to let you know it is working on it.
+2. Open a merge request if it determines that the issue has been resolved.
+3. Comment on the issue with a summary of the performed tasks and a link to the
+   merge request.
+
+### Working with Merge Requests
+
+To get OpenHands to work on merge requests, mention `@openhands` in the comments
+to:
+
+- Ask questions
+- Request updates
+- Get code explanations
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| The GitLab login option is not visible | Confirm **GitLab Authentication** is enabled in the Admin Console or Helm values and the deployment has been applied. |
+| OAuth redirects fail | Confirm the redirect URI exactly matches `https://<your-auth-hostname>/realms/allhands/broker/gitlab/endpoint`. |
+| Login tries to reach an invalid `https://https://...` URL | Remove `https://` from the GitLab Host field in the Admin Console or Helm values. |
+| GitLab sign-in succeeds but no repositories are listed | Confirm the user has access to the GitLab projects and that the GitLab Host is correct for self-managed instances. |
+| `@openhands` is ignored | Confirm the webhook is installed for the repository, the sender has signed in to OpenHands with GitLab, and the sender has access to the repository. |
+| Webhook installation fails | Confirm the user has Admin or Owner permissions on the GitLab project or group and the OAuth application grants the `api` scope. |
+| GitLab webhook deliveries do not reach OpenHands | Confirm the GitLab instance can reach the OpenHands app URL and the TLS certificate is trusted. |
+| GitLab API calls fail with TLS errors | Upload the GitLab CA certificate in **Additional Trusted CA Certificates** and redeploy. |
+| OpenHands posts duplicate comments | Check whether more than one OpenHands webhook is installed for the repository. |
+
+## Related Documentation
+
+- [Enterprise Quick Start](/enterprise/quick-start)
+- [Skills and Plugins](/enterprise/skills-and-plugins)
+- [GitLab Integration (Cloud)](/openhands/usage/cloud/gitlab-installation)
