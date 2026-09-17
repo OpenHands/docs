@@ -1,0 +1,274 @@
+---
+title: Agent Plugins Packages
+description: OpenHands loads plugins published in the portable Agent Plugins format, so a single package works across every compatible client.
+---
+
+[Agent Plugins](https://agent-plugins.org) is a portable packaging format for agent
+extensions. A package published in this format carries its skills and MCP server
+configuration in fixed, client-neutral locations, so the same directory loads in
+OpenHands and in any other compatible client without being rewritten.
+
+OpenHands supports version 1.0.0 of the specification. This page covers what the
+format looks like, which parts of a package OpenHands honours, and how a package
+behaves when something in it is invalid.
+
+<Note>
+  Agent Plugins support ships in `openhands-sdk` 1.50.0 and later. Earlier
+  versions load a package's root `plugin.json` with the
+  [OpenHands plugin format](/overview/plugins) instead, which expects its
+  manifest at `.plugin/plugin.json` and therefore names the plugin after its
+  directory.
+</Note>
+
+## How OpenHands Picks the Format
+
+OpenHands supports two plugin layouts and chooses between them by looking for a
+manifest at the package root:
+
+| Manifest location | Format used |
+|-------------------|-------------|
+| `plugin.json` at the package root | Agent Plugins |
+| `.plugin/plugin.json` or `.claude-plugin/plugin.json` | [OpenHands / Claude Code](/overview/plugins) |
+
+A root `plugin.json` takes precedence. Its presence alone decides the format: a
+package whose manifest is present but invalid is rejected as an Agent Plugins
+package rather than falling back to the other layout.
+
+## Package Layout
+
+```
+plugin-name/
+├── plugin.json              # Required manifest
+├── skills/                  # Agent Skills (optional)
+│   └── skill-name/
+│       └── SKILL.md
+├── mcp.json                 # MCP servers, no leading dot (optional)
+└── dev.openhands/           # OpenHands extensions (optional)
+    ├── commands/
+    ├── agents/
+    └── hooks/hooks.json
+```
+
+Everything except `plugin.json` is optional, and a missing directory is a valid
+absence rather than an error. Every path a package refers to must stay inside the
+package directory; paths that resolve outside it are refused.
+
+## Manifest
+
+`plugin.json` sits at the package root and must declare both `$schema` and
+`name`:
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "code-quality",
+  "version": "1.2.0",
+  "description": "Linting and review skills with a code analysis MCP server",
+  "author": { "name": "Your Team" },
+  "homepage": "https://example.com/code-quality",
+  "repository": "https://github.com/example/code-quality",
+  "license": "Apache-2.0",
+  "keywords": ["linting", "review"]
+}
+```
+
+The `$schema` value must be exactly the 1.0.0 plugin schema identifier above.
+OpenHands validates the manifest against a vendored copy of that schema and never
+fetches it over the network while loading.
+
+Unknown top-level fields are reported in the logs and ignored. Any other manifest
+violation — unparseable JSON, a missing or unrecognized `$schema`, a missing
+`name`, a field of the wrong type — stops the package from loading before
+component discovery begins.
+
+## Supported Components
+
+| Component | Location | Support |
+|-----------|----------|---------|
+| Skills | `skills/` | Loaded |
+| MCP servers | `mcp.json` | Loaded (`stdio` and `streamable-http`) |
+| Commands, agents, hooks | `dev.openhands/` | Loaded through the OpenHands extension namespace |
+
+Component types that the specification does not define, and extension namespaces
+belonging to other clients, are ignored without inspecting their contents.
+
+### Skills
+
+Each subdirectory of `skills/` holds one skill, defined by a `SKILL.md` file:
+
+```
+skills/
+├── linting/
+│   ├── SKILL.md
+│   └── references/
+│       └── style-guide.md
+└── review/
+    └── SKILL.md
+```
+
+Discovery is not recursive: `skills/<name>/SKILL.md` defines a skill, while
+deeper Markdown files are that skill's own resources. A package with no `skills/`
+directory but a `SKILL.md` at its root loads as a single-skill package.
+
+See [Skills](/overview/skills) for how to write one.
+
+### MCP Servers
+
+MCP servers are declared in `mcp.json` at the package root — no leading dot,
+unlike the OpenHands format's `.mcp.json`:
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "analyzer": {
+      "type": "stdio",
+      "command": "./bin/analyzer",
+      "args": ["--state", "${PLUGIN_DATA}/cache"],
+      "env": { "RULES": "${PLUGIN_ROOT}/rules.toml" }
+    },
+    "registry": {
+      "type": "streamable-http",
+      "url": "https://mcp.example.com/registry",
+      "headers": { "X-Registry-Tier": "standard" }
+    }
+  }
+}
+```
+
+OpenHands supports the `stdio` and `streamable-http` transports. An `sse` entry is
+reported and skipped: the transport is optional in the specification and
+deprecated by MCP itself, so OpenHands declines it rather than silently
+substituting another transport.
+
+Each entry is validated on its own. One invalid or unsupported entry is skipped
+while its siblings still load, and a package whose `mcp.json` is invalid as a
+whole loads with no MCP servers instead of failing entirely.
+
+#### Placeholders
+
+Two placeholders are available:
+
+| Placeholder | Value |
+|-------------|-------|
+| `${PLUGIN_ROOT}` | The package's resolved directory |
+| `${PLUGIN_DATA}` | A persistent per-package directory OpenHands creates for writable state |
+
+They are expanded only in `args`, in `env` values, and in `cwd`. Expansion is a
+single pass, so text introduced by one replacement is never expanded again, and
+any other `${...}` text is passed through literally. `${PLUGIN_DATA}` is keyed to
+the package's location, so it survives updates and is never shared with a
+same-named package elsewhere.
+
+For `stdio` servers, OpenHands also sets `PLUGIN_ROOT` and `PLUGIN_DATA` in the
+server's environment. A package cannot override either one.
+
+#### stdio Servers
+
+`command` is a single executable token, never a shell string. It is either a bare
+executable name resolved through the platform's executable search, or a
+package-relative path beginning with `./`. Absolute paths, `../` and bare relative
+paths are refused.
+
+`cwd` defaults to the package root. An explicit `cwd` must stay inside the package
+root, or inside `${PLUGIN_DATA}` when written relative to it.
+
+#### streamable-http Servers
+
+`url` must be an absolute `http(s)` URL with no user information and no fragment.
+`https` is required unless the host is a loopback address.
+
+Header values are sent literally, with no placeholder expansion. Headers that
+OpenHands generates itself to implement HTTP and MCP — such as `Host`,
+`Content-Length` and `Mcp-Session-Id` — are dropped with a warning if a package
+configures them.
+
+### OpenHands Extensions
+
+Commands, agents, hooks and an entry command are not part of the portable core, so
+OpenHands reads them from its own extension namespace, `dev.openhands`. File-based
+components live in a top-level directory of that name:
+
+```
+dev.openhands/
+├── commands/
+│   └── review.md
+├── agents/
+│   └── reviewer.md
+└── hooks/
+    └── hooks.json
+```
+
+The layout inside `dev.openhands/` is the same as in the OpenHands plugin format,
+so porting a package is a matter of moving those directories rather than rewriting
+them.
+
+An entry command is declared in the manifest under the same namespace:
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "code-quality",
+  "extensions": {
+    "dev.openhands": {
+      "entry_command": "review"
+    }
+  }
+}
+```
+
+Other clients ignore this member, and OpenHands ignores theirs. An unusable value
+inside `dev.openhands` is reported and ignored rather than failing the package.
+
+What these components do is unchanged by the format: see
+[Plugin components](/overview/plugins) for commands and agents, and
+[Hooks](/openhands/usage/customization/hooks) for the hook contract.
+
+## Installing a Package
+
+Agent Plugins packages install exactly like any other OpenHands plugin — from a
+local directory or a repository, through the same settings and commands. The
+format changes only how a package is laid out, not how it is installed.
+
+<CardGroup cols={2}>
+  <Card title="Install a plugin" icon="download" href="/overview/plugins">
+    Installation paths for every OpenHands surface
+  </Card>
+  <Card title="Agent Canvas" icon="table-columns" href="/openhands/usage/agent-canvas/plugins">
+    Browse, install and attach plugins in the UI
+  </Card>
+</CardGroup>
+
+## When Something Is Invalid
+
+Failures are contained as narrowly as the specification allows, so a partly broken
+package still contributes what is valid:
+
+| Problem | Result |
+|---------|--------|
+| Invalid manifest | The package does not load |
+| Unknown top-level manifest field | Reported and ignored |
+| Invalid `mcp.json` document | The package loads with no MCP servers |
+| Invalid or unsupported MCP entry | That entry is skipped; the others load |
+| Invalid skill | That skill is skipped; the others load |
+| Unknown component type or extension namespace | Ignored |
+
+Loading decisions are logged, so the log is the place to look when a component you
+expect is missing.
+
+## Further Reading
+
+<CardGroup cols={2}>
+  <Card title="Agent Plugins specification" icon="book" href="https://agent-plugins.org">
+    The portable format this page implements
+  </Card>
+  <Card title="OpenHands plugin format" icon="plug" href="/overview/plugins">
+    The `.plugin/` layout and its components
+  </Card>
+  <Card title="Skills" icon="lightbulb" href="/overview/skills">
+    Writing and distributing skills
+  </Card>
+  <Card title="SDK plugins guide" icon="code" href="/sdk/guides/plugins">
+    Loading plugins programmatically
+  </Card>
+</CardGroup>
