@@ -133,6 +133,48 @@ agent = ACPAgent(
 | `acp_args` | Additional arguments appended to the command |
 | `acp_env` | **Deprecated** (removed in 1.29.0). Route env/credentials through the conversation's `secrets` or `agent_context.secrets` instead — see below. |
 
+### Structured Output
+
+`structured_output` is the programmatic, provider-neutral configuration for ACP structured output. `StructuredOutputConfig` and `StructuredOutputMode` are public exports from `openhands.sdk`. Create a `StructuredOutputConfig` with a caller-supplied JSON Schema. `StructuredOutputMode` is currently limited to `"json_schema"`.
+
+```python icon="python"
+from openhands.sdk import ACPAgentSettings, StructuredOutputConfig
+from openhands.sdk.agent import ACPAgent
+
+structured_output = StructuredOutputConfig(
+    mode="json_schema",
+    schema={
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "severity": {"type": "string", "enum": ["low", "medium", "high"]},
+        },
+        "required": ["summary", "severity"],
+        "additionalProperties": False,
+    },
+)
+
+# Set it directly on ACPAgent.
+agent = ACPAgent(
+    acp_server="claude-code",
+    acp_command=["npx", "-y", "@agentclientprotocol/claude-agent-acp"],
+    structured_output=structured_output,
+)
+
+# Or set it on ACPAgentSettings and create the agent from the settings.
+settings = ACPAgentSettings(
+    acp_server="claude-code",
+    structured_output=structured_output,
+)
+settings_agent = settings.create_agent()
+```
+
+The configuration is intentionally bounded: it accepts the caller's schema, not an arbitrary raw ACP `_meta` dictionary. The caller owns the schema's canonical semantics and must validate the returned semantic result. The SDK only handles provider and ACP attachment mechanics; it does not interpret the schema's domain fields.
+
+The only currently qualified mapping is Claude ACP. On that path, the SDK attaches the schema to Claude's provider-native JSON Schema output mechanism during session setup, including resumed sessions. Any provider-specific session metadata used for that mapping is Claude-specific and is **not** an ACP standard field.
+
+If structured output is requested for a provider without a qualified mapping, the SDK fails explicitly before ACP session dispatch. It does not silently ignore the configuration or downgrade to prompt-only behavior. Provider support is provider-specific and must be explicitly implemented and qualified.
+
 ### Environment Variables and Credentials
 
 Pass the environment variables and credentials the ACP server needs through the conversation's `secrets` (or `agent_context.secrets`). They flow into the conversation's secret registry, are injected into the ACP subprocess environment, and are masked if the server echoes them back into its output:
