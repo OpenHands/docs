@@ -1,0 +1,96 @@
+---
+title: Command Whitelist
+description: Restrict the agent to a pre-approved set of shell commands using PreToolUse hooks. Everything not on the list is blocked by default.
+---
+
+**Source:** [`command-whitelist/`](https://github.com/jpshackelford/oh-examples/tree/main/command-whitelist)
+
+This example uses a `PreToolUse` hook to enforce a strict allowlist of shell commands. Any command not on the list is blocked before execution. This is the **whitelist approach**: deny everything by default, allow only what you explicitly approve.
+
+## Allowed Commands
+
+The bundled `strict-mode` plugin permits only these read-only operations:
+
+| Category | Commands |
+|----------|----------|
+| File operations | `ls`, `cat`, `head`, `tail`, `file` |
+| Search & filter | `grep`, `find`, `wc` |
+| System info | `pwd`, `whoami`, `date`, `uname`, `df`, `du`, `stat` |
+| Utilities | `echo`, `which`, `env`, `printenv`, `history`, `tree` |
+
+Everything else — `pip`, `npm`, `rm`, `git`, `curl`, and anything else — is **blocked**.
+
+## How It Works
+
+The hook extracts the command name from the tool invocation JSON, checks it against the approved list, and denies it if not found:
+
+```bash
+input=$(cat)
+# Extract first word of the command (the binary name)
+cmd=$(printf '%s' "$input" \
+    | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' \
+    | head -1 | sed 's/.*: *"//' | sed 's/"$//' \
+    | awk '{print $1}' | sed 's|.*/||')
+
+# Check against the approved list
+case "$cmd" in
+    ls|cat|head|tail|file|grep|find|wc|pwd|whoami|date|uname|df|du|stat|echo|which|env|printenv|history|tree)
+        exit 0  # Allow
+        ;;
+    *)
+        printf '{"decision": "deny", "reason": "🚫 Command '\''%s'\'' is not in the approved list."}\n' "$cmd"
+        exit 2  # Block
+        ;;
+esac
+```
+
+The hook lives in [`strict-mode/`](https://github.com/jpshackelford/oh-examples/tree/main/command-whitelist/strict-mode).
+
+## Try It
+
+<Tabs>
+  <Tab title="Via API">
+    ```bash
+    cd ../load-plugin
+
+    # This will be blocked (pip is not on the whitelist)
+    python load_plugin.py \
+      --repo-path command-whitelist/strict-mode \
+      --message "Install the requests package"
+
+    # This will be allowed (ls is on the whitelist)
+    python load_plugin.py \
+      --repo-path command-whitelist/strict-mode \
+      --message "List all Python files in the current directory"
+    ```
+  </Tab>
+  <Tab title="Via Badge">
+    Click the badge in the [example README](https://github.com/jpshackelford/oh-examples/tree/main/command-whitelist) to open a conversation with the plugin pre-loaded.
+  </Tab>
+</Tabs>
+
+## Customizing the Allowlist
+
+Edit the `case` statement in `hooks/hooks.json` to add commands for your use case:
+
+```bash
+# Add git read operations to the allowlist
+ls|cat|head|tail|file|grep|find|wc|pwd|whoami|date|uname|df|du|stat|echo|which|env|printenv|history|tree|git)
+    exit 0
+    ;;
+```
+
+## When to Use Whitelisting
+
+| Use case | Recommendation |
+|----------|---------------|
+| General development work | [Blacklist](/cookbook/command-blacklist) — fewer blocked operations |
+| Read-only exploration or analysis | **Whitelist** — agent can only inspect, never modify |
+| Regulated environments | **Whitelist** — explicit control over every permitted action |
+| Shared/multi-tenant setups | [Workspace Isolation](/cookbook/workspace-isolation) combined with either approach |
+
+## See Also
+
+- [Command Blacklist](/cookbook/command-blacklist) — Block specific dangerous commands while allowing everything else
+- [Workspace Isolation](/cookbook/workspace-isolation) — Enforce directory boundaries regardless of which commands are used
+- [Hooks](/openhands/usage/customization/hooks) — Full hooks documentation

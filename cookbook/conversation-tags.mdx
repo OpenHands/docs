@@ -1,0 +1,117 @@
+---
+title: Conversation Tags
+description: Attach arbitrary key-value metadata to an OpenHands conversation using the tags field, and read it back from your own tooling.
+---
+
+**Source:** [`conversation-tags/`](https://github.com/jpshackelford/oh-examples/tree/main/conversation-tags)
+
+Conversations have a free-form `tags` map for storing your own metadata — for example, an external `environment_url` or a `job_id` from your CI system. This example shows the full write-then-read round-trip.
+
+Tags are the supported replacement for adding custom fields to the conversation model. Instead of waiting for the API to expose a new field, put it in `tags`.
+
+## Tag Rules
+
+| Rule | Detail |
+|------|--------|
+| Keys | Lowercase alphanumeric only — no `_` or `-` (e.g., use `environmenturl`, not `environment_url`) |
+| Values | Arbitrary strings, 256 characters max |
+| `PATCH` behavior | **Replaces all tags** — this example does a read-modify-write to merge |
+
+## The Two-Server Split
+
+Tags are written on the **agent server** (which owns the conversation), not the Cloud app server. The Cloud's `AppConversation.tags` field is eventually consistent — it typically catches up within a few seconds.
+
+| Step | Server | Call |
+|------|--------|------|
+| Start a conversation | Cloud | `POST /api/v1/app-conversations` |
+| Resolve agent URL + key | Cloud | `GET /api/v1/app-conversations?ids=<id>` |
+| **Write tags** | **Agent** | `PATCH {conversation_url}` |
+| Read tags back | Cloud | `GET /api/v1/app-conversations?ids=<id>` |
+
+## How It Works
+
+### 1. Start a Conversation
+
+```python
+import os
+import requests
+
+CLOUD = "https://app.all-hands.dev"
+cloud_headers = {"X-Session-API-Key": os.environ["OH_API_KEY"]}
+
+task = requests.post(
+    f"{CLOUD}/api/v1/app-conversations",
+    headers=cloud_headers,
+    json={"initial_message": {"role": "user", "content": [{"type": "text", "text": "Hello"}]}},
+).json()
+```
+
+### 2. Resolve the Agent URL
+
+```python
+# Poll until conversation is ready, then fetch conversation details
+conv = requests.get(
+    f"{CLOUD}/api/v1/app-conversations",
+    headers=cloud_headers,
+    params={"ids": conversation_id},
+).json()[0]
+
+conversation_url = conv["conversation_url"]   # full agent resource URL
+session_api_key = conv["session_api_key"]
+agent_headers = {"X-Session-API-Key": session_api_key}
+```
+
+### 3. Write Tags (Agent Server)
+
+```python
+# Read existing tags first to avoid clobbering them
+existing = requests.get(conversation_url, headers=agent_headers).json()
+merged_tags = {**existing.get("tags", {}), "environmenturl": "https://env.example.com", "jobid": "42"}
+
+requests.patch(
+    conversation_url,
+    headers=agent_headers,
+    json={"tags": merged_tags},
+)
+```
+
+### 4. Read Tags Back (Cloud)
+
+```python
+# The Cloud reflects the agent server's tags (eventually consistent)
+import time
+for _ in range(10):
+    conv = requests.get(
+        f"{CLOUD}/api/v1/app-conversations",
+        headers=cloud_headers,
+        params={"ids": conversation_id},
+    ).json()[0]
+    if conv.get("tags"):
+        break
+    time.sleep(2)
+
+print(conv["tags"])
+# {"environmenturl": "https://env.example.com", "jobid": "42"}
+```
+
+## Quickstart
+
+```bash
+export OH_API_KEY="your-api-key"
+pip install requests
+python tag_conversation.py
+```
+
+Pass your own tags with `--tag`:
+
+```bash
+python tag_conversation.py \
+    --tag environmenturl=https://staging.example.com \
+    --tag jobid=ci-run-1234 \
+    --keep   # don't delete the conversation after the demo
+```
+
+## See Also
+
+- [Per-Conversation Secrets](/cookbook/per-conversation-secrets) — Inject secrets that are scoped to a single conversation
+- [Conversation Metrics](/cookbook/conversation-metrics) — Retrieve cost and token usage for a conversation
