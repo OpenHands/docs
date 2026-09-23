@@ -157,8 +157,11 @@
     }
     payload.attribution = sanitizedAttribution;
 
+    const encodedHandoff = base64UrlEncode(JSON.stringify(payload));
+    url.searchParams.set(HANDOFF_PARAM, encodedHandoff);
+
     const hash = new URLSearchParams(url.hash.slice(1));
-    hash.set(HANDOFF_PARAM, base64UrlEncode(JSON.stringify(payload)));
+    hash.set(HANDOFF_PARAM, encodedHandoff);
     url.hash = hash.toString();
     return url.toString();
   }
