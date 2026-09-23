@@ -13,11 +13,9 @@
 //   - localhost / 127.0.0.1       -> STAGING_KEY (local dev)
 //
 // The api_host / ui_host / defaults stay the same for both environments.
-// Replace STAGING_KEY with the real staging PostHog project key before merging
-// (or leave it as the placeholder to keep previews non-tracking until then).
 
 var PROD_KEY = 'phc_BgzfxKdgsYMLFTmJqt424ZoyVHvKFfrwttLimzdYTKFK';
-var STAGING_KEY = 'phc_REPLACE_WITH_STAGING_POSTHOG_KEY';
+var STAGING_KEY = 'phc_kBtz5nKmxVRRQ7HtPwr2QX9eMC5j65zE86QKocVNwb4U';
 
 var POSTHOG_CONFIG = {
   api_host: 'https://z.openhands.dev',
@@ -43,13 +41,6 @@ function isStagingHostname(hostname) {
 (function () {
   var hostname = (window.location && window.location.hostname) || '';
   var apiKey = isStagingHostname(hostname) ? STAGING_KEY : PROD_KEY;
-
-  if (apiKey.indexOf('REPLACE_WITH_STAGING') !== -1 && isStagingHostname(hostname)) {
-    if (window.console && console.warn) {
-      console.warn('[analytics] Staging PostHog key is still a placeholder; preview analytics disabled until it is set.');
-    }
-    return;
-  }
 
   posthog.init(apiKey, POSTHOG_CONFIG);
 })();
