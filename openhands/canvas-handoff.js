@@ -1,6 +1,5 @@
 (function () {
   const APP_HOST = "app.all-hands.dev";
-  const APP_PREVIEW_HOST = "pr-1175.staging.all-hands.dev";
   const HANDOFF_PARAM = "oh_ph_handoff";
   const HANDOFF_TTL_MS = 5 * 60 * 1000;
   const ATTRIBUTION_KEYS = [
@@ -21,16 +20,6 @@
 
   function isDoNotTrackEnabled() {
     return navigator.doNotTrack === "1" || window.doNotTrack === "1";
-  }
-
-  function isProductionDocsHost(hostname) {
-    const normalized = hostname.toLowerCase().replace(/^www\./, "");
-    return normalized === "docs.openhands.dev";
-  }
-
-  function getAppTargetOrigin() {
-    if (isProductionDocsHost(window.location.hostname)) return `https://${APP_HOST}`;
-    return `https://${APP_PREVIEW_HOST}`;
   }
 
   function getPostHog() {
@@ -129,11 +118,7 @@
 
   function buildHandoffUrl(href) {
     const url = new URL(href, window.location.href);
-    if (url.hostname !== APP_HOST && url.hostname !== APP_PREVIEW_HOST) return href;
-
-    const targetOrigin = new URL(getAppTargetOrigin());
-    url.protocol = targetOrigin.protocol;
-    url.host = targetOrigin.host;
+    if (url.hostname !== APP_HOST) return href;
 
     const posthog = getPostHog();
     if (!posthog) return url.toString();
