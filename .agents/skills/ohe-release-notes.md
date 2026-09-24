@@ -155,10 +155,10 @@ curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('body',''))"
 ```
 
-### 4. Categorize by component
+### 4. Categorize into top-level sections with component subsections
 
-Group bullet points **by component section**, with each section having its own Features, Bug Fixes,
-and Maintenance sub-headings. The component sections are:
+Group bullet points into **top-level sections** (Features, Bug Fixes, Maintenance), with **h4 component
+subsections** under each. The component order is:
 
 1. **Enterprise Server** — from `OpenHands/enterprise`
 2. **Software Agent SDK** — from `OpenHands/software-agent-sdk`
@@ -166,7 +166,7 @@ and Maintenance sub-headings. The component sections are:
 4. **Automation** — from `OpenHands/automation`
 5. **OpenHands Cloud (Helm Chart)** — from `OpenHands/OpenHands-Cloud`
 
-Within each section, sort items into:
+Sort items by conventional commit prefix:
 - **Features** — lines starting with `* feat`
 - **Bug Fixes** — lines starting with `* fix`
 - **Maintenance** — lines starting with `* chore`, `* ci`, `* build`, `* refactor`, `* test`, etc.
@@ -192,22 +192,23 @@ Also remove these automated/housekeeping lines that don't add value to customer-
 
 ### 6. Write the page
 
-Create or update `enterprise/release-notes.mdx`. Prepend the new release at the top of the file
-(after the frontmatter), so the most recent release appears first.
+Create a new file `enterprise/release-notes/X.Y.Z.mdx` (where X.Y.Z is the release version).
+Each release gets its own page, following the Agent Canvas release notes format.
 
-**Always write a short summary paragraph immediately under the `## X.Y.Z` heading**, before the
-first `### Component` section. Read all of the changelog entries for the release and summarize what
-the release encompasses. Keep it high-level and short (usually a single paragraph) — only call out
-things genuinely worth highlighting like notable features, and don't enumerate individual fixes or
-config flags. If the release contains only bug fixes and maintenance, just say something like
-"This release was focused on stability and maintenance fixes."
+**Directory setup:** If `enterprise/release-notes/` doesn't exist yet, create it.
 
-**The summary paragraph is for users, not developers.** Only include things a customer would
+**Always include a Highlights section** at the top. Read all of the changelog entries for the release
+and identify 2-5 items worth calling out. Keep it high-level and short — only call out things
+genuinely worth highlighting like notable features, and don't enumerate individual fixes or config flags.
+If the release contains only bug fixes and maintenance, you can still highlight the most important
+fixes or just say "This release was focused on stability and maintenance fixes."
+
+**The Highlights section is for users, not developers.** Only include things a customer would
 recognize and care about when reading the release notes — new UI, new capabilities they can use,
 new integrations, behavior changes that affect them, or admin/org features they can act on.
 **Do not include developer-facing or internal plumbing items**, even if they are prominent in the
-underlying changelog. Examples of what to exclude from the summary (even when present in the
-categorized bullet lists below):
+underlying changelog. Examples of what to exclude from Highlights (even when present in the
+categorized sections below):
 
 - Internal APIs, admin-only lifecycle endpoints, or other backend-only surfaces
 - Feature-flag mechanisms, config plumbing, database schema/indexing changes
@@ -218,91 +219,119 @@ categorized bullet lists below):
 - New model support unless it materially changes what a user can select in the product
 
 When in doubt, ask: "would a customer skimming release notes notice or care?" If not, leave it out
-of the summary. It still belongs in the categorized bullet lists below, just not in the intro.
+of Highlights. It may still belong in the categorized sections below, just not in Highlights.
 
 **Page structure:**
 
 ```mdx
 ---
-title: Release Notes
-description: Release notes for OpenHands Enterprise
-icon: clipboard-list
+title: OpenHands Enterprise X.Y.Z
+description: Release notes for OpenHands Enterprise version X.Y.Z
 ---
 
-## X.Y.Z
+# OpenHands Enterprise X.Y.Z
 
-<One or two short paragraphs summarizing what the release encompasses. Call out notable features;
-if it's only bug fixes, say something like "This release was focused on stability and maintenance fixes.">
+Released <Month Day, Year>.
 
-### Enterprise Server
+## Highlights
 
-#### Features
+- **<Short bold title>** — Brief description of the highlight. Include links to docs if relevant.
+- **<Another highlight>** — Brief description.
+
+## Features
+
+#### Enterprise Server
+
 * feat: ... by @author in https://github.com/OpenHands/enterprise/pull/...
 
-#### Bug Fixes
-* fix: ... by @author in https://github.com/OpenHands/enterprise/pull/...
+#### Software Agent SDK
 
-#### Maintenance
-* ci: ... by @author in https://github.com/OpenHands/enterprise/pull/...
-
----
-
-### Software Agent SDK
-
-#### Features
 * feat: ... by @author in https://github.com/OpenHands/software-agent-sdk/pull/...
 
-#### Bug Fixes
-* fix: ... by @author in https://github.com/OpenHands/software-agent-sdk/pull/...
+#### Runtime API
 
----
-
-### Runtime API
-
-#### Features
 * feat: ... by @author in https://github.com/OpenHands/runtime-api/pull/...
 
----
+#### Automation
 
-### Automation
-
-#### Features
 * feat: ... by @author in https://github.com/OpenHands/automation/pull/...
 
-#### Bug Fixes
-* fix: ... by @author in https://github.com/OpenHands/automation/pull/...
+#### OpenHands Cloud (Helm Chart)
 
----
-
-### OpenHands Cloud (Helm Chart)
-
-#### Features
 * feat: ... by @author in https://github.com/OpenHands/OpenHands-Cloud/pull/...
 
-#### Bug Fixes
-* fix: ... by @author in https://github.com/OpenHands/OpenHands-Cloud/pull/...
+## Bug Fixes
 
-## (previous release heading, if any)
-...
+#### Enterprise Server
+
+* fix: ... by @author in https://github.com/OpenHands/enterprise/pull/...
+
+#### Software Agent SDK
+
+* fix: ... by @author in https://github.com/OpenHands/software-agent-sdk/pull/...
+
+## Maintenance
+
+#### Enterprise Server
+
+* chore: ... by @author in https://github.com/OpenHands/enterprise/pull/...
+
+#### Runtime API
+
+* ci: ... by @author in https://github.com/OpenHands/runtime-api/pull/...
+
+## Full Changelog
+
+- [Enterprise Server releases](https://github.com/OpenHands/enterprise/releases)
+- [Software Agent SDK releases](https://github.com/OpenHands/software-agent-sdk/releases)
+- [Runtime API releases](https://github.com/OpenHands/runtime-api/releases)
+- [Automation releases](https://github.com/OpenHands/automation/releases)
+- [OpenHands Cloud releases](https://github.com/OpenHands/OpenHands-Cloud/releases)
 ```
 
 **Key formatting rules:**
-- Start each release with a short summary paragraph under the `## X.Y.Z` heading (see above)
-- Split by component section — each component gets its own `### Heading`
-- Within each component, group by `#### Features`, `#### Bug Fixes`, `#### Maintenance`
-- Separate component sections with `---` horizontal rules
+- Top-level sections are `## Highlights`, `## Features`, `## Bug Fixes`, `## Maintenance`, `## Full Changelog`
+- Under Features, Bug Fixes, and Maintenance, use `#### Component Name` for each component subsection
 - Keep the exact bullet text from the original release notes (author, PR link)
-- If a category has zero items after filtering, omit that sub-heading entirely
+- If a component has zero items in a category, omit that component subsection entirely
+- If an entire top-level section has zero items across all components, omit that section entirely
+- The Full Changelog section links to each component repo's releases page on GitHub
 
 ### 7. Update navigation
 
-Ensure `enterprise/release-notes` is listed in `docs.json` under the Enterprise tab. It should
-appear in the `"OpenHands Enterprise"` group. If it's already there (from a previous release),
-no change is needed.
+Add the new release page to `docs.json` under the Enterprise tab in a "Release Notes" group.
+
+**First time setup:** If there's no "Release Notes" group yet in the Enterprise tab, create one:
+
+```json
+{
+  "group": "Release Notes",
+  "pages": [
+    "enterprise/release-notes/X.Y.Z"
+  ]
+}
+```
+
+**Adding subsequent releases:** Prepend the new release at the **top** of the "Release Notes" pages array,
+so the most recent release appears first in the navigation:
+
+```json
+{
+  "group": "Release Notes",
+  "pages": [
+    "enterprise/release-notes/X.Y.Z",  // ← new release at the top
+    "enterprise/release-notes/A.B.C",  // ← previous releases below
+    "enterprise/release-notes/D.E.F"
+  ]
+}
+```
+
+The "Release Notes" group should appear after the other Enterprise documentation groups (like
+"OpenHands Enterprise" and "Integrations") in the Enterprise tab navigation.
 
 ### 8. Commit
 
 ```bash
-git add enterprise/release-notes.mdx docs.json
+git add enterprise/release-notes/X.Y.Z.mdx docs.json
 git commit -m "Add Enterprise X.Y.Z release notes"
 ```
