@@ -1,0 +1,281 @@
+---
+title: Task-Based Model Routing
+description: Let the agent pick the best saved LLM profile for the task at hand with the built-in route_task_to_model tool.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+The built-in `route_task_to_model` tool (`ClassifyAndSwitchLLMTool`) lets an agent switch models mid-conversation based on what the current task looks like. When the agent calls the tool, a lightweight classifier LLM inspects the recent conversation, picks the most suitable saved [LLM profile](/sdk/guides/llm-profile-store), and switches the conversation to that profile before the agent continues. Conversation history and combined usage metrics are preserved across the switch.
+
+This differs from [Model Routing](/sdk/guides/llm-routing), where a `Router` decides per request based on fixed rules. Here the decision is made by an LLM, and the agent decides when to ask for it.
+
+## How It Works
+
+1. **Save the candidate LLM profiles.** The tool switches profiles by name, so every model it can choose must exist in the `LLMProfileStore`, or be supplied inline (see below).
+2. **Define a meta-profile.** A `MetaProfile` names the classifier profile and describes how to map a task to a target profile.
+3. **Enable the tool on the agent.** Set `enable_classify_and_switch_llm_tool=True` on `OpenHandsAgentSettings` and point `active_meta_profile` (or `meta_profile`) at the routing configuration.
+4. **Let the agent call it.** The agent starts on its configured LLM and switches only when it invokes `route_task_to_model`.
+
+## Meta-Profile Shapes
+
+A `MetaProfile` supports two mutually exclusive routing modes.
+
+### Structured classes
+
+Provide a fixed set of task categories. The classifier is shown the categories and returns the number of the best match; the tool switches to that class's `model`, which is a saved profile name.
+
+```python icon="python"
+from openhands.sdk.llm.meta_profile_store import MetaProfile, MetaProfileClass
+
+structured_meta = MetaProfile(
+    classifier_model="example-router-classifier",
+    classes=[
+        MetaProfileClass(
+            description="Simple lookups, small edits, formatting",
+            model="example-router-cheap",
+        ),
+        MetaProfileClass(
+            description="Multi-file reasoning, debugging, architecture",
+            model="example-router-strong",
+        ),
+    ],
+)
+```
+
+### Direct prompt
+
+Provide a free-form `prompt_template` instead of classes. The template must contain `{{ instance_text }}` (the recent conversation) and may contain `{{ model_table }}` (the `model_table` text). The classifier is expected to return JSON with a `model` field naming a saved profile:
+
+```json
+{"model": "example-router-strong", "reason": "multi-file debugging"}
+```
+
+The returned name is matched case-insensitively against saved profile names, and the canonical profile name is used for the switch.
+
+```python icon="python"
+direct_meta = MetaProfile(
+    classifier_model="example-router-classifier",
+    prompt_template=(
+        "Pick the best model for the task below.\n\n"
+        "{{ model_table }}\n\n"
+        "Task:\n{{ instance_text }}\n\n"
+        'Return ONLY JSON: {"model": "<exact profile name>", "reason": "<short>"}'
+    ),
+    model_table=(
+        "- example-router-cheap: fast and cheap, good for simple tasks\n"
+        "- example-router-strong: slower and stronger, good for hard tasks"
+    ),
+)
+```
+
+## Where Meta-Profiles Come From
+
+Meta-profiles are stored by name in `~/.openhands/meta-profiles` and managed with `MetaProfileStore`. The tool resolves its configuration lazily, at invocation time, in this order:
+
+1. If `active_meta_profile` is set, the store is authoritative and the meta-profile is loaded by name.
+2. If the store cannot resolve that name, or no name is set, the inline `meta_profile` from the agent settings is used. Cloud runtimes rely on this because their ephemeral filesystem has no meta-profile store.
+3. If neither applies, the alphabetically first meta-profile in the store is used.
+
+Target and classifier profiles are likewise loaded from the `LLMProfileStore`, or from the `meta_profile_llms` map on the settings when supplied inline.
+
+<Note>
+If the classifier returns no usable answer, or names a profile that does not exist, the tool returns an error observation instead of silently routing to a default model. The agent sees the failure and can retry.
+</Note>
+
+## Enabling the Tool
+
+Wire everything through `OpenHandsAgentSettings`:
+
+```python icon="python" wrap focus={9-12}
+from openhands.sdk import Conversation, OpenHandsAgentSettings
+from openhands.sdk.llm.llm_profile_store import LLMProfileStore
+from openhands.tools.preset.default import register_default_tools
+
+profile_store = LLMProfileStore()
+register_default_tools(enable_browser=False)
+
+settings = OpenHandsAgentSettings(
+    llm=profile_store.load("example-router-default"),
+    enable_classify_and_switch_llm_tool=True,
+    active_meta_profile="structured",
+    meta_profile=structured_meta,
+)
+agent = settings.create_agent()
+conversation = Conversation(agent=agent, workspace=".")
+```
+
+<Warning>
+`create_agent()` defaults the agent's toolset to `terminal`, `file_editor`, and `task_tracker` by name. Their implementations live in `openhands-tools` and are registered only when imported, so call `register_default_tools()` (or import the tool modules you need) before creating the agent. Passing `tools=[]` instead builds a bare agent that has only the built-in tools plus `route_task_to_model`.
+</Warning>
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/59_route_task_to_model.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/59_route_task_to_model.py)
+</Note>
+
+Save a set of profiles, define a structured meta-profile, enable the tool, and ask the agent to route the task:
+
+```python icon="python" expandable examples/01_standalone_sdk/59_route_task_to_model.py
+"""Route each task to the best LLM with the built-in route_task_to_model tool.
+
+The agent starts on a default profile. When it calls the ``route_task_to_model``
+tool (a.k.a. ``ClassifyAndSwitchLLMTool``), a lightweight classifier LLM inspects
+the recent conversation, picks the most suitable saved LLM profile for the task,
+and switches the conversation to that profile before the agent continues.
+
+This example shows the two meta-profile shapes the tool supports:
+
+1. **Structured classes** — a fixed set of ``{description, model}`` rows; the
+   classifier returns a class index.
+2. **Direct prompt** — a ``prompt_template`` rendered with ``{{ instance_text }}``
+   and ``{{ model_table }}``; the classifier returns the model name directly.
+
+Both modes require the target models to exist as saved LLM profiles (the tool
+switches to them by name) or to be supplied inline via ``meta_profile_llms``.
+
+Usage:
+    LLM_API_KEY=... LLM_BASE_URL=https://llm-proxy.app.all-hands.dev \
+        uv run python examples/01_standalone_sdk/59_route_task_to_model.py
+"""
+
+import os
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Conversation, OpenHandsAgentSettings
+from openhands.sdk.llm.llm_profile_store import LLMProfileStore
+from openhands.sdk.llm.meta_profile_store import MetaProfile, MetaProfileClass
+from openhands.tools.preset.default import register_default_tools
+
+
+DEFAULT_BASE_URL = "https://llm-proxy.app.all-hands.dev"
+
+# Saved profile names. The route_task_to_model tool switches the conversation
+# to one of these by name, so each must exist in the LLMProfileStore below.
+DEFAULT_PROFILE = "example-router-default"
+CHEAP_PROFILE = "example-router-cheap"
+STRONG_PROFILE = "example-router-strong"
+CLASSIFIER_PROFILE = "example-router-classifier"
+
+CHEAP_MODEL = "openai/gpt-5.5"
+STRONG_MODEL = "openai/prod/claude-sonnet-4-5-20250929"
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+base_url = os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+
+
+# ── 1. Save the LLM profiles the router will choose between ──────────────
+profile_store = LLMProfileStore()
+for name, model, usage_id in [
+    (DEFAULT_PROFILE, CHEAP_MODEL, "router-default"),
+    (CHEAP_PROFILE, CHEAP_MODEL, "router-cheap"),
+    (STRONG_PROFILE, STRONG_MODEL, "router-strong"),
+    (CLASSIFIER_PROFILE, CHEAP_MODEL, "router-classifier"),
+]:
+    profile_store.save(
+        name,
+        LLM(
+            model=model,
+            api_key=SecretStr(api_key),
+            base_url=base_url,
+            usage_id=usage_id,
+        ),
+        include_secrets=True,
+    )
+
+try:
+    # ── 2. Define a meta-profile: structured classes ──────────────────────
+    # The classifier returns a 1-based class index; ``model`` is the saved
+    # profile name to switch to. ``classifier_model`` is itself a saved
+    # profile name used to run the classification call.
+    structured_meta = MetaProfile(
+        classifier_model=CLASSIFIER_PROFILE,
+        classes=[
+            MetaProfileClass(
+                description="Simple lookups, small edits, formatting",
+                model=CHEAP_PROFILE,
+            ),
+            MetaProfileClass(
+                description="Multi-file reasoning, debugging, architecture",
+                model=STRONG_PROFILE,
+            ),
+        ],
+    )
+
+    # ── 3. Build the agent via OpenHandsAgentSettings ─────────────────────
+    # ``create_agent()`` defaults to the standard exec tools (terminal,
+    # file_editor, task_tracker) by name; their implementations live in
+    # ``openhands-tools`` and must be registered before the agent initializes.
+    register_default_tools(enable_browser=False)
+
+    # Enabling the tool + setting the active meta-profile name is all it takes
+    # to wire route_task_to_model into the agent. The agent starts on the
+    # default profile and switches only when it calls the tool.
+    settings = OpenHandsAgentSettings(
+        llm=profile_store.load(DEFAULT_PROFILE),
+        enable_classify_and_switch_llm_tool=True,
+        active_meta_profile="structured",
+        meta_profile=structured_meta,
+    )
+    agent = settings.create_agent()
+
+    conversation = Conversation(agent=agent, workspace=os.getcwd())
+    print(f"Starting model: {conversation.agent.llm.model}")
+
+    conversation.send_message(
+        "Call the route_task_to_model tool now. After it returns, answer in one "
+        "short sentence naming the model the tool switched to."
+    )
+    conversation.run()
+
+    print(f"Active model after routing: {conversation.agent.llm.model}")
+
+    for usage_id, metrics in conversation.state.stats.usage_to_metrics.items():
+        print(f"  [{usage_id}] cost=${metrics.accumulated_cost:.6f}")
+    combined = conversation.state.stats.get_combined_metrics()
+    print(f"Total cost: ${combined.accumulated_cost:.6f}")
+    print(f"EXAMPLE_COST: {combined.accumulated_cost}")
+
+    # ── 4. (Info) Direct-prompt meta-profile shape ────────────────────────
+    # Instead of fixed classes, you give the classifier a free-form prompt
+    # template and a model table. The classifier returns the model name
+    # directly as JSON ``{"model": "<name>", "reason": "..."}``. This is the
+    # shape used by the Pareto prompt meta-profiles.
+    direct_meta = MetaProfile(
+        classifier_model=CLASSIFIER_PROFILE,
+        prompt_template=(
+            "Pick the best model for the task below.\n\n"
+            "{{ model_table }}\n\n"
+            "Task:\n{{ instance_text }}\n\n"
+            'Return ONLY JSON: {"model": "<exact profile name>", "reason": "<short>"}'
+        ),
+        model_table=(
+            f"- {CHEAP_PROFILE}: fast and cheap, good for simple tasks\n"
+            f"- {STRONG_PROFILE}: slower and stronger, good for hard tasks"
+        ),
+    )
+    print()
+    print("Direct-prompt meta-profile (not executed here):")
+    print(direct_meta.model_dump_json(indent=2))
+
+finally:
+    for name in [
+        DEFAULT_PROFILE,
+        CHEAP_PROFILE,
+        STRONG_PROFILE,
+        CLASSIFIER_PROFILE,
+    ]:
+        profile_store.delete(name)
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/59_route_task_to_model.py"/>
+
+## Next Steps
+
+- **[LLM Profile Store](/sdk/guides/llm-profile-store)** - Save and manage the profiles the router chooses between
+- **[Model Routing](/sdk/guides/llm-routing)** - Rule-based per-request routing with a `Router`
+- **[Agent Settings](/sdk/guides/agent-settings)** - Configure agents declaratively with `OpenHandsAgentSettings`
