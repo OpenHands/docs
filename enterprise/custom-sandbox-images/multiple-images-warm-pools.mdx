@@ -4,55 +4,29 @@ description: Configure custom sandbox images through the Runtime API, each kept 
 icon: layer-group
 ---
 
-To offer several sandbox images at once, configure **warm runtime pools**
-through the Runtime API. Each configuration names one image and keeps a pool
-of pre-started sandbox pods ready for it. The OpenHands application
-automatically exposes every configuration as a selectable sandbox so users can
-pick their environment — no redeployment required.
-
 **Requirements:**
 
 - OpenHands Enterprise **0.64.0 or later**
-- `kubectl` access to the cluster (see [Prerequisites](/enterprise/custom-sandbox-images#prerequisites))
 - Custom images built and pushed as described in [Building a Custom Image](/enterprise/custom-sandbox-images/building-custom-images)
 
 ## How It Works
 
-<Tabs>
-  <Tab title="VM Install (Replicated)">
-    Warm runtime configurations run in **overlay mode** on Replicated installs
-    (`WARM_RUNTIME_CONFIG_OVERLAY=1` is set by default). API-managed
-    configurations layer on top of the installer's ConfigMap entries rather than
-    replacing them.
+Custom sandbox images are registered through the **Runtime API** — a
+management interface built into OpenHands Enterprise. The process has three
+steps:
 
-    - Adding a new name creates an additional pool alongside the
-      installer-managed `v1_current` pool.
-    - Saving a name that already exists in the ConfigMap overrides that entry;
-      deleting the override reverts to the ConfigMap value.
-    - The installer-managed `v1_current` pool keeps running throughout — you
-      never lose the default pool by adding custom configurations.
+1. **Set an admin password** in the install admin UI. This secures the Runtime
+   API so only authorized administrators can register or remove images.
 
-    Changes take effect within about a minute with no application restarts and
-    no redeployments.
-  </Tab>
-  <Tab title="Kubernetes (Helm)">
-    <Warning>
-      **The first configuration you save takes over warm pool management.**
-      While the Runtime API database holds any configurations, the
-      installer-managed ConfigMap is ignored entirely. Always re-declare the
-      default image as a configuration (Step 3 does this). To hand control
-      back to the installer, delete **all** configurations.
+2. **Register images via the API.** Use the helper script below to give each
+   image a name and tell OpenHands where to pull it from. OpenHands pulls the
+   image from the registry you specify and keeps a pool of ready sandboxes for
+   it. No restarts or redeployments are needed — new images become available
+   within about a minute.
 
-      To enable overlay mode instead — so API configs layer on top of the
-      installer pool rather than replacing it, matching the Replicated
-      behavior — add `WARM_RUNTIME_CONFIG_OVERLAY: "1"` to the runtime-api
-      environment and restart the deployment.
-    </Warning>
-
-    Changes take effect within about a minute with no application restarts and
-    no redeployments.
-  </Tab>
-</Tabs>
+3. **Users choose their environment.** Each registered image appears in the
+   user's **Settings → Application → Default Sandbox** dropdown. Users pick
+   their default and all their new conversations start in that environment.
 
 ---
 
@@ -61,7 +35,7 @@ pick their environment — no redeployment required.
 The Runtime API admin endpoints require an admin password.
 
 <Tabs>
-  <Tab title="VM Install (Replicated)">
+  <Tab title="VM Install">
     The password is **auto-generated at install** (`{{repl RandomString 32}}`)
     and stored in the `admin-password` Kubernetes secret. The helper script in
     Step 2 reads it from the pod environment automatically — no action
@@ -84,7 +58,7 @@ The Runtime API admin endpoints require an admin password.
       use the Admin Console field.
     </Warning>
   </Tab>
-  <Tab title="Kubernetes (Helm)">
+  <Tab title="Helm">
     The password was set when you created the `admin-password` secret during
     installation:
 
@@ -115,7 +89,7 @@ The Runtime API admin endpoints require an admin password.
 ## Step 2: Save the Helper Script
 
 <Tabs>
-  <Tab title="VM Install (Replicated)">
+  <Tab title="VM Install">
     The runtime-api is exposed externally at
     `https://runtime-api.<your-base-domain>`. All API calls go directly to
     that URL — no cluster shell or `kubectl exec` needed for day-to-day
@@ -256,7 +230,7 @@ The Runtime API admin endpoints require an admin password.
       -o jsonpath='{.data.admin-password}' | base64 -d)"
     ```
   </Tab>
-  <Tab title="Kubernetes (Helm)">
+  <Tab title="Helm">
     The runtime-api is not exposed outside the cluster by default on Helm
     installs. The script tunnels each API call into the runtime-api pod via
     `kubectl exec`. You need `kubectl` access for every operation.
@@ -401,12 +375,12 @@ kubectl -n openhands get configmap | grep warm-runtimes
 ```
 
 <Tabs>
-  <Tab title="VM Install (Replicated)">
+  <Tab title="VM Install">
     The installer's `v1_current` pool keeps running while you add API-managed
     entries. You do not need to save `v1_current` explicitly — the ConfigMap
     entry stays live. Skip to saving your first custom configuration below.
   </Tab>
-  <Tab title="Kubernetes (Helm)">
+  <Tab title="Helm">
     Because the first API-managed configuration takes over warm pool
     management, re-declare the default pool explicitly before adding custom
     images. This ensures the default pool survives the takeover:
