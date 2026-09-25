@@ -280,6 +280,16 @@ Released <Month Day, Year>.
 
 * ci: ... by @author in https://github.com/OpenHands/runtime-api/pull/...
 
+## Component Versions
+
+| Component | Version |
+|-----------|---------|
+| enterprise-server | X.XX.X |
+| agent-server | X.XX.X |
+| agent-canvas | X.XX.X |
+| automation | X.XX.X |
+| runtime-api | X.XX.X |
+
 ## Full Changelog
 
 - [Enterprise Server releases](https://github.com/OpenHands/enterprise/releases)
