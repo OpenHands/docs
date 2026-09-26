@@ -42295,6 +42295,13 @@ Each use case can be implemented in different ways—as a one-off conversation, 
 
 <CardGroup cols={2}>
   <Card
+    title="Software Factory"
+    icon="industry"
+    href="/openhands/usage/use-cases/software-factory"
+  >
+    Take GitHub issues through development, independent review, testing, and merge with four automations.
+  </Card>
+  <Card
     title="Vulnerability Remediation"
     icon="shield-halved"
     href="/openhands/usage/use-cases/vulnerability-remediation"
@@ -42582,6 +42589,99 @@ For a more detailed automation setup with progress comments and session links, s
 - [QA Changes Skill](https://github.com/OpenHands/extensions/tree/main/skills/qa-changes) — Detailed skill methodology
 - [Verification Stack](https://www.openhands.dev/blog/verification-stack) — How QA fits into the full verification pipeline
 - [Automated Code Review](/openhands/usage/use-cases/code-review) — The complementary code review agent
+
+### Software Factory
+Source: https://docs.openhands.dev/openhands/usage/use-cases/software-factory.md
+
+A software factory turns a GitHub issue into a tested, reviewed pull request and merges it when acceptance checks pass. Configure four automations: **triage**, **developer**, **reviewer**, and **watchdog**. You supply issues and acceptance criteria; agents implement and validate the changes.
+
+<Accordion title="Watch the UI Setup Walkthrough">
+  <img src="/openhands/static/img/software-factory/setup.gif" alt="Step-by-step Canvas setup: model, scoped profiles, and four independent automations" />
+</Accordion>
+
+<Note>
+This walkthrough uses a preview build with profile-scoped automation credentials and Docker conversation runtimes. These capabilities are not yet included in a released Canvas installation. The implementation PRs must be released before following this guide with the standard installer.
+</Note>
+
+## Before You Start
+
+Use a Canvas backend with Automation enabled and bounded Docker workspaces. Prepare a GitHub repository with clear test commands and three repository-scoped [fine-grained personal access tokens](https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens):
+
+| Token | Repository permissions |
+| --- | --- |
+| Triage | Issues: read and write. |
+| Developer | Contents, Issues, Pull requests: read and write. Actions, Commit statuses: read. |
+| Reviewer | Contents and Actions: read. Issues, Pull requests, Commit statuses: read and write. |
+
+Metadata read access is included by GitHub. The watchdog reuses the developer token. The reviewer can publish findings and statuses but cannot push code. Add Workflows write permission to the developer token only if agents need to change GitHub Actions workflow files.
+
+## Configure Canvas
+
+<Steps>
+  <Step title="Set Up Your Model">
+    In the welcome screen, choose OpenHands, then configure your model and API key. For an OpenAI-compatible provider, use `Advanced` to enter the model name and base URL. Save and close the welcome screen.
+
+    <img src="/openhands/static/img/software-factory/model.png" alt="Advanced model settings with the API key hidden" />
+  </Step>
+  <Step title="Save the Three GitHub Tokens">
+    Open `Settings` → `Secrets` → `Add a new secret`. Save:
+
+    - `FACTORY_GITHUB_TRIAGE_TOKEN`
+    - `FACTORY_GITHUB_DEVELOPER_TOKEN`
+    - `FACTORY_GITHUB_REVIEWER_TOKEN`
+
+    Keep token values in this secret store. Automation forms use their names.
+  </Step>
+  <Step title="Create Four Agent Profiles">
+    Open `Settings` → `Agent` → `Add agent profile`. Select your saved model. Under `Secrets`, choose `Choose secrets` and select only the token for that role. Use `Choose servers` with no MCP servers for these GitHub workflows, and disable model switching and sub-agents.
+
+    | Profile | Selected secret |
+    | --- | --- |
+    | `factory-triage` | `FACTORY_GITHUB_TRIAGE_TOKEN` |
+    | `factory-developer` | `FACTORY_GITHUB_DEVELOPER_TOKEN` |
+    | `factory-reviewer` | `FACTORY_GITHUB_REVIEWER_TOKEN` |
+    | `factory-watchdog` | `FACTORY_GITHUB_DEVELOPER_TOKEN` |
+
+    <img src="/openhands/static/img/software-factory/profile.png" alt="Triage profile with only the triage token selected" />
+  </Step>
+</Steps>
+
+## Add the Four Automations
+
+Open `Automate` → `Templates`, search for each template below, and choose `Continue with local setup`. Each template uses the saved token named in its form and allowed by its selected profile.
+
+For every automation, select its agent profile, add your `owner/repo`, set `Check frequency` to `*/5 * * * *`, and enter the matching **GitHub token secret name**. Select `Continue`, inspect the summary, then `Confirm and create`. New automations start enabled; turn them off until all four are configured.
+
+<Steps>
+  <Step title="GitHub Issue Triage">
+    Select `factory-triage`. It prioritizes issues, checks dependencies, and establishes acceptance criteria before applying `ready-for-dev`.
+
+    <img src="/openhands/static/img/software-factory/triage.png" alt="Triage automation confirmation" />
+  </Step>
+  <Step title="GitHub Issue to PR">
+    Select `factory-developer`. Set `Trigger label` to `ready-for-dev`, `Branch prefix` to `factory/issue`, and `Pull request mode` to `Ready for review`.
+
+    <img src="/openhands/static/img/software-factory/developer.png" alt="Developer automation confirmation with the readiness label and branch prefix" />
+  </Step>
+  <Step title="GitHub Code Review">
+    Select `factory-reviewer`, keep `Trigger label` as `openhands-review`, and choose the desired review tone. The reviewer checks out the exact PR head, follows the repository's guidance, runs its relevant tests, posts a readable native review, and records exact-head review and test statuses.
+
+    <img src="/openhands/static/img/software-factory/reviewer.png" alt="Reviewer setup with independent test commands entered on separate lines" />
+  </Step>
+  <Step title="GitHub Delivery Watchdog">
+    Select `factory-watchdog`, the developer secret, and the same `factory/issue` prefix. It merges only a current branch with passing independent acceptance statuses and passing Actions runs when present.
+
+    <img src="/openhands/static/img/software-factory/watchdog.png" alt="Watchdog confirmation using the developer token and matching branch prefix" />
+  </Step>
+</Steps>
+
+## Start and Observe
+
+Turn on all four automations. Open a small GitHub issue with observable acceptance criteria. Use `Run now` to start triage immediately, or wait for the schedule.
+
+In `Automate`, open each automation to inspect its selected profile and activity. Follow the issue's development PR, readable review and exact-head test statuses, and final merge. Failed checks lead to revisions and fresh acceptance of the changed commit. Use the automation toggle to pause new scheduling while inspecting a problem.
+
+The walkthrough targets [neubig/airbnb-clone](https://github.com/neubig/airbnb-clone). In the recorded current-head deployment, six issues were triaged and six developers ran concurrently in Docker. Reviewer agents tested and accepted [PR #87](https://github.com/neubig/airbnb-clone/pull/87) through [PR #92](https://github.com/neubig/airbnb-clone/pull/92), and the watchdog merged all six. The final two reviews resumed after a graceful Canvas restart; when earlier merges made an accepted branch stale, the watchdog updated it and waited for a fresh exact-head review before merging. The earlier factory completed [neubig/box-clone](https://github.com/neubig/box-clone) through the same automated development, review, testing, and acceptance path.
 
 ### Spark Migrations
 Source: https://docs.openhands.dev/openhands/usage/use-cases/spark-migrations.md
