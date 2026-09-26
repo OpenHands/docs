@@ -1,0 +1,604 @@
+---
+title: Configuring Custom Sandbox Images
+description: Configure custom sandbox images through the Runtime API, each kept ready in its own warm pool and independently selectable by users.
+icon: layer-group
+---
+
+**Requirements:**
+
+- OpenHands Enterprise **0.64.0 or later**
+- Custom images built and pushed as described in [Building a Custom Image](/enterprise/custom-sandbox-images/building-custom-images)
+
+## How It Works
+
+Custom sandbox images are registered through the **Runtime API** — a
+management interface built into OpenHands Enterprise. The process has three
+steps:
+
+1. **Set an admin password** in the install admin UI. This secures the Runtime
+   API so only authorized administrators can register or remove images.
+
+2. **Register images via the API.** Use the helper script below to give each
+   image a name and tell OpenHands where to pull it from. OpenHands pulls the
+   image from the registry you specify and keeps a pool of ready sandboxes for
+   it. No restarts or redeployments are needed — new images become available
+   within about a minute.
+
+3. **Users choose their environment.** Each registered image appears in the
+   user's **Settings → Application → Default Sandbox** dropdown. Users pick
+   their default and all their new conversations start in that environment.
+
+---
+
+## Step 1: Confirm the Admin Password
+
+The Runtime API admin endpoints require an admin password.
+
+<Tabs>
+  <Tab title="VM Install">
+    The password is **auto-generated at install** (`{{repl RandomString 32}}`)
+    and stored in the `admin-password` Kubernetes secret. The helper script in
+    Step 2 reads it from the pod environment automatically — no action
+    required for a standard installation.
+
+    To set a memorable password or rotate the generated one:
+
+    1. Open the **Admin Console** at `https://admin.<your-base-domain>:30000`.
+    2. Navigate to **Config → Sandbox Configuration → Runtime API Admin Password**.
+    3. Enter your new password and click **Save config**, then **Deploy**.
+
+    The Admin Console updates the secret and rolls out the runtime-api
+    automatically. The password persists across all future Admin Console
+    deploys.
+
+    <Warning>
+      Do not use `kubectl patch` to set the password. The Admin Console manages
+      the `admin-password` secret and overwrites it on every deploy, so a
+      patched value is lost the next time you save any config change. Always
+      use the Admin Console field.
+    </Warning>
+  </Tab>
+  <Tab title="Helm">
+    The password was set when you created the `admin-password` secret during
+    installation:
+
+    ```bash
+    kubectl -n openhands create secret generic admin-password \
+      --from-literal=admin-password=<your-password>
+    ```
+
+    The helper script reads it automatically — no action required.
+
+    To rotate the password:
+
+    ```bash
+    # Store the new value somewhere secure before running this
+    kubectl -n openhands delete secret admin-password
+    kubectl -n openhands create secret generic admin-password \
+      --from-literal=admin-password=$(openssl rand -base64 24)
+    kubectl -n openhands rollout restart deployment \
+      -l app.kubernetes.io/name=runtime-api
+    kubectl -n openhands rollout status deployment \
+      -l app.kubernetes.io/name=runtime-api
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Step 2: Save the Helper Script
+
+<Tabs>
+  <Tab title="VM Install">
+    The runtime-api is exposed externally at
+    `https://runtime-api.<your-base-domain>`. All API calls go directly to
+    that URL — no cluster shell or `kubectl exec` needed for day-to-day
+    operations.
+
+    Save the script below as `warm-runtime-configs.sh`. On first run it reads
+    credentials from Kubernetes secrets; export them afterward and you can run
+    the script entirely without cluster access.
+
+    ```bash
+    #!/usr/bin/env bash
+    # warm-runtime-configs.sh — manage warm runtime configurations (VM install).
+    #
+    # Usage:
+    #   ./warm-runtime-configs.sh list
+    #   ./warm-runtime-configs.sh save <name> <config.json>
+    #   ./warm-runtime-configs.sh delete <name>
+    #
+    # Credentials are read from Kubernetes secrets on first run. To run without
+    # cluster access afterward, export these before calling the script:
+    #   export RUNTIME_API_URL=https://runtime-api.<your-base-domain>
+    #   export API_KEY=<value from the default-api-key secret>
+    #   export ADMIN_PASSWORD=<value from the admin-password secret>
+    set -euo pipefail
+
+    NAMESPACE="${NAMESPACE:-openhands}"
+    COMMAND="${1:?usage: $0 list|save <name> <config.json>|delete <name>}"
+    CONFIG_NAME="${2:-}"
+    CONFIG_FILE="${3:-}"
+
+    if [ -z "${RUNTIME_API_URL:-}" ]; then
+      RUNTIME_API_URL="https://$(kubectl get ingress -n "$NAMESPACE" \
+        -l app.kubernetes.io/name=runtime-api \
+        -o jsonpath='{.items[0].spec.rules[0].host}')"
+    fi
+    if [ -z "${API_KEY:-}" ]; then
+      API_KEY=$(kubectl get secret default-api-key -n "$NAMESPACE" \
+        -o jsonpath='{.data.default-api-key}' | base64 -d)
+    fi
+    if [ "$COMMAND" != "list" ] && [ -z "${ADMIN_PASSWORD:-}" ]; then
+      ADMIN_PASSWORD=$(kubectl get secret admin-password -n "$NAMESPACE" \
+        -o jsonpath='{.data.admin-password}' | base64 -d)
+    fi
+    if [ "$COMMAND" != "list" ] && [ -z "${ADMIN_PASSWORD:-}" ]; then
+      echo "Error: admin password is not set. See Step 1." >&2
+      exit 1
+    fi
+
+    PYSCRIPT='
+    import binascii, hashlib, json, os, sys, urllib.error, urllib.parse, urllib.request
+
+    API_URL = os.environ["RUNTIME_API_URL"].rstrip("/")
+
+    def req(path, method="GET", data=None, headers=None):
+        h = {"Content-Type": "application/json", **(headers or {})}
+        r = urllib.request.Request(f"{API_URL}{path}", method=method, headers=h)
+        if data is not None:
+            r.data = json.dumps(data).encode()
+        try:
+            with urllib.request.urlopen(r) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            sys.exit(f"HTTP {e.code}: {e.read().decode()}")
+        except urllib.error.URLError as e:
+            sys.exit(f"Could not connect to {API_URL}: {e.reason}")
+
+    def admin_token():
+        chal = req("/api/admin/challenge")
+        dk = hashlib.pbkdf2_hmac(
+            "sha256",
+            os.environ["ADMIN_PASSWORD"].encode(),
+            (chal["salt"] + chal["challenge"]).encode(),
+            chal["iterations"],
+            dklen=32,
+        )
+        resp = req("/api/admin/login", "POST",
+            {"challenge": chal["challenge"], "hash": binascii.hexlify(dk).decode()})
+        return resp["token"]
+
+    action = os.environ["ACTION"]
+    name = urllib.parse.quote(os.environ.get("CONFIG_NAME", ""), safe="")
+
+    if action == "list":
+        configs = req("/api/warm-runtime-configs",
+            headers={"X-API-Key": os.environ["API_KEY"]})["configs"]
+        print(json.dumps(configs, indent=2))
+    elif action == "save":
+        body = json.load(sys.stdin)
+        token = admin_token()
+        saved = req(f"/api/admin/warm-runtime-configs/{name}", "PUT", body,
+            headers={"Authorization": f"Bearer {token}"})
+        print("Saved", saved["name"], "image:", saved["image"], "count:", saved.get("count"))
+    elif action == "delete":
+        token = admin_token()
+        resp = req(f"/api/admin/warm-runtime-configs/{name}", "DELETE",
+            headers={"Authorization": f"Bearer {token}"})
+        print(resp["message"])
+    '
+
+    case "$COMMAND" in
+      list)
+        ACTION=list API_KEY="$API_KEY" RUNTIME_API_URL="$RUNTIME_API_URL" \
+          python3 -c "$PYSCRIPT"
+        ;;
+      save)
+        if [ -z "$CONFIG_NAME" ] || [ ! -f "$CONFIG_FILE" ]; then
+          echo "usage: $0 save <name> <config.json>" >&2; exit 1
+        fi
+        ACTION=save CONFIG_NAME="$CONFIG_NAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+          RUNTIME_API_URL="$RUNTIME_API_URL" python3 -c "$PYSCRIPT" < "$CONFIG_FILE"
+        ;;
+      delete)
+        if [ -z "$CONFIG_NAME" ]; then
+          echo "usage: $0 delete <name>" >&2; exit 1
+        fi
+        ACTION=delete CONFIG_NAME="$CONFIG_NAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+          RUNTIME_API_URL="$RUNTIME_API_URL" python3 -c "$PYSCRIPT"
+        ;;
+    esac
+    ```
+
+    ```bash
+    chmod +x warm-runtime-configs.sh
+    ./warm-runtime-configs.sh list
+    ```
+
+    After the first run, export the discovered values so subsequent runs need
+    no cluster access at all:
+
+    ```bash
+    NAMESPACE=openhands
+    echo "export RUNTIME_API_URL=https://$(kubectl get ingress -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=runtime-api \
+      -o jsonpath='{.items[0].spec.rules[0].host}')"
+    echo "export API_KEY=$(kubectl get secret default-api-key -n "$NAMESPACE" \
+      -o jsonpath='{.data.default-api-key}' | base64 -d)"
+    echo "export ADMIN_PASSWORD=$(kubectl get secret admin-password -n "$NAMESPACE" \
+      -o jsonpath='{.data.admin-password}' | base64 -d)"
+    ```
+  </Tab>
+  <Tab title="Helm">
+    The runtime-api is not exposed outside the cluster by default on Helm
+    installs. The script tunnels each API call into the runtime-api pod via
+    `kubectl exec`. You need `kubectl` access for every operation.
+
+    Save the script below as `warm-runtime-configs.sh`:
+
+    ```bash
+    #!/usr/bin/env bash
+    # warm-runtime-configs.sh — manage warm runtime configurations (Helm install).
+    #
+    # Usage:
+    #   ./warm-runtime-configs.sh list
+    #   ./warm-runtime-configs.sh save <name> <config.json>
+    #   ./warm-runtime-configs.sh delete <name>
+    set -euo pipefail
+
+    NAMESPACE="${NAMESPACE:-openhands}"
+    COMMAND="${1:?usage: $0 list|save <name> <config.json>|delete <name>}"
+    CONFIG_NAME="${2:-}"
+    CONFIG_FILE="${3:-}"
+
+    POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/name=runtime-api \
+      -o jsonpath='{.items[0].metadata.name}')
+    if [ -z "$POD" ]; then
+      echo "Error: no runtime-api pod found in namespace $NAMESPACE." >&2; exit 1
+    fi
+
+    PYSCRIPT='
+    import binascii, hashlib, json, os, sys, urllib.error, urllib.parse, urllib.request
+
+    API_URL = "http://localhost:5000"
+
+    def required_env(name):
+        value = os.environ.get(name)
+        if not value:
+            sys.exit(f"Error: {name} is not set in the runtime-api pod.")
+        return value
+
+    def req(path, method="GET", data=None, headers=None):
+        h = {"Content-Type": "application/json", **(headers or {})}
+        r = urllib.request.Request(f"{API_URL}{path}", method=method, headers=h)
+        if data is not None:
+            r.data = json.dumps(data).encode()
+        try:
+            with urllib.request.urlopen(r) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            sys.exit(f"HTTP {e.code}: {e.read().decode()}")
+        except urllib.error.URLError as e:
+            sys.exit(f"Could not connect: {e.reason}")
+
+    def admin_token():
+        chal = req("/api/admin/challenge")
+        dk = hashlib.pbkdf2_hmac(
+            "sha256",
+            required_env("ADMIN_PASSWORD").encode(),
+            (chal["salt"] + chal["challenge"]).encode(),
+            chal["iterations"],
+            dklen=32,
+        )
+        resp = req("/api/admin/login", "POST",
+            {"challenge": chal["challenge"], "hash": binascii.hexlify(dk).decode()})
+        return resp["token"]
+
+    action = os.environ["ACTION"]
+    name = urllib.parse.quote(os.environ.get("CONFIG_NAME", ""), safe="")
+
+    if action == "list":
+        configs = req("/api/warm-runtime-configs",
+            headers={"X-API-Key": required_env("DEFAULT_API_KEY")})["configs"]
+        print(json.dumps(configs, indent=2))
+    elif action == "save":
+        body = json.load(sys.stdin)
+        token = admin_token()
+        saved = req(f"/api/admin/warm-runtime-configs/{name}", "PUT", body,
+            headers={"Authorization": f"Bearer {token}"})
+        print("Saved", saved["name"], "image:", saved["image"], "count:", saved.get("count"))
+    elif action == "delete":
+        token = admin_token()
+        resp = req(f"/api/admin/warm-runtime-configs/{name}", "DELETE",
+            headers={"Authorization": f"Bearer {token}"})
+        print(resp["message"])
+    '
+
+    case "$COMMAND" in
+      list)
+        kubectl exec -n "$NAMESPACE" "$POD" -- \
+          env ACTION=list RUNTIME_API_URL="http://localhost:5000" python3 -c "$PYSCRIPT"
+        ;;
+      save)
+        if [ -z "$CONFIG_NAME" ] || [ ! -f "$CONFIG_FILE" ]; then
+          echo "usage: $0 save <name> <config.json>" >&2; exit 1
+        fi
+        kubectl exec -i -n "$NAMESPACE" "$POD" -- \
+          env ACTION=save CONFIG_NAME="$CONFIG_NAME" \
+          RUNTIME_API_URL="http://localhost:5000" python3 -c "$PYSCRIPT" < "$CONFIG_FILE"
+        ;;
+      delete)
+        if [ -z "$CONFIG_NAME" ]; then
+          echo "usage: $0 delete <name>" >&2; exit 1
+        fi
+        kubectl exec -n "$NAMESPACE" "$POD" -- \
+          env ACTION=delete CONFIG_NAME="$CONFIG_NAME" \
+          RUNTIME_API_URL="http://localhost:5000" python3 -c "$PYSCRIPT"
+        ;;
+    esac
+    ```
+
+    ```bash
+    chmod +x warm-runtime-configs.sh
+    ./warm-runtime-configs.sh list
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Listing authenticates with the regular API key (`X-API-Key`). Saving and
+  deleting use the admin password via a PBKDF2 challenge-response login that
+  returns a 24-hour JWT. The script handles both flows automatically.
+</Note>
+
+---
+
+## Step 3: Save Your First Configuration
+
+Do not write configurations from scratch. The default configuration contains
+install-specific values (callback URLs, CA bundles, workspace paths) that
+sandboxes need to function. Fetch it from the API and use it as your template:
+
+```bash
+./warm-runtime-configs.sh list \
+  | jq '.configs[] | select(.name == "v1_current") | del(.name, .source)' \
+  > default-config.json
+```
+
+<Tabs>
+  <Tab title="VM Install">
+    The default `v1_current` pool keeps running while you add configurations.
+    Derive your custom configuration from the template, changing only the image
+    and pool size, then save it:
+
+    ```bash
+    jq '.image = "ghcr.io/your-org/openhands-php:8.4-v1" | .count = 1' \
+      default-config.json > php-web.json
+    ./warm-runtime-configs.sh save php-web php-web.json
+    ```
+  </Tab>
+  <Tab title="Helm">
+    <Warning>
+      The first configuration you save takes over warm pool management — the
+      installer's default pool is ignored while any API configurations exist.
+      Save `v1_current` explicitly first so the default pool keeps running.
+    </Warning>
+
+    ```bash
+    # Re-declare the default pool before adding custom images
+    jq '.count = 1' default-config.json > v1_current.json
+    ./warm-runtime-configs.sh save v1_current v1_current.json
+
+    # Now add your custom image
+    jq '.image = "ghcr.io/your-org/openhands-php:8.4-v1" | .count = 1' \
+      default-config.json > php-web.json
+    ./warm-runtime-configs.sh save php-web php-web.json
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Configuration Format
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `image` | string | Yes | Full image reference (e.g. `ghcr.io/your-org/openhands-php:8.4-v1`) |
+| `working_dir` | string | Yes | Working directory inside the sandbox — copy from the default |
+| `command` | array | Yes | Agent-server start command — copy from the default |
+| `environment` | object | Yes | Environment variables the sandbox boots with — copy from the default |
+| `count` | integer | No | Warm pods to keep ready. Falls back to the installer-wide **Warm Runtime Count** setting — on Replicated installs this defaults to **1** (adjustable in **Config → Sandbox Configuration**); the code-level fallback when nothing is configured is **3** |
+| `run_as_user` | integer | No | Copy from the installer default so warm pods match application start requests |
+| `run_as_group` | integer | No | Copy from the installer default so warm pods match application start requests |
+| `fs_group` | integer | No | Copy from the installer default so warm pods match application start requests |
+
+The configuration name comes from the URL path (the `save <name>` argument),
+not the body. A `source` field appears in list responses (`file` for
+installer-managed entries, `db` for API-managed entries) but must not be
+included in saved configurations.
+
+The application uses the image reference as the sandbox spec ID. Give every
+selectable configuration a distinct image reference; configurations that share
+an image reference cannot be selected independently.
+
+<Tip>
+  Set `count` explicitly. Every warm pod reserves the full sandbox resource
+  envelope (25 Gi of ephemeral storage by default) whether or not it is in
+  use, so the sum of all pool sizes must fit your node capacity. Pools that
+  exceed capacity show up as `Pending` pods. Start with `count: 1` per image
+  and grow the pools that see real traffic.
+</Tip>
+
+---
+
+## Step 4: Verify
+
+Confirm your configurations were saved:
+
+```bash
+./warm-runtime-configs.sh list
+```
+
+The response shows each saved configuration with its name, image, pool size,
+and source. Within about a minute the pool is ready. Open
+**Settings → Application → Default Sandbox** — your image name appears in the
+dropdown. Select it and start a conversation to confirm it loads in a few
+seconds rather than 20 or more.
+
+If the image does not appear or conversations cold-start, see
+[Troubleshooting](#troubleshooting) below.
+
+---
+
+## Updating and Deleting Configurations
+
+Update by saving the same name again:
+
+```bash
+jq '.image = "ghcr.io/your-org/openhands-php:8.4-v2"' php-web.json > php-web-v2.json
+./warm-runtime-configs.sh save php-web php-web-v2.json
+```
+
+Within a minute the reconciler stops the old pods and starts pods on the new
+image. Delete a configuration to remove its pool:
+
+```bash
+./warm-runtime-configs.sh delete php-web
+```
+
+If the deleted name overrides an installer-managed entry, the underlying
+installer entry becomes effective again. Confirm with
+`./warm-runtime-configs.sh list` — its `source` changes from `db` to `file`.
+
+Keep superseded image tags available in your registry while conversations that
+used them can still resume: a paused conversation resumes on its **original**
+image. Delete old tags only after the conversations that used them are gone
+(stopped sandboxes are cleaned up after 10 days by default).
+
+---
+
+## After Upgrading OpenHands Enterprise
+
+<Warning>
+  API-managed configurations are **frozen snapshots** — upgrades do not touch
+  them. The installer-managed `v1_current` entry updates automatically unless
+  a database entry with that name overrides it. Each release expects a
+  specific agent-server version and may add or change sandbox environment
+  variables. After every OHE upgrade:
+
+  1. Rebuild your custom images on the release's new agent-server base version.
+  2. Re-export the default template (Step 3) from the refreshed ConfigMap.
+  3. Re-derive and save each API-managed custom configuration from the new template.
+  4. If you intentionally override `v1_current`, refresh or delete that override
+     so the new installer-managed entry can take effect.
+
+  Skipping this leaves configurations pointing at the previous agent-server
+  version, and new conversations fail with a version mismatch error until
+  the configurations are updated.
+</Warning>
+
+---
+
+## Returning an Entry to Installer Management
+
+Delete a same-named database override to restore the installer-managed entry
+on the next reconciler cycle:
+
+```bash
+./warm-runtime-configs.sh delete v1_current
+./warm-runtime-configs.sh list   # v1_current now reports "source": "file"
+```
+
+Other API-managed configurations continue running. Delete them individually
+when you no longer want their pools or images in the application's selector.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `HTTP 403: Admin functionality is disabled` | The runtime-api deployment has no admin password configured. On Replicated installs, set **Runtime API Admin Password** per Step 1 and deploy. |
+| `HTTP 401` on login | Wrong password, or the challenge expired (challenges are single-use and expire after 5 minutes; the script fetches a fresh one per call). To verify the current password value: `kubectl get secret admin-password -n openhands -o jsonpath='{.data.admin-password}' \| base64 -d`. On Replicated installs, the password only changes if you update it in the Admin Console and deploy. |
+| `HTTP 401: ...provide a valid API key...` on list | The list endpoint authenticates with `X-API-Key`, not the admin JWT. Use the helper script. |
+| Saved a config but the dropdown does not show it | The app server caches the config list for 60 seconds; the UI may cache it for up to 5 minutes. Wait, then navigate away from and back to the Settings page to prompt a fresh fetch. Confirm the config was saved with `./warm-runtime-configs.sh list`. |
+| No warm pods appear | Check the reconciler log: `JOB=$(kubectl -n openhands get jobs --sort-by=.metadata.creationTimestamp -o name \| grep warm-runtimes \| tail -1) && kubectl -n openhands logs "$JOB"`. Look for image pull errors or scheduling failures. |
+| Warm pods `Pending` | Insufficient node resources. Check with `kubectl -n openhands get deploy -l 'runtime_id,!session_id'`. Every warm pod reserves the full sandbox resource envelope; lower the pool `count`s or add capacity. |
+| Conversations cold-start despite warm pods | Pool exhausted or configuration recently changed. See [How Warm Pods Are Claimed](/enterprise/custom-sandbox-images/using-custom-images#how-warm-pods-are-claimed). |
+| Sandbox fails with an agent-server version error | The custom image's base version does not match the release. Rebuild on the expected agent-server version. See [Version Compatibility](/enterprise/custom-sandbox-images/building-custom-images#version-compatibility). |
+| Conversations start but never show agent output | The configuration's `environment` is missing install-specific values. Rebuild the configuration from the default template (Step 3). |
+
+---
+
+## API Reference
+
+The endpoints below are served by the runtime-api service.
+
+**Admin authentication** (required for save and delete):
+
+1. `GET /api/admin/challenge` returns `{challenge, salt, iterations}`. Challenges
+   are single-use and expire after 5 minutes.
+2. Compute `PBKDF2-HMAC-SHA256(password, salt + challenge, iterations, dklen=32)`
+   and hex-encode the result.
+3. `POST /api/admin/login` with `{"challenge": ..., "hash": ...}` returns
+   `{"token": ...}`, a JWT valid for 24 hours.
+4. Send `Authorization: Bearer <token>` on admin requests.
+
+**List configurations** (regular API key, not admin):
+
+```http
+GET /api/warm-runtime-configs
+X-API-Key: {api-key}
+```
+
+Returns `200` with the effective configuration set:
+
+```json
+{
+  "configs": [
+    {
+      "name": "v1_current",
+      "image": "ghcr.io/openhands/agent-server:1.46.0-python",
+      "source": "file",
+      "count": 1
+    },
+    {
+      "name": "php-web",
+      "image": "ghcr.io/your-org/openhands-php:8.4-v1",
+      "source": "db",
+      "count": 1
+    }
+  ]
+}
+```
+
+`source: "file"` — installer-managed entry. `source: "db"` — API-managed
+entry. On Replicated installs (overlay mode), the list is the full effective
+set: ConfigMap entries merged with same-named API entries overriding them. On
+Helm installs without overlay mode, only API-saved entries appear while the
+database contains any rows.
+
+**Create or update a configuration** (admin):
+
+```http
+PUT /api/admin/warm-runtime-configs/{name}
+Authorization: Bearer {admin-jwt}
+Content-Type: application/json
+
+{"image": "...", "working_dir": "...", "command": [...], "environment": {...}, "count": 1}
+```
+
+Returns `200` with the saved configuration. Creates or overwrites; the name
+in the URL is the identity.
+
+**Delete a configuration** (admin):
+
+```http
+DELETE /api/admin/warm-runtime-configs/{name}
+Authorization: Bearer {admin-jwt}
+```
+
+Returns `200` with a confirmation message, or `404` if no database
+configuration has that name. When the deleted name also exists in the
+installer-managed ConfigMap, that ConfigMap entry becomes effective again.
