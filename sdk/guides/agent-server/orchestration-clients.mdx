@@ -1,0 +1,202 @@
+---
+title: Orchestrate Agent Server Conversations
+description: Create conversations from agent profiles and control their workspaces with the existing SDK APIs.
+---
+
+<Note>
+This guide accompanies [software-agent-sdk #5010](https://github.com/OpenHands/software-agent-sdk/pull/5010).
+Use a build containing that change and the server's conversation-scoped runtime APIs.
+Publish this guide with the corresponding SDK release.
+</Note>
+
+Use `RemoteConversationControl` when a service only needs to create a conversation
+or submit work. It uses HTTP without loading agent state, tool packages, event
+history, or a WebSocket. Use `RemoteConversation` inside the agent runtime when a
+process needs interactive state and callbacks. Use `RemoteWorkspace` for files,
+commands, and runtime lifecycle.
+`AsyncRemoteWorkspace` provides the same workspace operations for async callers.
+
+The SDK owns HTTP routes, authentication headers, and conversation scope. The
+caller owns scheduling, admission limits, workflow selection, and completion
+policy. Canvas uses the TypeScript client for the same API boundary.
+
+## Create a Conversation From a Saved Profile
+
+A dispatcher selects a unique conversation ID and workspace directory. Use
+`/workspace` for a Docker conversation, or an absolute local run directory for a
+local server. `workspace.get_server_info()["conversation_runtime"]` reports the
+server's configured runtime mode. This selection belongs to the dispatcher;
+the automation bundle receives the same environment in either mode.
+
+```python
+import os
+from uuid import UUID, uuid4
+
+from openhands.sdk import RemoteConversationControl, RemoteWorkspace
+from openhands.sdk.conversation.request import StartConversationRequest
+from openhands.sdk.workspace import LocalWorkspace
+
+conversation_id = uuid4()
+working_dir = os.environ["WORKSPACE_BASE"]
+
+with RemoteWorkspace(
+    host=os.environ["AGENT_SERVER_URL"],
+    api_key=os.environ["SESSION_API_KEY"],
+    working_dir=working_dir,
+    runtime_conversation_id=conversation_id,
+) as workspace:
+    conversation = RemoteConversationControl.create(
+        workspace=workspace,
+        request=StartConversationRequest(
+            agent_profile_id=UUID(os.environ["AGENT_PROFILE_ID"]),
+            workspace=LocalWorkspace(working_dir=working_dir),
+            conversation_id=conversation_id,
+            tags={"automationrun": str(conversation_id)},
+        ),
+    )
+    workspace.file_upload(b"Prepared by the dispatcher\n", f"{working_dir}/input.txt")
+```
+
+`RemoteConversationControl.create` sends the typed request and retains only the
+returned conversation ID. The server resolves the saved profile. The dispatcher
+does not load its model, tools, events, or secret values. `runtime_conversation_id`
+binds the workspace's existing
+file, command, and Git operations to that conversation and cannot be changed
+on the workspace instance. Omitting it selects the legacy host workspace;
+runtime credential handoff and release require an explicit conversation scope.
+
+## Start and Observe a Bundle
+
+After uploading and extracting its bundle, a dispatcher starts the configured
+entrypoint with `workspace.start_command(command, timeout=...)`. This returns a
+command ID without waiting. `workspace.get_command_output(command_id)` returns
+the latest matching output record; `None` or a missing exit code means the
+command has not completed. Always inspect the actual command's exit code before
+accepting completion. `workspace.execute_command(...)` remains the foreground
+operation and returns a `CommandResult`.
+
+Async callers use the same scope and operations:
+
+```python
+import os
+
+from openhands.sdk.workspace import AsyncRemoteWorkspace
+
+
+async def start_worker(conversation_id, working_dir, command):
+    async with AsyncRemoteWorkspace(
+        host=os.environ["AGENT_SERVER_URL"],
+        api_key=os.environ["SESSION_API_KEY"],
+        working_dir=working_dir,
+        runtime_conversation_id=conversation_id,
+    ) as workspace:
+        return await workspace.start_command(command, timeout=2400)
+```
+
+## The Bundle Interface
+
+Supply `AGENT_SERVER_URL`, `SESSION_API_KEY`, `AUTOMATION_CONVERSATION_ID`, and
+`WORKSPACE_BASE` to each bundle. The same code works in either workspace:
+
+```python
+import os
+from contextlib import closing
+from uuid import UUID
+
+from openhands.tools import register_default_tools
+from openhands.sdk import RemoteConversation, RemoteWorkspace
+from openhands.sdk.conversation.response_utils import get_agent_final_response
+
+register_default_tools()
+
+with RemoteWorkspace(
+    host=os.environ["AGENT_SERVER_URL"],
+    api_key=os.environ["SESSION_API_KEY"],
+    working_dir=os.environ["WORKSPACE_BASE"],
+) as workspace:
+    with closing(RemoteConversation.attach(
+        workspace=workspace,
+        conversation_id=UUID(os.environ["AUTOMATION_CONVERSATION_ID"]),
+        visualizer=None,
+    )) as conversation:
+        conversation.send_message("Perform the configured workflow.")
+        conversation.run(timeout=2400)
+        print(get_agent_final_response(conversation.state.events))
+```
+
+`attach` fetches an existing conversation and connects to its server-resolved
+agent, including ACP agents. A missing or inaccessible conversation fails;
+attachment never creates a conversation or reloads its profile. Run completion,
+callbacks, structured events, and errors follow the existing conversation lifecycle. Read `conversation.state.events`
+for the event history.
+
+`delete_on_close` defaults to `False`, so closing this handle preserves the
+server conversation and the caller-owned workspace. Register the remote agent's
+tool schemas before connecting: `register_default_tools()` covers standard
+tools, including browser events; register additional custom tools separately.
+
+A webhook or scheduler that only needs to append a turn can avoid attachment:
+
+```python
+from openhands.sdk import RemoteConversationControl
+
+control = RemoteConversationControl(workspace, conversation_id)
+control.send_message("Review the latest pull request update.", run=True)
+status = control.get_execution_status()
+```
+
+The control client deliberately does not expose events or agent state. Attach a
+`RemoteConversation` in a process that has the agent's tool packages when those
+interactive features are needed. Services can poll `get_execution_status()` with
+their existing scheduler or watchdog instead of creating another SDK wait loop.
+
+## Select Secrets With an Agent Profile
+
+Profile secret selection requires the profile `secret_refs` and Docker integration
+changes tracked in [SDK #5014](https://github.com/OpenHands/software-agent-sdk/issues/5014).
+Keep this section unpublished until that integration is released.
+
+Servers with profile-secret enforcement advertise `profile_secret_scope_v1` in
+`/server_info.capabilities`; clients should use that capability instead of a guessed
+release version when offering a scope picker.
+
+Set `secret_refs` on the saved agent profile to an explicit list of secret names,
+for example `["GITHUB_REVIEWER_TOKEN"]`. The profile stores names only. A launch
+using that profile receives the selected saved secrets without the dispatcher
+copying every secret into the request. An empty list permits no user secrets;
+`null` preserves the existing request-only, unrestricted behavior.
+
+The Agent Server applies the same selection before local conversation construction
+and before Docker secret materialization. Extra request secrets are discarded
+before their lookup runs. For a selected name present in the server's secret store,
+the stored value takes precedence over a caller-supplied value or lookup. Names
+missing from the store can still match explicitly supplied conversation secrets.
+The agent's secret registry advertises selected names and descriptions in the
+system prompt and exports selected values to tools when needed. Values are never
+included in the prompt. Docker handoff encrypts them with the runtime's key.
+
+LLM profile credentials and selected MCP credentials have their own delivery
+channels. Restrict `mcp_server_refs`, tools, and other profile capabilities as well.
+A secret allow-list does not narrow the external provider's token permissions:
+issue repository-scoped credentials appropriate to each automation's role.
+
+## Credentials and Lifecycle Ownership
+
+Only a trusted orchestrator should call `workspace.get_runtime_session_key()`. On a Docker
+server supporting credential handoff, it returns the selected inner runtime's key.
+The dispatcher supplies that key and the runtime-reachable server URL to the
+worker. Keep the outer control-plane key outside the worker.
+
+Local workspaces retain the local server's credential boundary and are not
+security sandboxes. Use Docker isolation and role-scoped external-service grants
+when running untrusted repository code.
+
+After a Docker run has stopped and its result is recorded, the dispatcher calls
+`workspace.release_runtime()`. This releases that runtime while preserving conversation
+history. A missing runtime is treated as already released; other failures are
+reported. A persistent local server should be retained by its owner.
+
+Workspace context managers close their own HTTP connections. Closing a
+conversation handle does not release its runtime or delete history unless
+`delete_on_close=True` was explicitly selected. These SDK operations do not
+choose a workflow, post an acceptance decision, or schedule another run.
