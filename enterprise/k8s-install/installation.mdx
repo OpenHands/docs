@@ -12,6 +12,10 @@ license automatically at install time.
   Helm-based installation requires an OpenHands Enterprise license. If you don't have
   one yet, [register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup)
   or [contact our team](https://openhands.dev/contact) to get set up.
+  The license YAML from the install portal is all the licensing material you need:
+  use `spec.customerEmail` as the registry username and `spec.licenseID` as its
+  password. The embedded-cluster installer assets on that portal are for VM
+  installations, not Helm.
 </Note>
 
 ## Prerequisites
@@ -39,12 +43,15 @@ license automatically at install time.
 
 ## Step 1: Log in to the registry
 
-Authenticate Helm against the Replicated registry using your license:
+Authenticate Helm against the Replicated registry using your license. Supply
+the license ID on standard input so it does not appear in the command history:
 
 ```bash
-helm registry login registry.replicated.com \
+read -r -s -p "License ID: " OH_LICENSE_ID; echo
+printf '%s' "$OH_LICENSE_ID" | helm registry login registry.replicated.com \
   --username <your-license-email> \
-  --password <your-license-id>
+  --password-stdin
+unset OH_LICENSE_ID
 ```
 
 ## Step 2: Create the namespaces and secrets
@@ -76,10 +83,12 @@ kubectl -n openhands create secret generic keycloak-realm \
   --from-literal=client-secret=<random-string> \
   --from-literal=smtp-password=<smtp-password>
 
+OH_POSTGRES_PASSWORD="$(openssl rand -hex 32)"
 kubectl -n openhands create secret generic postgres-password \
   --from-literal=username=postgres \
-  --from-literal=password=<random-string> \
-  --from-literal=postgres-password=<random-string>
+  --from-literal=password="$OH_POSTGRES_PASSWORD" \
+  --from-literal=postgres-password="$OH_POSTGRES_PASSWORD"
+unset OH_POSTGRES_PASSWORD
 
 kubectl -n openhands create secret generic redis \
   --from-literal=redis-password=<random-string>
@@ -90,14 +99,20 @@ kubectl -n openhands create secret generic lite-llm-api-key \
 kubectl -n openhands create secret generic admin-password \
   --from-literal=admin-password=<random-string>
 
-kubectl -n openhands create secret generic default-api-key \
-  --from-literal=default-api-key=<random-string>
-
-kubectl -n openhands create secret generic sandbox-api-key \
-  --from-literal=sandbox-api-key=<random-string>
-
 kubectl -n openhands create secret generic litellm-env-secrets \
   --from-literal=ANTHROPIC_API_KEY=<your-llm-api-key>
+```
+
+The application and Runtime API must use the **same** key. Create both Secrets
+from one generated value:
+
+```bash
+OH_RUNTIME_SHARED_KEY="$(openssl rand -hex 32)"
+kubectl -n openhands create secret generic default-api-key \
+  --from-literal=default-api-key="$OH_RUNTIME_SHARED_KEY"
+kubectl -n openhands create secret generic sandbox-api-key \
+  --from-literal=sandbox-api-key="$OH_RUNTIME_SHARED_KEY"
+unset OH_RUNTIME_SHARED_KEY
 ```
 
 Then create the secret for user authentication. Other providers (GitLab,
@@ -119,16 +134,19 @@ kubectl -n openhands create secret generic github-app \
 
 <Tip>
   Generate strong random values (for example with `openssl rand -hex 32`) for each
-  `<random-string>` placeholder, and store them in your secret manager. To use an
-  existing PostgreSQL instance instead of the bundled one, see
+  remaining `<random-string>` placeholder, and store them in your secret manager.
+  Use one value for both Runtime API Secrets. Since this example connects to
+  PostgreSQL as `postgres`, use one value for its `password` and
+  `postgres-password` fields too.
+  To use an existing PostgreSQL instance instead of the bundled one, see
   [External PostgreSQL](/enterprise/external-postgres).
 </Tip>
 
 ## Step 3: Configure values
 
 Create a `values.yaml` with your environment-specific configuration. The
-minimum for a working installation covers five areas: application ingress and
-TLS, user authentication, the runtime (sandbox) endpoints, conversation
+minimum for a working installation covers application ingress and TLS,
+user authentication, the runtime (sandbox) endpoints, conversation
 storage, and your LLM provider. PostgreSQL and Redis run embedded in the
 cluster; the bundled PostgreSQL needs a database name and database creation
 turned on, both shown below (to use your own database instead, see
@@ -153,10 +171,10 @@ ingress:
   host: app.openhands.example.com
   class: traefik
 
-# This guide brings its own certificate, terminated at the ingress controller,
-# so the chart's per-ingress TLS is disabled (see the note below the example).
-tls:
-  enabled: false
+  # This guide brings its own certificate, terminated at the ingress controller,
+  # so the chart's per-ingress TLS is disabled (see the note below the example).
+  tls:
+    enabled: false
 
 # Enables login via the GitHub App created in Step 2
 github:
@@ -167,6 +185,10 @@ github:
 postgresql:
   auth:
     database: openhands
+  primary:
+    persistence:
+      enabled: true
+      storageClass: <your-storage-class>
 databaseMigrations:
   createDatabases: true
 
@@ -210,12 +232,15 @@ runtime-api:
     # sandboxes will never start.
     STORAGE_CLASS: <your-storage-class>
 
-# Store conversation data in the bundled MinIO, persisted to a volume
+# On EKS, provide S3 access using the IAM role or Secret in the EKS guide.
+# Replace the bucket and region with your values.
 filestore:
-  ephemeral: true
+  ephemeral: false
+  type: s3
+  bucket: <your-bucket>
+  region: <your-region>
 minio:
-  persistence:
-    enabled: true
+  enabled: false
 
 litellm-helm:
   enabled: true
@@ -226,6 +251,44 @@ litellm-helm:
           model: anthropic/claude-sonnet-4-5
           api_key: os.environ/ANTHROPIC_API_KEY
 ```
+
+This example uses Amazon S3 for conversation storage. Follow the
+[EKS object storage steps](/enterprise/k8s-install/eks#object-storage) to grant
+the application access to the bucket. On another Kubernetes provider,
+configure a supported external object store and its credentials before
+installing.
+
+<Warning>
+  The bundled MinIO example is not a working baseline for chart `0.71.1`.
+  Its values must select and enable MinIO, and the pinned server image returned
+  401 during a fresh pull. Use external object storage until a bundled-store
+  configuration has been verified for your chart version.
+</Warning>
+
+<Note>
+  Chart `0.71.1` redirects signed-in users to `/canvas` but does not enable
+  that frontend by default. For this chart version, add the following to
+  `values.yaml` so the first conversation can start:
+
+  ```yaml
+  agent-canvas:
+    enabled: true
+    ingress:
+      enabled: true
+      host: app.openhands.example.com
+      className: traefik
+      path: /canvas
+      tls:
+        enabled: false
+    staticServer:
+      authRequired: false
+      lockToCloud: https://app.openhands.example.com
+  ```
+
+  The static frontend can load without a second API-key prompt; Enterprise
+  API requests still use the signed-in session. Later chart versions may
+  provide a working default UI without these overrides.
+</Note>
 
 ## Step 4: Install
 
@@ -265,7 +328,26 @@ preflight secret/openhands/openhands-preflight
   ```
 </Tip>
 
-Then confirm the application is reachable at your configured hostname and log in.
+Then confirm the application is reachable at your configured hostname and log
+in. A complete first-use check goes beyond Ready pods and preflight:
+
+1. Open `https://app.openhands.example.com` and sign in through your configured
+   identity provider. The conversation UI should load without an additional
+   backend URL or API-key prompt.
+2. Start a new conversation and ask the agent to run `pwd`. Confirm a sandbox
+   starts in `openhands-runtimes`, the command returns a path, and the agent
+   gives a completed reply.
+3. If the conversation cannot start, use the
+   [first-conversation checks](/enterprise/troubleshooting#first-conversation-checks)
+   before changing the deployment.
+
+<Note>
+  On chart `0.71.1`, a fresh user's selected `Default` LLM profile may not
+  match `LITELLM_DEFAULT_MODEL`. If the first request reports an invalid proxy
+  token or model, inspect the selected profile and the bundled LiteLLM model
+  list using the troubleshooting checks. Do not enter an infrastructure API key
+  into the browser to work around this error.
+</Note>
 
 ## Next Steps
 
