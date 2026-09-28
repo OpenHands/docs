@@ -77,7 +77,7 @@ mint dev
 Useful checks:
 
 ```bash
-mint broken-links
+mintlify broken-links
 ```
 
 ### Python tooling (sync/generation scripts)
