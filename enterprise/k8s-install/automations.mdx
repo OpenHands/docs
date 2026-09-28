@@ -1,0 +1,124 @@
+---
+title: Enable Automations with Helm
+description: Configure the OpenHands Enterprise automation service on a Kubernetes installation.
+icon: clock
+---
+
+Automations run OpenHands conversations on a schedule or in response to an event.
+This guide adds the automation service to an existing Enterprise Helm installation.
+Complete [Install with Helm](/enterprise/k8s-install/installation) and confirm that a
+regular conversation works before enabling automations.
+
+The example below was verified with OpenHands Enterprise chart `0.71.1` on Amazon
+EKS. It uses the bundled PostgreSQL instance and Amazon S3 for automation
+packages. For production, use [external PostgreSQL](/enterprise/external-postgres)
+and adapt the database host and credentials accordingly.
+
+## Prerequisites
+
+- A public HTTPS application origin, such as `https://app.openhands.example.com`.
+  Event-based automations need a URL the event source can reach.
+- A PostgreSQL instance reachable from the automation pod. This example creates
+  a separate `automations` database and `automation_user` in the bundled instance.
+- A durable S3 bucket for automation packages. Give the automation service account
+  access to list the bucket and read, write, and delete objects. On EKS, use
+  [IRSA or EKS Pod Identity](/enterprise/k8s-install/eks#object-storage) so the
+  pod does not need a long-lived AWS access key.
+- Three independent, random secret values stored in your secret manager:
+
+| Secret | Key | Purpose |
+| --- | --- | --- |
+| `automation-db-secret` | `db-password` | Password for `automation_user` |
+| `automation-service-key` | `automation-service-key` | Authenticates the automation service to OpenHands |
+| `automation-webhook-secret` | `webhook-secret` | Verifies automation webhook signatures |
+
+## Step 1: Create Secrets
+
+Create the three Kubernetes Secrets in the `openhands` namespace. If you create
+them with `kubectl`, use `--from-file` or your secret manager rather than putting
+values directly in a shell command. The service key and webhook secret must
+differ. Keep all three values out of your Helm values file and Git repository.
+
+## Step 2: Add Helm Values
+
+Add the following to the values you already use for the `openhands` release.
+Replace the host, bucket, region, and IAM role with your own. Keep your existing
+installation values alongside these overrides when upgrading.
+
+```yaml
+automationServiceKey:
+  enabled: true
+
+automationWebhookSecret:
+  enabled: true
+
+automationService:
+  url: https://app.openhands.example.com/api/automation
+  eventForwardingEnabled: true
+
+automation:
+  enabled: true
+  image:
+    tag: 1.14.0 # Tested with Enterprise chart 0.71.1
+  openhandsApiUrl: https://app.openhands.example.com
+  automationBaseUrl: https://app.openhands.example.com
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<automation-s3-role>
+  database:
+    host: openhands-postgresql.openhands.svc.cluster.local
+    port: "5432"
+    user: automation_user
+    name: automations
+    secretName: automation-db-secret
+    secretKey: db-password
+    createDatabaseUser: true
+    superuserName: postgres
+    superuserSecretName: postgres-password
+    superuserSecretKey: password
+  filestore:
+    type: s3
+    bucket: <automation-package-bucket>
+    region: <aws-region>
+  serviceKeyFromSecret:
+    name: automation-service-key
+    key: automation-service-key
+  automationWebhookSecretFromSecret:
+    name: automation-webhook-secret
+    key: webhook-secret
+```
+
+<Warning>
+  `automation.automationBaseUrl` is the public **origin**, without
+  `/api/automation`. The service appends that path for callbacks. In chart
+  `0.71.1`, adding the path here made the Canvas dashboard report
+  “Automations Unavailable” even though the automation pod was Ready.
+</Warning>
+
+The `automationService.url` value **does** include `/api/automation`. It is
+used by the OpenHands application to reach the automation service.
+
+## Step 3: Upgrade and Verify
+
+Upgrade the same licensed release used for your initial installation. This
+example assumes the baseline and automation values are in separate files:
+
+```bash
+helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands \
+  --version 0.71.1 \
+  --values values.yaml \
+  --values values-automation.yaml
+
+kubectl -n openhands rollout status deployment/automation
+curl -f https://app.openhands.example.com/api/automation/health
+```
+
+Sign in to OpenHands and open `Automate` in Canvas. Create a read-only prompt
+automation, run it once with `Run now`, and confirm that a completed run
+appears in `Activity Log`. For example, ask it to summarize the README of a
+test repository without changing files or posting messages. Disable the test
+schedule afterward if you do not want it to run again.
+
+For creating and managing automations, see [Automations Overview](/openhands/usage/automations/overview).
+For events from another service, see [Event-Based Automations](/openhands/usage/automations/event-automations).
