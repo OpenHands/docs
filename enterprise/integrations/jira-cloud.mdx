@@ -4,9 +4,10 @@ description: Configure Jira Cloud for OpenHands Enterprise.
 icon: cloud
 ---
 
-This guide explains how to connect Jira Cloud to an OpenHands Enterprise
-Replicated installation. The integration lets users start OpenHands from Jira
-issues by commenting with `@openhands` or by adding the `openhands` label.
+This guide explains how to set up the Jira Cloud resolver on an OpenHands
+Enterprise installation, including standalone Helm and Replicated deployments.
+The resolver lets users start OpenHands from Jira issues by commenting with
+`@openhands` or by adding the `openhands` label.
 OpenHands replies on the issue with a link to the conversation and posts the
 result back when it finishes.
 
@@ -15,10 +16,15 @@ Atlassian OAuth app is required, and users need no per-user setup beyond
 making their email visible (see [User requirements](#user-requirements)).
 Users are enrolled automatically the first time they trigger OpenHands.
 
+To trigger an **automation** from a Jira event instead, register a separate
+[custom webhook](/openhands/usage/automations/event-automations#custom-webhooks).
+The resolver webhook described below does not deliver events to automations.
+
 ## Prerequisites
 
-- Jira Cloud **site administrator** access, to invite the service account and
-  register a webhook.
+- A Jira Cloud account with **Administer Jira** permission to register the
+  system webhook. The service account needs project access, but does not need
+  Jira administrator permissions.
 - An OpenHands Enterprise **organization admin or owner** account, to
   configure the integration inside OpenHands.
 - Network access from Jira Cloud to the OpenHands app URL over HTTPS with a
@@ -43,28 +49,57 @@ post comments, and its replies appear under this account's name.
   account, not the service account.
 </Warning>
 
-## Enable the integration in the Admin Console
+## Enable the Resolver
 
-1. In the OpenHands Enterprise Admin Console, open **Config** and check
-   **Enable Jira Cloud Integration** under **Jira Cloud Integration**.
-2. Save and deploy the new version, and wait for the rollout to finish.
+<Tabs>
+  <Tab title="Replicated VM">
+    1. In the OpenHands Enterprise Admin Console, open `Config` and check
+       `Enable Jira Cloud Integration` under `Jira Cloud Integration`.
+    2. Save and deploy the new version, and wait for the rollout to finish.
+  </Tab>
+  <Tab title="Standalone Helm">
+    1. Add the following values to your existing `values.yaml`:
 
-After the deploy, a **Jira** card appears under **Settings → Integrations**
+       ```yaml
+       jira:
+         enabled: true
+         linkMethod: email_match
+       ```
+
+    2. Upgrade the same licensed release used for your
+       [Helm installation](/enterprise/k8s-install/installation):
+
+       ```bash
+       helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+         --namespace openhands \
+         --values values.yaml
+       ```
+
+    3. Wait for the rollout to finish. Enter the service account credentials and
+       webhook secret in OpenHands, not in Helm values.
+  </Tab>
+</Tabs>
+
+After the deploy, a `Jira` card appears under `Settings → Integrations`
 in the OpenHands app.
 
 ## Configure the workspace in OpenHands
 
-As an organization admin or owner, open **Settings → Integrations → Jira**
-in OpenHands and select **Configure**:
+As an organization admin or owner, open `Settings → Integrations → Jira`
+in OpenHands and select `Configure`. On a new installation, the `Link Workspace`
+screen appears first. Enter the full Jira hostname, for example
+`yourcompany.atlassian.net`, and select `Connect`. Then complete the
+administrator form:
 
-- **Workspace**: the full site hostname, for example
-  `yourcompany.atlassian.net`. Webhook events are matched against this
-  hostname, so the bare site name is not sufficient.
 - **Service account email**: the service account's email address.
 - **Service account API token**: the token created above. The credentials are
   validated against Jira when you save, so a typo fails immediately.
 - **Webhook secret**: choose a strong secret. You will paste the same secret
   into Jira in the next step.
+
+Webhook events are matched against the full hostname entered on the first
+screen; the bare site name is not sufficient. After saving, the Jira card shows
+`Edit` for changes to this connection.
 
 Save, then copy the **events URL** shown below the webhook secret field. It
 has the form:
@@ -86,6 +121,11 @@ webhook:
 - Optionally scope the webhook with a JQL filter (for example
   `project = ENG`).
 - Leave the request body included (do not check "Exclude body").
+
+Use a regular Jira account to test the resolver after completing the
+[user requirements](#user-requirements). On an issue covered by the webhook,
+comment `@openhands` followed by a read-only request. Confirm that OpenHands
+posts a conversation link on that issue.
 
 ## User requirements
 
@@ -123,6 +163,35 @@ automatically.
 
 OpenHands reacts with a comment linking to the conversation, and the service
 account posts the result back to the issue when the run completes.
+
+## Trigger Automations from Jira
+
+Jira-triggered automations use a **second Jira system webhook**. The resolver
+URL ending in `/integration/jira/events` only handles mentions and labels; it
+does not feed the automation service.
+
+First, enable the automation service on your installation. Follow
+[Custom Webhooks](/openhands/usage/automations/event-automations#custom-webhooks)
+to create an OpenHands API key and register a custom source. For Jira Cloud,
+use a distinct source name and these registration fields:
+
+```json
+{
+  "name": "Jira issue events",
+  "source": "jira-issues",
+  "event_key_expr": "webhookEvent",
+  "signature_header": "X-Hub-Signature"
+}
+```
+
+When you omit `webhook_secret`, OpenHands generates one and returns it once
+with the `webhook_url`. Store both securely. Create an event automation for
+source `jira-issues` and event `jira:issue_created`, then register another Jira
+system webhook using that `webhook_url` and signing secret. Select only
+`Issue created` and use a narrow JQL filter, such as
+`project = ENG AND labels = openhands-automation`. Create one matching test
+issue and confirm that the automation starts. Keep this webhook separate from
+the resolver webhook above.
 
 ## Troubleshooting
 
