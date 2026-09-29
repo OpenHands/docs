@@ -32,6 +32,19 @@ Pin a specific version tag to ensure reproducible builds, and replace it with
 the tag expected by your installed release. See [Version Compatibility](#version-compatibility)
 below to find the right tag.
 
+<Tip>
+  **What is already inside the base image?** Runtime user `openhands` (UID 10001,
+  home `/home/openhands`, workspace at `/workspace/project`), Python 3.13, Node.js
+  24, `git`, `curl`, VS Code server, a headless browser, a Docker CLI, and the
+  bundled ACP providers (`claude-code`, `codex`, `gemini-cli`). The entrypoint
+  is `tini -- /usr/local/bin/openhands-agent-server` and must not be overridden.
+  The full recipe (all preinstalled packages, capability flags, and stage
+  definitions) lives at
+  [`openhands-agent-server/openhands/agent_server/docker/Dockerfile`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile)
+  in the `OpenHands/software-agent-sdk` repository. Read it before duplicating
+  something that is already present.
+</Tip>
+
 ## Version Compatibility
 
 Each OpenHands Enterprise release expects a specific agent-server version. The
@@ -94,6 +107,69 @@ Good candidates for prebaking:
 If the repository or dependencies change frequently, include a `prepare-*`
 script in the image so the agent can refresh only the parts that need updating
 without a full rebuild.
+
+## Complete Example
+
+A realistic customization that bakes a pinned repository checkout, installs
+its dependencies, and ships a `prepare-repo` refresh script. The `ENTRYPOINT`
+from the base image is inherited unchanged.
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+FROM ghcr.io/openhands/agent-server:1.46.0-python
+
+ARG REPO_URL=https://github.com/your-org/your-service.git
+ARG REPO_REF=v2.4.1
+
+# System packages require root; drop back to the openhands user before the
+# entrypoint runs so the sandbox does not execute as root at task time.
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        libkrb5-dev \
+        libpq-dev \
+        pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+
+# Refresh script for the fast-changing bits. The agent runs this at task start
+# instead of paying for a full image rebuild every time the branch moves.
+COPY --chown=openhands:openhands prepare-repo /usr/local/bin/prepare-repo
+RUN chmod +x /usr/local/bin/prepare-repo
+
+USER openhands
+WORKDIR /workspace/project
+
+# Clone once at a pinned ref so the image is reproducible. `prepare-repo`
+# fast-forwards this checkout at task time if the caller passes a newer ref.
+RUN git clone --depth 50 "${REPO_URL}" . \
+ && git checkout "${REPO_REF}" \
+ && git config --global --add safe.directory /workspace/project
+
+# Prebake dependencies so the first task does not pay install time. Pin the
+# lockfile so the image and the runtime resolve the same versions.
+RUN --mount=type=cache,target=/home/openhands/.cache/uv,uid=10001,gid=10001 \
+    uv sync --frozen
+
+# Do NOT set ENTRYPOINT or CMD. The base image's
+# `tini -- /usr/local/bin/openhands-agent-server` is required for the sandbox
+# to register with the runtime-api.
+```
+
+An accompanying `prepare-repo` script (fetches and fast-forwards without
+losing the prebaked dependency cache):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd /workspace/project
+git fetch --depth 50 origin "${1:-$(git rev-parse --abbrev-ref HEAD)}"
+git reset --hard FETCH_HEAD
+uv sync --frozen
+```
+
+Build and push it with the command from [Build and Push](#build-and-push)
+above, then point your Admin Console or warm runtime configuration at the
+resulting tag.
 
 ## Private Registries
 
