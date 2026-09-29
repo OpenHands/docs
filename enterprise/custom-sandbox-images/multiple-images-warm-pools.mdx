@@ -141,41 +141,54 @@ cd extensions/plugins/runtime-api-configs
 <Tabs>
   <Tab title="VM Install">
     The runtime-api is exposed externally at
-    `https://runtime-api.<your-base-domain>`, so the CLI can talk to it
-    directly. Bootstrap the required environment variables from Kubernetes
-    secrets once — after this, no cluster access is needed:
+    `https://runtime-api.<your-base-domain>`. Export the two env vars the
+    CLI needs — the URL, and the admin password you confirmed in Step 1:
 
     ```bash
-    eval "$(python3 scripts/warm_runtime_configs.py bootstrap --namespace openhands)"
+    export RUNTIME_API_URL=https://runtime-api.<your-base-domain>
+    export ADMIN_PASSWORD=<the-password-from-Step-1>
     python3 scripts/warm_runtime_configs.py list
     ```
 
-    `bootstrap` prints `export` lines for `RUNTIME_API_URL`, `API_KEY`, and
-    `ADMIN_PASSWORD`. Save the output somewhere secure if you want to reuse
-    the same shell across sessions.
+    That is the full setup. No `kubectl`, no SSH, no cluster access. The
+    CLI uses the admin password directly for `save` and `delete` (via the
+    PBKDF2 handshake), and for `list` and `template` it logs in as admin
+    and fetches the read-only API key over HTTPS from
+    `/api/admin/api-keys`.
+
+    Prefer to pull the credentials straight from Kubernetes secrets in one
+    shot? That is the `bootstrap` subcommand — kept as an optional
+    convenience for cluster operators and CI, and documented in
+    [Advanced: bootstrap from Kubernetes](#advanced-bootstrap-from-kubernetes)
+    at the bottom of this page.
   </Tab>
   <Tab title="Helm">
     The runtime-api is not exposed outside the cluster on Helm installs.
-    Port-forward it, then bootstrap credentials while overriding the URL:
+    Port-forward it, then export the admin password from Step 1:
 
     ```bash
     kubectl -n openhands port-forward svc/runtime-api 5000:5000 &
     export RUNTIME_API_URL=http://localhost:5000
-    eval "$(python3 scripts/warm_runtime_configs.py bootstrap \
-      --namespace openhands --skip-url)"
+    export ADMIN_PASSWORD=$(kubectl -n openhands get secret admin-password \
+      -o jsonpath='{.data.admin-password}' | base64 -d)
     python3 scripts/warm_runtime_configs.py list
     ```
 
-    `--skip-url` tells `bootstrap` to leave `RUNTIME_API_URL` alone so your
-    `port-forward` target wins.
+    As on VM installs, `list` and `template` fetch the read-only API key
+    over HTTPS via the admin login — `ADMIN_PASSWORD` is the only credential
+    you need to export.
   </Tab>
 </Tabs>
 
 <Note>
-  Listing authenticates with the regular API key (`X-API-Key`). Saving and
-  deleting use the admin password via a PBKDF2 challenge-response login that
-  returns a 24-hour JWT. The CLI handles both flows automatically. See the
-  plugin's [`SKILL.md`](https://github.com/OpenHands/extensions/blob/main/plugins/runtime-api-configs/SKILL.md)
+  For `save` and `delete`, the CLI runs a PBKDF2 challenge-response login
+  with `ADMIN_PASSWORD` to obtain a 24-hour JWT and calls the admin routes
+  as `Authorization: Bearer <jwt>`. For `list` and `template`, it uses that
+  same admin login to fetch the `default` read-only API key from
+  `/api/admin/api-keys` and sends it as `X-API-Key` on
+  `/api/warm-runtime-configs`. Export `API_KEY` explicitly if you would
+  rather skip the extra login round trip on reads. See the plugin's
+  [`SKILL.md`](https://github.com/OpenHands/extensions/blob/main/plugins/runtime-api-configs/SKILL.md)
   for the full subcommand reference.
 </Note>
 
@@ -238,6 +251,7 @@ image and pool size in one step.
 | `run_as_user` | integer | No | Copy from the installer default so warm pods match application start requests |
 | `run_as_group` | integer | No | Copy from the installer default so warm pods match application start requests |
 | `fs_group` | integer | No | Copy from the installer default so warm pods match application start requests |
+| `fuse_s3_mount` | boolean | No | Use the fusey S3 workspace instead of a PVC. Copy from the installer default when unsure — most installs do not set it. |
 
 The configuration name comes from the URL path (the `save <name>` argument),
 not the body. A `source` field appears in list responses (`file` for
@@ -368,15 +382,30 @@ when you no longer want their pools or images in the application's selector.
 
 The endpoints below are served by the runtime-api service.
 
-**Admin authentication** (required for save and delete):
+**Admin authentication** (required for save, delete, and — if you skip the
+`X-API-Key` header on reads — for `GET /api/admin/api-keys`):
 
 1. `GET /api/admin/challenge` returns `{challenge, salt, iterations}`. Challenges
-   are single-use and expire after 5 minutes.
-2. Compute `PBKDF2-HMAC-SHA256(password, salt + challenge, iterations, dklen=32)`
-   and hex-encode the result.
+   are single-use and expire after 5 minutes. `salt` is returned as an ASCII
+   hex string.
+2. Compute `PBKDF2-HMAC-SHA256(password_utf8, (salt_hex + challenge).utf8, iterations, dklen=32)`
+   and hex-encode the result. The `salt` value returned above goes into PBKDF2
+   as **its ASCII hex string**, not decoded to raw bytes first — concatenate
+   `salt` and `challenge` as strings, then UTF-8 encode.
 3. `POST /api/admin/login` with `{"challenge": ..., "hash": ...}` returns
    `{"token": ...}`, a JWT valid for 24 hours.
 4. Send `Authorization: Bearer <token>` on admin requests.
+
+**Fetch the read-only API key over HTTPS** (admin — lets you drive
+`/api/warm-runtime-configs` without any cluster access):
+
+```http
+GET /api/admin/api-keys
+Authorization: Bearer {admin-jwt}
+```
+
+Returns `200` with `[{"id": ..., "name": "default", "key_value": "...", ...}, ...]`.
+Use the `key_value` of the `name: "default"` entry as your `X-API-Key`.
 
 **List configurations** (regular API key, not admin):
 
@@ -433,3 +462,44 @@ Authorization: Bearer {admin-jwt}
 Returns `200` with a confirmation message, or `404` if no database
 configuration has that name. When the deleted name also exists in the
 installer-managed ConfigMap, that ConfigMap entry becomes effective again.
+
+---
+
+## Advanced: bootstrap from Kubernetes
+
+The CLI's `bootstrap` subcommand pulls `RUNTIME_API_URL`, `API_KEY`, and
+`ADMIN_PASSWORD` from Kubernetes secrets in one step. It is optional — the
+HTTPS-only flow in Step 2 is preferred for interactive administration. Use
+`bootstrap` when you have `kubectl` access anyway and want a single
+one-liner for a CI job or an operator runbook.
+
+<Tabs>
+  <Tab title="VM Install">
+    The Replicated embedded k0s cluster stores its kubeconfig at
+    `/var/lib/k0s/pki/admin.conf`, which is root-owned. Run under `sudo -E`
+    so the CLI's `kubectl` calls can read it:
+
+    ```bash
+    eval "$(sudo -E python3 scripts/warm_runtime_configs.py bootstrap \
+      --namespace openhands)"
+    python3 scripts/warm_runtime_configs.py list
+    ```
+
+    `bootstrap` prints three `export` lines. After the `eval`, subsequent
+    commands run from any host with network access to the ingress — no
+    further cluster access needed.
+  </Tab>
+  <Tab title="Helm">
+    Run against your own `kubectl` context (no `sudo` needed on typical
+    Helm-managed clusters). Port-forward first, then bootstrap with
+    `--skip-url` so your `port-forward` target is not overwritten:
+
+    ```bash
+    kubectl -n openhands port-forward svc/runtime-api 5000:5000 &
+    export RUNTIME_API_URL=http://localhost:5000
+    eval "$(python3 scripts/warm_runtime_configs.py bootstrap \
+      --namespace openhands --skip-url)"
+    python3 scripts/warm_runtime_configs.py list
+    ```
+  </Tab>
+</Tabs>
