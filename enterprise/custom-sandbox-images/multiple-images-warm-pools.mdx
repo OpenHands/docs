@@ -86,6 +86,38 @@ The Runtime API admin endpoints require an admin password.
 
 ---
 
+## Enable Overlay Mode (Helm Installs Only)
+
+By default on Helm installs, saving any configuration via the API takes over
+warm pool management and the installer-managed `v1_current` default is
+ignored. Enable overlay mode so API-saved configurations sit alongside
+`v1_current` rather than replacing it. VM installs have overlay mode enabled
+by default and can skip this section.
+
+Add to your `site-values.yaml`:
+
+```yaml
+runtime-api:
+  env:
+    WARM_RUNTIME_CONFIG_OVERLAY: "1"
+```
+
+Apply and roll out:
+
+```bash
+helm upgrade openhands openhands/openhands -f site-values.yaml -n openhands
+kubectl -n openhands rollout restart deployment \
+  -l app.kubernetes.io/name=runtime-api
+kubectl -n openhands rollout status deployment \
+  -l app.kubernetes.io/name=runtime-api
+```
+
+You can confirm overlay mode is active after Step 2 by running
+`python3 scripts/warm_runtime_configs.py list` — `v1_current` should appear
+with `"source": "file"`.
+
+---
+
 ## Step 2: Install the Management CLI
 
 We publish a small Python CLI — the **`runtime-api-configs`** plugin — that
@@ -178,21 +210,16 @@ image and pool size in one step.
     ```
   </Tab>
   <Tab title="Helm">
-    <Warning>
-      The first configuration you save takes over warm pool management — the
-      installer's default pool is ignored while any API configurations exist.
-      Save `v1_current` explicitly first so the default pool keeps running.
-    </Warning>
+    With overlay mode enabled (see [Enable Overlay Mode](#enable-overlay-mode-helm-installs-only)
+    above), the default `v1_current` pool keeps running while you add
+    configurations. Derive your custom configuration from the template and
+    save it:
 
     ```bash
-    # Re-declare the default pool before adding custom images
-    python3 scripts/warm_runtime_configs.py template v1_current --count 1 \
-      | python3 scripts/warm_runtime_configs.py save v1_current --file -
-
-    # Now add your custom image
     python3 scripts/warm_runtime_configs.py template v1_current \
       --image ghcr.io/your-org/openhands-php:8.4-v1 --count 1 \
-      | python3 scripts/warm_runtime_configs.py save php-web --file -
+      --output php-web.json
+    python3 scripts/warm_runtime_configs.py save php-web --file php-web.json
     ```
   </Tab>
 </Tabs>
@@ -294,9 +321,14 @@ image. Delete old tags only after the conversations that used them are gone
   4. If you intentionally override `v1_current`, refresh or delete that override
      so the new installer-managed entry can take effect.
 
-  Skipping this leaves configurations pointing at the previous agent-server
-  version, and new conversations fail with a version mismatch error until
-  the configurations are updated.
+  Skipping this leaves configurations pinned to the previous agent-server
+  version. Existing features keep working - agent-server is largely forward
+  and backward compatible - but any newer feature with a declared minimum
+  version (Hooks, MCP test, MCP OAuth, and future additions) fails on those
+  sandboxes with an `AGENT_SERVER_VERSION_TOO_OLD` error until the
+  configurations are refreshed. See
+  [Version Compatibility](/enterprise/custom-sandbox-images/building-custom-images#version-compatibility)
+  for details.
 </Warning>
 
 ---
@@ -375,10 +407,8 @@ Returns `200` with the effective configuration set:
 ```
 
 `source: "file"` — installer-managed entry. `source: "db"` — API-managed
-entry. On Replicated installs (overlay mode), the list is the full effective
-set: ConfigMap entries merged with same-named API entries overriding them. On
-Helm installs without overlay mode, only API-saved entries appear while the
-database contains any rows.
+entry. The list is the full effective set: ConfigMap entries merged with
+same-named API entries overriding them.
 
 **Create or update a configuration** (admin):
 
