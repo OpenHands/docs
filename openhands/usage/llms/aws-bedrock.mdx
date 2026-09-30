@@ -15,15 +15,15 @@ AWS Bedrock provides access to foundation models from Amazon and third-party pro
 
 ### Environment Variables
 
-When running OpenHands with Docker, set the following environment variables using `-e`:
+When running Agent Canvas with the [official Docker image](/openhands/usage/agent-canvas/backend-setup/docker), add these options to the documented `docker run` command:
 
 ```bash
-docker run -it --pull=always \
-    -e LLM_AWS_ACCESS_KEY_ID="your-access-key-id" \
-    -e LLM_AWS_SECRET_ACCESS_KEY="your-secret-access-key" \
-    -e LLM_AWS_REGION_NAME="us-east-1" \
-    ...
+--env LLM_AWS_ACCESS_KEY_ID="your-access-key-id" \
+--env LLM_AWS_SECRET_ACCESS_KEY="your-secret-access-key" \
+--env LLM_AWS_REGION_NAME="us-east-1"
 ```
+
+The official `ghcr.io/openhands/agent-canvas:latest` image includes the AWS SDK for Python (`boto3`).
 
 <Note>
 Make sure you have enabled the Bedrock models you want to use in the AWS Console. Go to **Amazon Bedrock** → **Model access** and request access to the models you need.
@@ -31,58 +31,81 @@ Make sure you have enabled the Bedrock models you want to use in the AWS Console
 
 ### UI Configuration
 
-In the OpenHands UI Settings under the `LLM` tab:
+In Agent Canvas:
 
-1. Enable `Advanced` options
-2. Set the following:
-   - `Custom Model` to the Bedrock model ID (see [Model IDs](#model-ids))
-   - Leave `Base URL` empty (Bedrock uses AWS endpoints automatically)
-   - Leave `API Key` empty (authentication is handled via AWS credentials)
+1. Open `Settings > LLM` and enable the `Advanced` options.
+2. Set `Custom Model` to the Bedrock model or inference profile ID. See [Model IDs](#model-ids).
+3. Leave `Base URL` empty because Bedrock uses AWS endpoints automatically.
+4. Leave `API Key` empty because authentication is handled through your AWS credentials.
+5. Save the profile and start a new conversation to test it.
+
+See [Manage LLM Profiles](/openhands/usage/agent-canvas/llm-profiles) for more information about profile settings.
 
 ### Model IDs
 
 Bedrock model IDs are managed by AWS and may change over time. Use the exact **Model ID** from the AWS Console or the AWS documentation (no `bedrock/` prefix).
 
 Example format:
+
 - `Custom Model`: `anthropic.claude-3-5-sonnet-20241022-v2:0`
 
 For a complete list of available models, see the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html).
 
 ### Cross-Region Inference
 
-Some Bedrock models can be invoked across regions by prefixing the model ID with the target region (for example, `us.`):
+Some models must be invoked through a cross-region inference profile rather than their direct foundation model ID. Inference profile IDs include a geographic prefix such as `us.`.
 
-- `Custom Model`: `<region>.<model-id>`
+For example, use:
 
-No additional environment variable configuration is needed—keep using your normal Bedrock setup and credentials.
+- `Custom Model`: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+
+instead of the direct model ID:
+
+- `anthropic.claude-sonnet-4-5-20250929-v1:0`
+
+No additional environment variables are required. Keep using the AWS region where you configured Bedrock access and your existing credentials. See [Increase throughput with cross-region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for supported profiles and regions.
 
 ### Using IAM Roles (Alternative to Access Keys)
 
-If running OpenHands on AWS infrastructure (EC2, ECS, Lambda), you can use IAM roles instead of access keys:
+If running OpenHands on AWS infrastructure such as EC2, ECS, or Lambda, you can use IAM roles instead of access keys:
 
-1. Attach an IAM role with Bedrock permissions to your compute resource
-2. Omit the `LLM_AWS_ACCESS_KEY_ID` and `LLM_AWS_SECRET_ACCESS_KEY` environment variables
-3. The AWS SDK will automatically use the instance role credentials
+1. Attach an IAM role with Bedrock permissions to your compute resource.
+2. Omit the `LLM_AWS_ACCESS_KEY_ID` and `LLM_AWS_SECRET_ACCESS_KEY` environment variables.
+3. The AWS SDK automatically uses the instance role credentials.
 
 ### Troubleshooting
 
 #### "No module named 'boto3'" Error
 
 If you encounter this error:
-```
+
+```text
 litellm.APIConnectionError: No module named 'boto3'
 ModuleNotFoundError: No module named 'boto3'
 ```
 
-This means you're using an older version of the OpenHands Docker image that doesn't include the AWS SDK. Update to the latest version:
+First identify how you installed Agent Canvas:
 
-```bash
-docker pull docker.openhands.dev/openhands/openhands:latest
+- **Docker:** The current `ghcr.io/openhands/agent-canvas:latest` image includes `boto3`. Pull the latest image and recreate the container:
+
+  ```bash
+  docker pull ghcr.io/openhands/agent-canvas:latest
+  ```
+
+- **npm or npx:** The Python environment managed by the npm distribution may not include the optional Bedrock dependency. Follow [OpenHands issue #16578](https://github.com/OpenHands/OpenHands/issues/16578) for the package fix. Use the official Agent Canvas Docker image if you need Bedrock while that issue remains open.
+
+Do not install `boto3` into a temporary uv archive environment because Agent Canvas may recreate that environment.
+
+#### On-Demand Throughput Is Not Supported
+
+Some foundation model IDs cannot be invoked directly and return an error similar to:
+
+```text
+Invocation of model ID ... with on-demand throughput isn't supported.
+Retry your request with the ID or ARN of an inference profile that contains this model.
 ```
 
-<Note>
-This issue is resolved in recent OpenHands releases. If you still see it, upgrade to `latest` (or a recent release tag).
-</Note>
+Use the corresponding inference profile ID or ARN, such as `us.anthropic.claude-sonnet-4-5-20250929-v1:0`. This error does not indicate a credential, model access, or `boto3` problem.
 
 #### Access Denied Errors
 

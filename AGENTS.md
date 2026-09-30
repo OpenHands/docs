@@ -17,13 +17,27 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `openhands/usage/` — product docs for Web/Cloud/CLI/etc.
 - `sdk/` — Agent SDK docs (guides, architecture, API reference pages)
 - `openapi/` — OpenAPI specs consumed by Mintlify
-  - `openapi/openapi.json` — OpenHands REST API schema
+  - `openapi/V0_openapi.json` — OpenHands V0 REST API schema (legacy)
+  - `openapi/openhands-cloud.json` — OpenHands Cloud REST API schema (served by app.all-hands.dev; surfaced as a collapsible `REST API` group under the Cloud tab → Integrations)
   - `openapi/agent-sdk.json` — Agent SDK agent-server schema (synced from `software-agent-sdk`)
 - `scripts/` — automation for generating SDK API reference docs
 - `.github/workflows/` — CI workflows (broken link checks, sync jobs)
 - `.github/scripts/` — helper scripts used by CI
 - `.agents/skills/` — prompt extensions for agents editing this repo (legacy: `.openhands/skills/`; formerly `microagents`)
 - `tests/` — pytest checks for docs consistency (notably LLM pricing docs)
+
+## Cross-Repository Boundaries
+
+This repository owns the unified documentation site and documentation-specific tooling. The documented source repositories have distinct responsibilities:
+
+- [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) owns Agent Canvas UI and local-stack orchestration.
+- [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) owns the Python SDK, Agent Server, agent/tool behavior, conversations, workspaces, events, and canonical API.
+- [`OpenHands/typescript-client`](https://github.com/OpenHands/typescript-client) owns the browser-compatible typed Agent Server client.
+- [`OpenHands/automation`](https://github.com/OpenHands/automation) owns scheduling, webhooks, run history, dispatch, and sandbox lifecycle orchestration.
+- [`OpenHands/extensions`](https://github.com/OpenHands/extensions) owns reusable skills, plugins, automations, and integrations.
+
+Documentation should describe these boundaries accurately. If a documentation PR is opened in the wrong source repository, explicitly recommend closing and moving it to the repository that owns the change. PRs must follow this repository's applicable code-review guidance.
+
 
 
 ## llms.txt / llms-full.txt (V1-only)
