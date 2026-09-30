@@ -1,0 +1,180 @@
+---
+title: Ask Oracle
+description: Let an agent consult a saved Oracle LLM profile for stateless second-opinion advice.
+---
+
+import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+Use `ask_oracle` when an agent should consult a stronger or more specialized
+model for a second opinion without switching its active model.
+
+## When to Use It
+
+`ask_oracle` is useful when an agent is:
+
+- Stuck or uncertain about its next step
+- Comparing implementation approaches
+- Reviewing a risky or difficult decision
+- Asked by the user to get a second opinion
+
+## How It Works
+
+When the agent calls `ask_oracle`:
+
+1. The tool loads the saved LLM profile named `oracle`.
+2. The Oracle receives a dedicated system prompt and a user message containing
+   the agent's question and optional context.
+3. The Oracle returns a text recommendation to the original agent.
+4. The original agent continues the conversation with its existing model.
+
+The Oracle does not receive the conversation history or any tools. It cannot
+modify the workspace directly. Its token usage and cost are included in the
+conversation's combined metrics.
+
+<Note>
+  The tool does not fall back to the agent's active model. If the `oracle`
+  profile is missing or cannot be loaded, the tool returns an error observation
+  telling the agent that the Oracle is unavailable.
+</Note>
+
+## Configure the Oracle Profile
+
+The tool resolves its model by convention from a saved LLM profile named
+`oracle`. There is no dedicated agent setting for selecting another profile.
+
+To enable it:
+
+1. Save a usable LLM configuration under the name `oracle`. See
+   [LLM Profile Store](/sdk/guides/llm-profile-store).
+2. Add `AskOracleTool` to the agent's tools:
+
+```python icon="python" wrap focus={2, 5}
+from openhands.sdk import Agent, Tool
+from openhands.tools.ask_oracle import AskOracleTool
+
+agent = Agent(
+    llm=primary_llm,
+    tools=[Tool(name=AskOracleTool.name)],
+)
+```
+
+By default, `LocalConversation` reads profiles from
+`~/.openhands/profiles`. If you use a custom profile directory, pass the same
+directory to both `LLMProfileStore` and `LocalConversation` through
+`profile_store_dir`.
+
+<Warning>
+  Do not place literal API keys in source code. The ready-to-run example reads
+  its key from the environment and stores the Oracle profile in a temporary
+  directory, which is removed after the example exits. Follow the
+  [LLM Profile Store](/sdk/guides/llm-profile-store) guidance when creating a
+  persistent profile.
+</Warning>
+
+## Ask Oracle vs. Switch LLM
+
+`ask_oracle` makes one stateless call to another model and then returns control
+to the original agent. It never changes the active conversation model.
+
+Use `switch_profile()` or the `switch_llm` tool instead when subsequent agent
+turns should run on a different saved profile. See
+[LLM Profile Store](/sdk/guides/llm-profile-store#mid-conversation-model-switching).
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/58_ask_oracle_tool/main.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/58_ask_oracle_tool/main.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/58_ask_oracle_tool/main.py
+"""Consult the Oracle end-to-end with the ask_oracle tool.
+
+The Oracle is a saved LLM profile resolved by convention under the name
+``oracle``. This example wires two profiles — the agent's primary model and a
+separate ``oracle`` model — adds ``Tool(name="ask_oracle")`` to the agent, then
+drives a normal conversation: the agent decides to call ``ask_oracle``, the tool
+consults the ``oracle`` profile, and the agent uses the Oracle's answer to reply.
+
+Usage:
+    LLM_API_KEY=... LLM_BASE_URL=https://llm-proxy.app.all-hands.dev \
+        uv run python examples/01_standalone_sdk/58_ask_oracle_tool/main.py
+
+Note:
+    The example saves the ``oracle`` profile in a temporary directory so it
+    does not modify the user's default profile store.
+"""
+
+import os
+import tempfile
+
+from pydantic import SecretStr
+
+from openhands.sdk import LLM, Agent, LocalConversation, Tool
+from openhands.sdk.llm.llm_profile_store import LLMProfileStore
+from openhands.tools.ask_oracle import ORACLE_PROFILE_NAME, AskOracleTool
+
+
+DEFAULT_BASE_URL = "https://llm-proxy.app.all-hands.dev"
+# The agent's primary model (follows the standard LLM_MODEL env like other
+# examples). The Oracle defaults to the same model; override ASK_ORACLE_MODEL to
+# point the "oracle" profile at a different/stronger model.
+PRIMARY_MODEL = os.getenv("ASK_ORACLE_PRIMARY_MODEL") or os.getenv(
+    "LLM_MODEL", "openai/gpt-5.5"
+)
+ORACLE_MODEL = os.getenv("ASK_ORACLE_MODEL", PRIMARY_MODEL)
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key is not None, "LLM_API_KEY environment variable is not set."
+base_url = os.getenv("LLM_BASE_URL", DEFAULT_BASE_URL)
+
+with tempfile.TemporaryDirectory() as profile_store_dir:
+    store = LLMProfileStore(profile_store_dir)
+    store.save(
+        ORACLE_PROFILE_NAME,
+        LLM(
+            model=ORACLE_MODEL,
+            api_key=SecretStr(api_key),
+            base_url=base_url,
+            usage_id="oracle",
+        ),
+        include_secrets=True,
+    )
+
+    primary_llm = LLM(
+        model=PRIMARY_MODEL,
+        api_key=SecretStr(api_key),
+        base_url=base_url,
+        usage_id="primary",
+    )
+    agent = Agent(llm=primary_llm, tools=[Tool(name=AskOracleTool.name)])
+    conversation = LocalConversation(
+        agent=agent,
+        workspace=os.getcwd(),
+        profile_store_dir=profile_store_dir,
+    )
+
+    print(f"Primary model: {conversation.agent.llm.model}")
+    print(f"Oracle model:  {ORACLE_MODEL}")
+    conversation.send_message(
+        "Call the oracle to ask it for its opinion on the weather today, "
+        "then just tell me in two words how it's like."
+    )
+    conversation.run()
+
+    cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+    print(f"Total cost: ${cost:.6f}")
+    print(f"EXAMPLE_COST: {cost}")
+```
+
+<RunExampleCode path_to_script="examples/01_standalone_sdk/58_ask_oracle_tool/main.py"/>
+
+## Next Steps
+
+- **[LLM Profile Store](/sdk/guides/llm-profile-store)** - Create and manage
+  reusable LLM configurations
+- **[LLM Metrics](/sdk/guides/metrics)** - Track usage and cost across the
+  primary and Oracle models
+- **[Custom Tools](/sdk/guides/custom-tools)** - Build tools with custom
+  behavior
