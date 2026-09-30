@@ -17,6 +17,7 @@ steps:
 
 1. **Set an admin password** in the install admin UI. This secures the Runtime
    API so only authorized administrators can register or remove images.
+   On Helm installs, use the `admin-password` secret created during installation.
 
 2. **Register images via the API.** Use the helper script below to give each
    image a name and tell OpenHands where to pull it from. OpenHands pulls the
@@ -67,7 +68,7 @@ The Runtime API admin endpoints require an admin password.
       --from-literal=admin-password=<your-password>
     ```
 
-    The helper script reads it automatically — no action required.
+    The Helm commands in Step 2 read this secret with `kubectl`.
 
     To rotate the password:
 
@@ -94,22 +95,25 @@ ignored. Enable overlay mode so API-saved configurations sit alongside
 `v1_current` rather than replacing it. VM installs have overlay mode enabled
 by default and can skip this section.
 
-Add to your `site-values.yaml`:
+Merge these settings into the same `values.yaml` used for the
+[Kubernetes installation](/enterprise/k8s-install/installation). Keep the
+other values for your release:
 
 ```yaml
 runtime-api:
+  warmRuntimes:
+    enabled: true
   env:
     WARM_RUNTIME_CONFIG_OVERLAY: "1"
 ```
 
-Apply and roll out:
+Upgrade with the licensed chart and wait for Runtime API to roll out:
 
 ```bash
-helm upgrade openhands openhands/openhands -f site-values.yaml -n openhands
-kubectl -n openhands rollout restart deployment \
-  -l app.kubernetes.io/name=runtime-api
+helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands --values values.yaml
 kubectl -n openhands rollout status deployment \
-  -l app.kubernetes.io/name=runtime-api
+  -l 'app.kubernetes.io/name=runtime-api,app.kubernetes.io/instance=openhands'
 ```
 
 You can confirm overlay mode is active after Step 2 by running
@@ -163,20 +167,36 @@ cd extensions/plugins/runtime-api-configs
     at the bottom of this page.
   </Tab>
   <Tab title="Helm">
-    The runtime-api is not exposed outside the cluster on Helm installs.
-    Port-forward it, then export the admin password from Step 1:
+    The [Kubernetes installation guide](/enterprise/k8s-install/installation#step-3-configure-values)
+    enables Runtime API ingress. Use its configured hostname and read the
+    admin password from the secret created in Step 1:
 
     ```bash
-    kubectl -n openhands port-forward svc/runtime-api 5000:5000 &
-    export RUNTIME_API_URL=http://localhost:5000
+    export RUNTIME_API_URL=https://runtime-api.openhands.example.com
     export ADMIN_PASSWORD=$(kubectl -n openhands get secret admin-password \
       -o jsonpath='{.data.admin-password}' | base64 -d)
     python3 scripts/warm_runtime_configs.py list
     ```
 
+    Replace the example URL with your `runtime-api.ingress.host`. If you
+    disabled ingress, port-forward the release-named Service instead:
+
+    ```bash
+    RUNTIME_API_SERVICE=$(kubectl -n openhands get svc \
+      -l 'app.kubernetes.io/name=runtime-api,app.kubernetes.io/instance=openhands' \
+      -o jsonpath='{.items[0].metadata.name}')
+    test -n "$RUNTIME_API_SERVICE"
+    kubectl -n openhands port-forward "svc/$RUNTIME_API_SERVICE" 5000:5000 &
+    export RUNTIME_API_URL=http://localhost:5000
+    python3 scripts/warm_runtime_configs.py list
+    ```
+
+    If your Helm release has another name, change the
+    `app.kubernetes.io/instance` selector to match it.
+
     As on VM installs, `list` and `template` fetch the read-only API key
-    over HTTPS via the admin login — `ADMIN_PASSWORD` is the only credential
-    you need to export.
+    through the admin login. The port-forward path uses local HTTP;
+    `ADMIN_PASSWORD` is the only credential you need to export.
   </Tab>
 </Tabs>
 
@@ -285,6 +305,12 @@ and source. Within about a minute the pool is ready. Open
 **Settings → Application → Default Sandbox** — your image name appears in the
 dropdown. Select it and start a conversation to confirm it loads in a few
 seconds rather than 20 or more.
+
+On Helm, test both the default and custom images with a simple tool check. The
+dropdown shows image references rather than configuration names. If you test
+concurrent conversations, leave node capacity for active sandboxes and the
+replacement warm pods; a `Pending` replacement means the pool is not ready
+for the next conversation.
 
 If the image does not appear or conversations cold-start, see
 [Troubleshooting](#troubleshooting) below.
@@ -495,11 +521,18 @@ one-liner for a CI job or an operator runbook.
     `--skip-url` so your `port-forward` target is not overwritten:
 
     ```bash
-    kubectl -n openhands port-forward svc/runtime-api 5000:5000 &
+    RUNTIME_API_SERVICE=$(kubectl -n openhands get svc \
+      -l 'app.kubernetes.io/name=runtime-api,app.kubernetes.io/instance=openhands' \
+      -o jsonpath='{.items[0].metadata.name}')
+    test -n "$RUNTIME_API_SERVICE"
+    kubectl -n openhands port-forward "svc/$RUNTIME_API_SERVICE" 5000:5000 &
     export RUNTIME_API_URL=http://localhost:5000
     eval "$(python3 scripts/warm_runtime_configs.py bootstrap \
       --namespace openhands --skip-url)"
     python3 scripts/warm_runtime_configs.py list
     ```
+
+    If your Helm release has another name, change the
+    `app.kubernetes.io/instance` selector to match it.
   </Tab>
 </Tabs>
