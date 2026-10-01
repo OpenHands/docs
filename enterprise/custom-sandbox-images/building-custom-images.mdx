@@ -1,0 +1,196 @@
+---
+title: Building a Custom Sandbox Image
+description: How to build, version, and push a custom sandbox image for use with OpenHands Enterprise.
+icon: docker
+---
+
+All custom sandbox image approaches — single-image Admin Console and multi-image
+warm runtime pools — start here. Build your image once and then point whichever
+configuration approach you use at it.
+
+## Basic Pattern
+
+1. Start from the OpenHands agent-server base image.
+2. Keep the normal OpenHands entrypoint intact: extend the image, do not replace it.
+3. Add your repo, docs, tools, and verification wrappers.
+4. Pre-run the expensive setup you do not want to repeat at task time.
+5. Push the image to a registry reachable from your OpenHands cluster.
+
+<Warning>
+  Do not override the entrypoint or replace the runtime contract of the base
+  image. OpenHands expects standard agent-server behavior. Only extend, do not
+  replace.
+</Warning>
+
+## Base Image
+
+```dockerfile
+FROM ghcr.io/openhands/agent-server:1.46.0-python
+```
+
+Pin a specific version tag to ensure reproducible builds, and replace it with
+the tag expected by your installed release. See [Version Compatibility](#version-compatibility)
+below to find the right tag.
+
+### What is already inside the base image?
+
+| | |
+|---|---|
+| **Runtime user** | `openhands` (UID 10001), home `/home/openhands` |
+| **Working directory** | `/workspace/project` |
+| **Languages** | Python 3.13, Node.js 24 |
+| **Preinstalled tooling** | `git`, `curl`, VS Code server, headless browser, Docker CLI |
+| **ACP providers** | `claude-code`, `codex`, `gemini-cli` |
+| **Entrypoint** | `tini -- /usr/local/bin/openhands-agent-server` (do not override) |
+
+The full recipe - every preinstalled package, capability flag, and build stage - lives in
+[`openhands-agent-server/openhands/agent_server/docker/Dockerfile`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile)
+in the `OpenHands/software-agent-sdk` repository. Read it before duplicating
+something that is already present.
+
+## Version Compatibility
+
+Agent-server versions are largely forward and backward compatible: newer
+agent-servers work with older OpenHands releases and vice versa for the
+features they have in common. There is no strict version match at conversation
+start.
+
+The one exception is a per-feature minimum-version check. A handful of newer
+APIs (Hooks, MCP test, MCP OAuth, and any subsequent feature that ships with a
+declared floor) fail with an `AGENT_SERVER_VERSION_TOO_OLD` error, naming the
+feature and its required version, if the sandbox's agent-server predates that
+feature. Building your image from too old a base image only affects those
+specific features - everything else keeps working.
+
+Each OpenHands Enterprise release still ships with a **recommended** default
+tag. To find it, enable **Use a Custom Sandbox Image** in the Admin Console;
+the **Sandbox Image Tag** field defaults to that recommended tag. See
+[ghcr.io/openhands/agent-server](https://github.com/OpenHands/OpenHands/pkgs/container/agent-server)
+for the full tag list.
+
+<Tip>
+  Best practice is to stay reasonably current with the recommended tag so
+  you keep access to newer features without having to think about which ones
+  have a version floor. A refresh at each OHE upgrade is a good cadence, but
+  it is not required for existing functionality to keep working.
+</Tip>
+
+## Build and Push
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  -f your-project/Dockerfile \
+  -t ghcr.io/<your-org>/openhands-custom-image:<your-tag> \
+  --push \
+  .
+```
+
+Use `--platform linux/amd64` because the Enterprise Replicated VM runs on x86-64.
+For Helm installs, match the architecture of your sandbox nodes.
+
+## What to Bake In
+
+Good candidates for prebaking:
+
+- Pinned repository checkouts
+- Package manager caches and installed dependencies (`node_modules`, Python virtualenvs, etc.)
+- Compiled or transpiled output
+- Native system packages (`xvfb`, `libkrb5-dev`, `pkg-config`, etc.)
+- Browser or Electron artifacts
+- Stable helper scripts such as `prepare-*` and `*-verify` wrappers
+
+## What to Keep Out
+
+<Warning>
+  Do not bake the following into your image:
+
+  - Secrets, API keys, or personal credentials
+  - Machine-specific paths or environment assumptions
+  - Uncommitted source changes or task-specific fixes
+  - Rapidly changing dependencies (use a lightweight `prepare-*` script instead)
+</Warning>
+
+If the repository or dependencies change frequently, include a `prepare-*`
+script in the image so the agent can refresh only the parts that need updating
+without a full rebuild.
+
+## Complete Example
+
+A realistic customization that bakes a pinned repository checkout, installs
+its dependencies, and ships a `prepare-repo` refresh script. The `ENTRYPOINT`
+from the base image is inherited unchanged.
+
+```dockerfile
+# syntax=docker/dockerfile:1.7
+FROM ghcr.io/openhands/agent-server:1.46.0-python
+
+ARG REPO_URL=https://github.com/your-org/your-service.git
+ARG REPO_REF=v2.4.1
+
+# System packages require root; drop back to the openhands user before the
+# entrypoint runs so the sandbox does not execute as root at task time.
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        libkrb5-dev \
+        libpq-dev \
+        pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+
+# Refresh script for the fast-changing bits. The agent runs this at task start
+# instead of paying for a full image rebuild every time the branch moves.
+COPY --chown=openhands:openhands prepare-repo /usr/local/bin/prepare-repo
+RUN chmod +x /usr/local/bin/prepare-repo
+
+USER openhands
+WORKDIR /workspace/project
+
+# Clone once at a pinned ref so the image is reproducible. `prepare-repo`
+# fast-forwards this checkout at task time if the caller passes a newer ref.
+RUN git clone --depth 50 "${REPO_URL}" . \
+ && git checkout "${REPO_REF}" \
+ && git config --global --add safe.directory /workspace/project
+
+# Prebake dependencies so the first task does not pay install time. Pin the
+# lockfile so the image and the runtime resolve the same versions.
+RUN --mount=type=cache,target=/home/openhands/.cache/uv,uid=10001,gid=10001 \
+    uv sync --frozen
+
+# Do NOT set ENTRYPOINT or CMD. The base image's
+# `tini -- /usr/local/bin/openhands-agent-server` is required for the sandbox
+# to register with the runtime-api.
+```
+
+An accompanying `prepare-repo` script (fetches and fast-forwards without
+losing the prebaked dependency cache):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+cd /workspace/project
+git fetch --depth 50 origin "${1:-$(git rev-parse --abbrev-ref HEAD)}"
+git reset --hard FETCH_HEAD
+uv sync --frozen
+```
+
+Build and push it with the command from [Build and Push](#build-and-push)
+above, then point your Admin Console or warm runtime configuration at the
+resulting tag.
+
+## Private Registries
+
+If your image lives in a private registry, provide pull credentials so the
+cluster can fetch it at pod start time.
+
+**Replicated VM installs:** set **Registry Server**, **Registry Username**, and
+**Registry Password or Credentials** in **Config → Sandbox Configuration** in
+the Admin Console and deploy. The installer renders an image pull secret that
+runtime pods automatically use.
+
+**Helm installs:** use node-level registry access where available. An EKS
+node role with ECR read access can pull a private ECR image without a pull
+secret. Otherwise, create a pull secret in the sandbox namespace and add its
+name to the runtime-api `RUNTIME_IMAGE_PULL_SECRETS` environment variable
+(comma-separated list of secret names). Verify that the custom warm pod
+reaches `Ready` before selecting the image.
