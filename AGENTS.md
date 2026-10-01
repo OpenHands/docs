@@ -17,13 +17,27 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `openhands/usage/` — product docs for Web/Cloud/CLI/etc.
 - `sdk/` — Agent SDK docs (guides, architecture, API reference pages)
 - `openapi/` — OpenAPI specs consumed by Mintlify
-  - `openapi/openapi.json` — OpenHands REST API schema
+  - `openapi/V0_openapi.json` — OpenHands V0 REST API schema (legacy)
+  - `openapi/openhands-cloud.json` — OpenHands Cloud REST API schema (served by app.all-hands.dev; surfaced as a collapsible `REST API` group under the Cloud tab → Integrations)
   - `openapi/agent-sdk.json` — Agent SDK agent-server schema (synced from `software-agent-sdk`)
 - `scripts/` — automation for generating SDK API reference docs
 - `.github/workflows/` — CI workflows (broken link checks, sync jobs)
 - `.github/scripts/` — helper scripts used by CI
 - `.agents/skills/` — prompt extensions for agents editing this repo (legacy: `.openhands/skills/`; formerly `microagents`)
 - `tests/` — pytest checks for docs consistency (notably LLM pricing docs)
+
+## Cross-Repository Boundaries
+
+This repository owns the unified documentation site and documentation-specific tooling. The documented source repositories have distinct responsibilities:
+
+- [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) owns Agent Canvas UI and local-stack orchestration.
+- [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) owns the Python SDK, Agent Server, agent/tool behavior, conversations, workspaces, events, and canonical API.
+- [`OpenHands/typescript-client`](https://github.com/OpenHands/typescript-client) owns the browser-compatible typed Agent Server client.
+- [`OpenHands/automation`](https://github.com/OpenHands/automation) owns scheduling, webhooks, run history, dispatch, and sandbox lifecycle orchestration.
+- [`OpenHands/extensions`](https://github.com/OpenHands/extensions) owns reusable skills, plugins, automations, and integrations.
+
+Documentation should describe these boundaries accurately. If a documentation PR is opened in the wrong source repository, explicitly recommend closing and moving it to the repository that owns the change. PRs must follow this repository's applicable code-review guidance.
+
 
 
 ## llms.txt / llms-full.txt (V1-only)
@@ -165,7 +179,7 @@ SDK guide files under `sdk/guides/` use a **category prefix** to group related p
 | Prefix | Category | Examples |
 |--------|----------|----------|
 | `llm-` | LLM features (model configuration, providers, streaming, presets) | `llm-reasoning.mdx`, `llm-gpt5-preset.mdx` |
-| `agent-` | Agent features (customization, delegation, browser, settings) | `agent-custom.mdx`, `agent-delegation.mdx` |
+| `agent-` | Agent features (customization, browser, settings) | `agent-custom.mdx`, `agent-settings.mdx` |
 | `convo-` | Conversation features (async, persistence, pause/resume) | `convo-async.mdx`, `convo-persistence.mdx` |
 
 When adding a new SDK guide, always use the appropriate prefix so that related files sort together and the sidebar grouping in `docs.json` stays consistent.
@@ -182,6 +196,12 @@ When documenting LLM setup or examples, ensure all three options are mentioned w
 - `sdk/getting-started.mdx` - Main getting started page with AccordionGroup
 - `sdk/shared-snippets/how-to-run-example.mdx` - Shared snippet for running examples
 - `sdk/guides/llm-subscriptions.mdx` - Dedicated guide for subscription login
+
+
+## Documentation ownership patterns
+
+- Keep `sdk/guides/observability.mdx` as the canonical tracing and OTEL reference for OpenHands SDK users, including Laminar links and generic backend configuration.
+- Keep `enterprise/analytics.mdx` focused on OpenHands Enterprise deployment and admin-console setup, and link back to the SDK observability guide instead of duplicating OTEL reference material.
 
 ## Validation
 

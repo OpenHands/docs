@@ -103,6 +103,12 @@ If you cannot find source code to verify a documentation claim, explicitly flag 
 This should be verified before merging.
 ```
 
+## Repository boundaries
+
+Verify that documentation changes belong in this repository rather than a source repository. `OpenHands/OpenHands` owns Agent Canvas, `OpenHands/software-agent-sdk` owns the SDK/Agent Server and canonical API, `OpenHands/typescript-client` owns typed browser API access, `OpenHands/automation` owns scheduling and dispatch, and `OpenHands/extensions` owns reusable skills, plugins, automations, and integrations.
+
+If a PR is opened in the wrong repository, explicitly recommend that it may need to be closed and moved to the repository that owns the change rather than merged here. Every PR must follow this repository's review guidance.
+
 ## Review Decisions
 
 You **must** use the correct GitHub review `event` value when submitting your review.
@@ -141,7 +147,7 @@ Match the event to the severity of your findings:
 SDK guide files under `sdk/guides/` **must** use a category prefix:
 
 - `llm-` for LLM-related guides (e.g., `llm-reasoning.mdx`, `llm-gpt5-preset.mdx`)
-- `agent-` for Agent-related guides (e.g., `agent-custom.mdx`, `agent-delegation.mdx`)
+- `agent-` for Agent-related guides (e.g., `agent-custom.mdx`, `agent-settings.mdx`)
 - `convo-` for Conversation-related guides (e.g., `convo-async.mdx`, `convo-persistence.mdx`)
 
 Flag any new SDK guide that does not follow this naming convention.

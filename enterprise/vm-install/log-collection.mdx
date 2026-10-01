@@ -1,0 +1,102 @@
+---
+title: Log Collection
+description: Send logs from an OpenHands Enterprise VM installation to your own observability platform.
+icon: file-lines
+---
+
+An OpenHands Enterprise VM installation writes the output of every service to log files on the VM. To
+bring those logs into your observability platform, install your platform's log agent on the VM and
+point it at those files.
+
+For one-off diagnostics, collect a support bundle instead. See
+[Troubleshooting](/enterprise/troubleshooting).
+
+## Where the Logs Are
+
+Application logs live under `/var/log/pods`. Each path is built from the namespace, the pod, and the
+container:
+
+```
+/var/log/pods/<namespace>_<pod>_<pod-id>/<container>/<restart-count>.log
+```
+
+For example:
+
+```
+/var/log/pods/openhands_openhands-cbdbd996b-r54j8_30f64156-29b8-4b64-b663-cf5b4c697b64/openhands/17.log
+```
+
+The VM installation writes to files ending in `.log`. It rotates a file once it grows large,
+appending a timestamp to the name and compressing it, for example `16.log.20260824-235907.gz`. A
+pattern ending in `*.log` therefore collects current output and skips the rotated copies.
+
+`/var/log/containers` holds a symlink to every one of those files, carrying the same details in the
+file name rather than in the directories:
+
+```
+/var/log/containers/<pod>_<namespace>_<container>-<container-id>.log
+```
+
+Log agents with built-in Kubernetes support read that directory, because they can take the pod and
+container names straight from the file name.
+
+| Location | Contains |
+|---|---|
+| `/var/log/pods/` | Output from OpenHands, its supporting services, and sandboxes. |
+| The systemd journal | Cluster and operating system logs. |
+| `/var/log/embedded-cluster/` | Installer output, written during installation and upgrades. |
+
+The application log files are readable only by `root`.
+
+<Note>
+  The VM keeps only recent output, roughly 50 MB per service, and the log files for a sandbox are
+  deleted when its conversation is cleaned up. Run your log agent continuously and set your
+  retention period in your observability platform.
+</Note>
+
+## Collect the Logs
+
+<Steps>
+  <Step title="Install your log agent">
+    Install the Linux log agent for your observability platform on the VM, following your vendor's
+    instructions. Run it as `root` so that it can read the log files.
+  </Step>
+  <Step title="Tail the application logs">
+    Configure a file input for `/var/log/pods/*/*/*.log`, or `/var/log/containers/*.log` if your
+    log agent reads the symlinks.
+
+    Every line begins with a timestamp and the output stream:
+
+    ```
+    2026-08-25T13:12:11.300228843Z stdout F {"message": "GET /health 200", "severity": "INFO"}
+    ```
+
+    Enable your log agent's parser for this format, called `cri` in Fluent Bit, so that the
+    timestamp and the message arrive as separate fields. The message itself is JSON.
+  </Step>
+  <Step title="Collect the journal">
+    Enable your log agent's journald input to pick up cluster and operating system logs.
+  </Step>
+  <Step title="Confirm the logs arrive">
+    Print a recent line on the VM, then search for it in your observability platform:
+
+    ```bash
+    sudo sh -c 'tail -n 1 /var/log/pods/openhands_openhands-*/openhands/*.log'
+    ```
+  </Step>
+  <Step title="Repeat on every VM">
+    A VM only holds the logs for the services that run on it. Repeat these steps on each VM in the
+    installation, including any VM that runs sandboxes.
+  </Step>
+</Steps>
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="Troubleshooting" icon="life-ring" href="/enterprise/troubleshooting">
+    Collect a support bundle and inspect workloads.
+  </Card>
+  <Card title="Admin Console Configuration" icon="sliders" href="/enterprise/vm-install/admin-console-configuration">
+    Configure a Replicated VM installation.
+  </Card>
+</CardGroup>
