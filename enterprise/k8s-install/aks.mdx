@@ -1,0 +1,164 @@
+---
+title: Azure AKS
+description: Prepare an Azure Kubernetes Service cluster to run OpenHands Enterprise
+icon: microsoft
+---
+
+Prepare Azure Kubernetes Service (AKS) for OpenHands Enterprise, then follow the
+[Helm installation](/enterprise/k8s-install/installation) for application configuration.
+This page covers Azure permissions, node pools, persistent storage, and ingress.
+
+## Cluster Requirements
+
+| Requirement | Recommendation |
+| --- | --- |
+| Access | An Azure subscription and permissions to create the resource group, cluster, node pools and networking |
+| AKS version | A supported AKS version compatible with [Sysbox](/enterprise/k8s-install/sysbox); verify the actual Ubuntu image and containerd version |
+| Sandbox OS | Ubuntu nodes with a working Sysbox runtime |
+| Storage class | Azure Disk CSI, such as `managed-csi`, with expansion enabled |
+| Capacity | Sufficient regional and VM-family vCPU quota for application nodes, sandbox nodes and upgrades |
+
+Entra or Azure DevOps authentication alone does not establish subscription access.
+Check `az account list --all` and the selected subscription's permissions.
+Contributor was sufficient for the evaluated default managed-network deployment;
+Azure role assignments require additional permissions. Existing networks, private
+cluster access and workload identities need their own access checks.
+
+Check VM SKU restrictions as well as quota before selecting a region or availability
+zones. Use a dedicated resource group and explicit subscription and kubeconfig.
+
+## Node Pools
+
+Use separate pools for application services and sandbox workloads:
+
+- **General pool:** runs OpenHands services and cluster add-ons. Keep application
+  workloads here through node affinity or selectors.
+- **Sysbox pool:** an Ubuntu user node pool for agent sandboxes. Configure
+  `sysbox-install=yes` as a persistent node-pool label so new nodes receive the installer.
+
+The evaluation used Azure CNI overlay with Calico, two platform nodes and a sandbox
+pool with autoscaler bounds of one to two nodes. Size the pools using the
+[Sizing Guide](/enterprise/sizing-guide) and
+[Resource Limits](/enterprise/k8s-install/resource-limits), including node overhead,
+image storage and warm sandbox capacity. Validate scale-down behavior for active sessions.
+
+### Set Up the Sandbox Runtime
+
+1. Follow [Installing Sysbox](/enterprise/k8s-install/sysbox) to install Sysbox on
+   your Ubuntu sandbox pool.
+2. Before installing OpenHands, run a Sysbox test pod with an Azure Disk workspace
+   using the [AKS installation skill and companion checks](https://github.com/OpenHands/OpenHands-Cloud/tree/832e57028298f3ad564e6ee7461ee1d9d2ee6d62/aks-install).
+   Confirm the pod starts and can write and read a file.
+3. After installing OpenHands, start a conversation and ask it to run `pwd`.
+   Confirm it returns the workspace directory.
+
+<Warning>
+Some AKS node images need an additional Sysbox setup step. If the test pod fails
+with an error mentioning `sysbox-runc`, contact OpenHands support before continuing.
+The AKS installation skill includes the workaround used for the evaluation.
+</Warning>
+
+Before enabling sandbox-pool autoscaling, confirm that each newly created node can
+start a sandbox. A setup correction applied to existing nodes must also be applied
+to replacement and new nodes. Validate this with your support team before relying
+on automatic scale-out or node upgrades.
+
+<Accordion title="Troubleshooting: Sysbox is installed but sandbox pods do not start">
+The failure was observed on AKS 1.35.8, Ubuntu 24.04.5 LTS and containerd 2.3.3-2
+with Sysbox installer v0.7.1-0. The installer registered the runtime under the old
+containerd plugin key, so its success message did not establish a working runtime.
+See [upstream issue 997](https://github.com/nestybox/sysbox/issues/997).
+
+The evaluation workaround corrected only the Sysbox registration and restarted
+containerd on each affected sandbox node. It requires a reviewed per-node operation
+and does not automatically cover nodes added by autoscaling, reimaging or upgrades.
+The [AKS install skill](https://github.com/OpenHands/OpenHands-Cloud/blob/832e57028298f3ad564e6ee7461ee1d9d2ee6d62/.agents/skills/aks-install.md)
+contains the diagnostic and correction procedure. Verify a real test pod afterward.
+</Accordion>
+
+## Persistent Storage
+
+Inspect the Azure Disk CSI StorageClass:
+
+```bash
+kubectl get storageclass managed-csi -o yaml
+```
+
+The evaluated class uses `disk.csi.azure.com`, `WaitForFirstConsumer`,
+`ReadWriteOnce` and volume expansion. Configure stateful components and workspace
+storage explicitly; the GKE `standard-rwo` and AWS gp3 examples do not apply.
+
+```yaml
+runtime-api:
+  env:
+    STORAGE_CLASS: managed-csi
+postgresql:
+  primary:
+    persistence:
+      storageClass: managed-csi
+```
+
+Account for node disk-attachment limits and availability-zone topology. Validate
+mounting, persisted content after reattachment, and expansion on a disposable PVC.
+The evaluation passed these checks, including expansion from 1 GiB to 2 GiB.
+See [Azure Disk CSI provisioning](https://learn.microsoft.com/en-us/azure/aks/create-volume-azure-disk).
+
+## Object Storage
+
+Conversation/session storage is separate from workspace PVCs. Helm chart 0.74.0
+supports S3-compatible and GCS filestore configuration; it does not expose an Azure
+Blob backend. Do not substitute Azure Blob credentials into the S3 settings.
+
+The evaluation used the chart's optional RustFS store on Azure Disk CSI. For production,
+select a supported durable object store and validate backup, restore and availability.
+When enabling automations, also provision the separate automation package bucket.
+
+## Database
+
+Use the [External PostgreSQL](/enterprise/external-postgres) guide for production
+database requirements and Helm values. If choosing Azure Database for PostgreSQL,
+verify compatibility, TLS and network access against those requirements before deployment.
+The AKS evaluation used bundled PostgreSQL; a managed Azure database was not validated.
+
+## Ingress
+
+Run an ingress controller on the general pool. Traefik was validated with an Azure
+public LoadBalancer:
+
+```yaml
+service:
+  type: LoadBalancer
+```
+
+Read the Service's external IP and create a wildcard A record for your base domain.
+DNS can remain with another provider. For private ingress, select the appropriate
+Azure load-balancer configuration and verify client access separately.
+
+Follow [DNS and TLS](/enterprise/k8s-install/dns-and-tls) for trusted certificates
+and hostname configuration. Use flat runtime hostnames with Traefik standard Ingress.
+If provisioning certificates manually, assign renewal and Secret-update ownership.
+
+## Installation Skill
+
+For agent-assisted evaluation setup, the
+[AKS installation skill](https://github.com/OpenHands/OpenHands-Cloud/blob/832e57028298f3ad564e6ee7461ee1d9d2ee6d62/.agents/skills/aks-install.md)
+and [companion files](https://github.com/OpenHands/OpenHands-Cloud/tree/832e57028298f3ad564e6ee7461ee1d9d2ee6d62/aks-install)
+provide Azure commands, values templates and storage/automation checks.
+The skill is currently proposed in [PR #1339](https://github.com/OpenHands/OpenHands-Cloud/pull/1339).
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/sysbox">
+    Configure and verify the sandbox runtime.
+  </Card>
+  <Card title="DNS and TLS" icon="lock" href="/enterprise/k8s-install/dns-and-tls">
+    Configure hostnames and trusted certificates.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy the application and validate a conversation.
+  </Card>
+  <Card title="Enable Automations" icon="clock" href="/enterprise/k8s-install/automations">
+    Configure automation storage and verify a completed run.
+  </Card>
+</CardGroup>
