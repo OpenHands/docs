@@ -15,17 +15,32 @@ agent sandbox.
 <Tab title="Replicated">
 
 1. Open the [Admin Console LLM configuration](/enterprise/vm-install/admin-console-configuration#llm-configuration).
-2. Select `AWS Bedrock` and enter the AWS Region and Bedrock model ID.
+2. Select `AWS Bedrock` and enter the AWS Region.
 3. Select the authentication method supported by your installation. You can
    provide an access-key pair, or use an EC2 instance profile if the LiteLLM
    pod can access instance metadata. The role needs Bedrock model invocation
    permissions.
-4. Save the configuration and deploy the updated version.
+4. In `Bedrock Model IDs`, enter **one Bedrock model ID or inference profile ID
+   per line**. Enter the IDs as AWS provides them, without the `bedrock/`
+   prefix. For example:
 
-For an inference profile, enter its full ID, such as
-`us.anthropic.claude-haiku-4-5-20251001-v1:0`, as the model ID. Check that the
-profile is available from your selected Region and that your IAM policy
-permits the profile and its destination models.
+   ```text
+   us.anthropic.claude-haiku-4-5-20251001-v1:0
+   us.anthropic.claude-sonnet-4-5-20250929-v1:0
+   ```
+
+   The Admin Console creates a separate bundled-gateway model for each line.
+   The first line becomes the installation default. Use IDs available to your
+   account and selected Region; check each inference profile with
+   `aws bedrock get-inference-profile` before adding it.
+5. Save the configuration and deploy the updated version.
+
+If you add a cross-Region inference profile, keep its full ID, including the
+`us.` prefix in these examples. Your IAM policy must permit the profile and
+its destination models. A standard model ID is Region-specific. The
+`Allow users to configure their own LLM providers (BYOK)` checkbox controls
+whether users can add personal providers; it is not required for these
+administrator-managed Bedrock models.
 
 </Tab>
 <Tab title="Helm">
@@ -53,7 +68,7 @@ to create the OIDC provider and role. If you use a different namespace or
 ServiceAccount name, use those values in both the trust policy and Helm values.
 
 Grant the role `bedrock:InvokeModel` and
-`bedrock:InvokeModelWithResponseStream` for the model you will use. If the
+`bedrock:InvokeModelWithResponseStream` for every model you will use. If a
 model requires a cross-Region inference profile, include the inference
 profile ARN in the source Region and every destination foundation-model ARN
 returned by `GetInferenceProfile`. For example:
@@ -90,12 +105,18 @@ litellm-helm:
         litellm_params:
           model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
           aws_region_name: us-west-2
+      - model_name: bedrock-sonnet-4-5
+        litellm_params:
+          model: bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
+          aws_region_name: us-west-2
 ```
 
-`model_name` is the alias OpenHands uses to select this route. The `bedrock/`
-value identifies the Bedrock model or inference profile to LiteLLM. If you
-change the alias that should be the installation default, also set
-`env.LITELLM_DEFAULT_MODEL` to `litellm_proxy/<alias>` in the same values file.
+Add one `model_list` entry per model. Each `model_name` is the alias OpenHands
+uses to select that route. In Helm values, prefix the AWS model or inference
+profile ID with `bedrock/` in `litellm_params.model`; the Admin Console field
+above takes the raw ID instead. If you change the alias that should be the
+installation default, also set `env.LITELLM_DEFAULT_MODEL` to
+`litellm_proxy/<alias>` in the same values file.
 
 ### 3. Apply and Verify
 
@@ -123,7 +144,8 @@ installation. The annotation should contain the IAM role ARN from your values.
 
 For a Replicated installation, select the Bedrock model configured in the
 Admin Console. For a Helm installation, create a profile in `Settings` → `LLM`
-for the gateway alias. For the Helm example above, use:
+for each gateway alias you want users to select. For the first Helm example
+above, use:
 
 | Field | Value |
 | --- | --- |
@@ -134,6 +156,8 @@ for the gateway alias. For the Helm example above, use:
 
 Use your installation's actual LiteLLM Service name and namespace. The profile
 points to the **internal gateway**, not to a Bedrock endpoint.
+For the second Helm route, create another profile with Custom Model
+`litellm_proxy/bedrock-sonnet-4-5` and the same Base URL.
 
 ## Start Using the Model
 
