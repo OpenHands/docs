@@ -126,6 +126,56 @@ sequenceDiagram
     </Step>
 </Steps>
 
+## Limiting Delegated Capabilities
+
+An explicit `tools` selection in an OpenHands agent profile or settings becomes
+a ceiling for delegated tools. An explicit profile `mcp_server_refs` selection
+is carried through settings and limits delegated MCP servers. For each selection,
+`None` preserves unrestricted delegation and `[]` denies that category. Default
+profiles keep their existing delegation behavior.
+
+For an `Agent` constructed directly, opt in with `subagent_capability_limits`:
+
+```python icon="python"
+from openhands.sdk import Agent, Tool
+from openhands.sdk.subagent.capabilities import SubagentCapabilityLimits
+from openhands.tools.task import TaskToolSet
+
+tools = [Tool(name=TaskToolSet.name)]
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    subagent_capability_limits=SubagentCapabilityLimits.from_selection(
+        tools=tools,
+        mcp_server_refs=[],
+    ),
+)
+```
+
+This parent can delegate to a worker with no configured tools. A worker that
+requests `terminal` or any MCP server receives an error before those capabilities
+are initialized. Built-in tools such as `FinishTool` and `ThinkTool` remain
+available when the parent allows them.
+
+The SDK checks configuration as well as names: tool parameters and MCP commands,
+URLs, arguments, environment variables, and headers must match the parent for
+the restricted category. A child must also preserve the parent's tool filter.
+Use matching resolved MCP configuration; a placeholder and its expanded value
+are different configurations. Credential or endpoint changes require a new
+delegation with the newly authorized configuration.
+
+Both TaskToolSet and the older delegate tool apply these checks. Child agents
+carry the ceiling into nested delegation, persistence, and forks. Lazy or runtime
+plugin loading cannot add or replace an MCP server outside the inherited ceiling.
+On resume, supplying an agent that drops or changes inherited limits raises an
+error. Omit the runtime agent to retain its persisted configuration.
+
+<Note>
+These limits constrain SDK tool and MCP configuration. They do not sandbox
+arbitrary Python factories, plugin hooks, or the operations performed by an
+allowed tool. Use workspace isolation and confirmation policies for those needs.
+</Note>
+
 ## Tool Parameters
 
 When the parent agent calls the task tool, it provides these parameters:
