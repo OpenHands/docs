@@ -49657,6 +49657,174 @@ in the Admin Console or Helm values:
   For production deployments, we recommend enabling SSL/TLS for database connections.
 </Note>
 
+### AWS Bedrock LLM Gateway
+Source: https://docs.openhands.dev/enterprise/integrations/aws-bedrock-llm-gateway.md
+
+OpenHands Enterprise can use Amazon Bedrock through its bundled LiteLLM
+gateway. Configure the gateway according to how you installed OpenHands.
+The IAM identity that calls Bedrock belongs to the **LiteLLM pod**, not to an
+agent sandbox.
+
+## Configure the Gateway
+
+<Tabs>
+<Tab title="Replicated">
+
+1. Open the [Admin Console LLM configuration](/enterprise/vm-install/admin-console-configuration#llm-configuration).
+2. Select `AWS Bedrock` and enter the AWS Region and Bedrock model ID.
+3. Select the authentication method supported by your installation. You can
+   provide an access-key pair, or use an EC2 instance profile if the LiteLLM
+   pod can access instance metadata. The role needs Bedrock model invocation
+   permissions.
+4. Save the configuration and deploy the updated version.
+
+For an inference profile, enter its full ID, such as
+`us.anthropic.claude-haiku-4-5-20251001-v1:0`, as the model ID. Check that the
+profile is available from your selected Region and that your IAM policy
+permits the profile and its destination models.
+
+</Tab>
+<Tab title="Helm">
+
+### Prerequisites
+
+- A working [OpenHands Enterprise Helm installation](/enterprise/k8s-install/installation).
+- A Bedrock model that supports the agent's tool use, with model access enabled
+  in your AWS account. Confirm its Region and, if required, its inference
+  profile ID in the [Bedrock model catalog](https://docs.aws.amazon.com/bedrock/latest/userguide/models.html).
+- HTTPS access from the bundled LiteLLM pod to the Bedrock Runtime endpoint.
+
+The example below uses an **EKS IAM role for service accounts (IRSA)**, so it
+does not put long-lived AWS keys in Helm values or Kubernetes Secrets. Other
+Kubernetes platforms can supply AWS credentials to the LiteLLM pod using
+their supported credential mechanism.
+
+### 1. Grant the LiteLLM Service Account Bedrock Access
+
+Create an IAM role whose trust policy allows your EKS cluster's OIDC provider
+to assume it only for the ServiceAccount
+`system:serviceaccount:openhands:openhands-litellm-bedrock`. Follow the
+[AWS IRSA setup guide](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html)
+to create the OIDC provider and role. If you use a different namespace or
+ServiceAccount name, use those values in both the trust policy and Helm values.
+
+Grant the role `bedrock:InvokeModel` and
+`bedrock:InvokeModelWithResponseStream` for the model you will use. If the
+model requires a cross-Region inference profile, include the inference
+profile ARN in the source Region and every destination foundation-model ARN
+returned by `GetInferenceProfile`. For example:
+
+```bash
+aws bedrock get-inference-profile \
+  --region <source-region> \
+  --inference-profile-identifier <profile-id> \
+  --query '{profile:inferenceProfileArn,models:models[*].modelArn}'
+```
+
+Restrict the policy to those returned ARNs. AWS also requires your
+organization's service control policies to allow the profile's destination
+Regions; see [cross-Region inference permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+### 2. Add a Bedrock Route to Helm Values
+
+Merge the following into your **complete** installation `values.yaml`. Keep
+your existing `litellm-helm.proxy_config.model_list` entries: Helm replaces
+lists when applying overrides. Replace the role ARN, Region, and model ID with
+your own values.
+
+```yaml
+litellm-helm:
+  serviceAccount:
+    create: true
+    name: openhands-litellm-bedrock
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/<bedrock-role>
+  proxy_config:
+    model_list:
+      # Retain your existing model entries here.
+      - model_name: bedrock-haiku-4-5
+        litellm_params:
+          model: bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0
+          aws_region_name: us-west-2
+```
+
+`model_name` is the alias OpenHands uses to select this route. The `bedrock/`
+value identifies the Bedrock model or inference profile to LiteLLM. If you
+change the alias that should be the installation default, also set
+`env.LITELLM_DEFAULT_MODEL` to `litellm_proxy/<alias>` in the same values file.
+
+### 3. Apply and Verify
+
+Use the licensed chart URL and version from your installation:
+
+```bash
+helm upgrade openhands "$OPENHANDS_CHART_URL" \
+  --namespace openhands \
+  --version "$OPENHANDS_CHART_VERSION" \
+  --values values.yaml \
+  --wait --timeout 10m
+
+kubectl -n openhands rollout status deployment/openhands-litellm
+kubectl -n openhands get serviceaccount openhands-litellm-bedrock \
+  -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}'
+```
+
+Adjust the namespace, release name, and Deployment name if they differ in your
+installation. The annotation should contain the IAM role ARN from your values.
+
+</Tab>
+</Tabs>
+
+## Select the Model in OpenHands
+
+For a Replicated installation, select the Bedrock model configured in the
+Admin Console. For a Helm installation, create a profile in `Settings` → `LLM`
+for the gateway alias. For the Helm example above, use:
+
+| Field | Value |
+| --- | --- |
+| Profile Name | `Bedrock-Haiku-4-5` |
+| Custom Model | `litellm_proxy/bedrock-haiku-4-5` |
+| Base URL | `http://openhands-litellm.openhands.svc.cluster.local:4000/v1` |
+| API Key | Leave unset; the LiteLLM pod uses its AWS identity |
+
+Use your installation's actual LiteLLM Service name and namespace. The profile
+points to the **internal gateway**, not to a Bedrock endpoint.
+
+## Start Using the Model
+
+1. Select the Bedrock profile and start a new conversation.
+2. Ask the agent to run `pwd`.
+3. Confirm it starts a sandbox, runs the command, and replies with the output.
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="Bedrock AccessDeniedException">
+Check the IAM role annotation on the LiteLLM ServiceAccount, the role trust
+policy's exact namespace and ServiceAccount subject, and the role's model
+invocation policy. For a cross-Region inference profile, include its source
+profile ARN and all destination model ARNs; check organization service control
+policies for denied Regions.
+</Accordion>
+<Accordion title="Model or inference profile not found">
+Check the exact model or profile ID and `aws_region_name`. A model available in
+one Region may require an inference profile in another.
+</Accordion>
+<Accordion title="The profile cannot reach the gateway">
+Check the internal LiteLLM Service DNS name, namespace, and `/v1` base URL.
+Confirm the LiteLLM Deployment is ready and its logs show the Bedrock route.
+</Accordion>
+<Accordion title="The model answers a short prompt but the agent cannot work">
+Confirm the Bedrock model supports tool use and that its account quotas allow
+larger agent prompts. Test a full conversation with a sandbox command, not
+only a direct model completion.
+</Accordion>
+</AccordionGroup>
+
+For provider-specific model configuration, see
+[LiteLLM's Bedrock reference](https://docs.litellm.ai/docs/providers/bedrock).
+
 ### Azure DevOps
 Source: https://docs.openhands.dev/enterprise/integrations/azure-devops.md
 
