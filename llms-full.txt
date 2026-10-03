@@ -50014,6 +50014,249 @@ when the job starts and when it completes.
 | Bitbucket webhook deliveries do not reach OpenHands | Confirm the Bitbucket Data Center network can reach the OpenHands app URL. |
 | Bitbucket API calls fail with TLS errors | Upload the Bitbucket Data Center CA certificate in **Additional Trusted CA Certificates** and redeploy. |
 
+### Azure LLM Gateway
+Source: https://docs.openhands.dev/enterprise/integrations/azure-llm-gateway.md
+
+Connect OpenHands Enterprise to Azure OpenAI or Azure AI Foundry model deployments
+through its bundled LiteLLM gateway. These configurations apply whether OpenHands
+runs on AKS or another supported Kubernetes platform.
+
+Choose your installation method:
+
+- **Replicated**: configure the gateway in the Admin Console.
+- **Helm**: configure the gateway through your installation values.
+
+## Choose the Provider Route
+
+Azure AI Foundry includes Azure OpenAI and other model deployments. Use the
+route that matches your deployment's inference API, rather than choosing by the
+portal name alone.
+
+| Deployment API | LiteLLM Provider | Configuration |
+| --- | --- | --- |
+| Azure OpenAI | `azure/` | Azure resource endpoint, deployment name, API version and credentials |
+| Foundry model inference | `azure_ai/` | Deployment's inference endpoint, model/deployment identifier and credentials |
+
+An installation can expose both routes as separate model aliases in the same
+bundled gateway. Each route can use its own endpoint and Secret.
+
+## Configure the Gateway
+
+<Tabs>
+<Tab title="Replicated">
+
+1. Open the [Admin Console LLM configuration](/enterprise/vm-install/admin-console-configuration#llm-configuration).
+2. Select `Azure` for Azure OpenAI.
+3. Under `Azure Authentication Method`, select `API Key` and enter your
+   resource key in `Azure OpenAI API Key`. To use a service principal, select
+   `Microsoft Entra ID — Service Principal` and complete the authentication
+   fields shown by the Admin Console.
+4. In `Azure OpenAI Endpoint`, enter your resource endpoint, such as
+   `https://<resource-name>.openai.azure.com/`.
+5. In `Azure OpenAI API Version`, enter a version that supports your model and
+   selected API mode. For the Responses example in this guide, enter
+   `2025-04-01-preview` instead of the displayed `2024-10-21` default.
+6. In `Azure OpenAI Deployments`, enter **one deployment name per line**.
+   Use the deployment names from your Azure resource, without an `azure/`
+   prefix. For example:
+
+   ```text
+   gpt-4.1-mini
+   gpt-4.1
+   ```
+
+   All deployments must be reachable at the endpoint and API version above.
+   Deployment names can differ from the underlying model names.
+7. Save the configuration and deploy the updated version.
+
+
+Use the Admin Console to manage this configuration rather than applying the Helm
+snippets above to a Replicated-managed installation. Foundry support depends on
+the provider options in your installed release. If it only exposes `Azure`, do
+not assume it generates the `azure_ai/` route shown here. Consult OpenHands
+Support for the supported Foundry configuration for your release.
+
+</Tab>
+<Tab title="Helm">
+
+### Prerequisites
+
+- A working [OpenHands Enterprise Helm installation](/enterprise/k8s-install/installation).
+- An Azure OpenAI or Azure AI Foundry model deployment that supports agent tool
+  use, with its inference endpoint and API key.
+- Network access from the bundled LiteLLM pod to the Azure endpoint over HTTPS.
+  For a private endpoint, configure private DNS and routing from the cluster.
+- An API version supported by your deployment and the request endpoints it uses.
+
+The following instructions use Azure resource API keys.
+
+### Configure Azure OpenAI
+
+#### 1. Store the Azure Credential
+
+Use your secret manager to create `azure-openai-gateway` in the OpenHands
+application namespace, with a key named `AZURE_API_KEY`. Alternatively, create it
+from a private file containing only the Azure resource API key:
+
+```bash
+kubectl -n openhands create secret generic azure-openai-gateway \
+  --from-file=AZURE_API_KEY=/path/to/private/azure-api-key
+```
+
+The Azure resource key is used by LiteLLM. It is separate from an OpenHands app
+API key used to call conversation or automation APIs.
+
+#### 2. Add the Azure Model to Helm Values
+
+Merge this entry into your existing installation values. Keep all existing model
+entries and environment Secrets: Helm replaces lists when applying overrides.
+
+```yaml
+litellm-helm:
+  environmentSecrets:
+    - litellm-env-secrets
+    - azure-openai-gateway
+  proxy_config:
+    model_list:
+      # Retain your existing model entries here.
+      - model_name: azure-gpt-4.1-mini
+        litellm_params:
+          model: azure/<deployment-name>
+          api_base: https://<resource-name>.openai.azure.com/
+          api_version: "2025-04-01-preview"
+          api_key: os.environ/AZURE_API_KEY
+```
+
+Replace `<deployment-name>` with the deployment name in your Azure resource.
+It may differ from the underlying model name. `azure-gpt-4.1-mini` is the alias
+that OpenHands uses to select this route.
+
+Set `api_version` directly on the route. Use a version that supports your
+model and the API mode selected in OpenHands; this example uses Responses.
+
+#### 3. Apply the Updated Values
+
+Use the licensed chart URL and version from your installation. Apply your
+complete installation values, including the Azure configuration:
+
+```bash
+helm upgrade openhands "$OPENHANDS_CHART_URL" \
+  --namespace openhands \
+  --version "$OPENHANDS_CHART_VERSION" \
+  --values values.yaml \
+  --wait --timeout 10m
+
+kubectl -n openhands rollout status deployment/openhands-litellm
+```
+
+Adjust the namespace and deployment name if you used a different release name.
+
+### Configure Azure AI Foundry
+
+Obtain the inference endpoint, supported model/deployment identifier and key from
+an existing Foundry deployment. Use the inference endpoint shown for that
+deployment, rather than its project management URL.
+
+Create a separate Secret, `azure-ai-gateway`, containing `AZURE_AI_API_KEY` from
+your secret manager or a private file:
+
+```bash
+kubectl -n openhands create secret generic azure-ai-gateway \
+  --from-file=AZURE_AI_API_KEY=/path/to/private/foundry-api-key
+```
+
+Add the Secret to the gateway's existing `environmentSecrets` list and append a
+model route to its existing `model_list`:
+
+```yaml
+litellm-helm:
+  environmentSecrets:
+    - litellm-env-secrets
+    - azure-openai-gateway
+    - azure-ai-gateway
+  proxy_config:
+    model_list:
+      # Retain your Azure OpenAI and other existing model entries here.
+      - model_name: foundry-gpt-4.1-mini
+        litellm_params:
+          model: azure_ai/<foundry-deployment-name>
+          api_base: https://<resource-name>.services.ai.azure.com/models
+          api_version: "2024-05-01-preview"
+          api_key: os.environ/AZURE_AI_API_KEY
+          drop_params: true
+```
+
+Use the endpoint and API version for your deployment's model-inference API.
+Apply the complete updated values using the Helm upgrade command above.
+
+</Tab>
+</Tabs>
+
+## Select the Model in OpenHands
+
+For a Replicated installation, select the Azure model configured in the Admin
+Console. For a Helm installation, save a separate LLM profile for each gateway
+alias you want to use. For the GPT-4.1-mini Helm routes above, use these settings:
+
+| Field | Azure OpenAI Example | Foundry Example |
+| --- | --- | --- |
+| Profile Name | `Azure-GPT-4.1-mini` | `Foundry-GPT-4.1-mini` |
+| Model | `openhands/azure-gpt-4.1-mini` | `openhands/foundry-gpt-4.1-mini` |
+| Base URL | `http://openhands-litellm.openhands.svc.cluster.local:4000` | `http://openhands-litellm.openhands.svc.cluster.local:4000` |
+| Canonical Model Name | `gpt-4.1-mini` | `gpt-4.1-mini` |
+| API Mode | `responses` | `chat` |
+| API Key | Leave unset; use the managed gateway credential | Leave unset; use the managed gateway credential |
+
+The Foundry example uses Chat Completions, while the Azure OpenAI example uses
+Responses. Choose the API mode supported by your configured inference route.
+
+Use your installation's internal LiteLLM Service DNS name. The profile base URL
+points to the bundled gateway; the Azure resource endpoint belongs in Helm
+`litellm_params.api_base`.
+
+## Start Using the Model
+
+1. Select the profile you configured and start a conversation. Ask the agent to run `pwd`,
+   write a file containing a literal test string, and read it back.
+2. Confirm the sandbox starts, tool actions succeed, and the agent completes.
+3. If you use automations, follow
+   [Enable Automations with Helm](/enterprise/k8s-install/automations). Select
+   the saved profile name, such as `Azure-GPT-4.1-mini` or
+   `Foundry-GPT-4.1-mini`, dispatch one test run, and
+   verify its status reaches `COMPLETED` and its output is correct. Disable any
+   test schedule afterward.
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="Azure `404`">
+Check the resource endpoint, deployment name and API version. Chat Completions support does not establish Responses support; use a version that supports your selected API mode.
+</Accordion>
+<Accordion title="Managed gateway-token authentication error">
+Set the profile base URL to the internal LiteLLM Service URL shown above if your release does not supply it automatically.
+</Accordion>
+<Accordion title="Azure credential or permission error">
+Check the resource key and Secret injection. For Entra authentication, grant the required inference permissions; subscription Contributor access alone does not grant model inference access.
+</Accordion>
+<Accordion title="Azure `429`, repeated retries, or a conversation that keeps waiting">
+Check deployment token quota, request limits and available capacity. Agent prompts and tool definitions can require more capacity than short direct completions.
+</Accordion>
+<Accordion title="Unsupported model parameters">
+Check provider support; `drop_params: true` can omit unsupported optional parameters, but does not add tool support to a model
+</Accordion>
+<Accordion title="A different Foundry model fails">
+Check its endpoint path, supported API and [LiteLLM provider configuration](https://docs.litellm.ai/docs/providers/azure_ai). Some model families require a different route, such as an Anthropic endpoint for Claude.
+</Accordion>
+<Accordion title="Sandbox cannot start">
+Check Kubernetes events and runtime registration. For AKS, see [Installing Sysbox](/enterprise/k8s-install/sysbox).
+</Accordion>
+</AccordionGroup>
+
+For Azure model routing details, see
+[LiteLLM's Azure OpenAI reference](https://docs.litellm.ai/docs/providers/azure).
+If your organization routes through an existing external gateway, use
+[External LLM Gateways](/enterprise/integrations/external-llm-gateways).
+
 ### External LLM Gateways
 Source: https://docs.openhands.dev/enterprise/integrations/external-llm-gateways.md
 
@@ -52968,7 +53211,8 @@ license automatically at install time.
 - Your **license ID** and the **email address** registered with your license
   (both provided by our team)
 - **LLM credentials** from your chosen provider, for example an Anthropic API key
-  from the [Anthropic Console](https://console.anthropic.com/)
+  from the [Anthropic Console](https://console.anthropic.com/).
+  For Azure models, see [Azure LLM Gateway](/enterprise/integrations/azure-llm-gateway).
 - DNS records you control, following the layout used throughout this guide
   (with `openhands.example.com` as the base domain):
   `app.openhands.example.com` (application), `auth.openhands.example.com`
@@ -55985,6 +56229,8 @@ Select the administrator-managed LLM provider. The Admin Console shows only the 
 ### Bring Your Own Key
 
 Enable `Allow users to configure their own LLM providers (BYOK)` to let users add provider credentials and custom models in their OpenHands settings. Leave it disabled to restrict users to administrator-managed models.
+
+For Azure model setup, see [Azure LLM Gateway](/enterprise/integrations/azure-llm-gateway).
 
 ## LiteLLM Admin Console
 
