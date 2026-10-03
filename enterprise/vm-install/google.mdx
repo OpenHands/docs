@@ -1,0 +1,349 @@
+---
+title: Google Cloud Quick Start
+description: Install OpenHands Enterprise on Google Compute Engine with Replicated Embedded Cluster and configure Vertex AI.
+icon: google
+---
+
+Install OpenHands Enterprise on a dedicated Google Compute Engine VM using
+Replicated Embedded Cluster. The installer manages Kubernetes on the VM.
+
+For an existing Kubernetes cluster, see [Install with Helm](/enterprise/k8s-install/installation).
+This guide covers provisioning, DNS and TLS, installation, Vertex AI configuration
+and a completed conversation. Use the
+[Admin Console Configuration reference](/enterprise/vm-install/admin-console-configuration)
+for optional settings.
+
+## Prerequisites
+
+- An Enterprise trial or licensed installer account.
+- Google Cloud CLI authenticated to a project with Compute Engine and Cloud DNS enabled.
+- Permission to create a VM, persistent disk, VPC, subnet, firewall rules and static external IP.
+- Regional N2 vCPU, SSD and external-IP quota for the resources below.
+- A dedicated SSH key pair and the public IPv4 /32 of your workstation or VPN.
+- A base domain you control, a wildcard DNS record and a publicly trusted wildcard certificate.
+- Credentials for your LLM provider and a GitHub account that can create and install a GitHub App.
+
+## Plan the Google Cloud Resources
+
+| Resource | Purpose |
+| --- | --- |
+| Dedicated VPC and subnet | Isolate the VM's network and firewall rules |
+| Regional static external IPv4 | Stable address for DNS and inbound access |
+| VM-specific network tag | Target firewall rules to this installation |
+| Ubuntu 24.04 LTS x86-64 VM | Run the installer and embedded cluster |
+| Persistent SSD boot disk | Store cluster, database and sandbox data |
+| Wildcard DNS and trusted TLS | Secure services and dynamic sandbox hostnames |
+
+The evaluated VM uses `n2-standard-16` (16 vCPUs, 64 GiB RAM) and a 500 GiB
+`pd-ssd` boot disk. The public trial baseline is 16 vCPUs, 64 GB RAM and
+200 GB storage, with disk P99 write latency no higher than 10 ms. Provisioned
+storage capacity alone does not establish latency: the installer preflight
+must pass. Use the [Sizing Guide](/enterprise/sizing-guide) for larger deployments.
+
+The example uses persistent storage rather than Local SSD. The VM has no attached
+Google Cloud service account; provider credentials are configured separately
+through the Admin Console. A VM's infrastructure identity and its model-inference
+identity are separate decisions.
+
+## Provision Infrastructure
+
+Use a dedicated resource name and pass the target project explicitly to each
+command. Inspect existing resources before creating new ones.
+
+```bash
+export PROJECT="<google-cloud-project>"
+export ZONE="us-central1-a"
+export REGION="us-central1"
+export VM="openhands-replicated-eval"
+export NETWORK="$VM"
+export ADMIN_CIDR="<your-public-ip>/32"
+export SSH_PUBLIC_KEY_FILE="$HOME/.ssh/openhands-google.pub"
+export BASE_DOMAIN="google.openhands.example.com"
+
+gcloud auth login
+gcloud compute regions describe "$REGION" --project="$PROJECT"
+gcloud compute machine-types describe n2-standard-16 \
+  --project="$PROJECT" --zone="$ZONE"
+gcloud compute images describe-from-family ubuntu-2404-lts-amd64 \
+  --project=ubuntu-os-cloud
+gcloud compute instances list --project="$PROJECT"
+```
+
+Generate a dedicated SSH key without replacing an existing file:
+
+```bash
+ssh-keygen -t ed25519 -f "$HOME/.ssh/openhands-google" -C openhands-google
+```
+
+### Create Networking and Ingress Rules
+
+```bash
+gcloud compute networks create "$NETWORK" --project="$PROJECT" --subnet-mode=custom
+gcloud compute networks subnets create "$NETWORK" --project="$PROJECT" \
+  --region="$REGION" --network="$NETWORK" --range=10.90.0.0/24
+gcloud compute addresses create "$VM" --project="$PROJECT" \
+  --region="$REGION" --network-tier=PREMIUM
+export VM_IP=$(gcloud compute addresses describe "$VM" --project="$PROJECT" \
+  --region="$REGION" --format='value(address)')
+gcloud compute firewall-rules create "$VM-web" --project="$PROJECT" \
+  --network="$NETWORK" --direction=INGRESS --allow=tcp:80,tcp:443 \
+  --source-ranges=0.0.0.0/0 --target-tags="$VM"
+gcloud compute firewall-rules create "$VM-admin" --project="$PROJECT" \
+  --network="$NETWORK" --direction=INGRESS --allow=tcp:22,tcp:30000 \
+  --source-ranges="$ADMIN_CIDR" --target-tags="$VM"
+```
+
+Keep SSH and the Admin Console restricted to an administrator address or approved
+network. Application HTTPS must be reachable by users and configured OAuth or
+webhook providers. Choose a subnet range that does not overlap your connected networks.
+
+### Create the VM
+
+Resolve and review the current Ubuntu image, then pin the chosen image name.
+
+```bash
+export IMAGE="<reviewed-ubuntu-24.04-x86-64-image-name>"
+KEY_METADATA=$(mktemp)
+printf 'openhands:%s\n' "$(cat "$SSH_PUBLIC_KEY_FILE")" > "$KEY_METADATA"
+gcloud compute instances create "$VM" --project="$PROJECT" --zone="$ZONE" \
+  --machine-type=n2-standard-16 --image="$IMAGE" --image-project=ubuntu-os-cloud \
+  --boot-disk-type=pd-ssd --boot-disk-size=500GB \
+  --subnet="$NETWORK" --address="$VM_IP" --tags="$VM" \
+  --no-service-account --no-scopes --metadata=block-project-ssh-keys=true \
+  --metadata-from-file=ssh-keys="$KEY_METADATA"
+rm "$KEY_METADATA"
+ssh -i "$HOME/.ssh/openhands-google" "openhands@$VM_IP"
+```
+
+### Verify the OS and Kernel
+
+```bash
+cat /etc/os-release
+uname -r
+nproc
+free -h
+df -h / /var/lib
+sudo -n true
+```
+
+Ubuntu 24.04 images can use different kernel families. The evaluated Google image
+`ubuntu-2404-noble-amd64-v20260918` booted kernel `7.0.0-1011-gcp`. The public
+Quick Start cautions that very new kernels may not work with Sysbox; the evaluation
+selected Ubuntu's generic 6.8 LTS kernel before installation. This observation
+does not establish that kernel 7.0 fails with Sysbox.
+
+If your selected image needs the same change, refresh package indexes and install
+the supported LTS kernel:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y linux-generic
+sudo grep -E 'submenu |menuentry ' /boot/grub/grub.cfg
+```
+
+Use the actual generated GRUB entry to select the installed kernel. See
+[Ubuntu's GRUB configuration guide](https://help.ubuntu.com/community/Grub2/Setup).
+Retain the previous kernel for rollback, reboot, and verify `uname -r`. Package
+versions change; do not assume the evaluation's exact version is current.
+
+## Configure DNS and TLS
+
+Create a wildcard A record in your domain's managed zone:
+
+```bash
+export DNS_PROJECT="<dns-project>"
+export DNS_ZONE="<managed-zone-name>"
+gcloud dns record-sets create "*.${BASE_DOMAIN}." --project="$DNS_PROJECT" \
+  --zone="$DNS_ZONE" --type=A --ttl=300 --rrdatas="$VM_IP"
+```
+
+Obtain a publicly trusted certificate for `*.${BASE_DOMAIN}`. Let's Encrypt wildcard
+issuance uses DNS-01 validation. Follow the
+[Certbot manual DNS instructions](https://eff-certbot.readthedocs.io/en/stable/using.html#manual)
+or your certificate authority's procedure. Keep private keys outside source control,
+copy the full chain and key securely to the VM, and record how renewal and certificate
+replacement will be handled. Manual issuance does not configure automatic renewal.
+
+Run the shared Quick Start's DNS and outbound checks **from the VM**, and confirm
+all service names and a test runtime name resolve to its static IP. Verify the
+certificate chain, wildcard SAN, key match and expiration before installation.
+
+## Prepare Vertex AI Access
+
+Use a Google Cloud project with billing enabled, the Vertex AI API enabled and
+access to your chosen model in the selected location. The inference project can
+be different from the project hosting the VM.
+
+```bash
+export VERTEX_PROJECT="<vertex-project-id>"
+export VERTEX_LOCATION="us-central1"
+gcloud services enable aiplatform.googleapis.com --project="$VERTEX_PROJECT"
+```
+
+Have your Google Cloud administrator provide a service-account JSON key for the
+inference project with permission to invoke the selected model. The
+[Vertex AI User role](https://cloud.google.com/vertex-ai/docs/general/access-control)
+(`roles/aiplatform.user`) provides model-use permissions; an administrator can
+choose a narrower custom role under your organization's access policy.
+Follow Google's [service-account key procedure](https://cloud.google.com/iam/docs/keys-create-delete)
+if a new key is needed. Keep the JSON file outside source control, restrict access
+and follow your organization's key rotation policy. If organization policy
+prevents JSON keys, resolve the supported authentication path with OpenHands
+Support before proceeding.
+
+The tested Replicated configuration uploads this JSON file through the Admin
+Console. Signing in to `gcloud` on your workstation or attaching a service account
+to the VM does not configure that field. Check
+[model and location availability](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations)
+before choosing your model. The validated combination was `gemini-2.5-flash` in
+`us-central1`; other models and locations require their own validation.
+
+## Preflight Validation
+
+Before opening the installer dashboard, confirm that:
+
+- The VM meets the CPU, memory, storage, OS and kernel requirements.
+- Wildcard DNS resolves to the static external IP from the VM.
+- Ports 80 and 443 are reachable by application clients, and port 30000 is reachable from your administrator network.
+- The VM can reach the [distribution endpoints](/enterprise/quick-start#outbound-connectivity-checks), GitHub, `oauth2.googleapis.com` and the Vertex endpoint for your selected location.
+- Your trusted certificate covers service and dynamic sandbox hostnames, and its private key matches.
+- Vertex credentials and GitHub App prerequisites are ready.
+
+Run the shared [DNS checks](/enterprise/quick-start#dns-checks) and
+[outbound connectivity checks](/enterprise/quick-start#outbound-connectivity-checks)
+on the VM. An HTTP response establishes network reachability; authenticate and
+run a conversation after deployment to validate inference.
+
+## Run the Installer
+
+### 1. Open the Installer Dashboard
+
+[Register for an Enterprise trial](https://install.r9.all-hands.dev/openhands/signup)
+or log in with your licensed account. Select **View install guide**, name the
+instance and choose **Outbound requests allowed** for this connected deployment.
+
+### 2. Download and Run the Installation Commands
+
+SSH into the Google VM. Select a release, then copy the instance-specific download,
+extract and install commands from the dashboard. The extracted assets include
+your license. Use the current dashboard commands rather than commands from a
+previous installation.
+
+Run the interactive installer in a real terminal. Supply the trusted full-chain
+certificate and matching private key already copied to the VM:
+
+```bash
+sudo ./openhands install --license license.yaml \
+  --hostname "admin.${BASE_DOMAIN}" \
+  --tls-cert /path/to/fullchain.pem \
+  --tls-key /path/to/privkey.pem
+```
+
+Set `BASE_DOMAIN` in this VM shell before running the command. Replace the file
+paths with your actual certificate files. Set the Admin Console password when
+prompted and require the host and storage-latency preflights to pass.
+
+If installation fails after preflights pass, follow
+[Troubleshooting](/enterprise/troubleshooting) to generate a support bundle.
+
+### 3. Open the Admin Console
+
+Open `https://admin.<your-base-domain>:30000` from your administrator network and
+log in with the password created during installation. For a single-node install,
+continue past the additional-node screen.
+
+The tested installer printed an HTTP URL despite being invoked with TLS options.
+Use the HTTPS endpoint and confirm that the browser trusts the supplied certificate.
+
+## Configure OpenHands
+
+Select **Config** in the Admin Console. The
+[Admin Console Configuration reference](/enterprise/vm-install/admin-console-configuration)
+describes all available fields for the installed release.
+
+### Domain and Certificates
+
+Keep **Hostname Configuration Mode** set to **Simple (default)** and enter your
+base domain. Upload the trusted full-chain **TLS Certificate** and matching
+**TLS Private Key** for the application. The certificate supplied to the installer
+and the certificate configured for the application serve different setup steps.
+
+### Vertex AI Models
+
+In **LLM Configuration**, configure the administrator-managed provider:
+
+| Setting | Value |
+| --- | --- |
+| Provider | Google |
+| Google API type | Google Cloud Platform (Vertex AI) |
+| Project | Your Vertex inference project ID |
+| Location | Your model's supported location; tested with `us-central1` |
+| Service-account credentials | Upload your service-account JSON file |
+| Models | One model ID per line; tested with `gemini-2.5-flash` |
+
+Leave **Allow users to configure their own LLM providers (BYOK)** disabled when
+users should use the administrator-managed models. Save and deploy these values
+through the Admin Console. The deployment configures the bundled gateway and
+makes the model available in OpenHands.
+
+### Database and Sandbox Configuration
+
+The tested configuration uses bundled PostgreSQL, the default Sysbox isolation
+runtime and subdomain routing. For an external database, follow
+[External PostgreSQL](/enterprise/external-postgres). Size storage for your
+workload and establish backup and recovery procedures for the persistent data.
+
+### GitHub Authentication
+
+Enable GitHub Authentication and run the
+[official GitHub App helper](https://github.com/OpenHands/OpenHands-Cloud/tree/main/scripts/create_github_app)
+with your instance's base domain. Use the default flat DNS layout for Simple mode.
+Create a dedicated GitHub App and install it on the repositories you want this
+instance to access.
+
+Map the helper's output to **GitHub App Client ID**, **Client Secret**, **App ID**,
+**App Slug** and **Webhook Secret**. Upload the generated private key in
+**GitHub App Private Key**. Keep the generated secrets outside source control.
+See [GitHub integration](/enterprise/integrations/github) for repository and
+webhook configuration.
+
+Configure optional integrations after the baseline workflow passes.
+
+## Deploy and Verify
+
+Save the configuration, review application preflights and deploy the new sequence.
+Wait for **Ready** on the Admin Console dashboard.
+
+1. Open `https://app.<your-base-domain>` and sign in with GitHub.
+2. Check that the administrator-managed model appears in the model selector. The tested default profile displayed `openhands/gemini-2.5-flash`.
+3. Start a small conversation that asks the agent to print its working directory and write and read a temporary marker file. Confirm terminal output and a completed response.
+4. Open **Open Repository**, select an installed repository and branch, and run a read-only conversation that reads its README and reports `git status`.
+5. Verify persistent database storage and record the installation versions and test results.
+
+Deployment readiness and an HTTP response are useful checks. The completed
+conversations verify that authentication, model inference, sandbox startup,
+terminal tools and repository access work together.
+
+## Agent-Assisted Installation
+
+The [Replicated installation skill proposal](https://github.com/OpenHands/extensions/pull/458)
+provides an agent workflow for resource planning, preflights, installation and
+end-to-end checks. Its publication to the main skill registry is pending. Use
+these public instructions as the installation reference and review the proposed
+skill before using it with cloud credentials.
+
+## Validation Scope
+
+Infrastructure, SSH, Ubuntu generic kernel `6.8.0-146`, DNS, certificate files and
+outbound reachability were checked on the evaluation VM. Replicated release `0.74.0` installation completed with installer
+`v2.19.2+k8s-1.36` and Kubernetes `v1.36.1+k0s.0`; host preflights passed without
+overrides, and the Admin Console returned HTTP 200 over trusted HTTPS. Application sequence 0 reached Ready, all workloads including a warm Sysbox runtime
+became ready, service TLS checks passed, and the persistent-storage guard passed.
+GitHub login, administrator-managed Vertex Gemini 2.5 Flash inference, sandbox
+startup and terminal file operations passed in a completed conversation. GitHub
+repository discovery, branch selection and a read-only repository conversation
+also passed: the sandbox checked out the selected main branch, read its README
+and reported a clean working tree.
+The boot filesystem is persistent storage;
+backup, restore, upgrades, additional nodes and automatic certificate renewal have
+not yet been tested in this evaluation.
