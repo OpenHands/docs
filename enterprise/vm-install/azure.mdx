@@ -1,0 +1,735 @@
+---
+title: Azure Quick Start
+description: Provision an Azure Linux VM and install OpenHands Enterprise with Replicated, starting with Anthropic inference.
+icon: microsoft
+---
+
+Install OpenHands Enterprise on a dedicated Azure VM using Replicated Embedded
+Cluster. The installer manages Kubernetes on the VM. Start with an Anthropic API
+key, then optionally configure Azure OpenAI through the bundled LLM gateway.
+
+For an AKS deployment, use [Install with Helm](/enterprise/k8s-install/installation).
+AKS node pools, Helm values, and Kubernetes storage classes do not configure this
+VM installation.
+
+## Prerequisites
+
+- [Register for an Enterprise trial](https://install.r9.all-hands.dev/openhands/signup), or use an existing licensed installer account.
+- Azure CLI and an Azure subscription with permission to create a resource group,
+  VM, managed disk, virtual network, subnet, NIC, network security group, and public IP.
+- Regional total-vCPU and VM-family quota for a VM with at least 16 vCPUs and 64 GB RAM.
+- An SSH key pair and the public IPv4 CIDR of the administrator's workstation or VPN.
+- A base domain you control and permission to change its DNS records.
+- A publicly trusted wildcard certificate and its private key.
+- An Anthropic API key and a GitHub account with permission to create/install a GitHub App.
+
+Subscription `Contributor` normally covers the infrastructure in this guide.
+Azure RBAC assignments and model inference permissions are separate. If you
+choose Microsoft Entra authentication for Azure OpenAI, have an authorized
+administrator grant the required inference role.
+
+## Plan the Azure Resources
+
+| Resource | Purpose |
+| --- | --- |
+| Dedicated resource group | Scope the evaluation resources and cleanup |
+| VNet and subnet | Private network for the VM and embedded cluster |
+| Network security group | Permit HTTP/HTTPS and restrict SSH/Admin Console access |
+| Standard static IPv4 public IP and NIC | Stable inbound address and explicit outbound connectivity |
+| Ubuntu 24.04 LTS x86-64 VM | Run the Replicated installer and embedded Kubernetes cluster |
+| Premium SSD managed OS disk | Persist embedded-cluster, database, and sandbox data |
+| Wildcard DNS and TLS | Route and secure application services and dynamic sandbox hostnames |
+| Optional Azure OpenAI resource and deployment | Provide inference through the bundled LLM gateway |
+
+The example uses `Standard_D16s_v3` (16 vCPUs, 64 GB RAM) and a 1,024 GiB
+Premium SSD OS disk. The larger disk selects the P30 performance tier; it is not
+a new capacity requirement. The trial baseline is 200 GB and P99 write latency
+below 10 ms. A disk's provisioned IOPS do not guarantee that latency: run the
+installer's host preflights. See [Premium storage performance](https://learn.microsoft.com/en-us/azure/virtual-machines/premium-storage-performance)
+and the [Sizing Guide](/enterprise/sizing-guide) for larger deployments.
+
+Use persistent managed storage for installation data. Azure temporary/resource
+disks can be lost during host maintenance or redeployment. This example keeps
+installation data on the managed OS disk rather than adding a temporary disk.
+
+## Provision Infrastructure
+
+Run these commands from your administrator workstation using Bash.
+
+### 1. Select the Subscription and Check Capacity
+
+```bash
+az login
+export SUBSCRIPTION_ID="<subscription-id>"
+export LOCATION="eastus2"
+export RG="openhands-replicated-eval-rg"
+export VM="openhands-replicated-eval"
+export VM_SIZE="Standard_D16s_v3"
+export ADMIN_CIDR="<your-public-ip>/32"
+export SSH_PUBLIC_KEY_FILE="$HOME/.ssh/openhands-azure.pub"
+export BASE_DOMAIN="azure.openhands.example.com"
+
+az account set --subscription "$SUBSCRIPTION_ID"
+az account show --query '{name:name,id:id,tenant:tenantId}' --output table
+az vm list-usage --location "$LOCATION" --output table
+az vm list-skus --location "$LOCATION" --size "$VM_SIZE" --all \
+  --query '[?resourceType==`virtualMachines`].{name:name,restrictions:restrictions}' \
+  --output json
+az vm image show --location "$LOCATION" \
+  --urn Canonical:ubuntu-24_04-lts:server:latest --output table
+```
+
+Verify available total and VM-family vCPU quota and SKU restrictions before
+creating resources. A VM family can have zero quota even when total regional
+quota is available. Request a quota increase or choose another supported
+x86-64 size with at least 16 vCPUs and 64 GB RAM. Avoid a zonal deployment if
+that zone is restricted for your subscription.
+
+Ensure `Microsoft.Compute`, `Microsoft.Network`, and `Microsoft.Storage` are
+registered under **Subscriptions → Resource providers**. Registration may need
+a subscription administrator. This deployment does not require AKS or the
+`Microsoft.ContainerService` provider.
+
+Use an existing SSH public key, or generate a dedicated key pair without
+replacing an existing file:
+
+```bash
+ssh-keygen -t ed25519 -f "$HOME/.ssh/openhands-azure" -C openhands-azure
+```
+
+### 2. Create Networking and Ingress Rules
+
+Use a new, dedicated resource group. Check that its name is unused before
+proceeding; do not place evaluation resources in a shared production group.
+
+```bash
+az group exists --name "$RG"
+az group create --name "$RG" --location "$LOCATION"
+
+az network vnet create --resource-group "$RG" --name "$VM-vnet" \
+  --address-prefixes 10.82.0.0/16 \
+  --subnet-name openhands --subnet-prefixes 10.82.1.0/24
+az network nsg create --resource-group "$RG" --name "$VM-nsg"
+
+az network nsg rule create --resource-group "$RG" --nsg-name "$VM-nsg" \
+  --name admin --priority 100 --source-address-prefixes "$ADMIN_CIDR" \
+  --destination-port-ranges 22 30000 --protocol Tcp --access Allow
+az network nsg rule create --resource-group "$RG" --nsg-name "$VM-nsg" \
+  --name web --priority 110 --source-address-prefixes Internet \
+  --destination-port-ranges 80 443 --protocol Tcp --access Allow
+
+az network public-ip create --resource-group "$RG" --name "$VM-ip" \
+  --sku Standard --allocation-method Static --version IPv4
+az network nic create --resource-group "$RG" --name "$VM-nic" \
+  --vnet-name "$VM-vnet" --subnet openhands \
+  --network-security-group "$VM-nsg" --public-ip-address "$VM-ip"
+```
+
+Choose non-overlapping VNet/subnet address ranges for your environment. The
+example exposes ports 80/443 so GitHub callbacks and users can reach OpenHands.
+Ports 22/30000 are restricted to your administrator CIDR. Corporate firewalls,
+subnet NSGs, and host firewall rules must also permit the required traffic.
+Do not expose Kubernetes or etcd ports publicly.
+
+The NIC's public IP provides explicit VM outbound connectivity. If you use a
+private VM instead, provide a NAT gateway or your organization's approved egress
+path and a supported ingress path with DNS/TLS and integration reachability.
+
+### 3. Create the VM and Persistent Disk
+
+```bash
+az vm create --resource-group "$RG" --name "$VM" \
+  --nics "$VM-nic" \
+  --image Canonical:ubuntu-24_04-lts:server:latest \
+  --size "$VM_SIZE" --admin-username azureuser \
+  --authentication-type ssh --ssh-key-values "$SSH_PUBLIC_KEY_FILE" \
+  --storage-sku Premium_LRS --os-disk-size-gb 1024 \
+  --os-disk-name "$VM-os"
+
+export VM_IP=$(az network public-ip show --resource-group "$RG" \
+  --name "$VM-ip" --query ipAddress --output tsv)
+ssh -i "$HOME/.ssh/openhands-azure" "azureuser@$VM_IP"
+```
+
+Local embedded-cluster ports must be available: `2379`, `7443`, `9099`,
+`10248`, `10257`, and `10259` (TCP). These do not need public NSG rules.
+
+On the VM, verify the OS, kernel, memory, disk space, and sudo access:
+
+```bash
+cat /etc/os-release
+uname -m
+uname -r
+nproc
+free -h
+lsblk
+findmnt /var/lib
+sudo -v
+```
+
+Use Ubuntu 24.04 LTS and check the actual kernel against the
+[Sysbox requirements](/enterprise/docker-in-sandbox). Do not infer compatibility
+from the Azure image name alone. The Replicated host preflight must pass before
+installation; do not bypass a failed storage or runtime check.
+
+### 4. Configure DNS
+
+Create a wildcard A record for `*.<base-domain>` pointing to the static `VM_IP`.
+You can keep DNS with your existing provider; Azure hosting does not require
+Azure DNS.
+
+If your authoritative zone is already hosted in Azure DNS, run from your
+workstation using the existing zone's resource group:
+
+```bash
+export DNS_RG="<existing-dns-resource-group>"
+export DNS_ZONE="example.com"
+# Relative name for *.azure.openhands.example.com in example.com:
+export DNS_RECORD="*.azure.openhands"
+az network dns record-set a add-record --resource-group "$DNS_RG" \
+  --zone-name "$DNS_ZONE" --record-set-name "$DNS_RECORD" \
+  --ipv4-address "$VM_IP"
+```
+
+Do not append an IP to an existing record set that serves another deployment.
+If you create a new Azure DNS zone, delegate it at its parent or registrar to
+its assigned name servers before expecting public resolution. DNS zone access
+may require a separate role or DNS administrator.
+
+### 5. Obtain and Copy TLS Files
+
+Obtain a publicly trusted wildcard certificate for `*.<base-domain>`. For
+Let's Encrypt, use a DNS-01 challenge with your authoritative DNS provider.
+HTTP-01 cannot issue a wildcard certificate. Keep provider credentials and
+private keys out of repositories and command output.
+
+If you do not already have a certificate, install Certbot using its
+[official instructions](https://certbot.eff.org/instructions). For an evaluation,
+run a manual DNS-01 challenge on your administrator workstation:
+
+```bash
+sudo certbot certonly --manual --preferred-challenges dns \
+  --cert-name openhands-azure -d "*.${BASE_DOMAIN}"
+```
+
+Enter your ACME contact email and review the certificate authority's terms when
+prompted. Certbot displays a TXT value to publish at
+`_acme-challenge.<base-domain>`. Create it with the authoritative DNS provider,
+wait for public resolution, and then continue the challenge. For Azure DNS,
+the TXT record's relative name for this example is
+`_acme-challenge.azure.openhands` in the `example.com` zone.
+
+```bash
+dig +short TXT "_acme-challenge.${BASE_DOMAIN}"
+```
+
+After issuance, Certbot saves the full chain and private key under
+`/etc/letsencrypt/live/openhands-azure/`. Transfer those files through your
+approved private channel, or substitute existing certificate files below. See
+[Certbot's manual challenge guide](https://eff-certbot.readthedocs.io/en/stable/using.html#manual).
+Manual challenges need to be repeated for renewal unless you configure an
+authentication hook; choose a DNS plugin for unattended certificate issuance.
+
+Copy the full certificate chain and private key to a private directory on the
+VM using your existing certificate files:
+
+```bash
+ssh -i "$HOME/.ssh/openhands-azure" "azureuser@$VM_IP" \
+  'mkdir -p ~/tls && chmod 700 ~/tls'
+scp -i "$HOME/.ssh/openhands-azure" /path/to/fullchain.pem \
+  "azureuser@$VM_IP:tls/certificate.pem"
+scp -i "$HOME/.ssh/openhands-azure" /path/to/privkey.pem \
+  "azureuser@$VM_IP:tls/private-key.pem"
+ssh -i "$HOME/.ssh/openhands-azure" "azureuser@$VM_IP" \
+  'chmod 600 ~/tls/*.pem'
+```
+
+Plan certificate renewal and upload the renewed certificate through the supported
+Admin Console workflow. Initial issuance does not configure automatic renewal.
+
+For a Simple-mode install, one wildcard covers `admin`, `app`, `auth`,
+`analytics`, `llm-proxy`, `runtime-api`, and dynamic `<id>-runtime` hostnames under
+the base domain. If wildcard certificates are unavailable, follow the
+[VM DNS/TLS alternative](/enterprise/vm-install/generic-vm#dns-and-tls-setup) and select
+path-based sandbox routing.
+
+## Azure Disk Latency Preflight
+
+The installer measures write latency at its etcd data directory. Nominal disk
+capacity, a Premium SSD label, and provisioned IOPS do not prove that this check
+will pass. In an evaluation of this example's 1,024 GiB P30 disk, the first
+measurement was `10.027008 ms` P99 against the required `<10 ms`, and the installer
+stopped before cluster deployment. A repeat with the disk unchanged measured
+`9.633792 ms` and passed. Both measurements were close to the threshold;
+validate your own host and plan performance headroom for production.
+
+If your disk fails this check, review the measured result, VM storage limits,
+and disk performance tier with your Azure administrator. Azure supports
+[increasing a Premium SSD performance tier](https://learn.microsoft.com/en-us/azure/virtual-machines/disks-performance-tiers)
+without increasing disk capacity. Higher tiers change disk billing and still
+require a passing latency preflight. Do not bypass the check or use the temporary
+resource disk for persistent installation data.
+
+## Preflight Validation
+
+All items below must be completed before running the installer:
+
+- VM meets CPU, memory, disk, and OS requirements
+- DNS records are created and resolve from the VM
+- Inbound ports are open: `80`, `443`, and `30000`
+- Outbound domains are reachable from the VM
+- HTTPS egress to `api.anthropic.com` is available
+- GitHub App prerequisites are prepared
+- (Optional) [External PostgreSQL](/enterprise/external-postgres) instance provisioned if using your own database
+
+<Warning>
+  Do not run the installer until preflight checks pass.
+</Warning>
+
+### DNS Checks
+
+Run the checks below on the target VM before opening the installer dashboard.
+
+Export your base domain:
+
+```bash
+export BASE_DOMAIN="azure.openhands.example.com"
+```
+Test DNS:
+```bash
+for h in "admin.${BASE_DOMAIN}" "app.${BASE_DOMAIN}" "test-runtime.${BASE_DOMAIN}"; do
+  echo "[DNS] $h"
+  getent hosts "$h" || nslookup "$h"
+done
+```
+
+Expected: each hostname resolves to your VM's public IP address through the
+wildcard record.
+
+### Outbound Connectivity Checks
+
+```bash
+urls=(
+  "https://replicated.app"
+  "https://proxy.replicated.com/v2/"
+  "https://images.r9.all-hands.dev/v2/"
+  "https://install.r9.all-hands.dev"
+  "https://charts.r9.all-hands.dev"
+  "https://updates.r9.all-hands.dev"
+  "https://github.com"
+  "https://traefik.github.io/charts/index.yaml"
+  "https://registry-1.docker.io/v2/"
+  "https://ghcr.io/v2/"
+  "https://api.anthropic.com"
+)
+
+for u in "${urls[@]}"; do
+  # HTTP 000 means connection failure (DNS failure, timeout, or blocked network path).
+  code=$(curl -sSIL --max-time 15 -o /dev/null -w "%{http_code}" "$u" || true)
+  if [ "$code" = "000" ]; then
+    echo "FAIL $u"
+  else
+    echo "OK   $u (HTTP $code)"
+  fi
+done
+```
+
+Any HTTP response code other than `000` is acceptable for reachability checks
+(for example `200`, `301`, `302`, `401`, `403`, `405`).
+
+If any check fails, stop and resolve before continuing:
+- DNS failures: Verify records are created, point to the right target, and have finished propagating
+- Outbound connectivity failures: Check firewall egress rules, proxy settings, and TLS inspection policies
+
+## Reasons for Requirements
+
+| Requirement | Why It Exists |
+|------------|----------------|
+| `443/TCP` inbound | Primary HTTPS entrypoint for users and service hostnames |
+| `30000/TCP` inbound | Replicated/KOTS Admin Console for install and configuration |
+| `80/TCP` inbound | HTTP entrypoint used for ingress/redirect behavior |
+| `*.<domain>` DNS + cert SAN | Application services and sandboxes are addressed by hostnames under the base domain |
+| `replicated.app`, `proxy.replicated.com` | Replicated control-plane/license/install paths |
+| `images.r9...`, `charts.r9...`, `updates.r9...`, `install.r9...` | Vendor distribution image/chart/update/install endpoints |
+| `traefik.github.io` | Embedded cluster ingress chart repository |
+| `ghcr.io`, `registry-1.docker.io` | Container image pulls for platform components |
+| `github.com` | GitHub App setup/auth/webhooks and downloading public agent skills |
+
+## Run the Installer
+
+### 1. Access the Installer Dashboard
+
+After preflight validation checks have passed, [register for a free 30-day trial](https://install.r9.all-hands.dev/openhands/signup), then
+log in to the installer dashboard. You will see the dashboard below.
+Click **"View install guide"** in the Install tile.
+
+![Installer Dashboard](/enterprise/images/admin-dashboard.png)
+
+### 2. Name Your Instance
+
+Enter a name for your instance (e.g., your company name or environment identifier).
+Select **"Outbound requests allowed"** for Network Availability, then click **Continue**.
+
+![Instance name and network availability](/enterprise/images/install-instance-name.png)
+
+### 3. Run the Installation Commands
+
+The install guide provides commands to run on your VM. SSH into your VM and execute them in order:
+
+1. **Select a version** -- the latest version is pre-selected
+2. **Download the installation assets** -- copy and run the `curl` command shown
+3. **Extract the installation assets** -- run the `tar` command shown (this includes your license file)
+4. **Install** -- run the install command shown
+
+If the install command fails after preflight checks pass, see
+[Troubleshooting](/enterprise/troubleshooting) to generate a support
+bundle and open a support ticket.
+
+<Warning>
+  **Provide your TLS certificates during installation.** For this Azure VM,
+  use the certificate paths prepared above:
+
+  ```bash
+  sudo ./openhands install --license license.yaml \
+    --tls-cert ~/tls/certificate.pem \
+    --tls-key ~/tls/private-key.pem
+  ```
+
+  You can also omit the `--tls-cert` and `--tls-key` flags and upload certificates later through
+  the Admin Console.
+
+  For trials and production deployments, use a publicly trusted TLS certificate whenever possible.
+  Private CA certificates may work for users after manual trust setup, but external integrations
+  such as GitHub, GitLab, Slack, Jira, and Bitbucket must also trust the certificate chain. If they
+  do not, webhook or OAuth callbacks can fail TLS verification and repeatedly retry.
+</Warning>
+
+![Installation commands](/enterprise/images/install-commands.png)
+
+### 4. Access the Admin Console
+
+Once the install command completes, the Admin Console is available at:
+- `https://admin.<your-base-domain>:30000` (if you provided TLS certificates)
+- The URL printed by the installer (if you did not provide TLS files)
+
+If the installer uses a self-signed certificate, the browser displays a security
+warning. Verify that you are connecting to the intended VM, then follow your
+organization's policy for accessing the initial Admin Console. Upload a trusted
+certificate before configuring external callbacks.
+
+![Self-signed certificate warning](/enterprise/images/self-signed-cert-warning.png)
+
+### 5. Upload TLS Certificate (If Not Provided With the Install Command)
+
+If you did not provide certificates with the `install` command, select **"Upload your own"**,
+enter `admin.<your-base-domain>` under **Hostname**, upload your private key and SSL certificate, then click **Continue**.
+
+If you upload a private CA certificate, make sure any external webhook or OAuth provider that
+calls OpenHands also trusts that CA.
+
+![Upload TLS certificate](/enterprise/images/upload-tls-certificate.png)
+
+### 6. Log In to the Admin Console
+
+Enter the password you set during installation and click **Log in**.
+
+![Admin Console login](/enterprise/images/admin-console-login.png)
+
+### 7. Configure the Cluster
+
+You will be prompted to add additional nodes to the cluster.
+For a single-node deployment, click **Continue** to skip this step.
+
+![Configure cluster nodes](/enterprise/images/configure-cluster-nodes.png)
+
+## Configure OpenHands
+
+You should now see the application configuration page.
+
+![Configure OpenHands](/enterprise/images/configure-openhands.png)
+
+### Domain Configuration
+
+- Keep the Hostname Configuration Mode set to **"Simple (default)"**
+- Enter your base domain (e.g., `openhands.example.com`)
+
+### Certificate Configuration
+
+- Upload your **TLS Certificate** (`.crt` or `.pem`)
+- Upload your **TLS Private Key** (`.key` or `.pem`)
+- Optionally upload the root **CA Certificate** for your TLS certificates
+
+### LLM Configuration
+
+<Note>
+Configure managed models in the Replicated Admin Console under `Config → LLM
+Configuration`, then save and deploy the configuration. Select those models in
+OpenHands. This Quick Start does not require signing into LiteLLM or calling its
+API directly. If a configured model is missing, use
+[Troubleshooting](/enterprise/troubleshooting) and contact OpenHands Support;
+do not register it directly in LiteLLM to bypass the problem.
+</Note>
+
+Choose an LLM provider from the LLM Configuration dropdown and enter the details
+from that provider.
+
+![LLM Configuration provider dropdown](/enterprise/images/llm-configuration-provider-dropdown.png)
+
+For the initial installation, select `Anthropic (Claude)` and enter your key in
+`Anthropic API Key`. If your release exposes `Anthropic Models`, enter model IDs
+that your account can access, one per line. Confirm the model selected in
+OpenHands can complete a request before changing providers.
+
+Permit HTTPS egress to `api.anthropic.com` in addition to the installer and
+image endpoints listed above. Azure OpenAI resources and keys are not required
+for this baseline.
+
+### Database Configuration
+
+By default, OpenHands Enterprise uses a bundled PostgreSQL database. If you need to use your
+own PostgreSQL instance (for example, to integrate with existing database infrastructure or
+meet specific backup/HA requirements), see [External PostgreSQL](/enterprise/external-postgres)
+for setup instructions.
+
+### GitHub Authentication
+
+Enable GitHub Authentication in the Admin Console, then follow these steps to create and
+configure a GitHub App.
+
+#### Create a GitHub App
+
+For a new base domain, create a dedicated GitHub App so existing installations
+keep their webhook routing. A retired installation's app can be reused after
+updating its homepage, OAuth callback, and webhook to the new domain and
+verifying its repository scope and credentials. A GitHub App has one webhook
+URL, so sharing it across simultaneous installations requires a separate routing
+solution.
+
+For Simple mode, the callback is
+`https://auth.<base-domain>/realms/allhands/broker/github/endpoint` and the webhook
+is `https://app.<base-domain>/integration/github/events`.
+
+Run our [script](https://github.com/OpenHands/OpenHands-Cloud/tree/main/scripts/create_github_app) to create a GitHub App configured for your install.
+
+#### Map GitHub App Values to Admin Console
+
+Go back to the Installer Admin Console in your browser and enter the values from the Create GitHub App script output. For the private key, upload the file from the `keys` directory of the script location.
+
+See [GitHub](/enterprise/integrations/github) for GitHub App installation,
+`@openhands` resolver behavior, pull request review identity, and repository-level
+review controls.
+
+### Additional Integrations
+
+If your team uses Jira Data Center or Bitbucket Data Center, follow these guides
+to configure Admin Console values before deployment and complete webhook setup
+inside OpenHands after deployment.
+
+<CardGroup cols={2}>
+  <Card title="Bitbucket Data Center" icon="code-branch" href="/enterprise/integrations/bitbucket-data-center">
+    Configure Bitbucket Data Center login, repository access, bot identity, and pull request webhooks.
+  </Card>
+  <Card title="Jira Data Center" icon="building" href="/enterprise/integrations/jira-data-center">
+    Configure Jira issue triggers, OAuth account linking, service account credentials, and Jira webhooks.
+  </Card>
+</CardGroup>
+
+After filling in all fields, click **Continue** at the bottom of the page.
+
+## Deploy and Verify
+
+OpenHands will begin deploying. You can expect the deployment status to transition from
+**Missing** to **Unavailable** to **Ready**. This typically takes 5-10 minutes.
+
+![Deployment in progress](/enterprise/images/deployment-in-progress.png)
+
+Click **Details** next to the deployment status to monitor individual resources. Resources
+shown in orange are still deploying -- wait until all resources are ready.
+
+![Deployment status details](/enterprise/images/deployment-status-details.png)
+
+## First Login
+
+Once the deployment status shows **Ready**, navigate to `https://app.<your-base-domain>`
+and click the **Login with GitHub** tile.
+
+
+Accept the Terms of Service and click **Continue**.
+
+![Accept Terms of Service](/enterprise/images/accept-terms-of-service.png)
+
+Start a new conversation without a repository. Ask it to run `pwd`, write
+`OPENHANDS_INSTALL_PASS` to `/tmp/openhands-install-smoke.txt`, and read the file
+back with `cat`. Expand the terminal tool result and verify the actual workspace
+path and marker output, rather than relying only on the model's summary. The
+Agent Canvas server status should show **Running**; API clients should verify
+that the sandbox reaches `READY`. Then verify repository discovery and a
+repository-backed conversation.
+
+Deployment readiness alone does not prove that inference and sandbox startup work.
+If the first conversation fails, use [Troubleshooting](/enterprise/troubleshooting)
+to collect evidence before adding optional integrations.
+
+![OpenHands is ready](/enterprise/images/openhands-ready.png)
+
+## Optional: Use Azure OpenAI Through the Bundled Gateway
+
+<Warning>
+Replicated Stable release `0.74.0` can remove configured Azure routes during
+background model reconciliation. We reproduced an absent `azure-gpt-4.1-mini`
+alias and HTTP 400 `Invalid model name` after a clean Azure VM install.
+
+The test package for [OpenHands-Cloud PR #1337](https://github.com/OpenHands/OpenHands-Cloud/pull/1337),
+release `1749` / OpenHands `0.75.0`, fixes this by rendering the configured API
+version directly into each route. On the same Azure installation, model
+discovery persisted across background refreshes, and an Azure-backed conversation
+and automation both completed real terminal commands successfully.
+
+This validation applies to that test package, not Stable `0.74.0`. Ask support
+for a release containing the fix before using Azure inference. Do not register
+models directly in LiteLLM to bypass Replicated configuration. Keep a working
+provider available through the Admin Console while upgrading.
+</Warning>
+
+Complete the Anthropic login and first-conversation checks before switching
+providers. Azure hosting and Azure inference are separate: an Azure VM can use
+Anthropic, and OpenHands on another cloud can use Azure OpenAI.
+
+### 1. Prepare the Azure Model Deployment
+
+In the Azure portal or Azure AI Foundry portal:
+
+1. Create a dedicated **Azure OpenAI** resource in a region that supports your
+   chosen model, or obtain access to an existing resource from its owner.
+2. Deploy a model that supports agent tool use. Record the **deployment name**,
+   which can differ from the model name. Confirm regional model quota and the
+   requested deployment's availability before creating it.
+3. Record the resource endpoint, such as
+   `https://<resource-name>.openai.azure.com/`, and an API version supported by
+   the model and request API mode. Obtain a resource API key through your
+   approved secret channel. An OpenHands application API key is a different
+   credential and cannot authenticate Azure model inference.
+4. Permit HTTPS egress from the VM to the resource endpoint. If it uses a private
+   endpoint, configure VNet connectivity and private DNS resolution from this
+   VM. Verify these before configuring OpenHands.
+
+For example, GPT-4.1-mini can use API version `2025-04-01-preview` for
+Responses. Choose the API version for your actual deployment/API mode and
+verify compatibility with your installed OpenHands release.
+
+### 2. Configure the Replicated Admin Console
+
+1. Open **Config → LLM Configuration** in the Admin Console.
+2. Select `Azure` as the LLM provider. If `Azure Providers` is shown, select
+   `Azure OpenAI` for this example.
+3. Select `API Key` under `Azure Authentication Method` and enter the resource
+   key in `Azure OpenAI API Key`.
+4. Enter the resource endpoint in `Azure OpenAI Endpoint`.
+5. Enter your supported API version in `Azure OpenAI API Version`. The displayed
+   `2024-10-21` default does not support the Responses example above.
+6. If your release exposes `Azure OpenAI Deployments`, enter one deployment name
+   per line without an `azure/` prefix. Older releases may expose only a single
+   deployment-name field; follow the fields in your installed release.
+7. Save the configuration and deploy the updated version. Wait for `Ready`.
+8. In OpenHands, open `Settings → LLM` and add an LLM profile. Select `OpenHands`
+   as the provider to access this installation's administrator-managed models,
+   then select the configured Azure model and save the profile. You do not need
+   to enter the Azure resource key again in the user profile.
+9. Select that profile for a new conversation and repeat the no-repository
+   terminal and file-readback check.
+
+If the Azure model is absent from the OpenHands selector, stop and collect
+troubleshooting evidence for OpenHands Support. A model added directly to LiteLLM
+and a successful direct gateway request do not validate the Replicated Azure
+provider configuration.
+
+This selects Azure as the managed provider. Do not assume the dropdown preserves
+Anthropic and Azure as simultaneous managed routes. If you need both, use the
+[External LLM Gateways](/enterprise/integrations/external-llm-gateways) guide or
+ask OpenHands Support for the supported configuration for your release.
+
+For Microsoft Entra authentication, select `Microsoft Entra ID — Service
+Principal` and provide the tenant ID, client ID, and client secret. An authorized
+Azure administrator must grant that principal `Cognitive Services OpenAI User`
+on the Azure OpenAI resource. Subscription Contributor does not itself grant
+inference permissions or permission to assign roles.
+
+The tested package also exposes `Azure AI Foundry` under `Azure Providers`.
+Foundry endpoints use their own Admin Console fields and were not validated in
+this evaluation. Follow the fields and supported endpoint format for your
+installed release; do not substitute a Foundry endpoint into the Azure OpenAI
+fields. See [Azure LLMs](/openhands/usage/llms/azure-llms) for the distinction
+between Azure endpoint families. Configure managed models through the Admin
+Console rather than copying Helm values or editing installer-managed Kubernetes
+resources.
+
+## Operations and Cleanup
+
+- Back up the database and required persistent application data before upgrades
+  or removal. A single VM and bundled PostgreSQL do not provide high availability.
+- Keep the static IP, DNS record, and certificate renewal process together.
+  Expired TLS can break login and external callbacks even while pods are healthy.
+- Use the Admin Console for supported updates and deployment settings. If host
+  or first-conversation validation fails, collect a
+  [support bundle](/enterprise/troubleshooting) before changing workloads.
+- Stopping the VM is not complete cleanup: managed disks and public IPs can
+  continue to incur charges.
+
+To remove a disposable evaluation, first inspect the dedicated resource group:
+
+```bash
+az resource list --resource-group "$RG" \
+  --query '[].{name:name,type:type}' --output table
+```
+
+After confirming that every resource belongs to this evaluation and saving any
+required data, delete only that group:
+
+```bash
+az group delete --name "$RG"
+```
+
+Delete the evaluation wildcard DNS record separately if its zone is outside the
+group. Retain a reused GitHub App if it is needed for another installation;
+otherwise remove its repository installation and app through GitHub settings.
+An Azure OpenAI resource in a separate group requires separate cleanup. Preserve
+shared DNS zones and model resources.
+
+## Validation Scope
+
+Validated on a dedicated Azure VM using `Standard_D16s_v3`, Ubuntu 24.04 LTS
+and a 1,024 GiB Premium SSD OS disk. Host and application preflights passed
+without overrides. Trusted HTTPS, GitHub login, persistent PostgreSQL storage,
+an Anthropic-backed conversation and automation, and a read-only repository
+conversation passed on the clean installation.
+
+After upgrading to the PR #1337 test package (release `1749`, OpenHands `0.75.0`,
+Enterprise server `1.68.0`), the `gpt-4.1-mini` Azure OpenAI deployment with API
+version `2025-04-01-preview` remained discoverable across background refreshes.
+A conversation and a manually dispatched automation using
+`openhands/azure-gpt-4.1-mini` both completed terminal commands with exit code 0.
+All managed-provider configuration used the Replicated Admin Console; validation
+used OpenHands surfaces. The automation schedule was disabled.
+
+Backup and restore, multiple nodes, automatic certificate renewal, Microsoft
+Entra inference authentication and other Azure model families have not been
+validated in this evaluation. Select a model available to your account for the
+initial profile; an unavailable prior Claude model produced an initial error
+before the explicitly selected Azure profile completed successfully.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Enterprise Overview" icon="building" href="/enterprise/index">
+    Learn about OpenHands Enterprise features, integrations, and deployment options.
+  </Card>
+  <Card title="Prompting Best Practices" icon="lightbulb" href="/openhands/usage/tips/prompting-best-practices">
+    Get the most out of your AI coding agents with effective prompting techniques.
+  </Card>
+  <Card title="Troubleshooting" icon="life-ring" href="/enterprise/troubleshooting">
+    Collect diagnostics, inspect workloads, and contact OpenHands Support.
+  </Card>
+  <Card title="OpenHands Documentation" icon="book" href="/overview/introduction">
+    Explore the full OpenHands documentation for usage guides and features.
+  </Card>
+</CardGroup>
