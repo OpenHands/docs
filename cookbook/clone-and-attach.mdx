@@ -1,0 +1,104 @@
+---
+title: Clone and Attach
+description: Provision a sandbox yourself — shallow-clone a repo and run its setup script — then attach an OpenHands conversation to the prepared environment.
+---
+
+**Source:** [`clone-and-attach/`](https://github.com/jpshackelford/oh-examples/tree/main/clone-and-attach)
+
+Normally OpenHands clones your repository automatically when a conversation starts. This example shows how to take control of that process: you provision the sandbox, clone the repo, run its setup script, and only then hand it off to the agent.
+
+## Why Do This?
+
+- **Pre-warm expensive environments** so the agent starts instantly
+- **Clone a specific commit, tag, or monorepo sub-path** that the default flow doesn't support
+- **Run custom bootstrapping** before the agent gets involved
+- **Reuse one prepared sandbox** across multiple scripted conversations
+
+## How It Works
+
+```
+POST /api/v1/sandboxes                       # 1. Create sandbox
+GET  /api/v1/sandboxes?id=<id>               # 2. Poll until RUNNING
+POST {agent}/api/bash/execute_bash_command   # 3. git clone --depth 1 <repo>
+POST {agent}/api/bash/execute_bash_command   # 4. bash .openhands/setup.sh
+POST /api/v1/app-conversations               # 5. Attach conversation (sandbox_id=<id>)
+GET  /api/v1/app-conversations/start-tasks   # 6. Poll for app_conversation_id
+```
+
+Steps 1–2 and 5–6 use the **Cloud app server** (`X-Session-API-Key: <OH_API_KEY>`). Steps 3–4 use the **agent server** (`X-Session-API-Key: <session_api_key>`).
+
+## The Key Field: `sandbox_id`
+
+`POST /api/v1/app-conversations` accepts a `sandbox_id` parameter. Pass the ID of a sandbox you already prepared and the new conversation attaches to it instead of creating a fresh one:
+
+```python
+resp = requests.post(
+    f"{CLOUD}/api/v1/app-conversations",
+    headers=cloud_headers,
+    json={
+        "sandbox_id": sid,
+        "initial_message": {
+            "role": "user",
+            "content": [{"type": "text", "text": message}],
+        },
+    },
+)
+start_task_id = resp.json()["id"]
+```
+
+## Attaching Is Asynchronous
+
+`POST /api/v1/app-conversations` returns a **start task**, not the conversation itself. Poll until `app_conversation_id` is available:
+
+```python
+for _ in range(80):
+    tasks = requests.get(
+        f"{CLOUD}/api/v1/app-conversations/start-tasks",
+        headers=cloud_headers,
+        params={"ids": start_task_id},
+    ).json()
+    task = tasks[0]
+    if task.get("app_conversation_id"):
+        break
+    time.sleep(3)
+
+conversation_id = task["app_conversation_id"]
+print(f"https://app.all-hands.dev/conversations/{conversation_id}")
+```
+
+## Quickstart
+
+```bash
+export OH_API_KEY="your-api-key"
+pip install requests
+
+# Zero-config: clones this example repo and attaches a conversation
+python attach_conversation.py
+```
+
+## Configuration Options
+
+All inputs accept flags or environment variable fallbacks:
+
+| Flag | Env var | Default | Purpose |
+|------|---------|---------|---------|
+| `--api-key` | `OH_API_KEY` | *(required)* | Cloud API key |
+| `--repo` | `REPO_URL` | this repo | Git URL to shallow-clone |
+| `--branch` | `REPO_BRANCH` | repo default | Branch to check out |
+| `--depth` | `CLONE_DEPTH` | `1` | `git clone --depth` |
+| `--workdir` | `WORKDIR` | `/workspace` | Where the repo is cloned |
+| `--setup-script` | `SETUP_SCRIPT` | `.openhands/setup.sh` | Script to run after clone |
+| `--message` | `INITIAL_MESSAGE` | summarize prompt | First agent message |
+| `--sandbox-id` | `SANDBOX_ID` | none | Reuse a running sandbox |
+
+```bash
+python attach_conversation.py \
+    --repo https://github.com/your-org/your-repo \
+    --branch main \
+    --message "Run the test suite and fix any failures."
+```
+
+## See Also
+
+- [Start a Sandbox](/cookbook/start-sandbox) — The prerequisite example showing the sandbox lifecycle
+- [Upload Skills](/cookbook/upload-skills) — Upload a skills directory into a sandbox before attaching a conversation

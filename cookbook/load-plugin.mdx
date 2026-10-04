@@ -1,0 +1,131 @@
+---
+title: Load a Plugin
+description: Start an OpenHands conversation with a plugin pre-loaded using a single field in the REST API call.
+---
+
+**Source:** [`load-plugin/`](https://github.com/jpshackelford/oh-examples/tree/main/load-plugin)
+
+A plugin is a small git-hosted bundle that can include slash commands, skills, hooks, and MCP server configurations. Loading one at conversation-start is as simple as adding a `plugins` field to the `POST /api/v1/app-conversations` request.
+
+## The One Field That Matters
+
+```python
+import os
+import requests
+
+requests.post(
+    "https://app.all-hands.dev/api/v1/app-conversations",
+    headers={"X-Session-API-Key": os.environ["OH_API_KEY"]},
+    json={
+        "plugins": [
+            {
+                "source": "github:your-org/your-repo",
+                "ref": "main",
+                "repo_path": "path/to/plugin-dir",
+            }
+        ],
+        "initial_message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "/my-plugin:run"}],
+        },
+    },
+)
+```
+
+A plugin spec has three parts:
+
+| Field | Meaning | Example |
+|-------|---------|---------|
+| `source` | Where the plugin lives | `github:your-org/your-repo` |
+| `ref` | Git ref (branch, tag, SHA) | `main` |
+| `repo_path` | Sub-directory within the repo | `plugins/my-plugin` |
+
+## The Call Is Asynchronous
+
+`POST /api/v1/app-conversations` returns a **start task**, not a finished conversation. Poll until `app_conversation_id` is available:
+
+```python
+import time
+
+task_id = resp.json()["id"]
+CLOUD = "https://app.all-hands.dev"
+cloud_headers = {"X-Session-API-Key": os.environ["OH_API_KEY"]}
+
+for _ in range(80):
+    tasks = requests.get(
+        f"{CLOUD}/api/v1/app-conversations/start-tasks",
+        headers=cloud_headers,
+        params={"ids": task_id},
+    ).json()
+    if tasks[0].get("app_conversation_id"):
+        break
+    time.sleep(3)
+
+conv_id = tasks[0]["app_conversation_id"]
+print(f"https://app.all-hands.dev/conversations/{conv_id}")
+```
+
+## Two Ways to Drive the Plugin
+
+The `initial_message` controls what happens after the plugin loads:
+
+<Tabs>
+  <Tab title="Run an entry command">
+    Send the plugin's slash command as the initial message. The agent executes it immediately:
+
+    ```python
+    "initial_message": {
+        "role": "user",
+        "content": [{"type": "text", "text": "/my-plugin:start duck"}]
+    }
+    ```
+  </Tab>
+  <Tab title="Natural language prompt">
+    Send a natural-language message. The plugin's skills and commands are available for the agent to use when relevant:
+
+    ```python
+    "initial_message": {
+        "role": "user",
+        "content": [{"type": "text", "text": "Tell me a dad joke"}]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Try the Example
+
+The example ships a working `dad-joke/` plugin that tells dad jokes. Run it to see the full flow:
+
+```bash
+export OH_API_KEY="your-api-key"
+pip install requests
+python load_plugin.py
+# Opens a conversation that tells a dad joke about a duck
+```
+
+Override the default behavior:
+
+```bash
+python load_plugin.py --message "Tell me a dad joke about a cat"
+```
+
+## Plugin Structure
+
+A minimal plugin needs these files:
+
+```
+my-plugin/
+├── .claude-plugin/
+│   └── plugin.json    # Manifest: name, version, description
+├── skills/
+│   └── my-plugin/
+│       └── SKILL.md   # Skills the agent loads at startup
+└── hooks/
+    └── hooks.json     # Optional: lifecycle hooks
+```
+
+## See Also
+
+- [Launch Plugin Badge](/cookbook/launch-plugin-badge) — Create a no-code clickable link or badge that loads your plugin
+- [Per-Conversation Secrets](/cookbook/per-conversation-secrets) — Pass secrets to authenticate a plugin's MCP server
+- [Plugins](/overview/plugins) — Full plugin documentation

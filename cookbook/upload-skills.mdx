@@ -1,0 +1,83 @@
+---
+title: Upload Skills
+description: Upload a local skills directory into an OpenHands sandbox so that every conversation attached to that sandbox has access to your skills.
+---
+
+**Source:** [`upload-skills/`](https://github.com/jpshackelford/oh-examples/tree/main/upload-skills)
+
+Skills are Markdown files with YAML frontmatter that tell the agent how to do something. Normally you commit them to a repo's `.openhands/` directory. This example shows a programmatic alternative: start a sandbox, upload your skills directory into it, then attach a conversation that inherits them.
+
+## How It Works
+
+```
+POST /api/v1/sandboxes                         # 1. Create sandbox
+GET  /api/v1/sandboxes?id=<id>                 # 2. Poll until RUNNING
+POST {agent}/api/files/upload_file             # 3. Upload each SKILL.md
+POST /api/v1/app-conversations                 # 4. Attach conversation (sandbox_id=<id>)
+```
+
+The agent server's `/api/files/upload_file` endpoint accepts a multipart POST with the file content and a destination path. Skills are uploaded to `~/.openhands/skills/` by default (the location OpenHands checks at conversation start).
+
+## Quickstart
+
+```bash
+export OH_API_KEY="your-api-key"
+pip install requests
+
+# Upload the bundled example skills and start a conversation
+python upload_skills.py ./example-skills
+```
+
+## Configuration Options
+
+| Flag | Env var | Default | Purpose |
+|------|---------|---------|---------|
+| `skills_dir` | *(positional)* | `./example-skills` | Local directory of skills to upload |
+| `--remote-skills-dir` | `REMOTE_SKILLS_DIR` | `~/.openhands/skills` | Destination in the sandbox |
+| `--message` | `INITIAL_MESSAGE` | "list your skills" | First message to the agent |
+| `--sandbox-id` | `SANDBOX_ID` | none | Reuse a running sandbox |
+
+```bash
+python upload_skills.py ~/my-skills \
+    --remote-skills-dir '~/.agents/skills' \
+    --message "Use the deploy-helper skill to outline a release plan."
+```
+
+## Skill Format
+
+Each skill is a directory containing a `SKILL.md` with YAML frontmatter:
+
+```markdown
+---
+name: deploy-helper
+description: Guides the agent through a standard deployment checklist.
+triggers:
+  - deploy
+  - release
+---
+
+# Deploy Helper
+
+Before deploying, always:
+1. Run the test suite: `make test`
+2. Check the diff: `git diff main`
+3. Tag the release: `git tag v<version>`
+```
+
+The `triggers` list activates the skill automatically when matching keywords appear in a user message.
+
+## Reusing the Sandbox
+
+Once skills are uploaded, you can reuse that sandbox for subsequent conversations so they all inherit the skills automatically. Control this with the **Sandbox Grouping Strategy** in **Settings → Application**:
+
+- **No Grouping** (default): each new conversation gets a fresh sandbox — skills won't be present
+- **Any grouping strategy** (e.g., Group by Newest): new conversations join the existing, skills-loaded sandbox
+
+<Note>
+A sandbox must still be running for new conversations to join it. If the seeded sandbox has gone inactive, start a new one with `--sandbox-id` to wake it up.
+</Note>
+
+## See Also
+
+- [Clone and Attach](/cookbook/clone-and-attach) — Another way to prepare a sandbox before attaching a conversation
+- [Skills](/overview/skills) — Full documentation on creating and using skills
