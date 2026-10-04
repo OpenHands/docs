@@ -32,7 +32,7 @@ flowchart TB
     end
     
     subgraph Integration["Agent Integration"]
-        Action["MCPToolAction<br><i>Dynamic model</i>"]
+        Action["MCPToolAction<br><i>Argument wrapper</i>"]
         Obs["MCPToolObservation<br><i>Result wrapper</i>"]
     end
     
@@ -67,9 +67,9 @@ flowchart TB
 | Component | Purpose | Design |
 |-----------|---------|--------|
 | **[`MCPClient`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/client.py)** | Client wrapper | Extends FastMCP with sync/async bridge |
-| **[`MCPToolDefinition`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/definition.py)** | Tool metadata | Converts MCP schemas to SDK format |
+| **[`MCPToolDefinition`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/tool.py)** | Tool metadata | Converts MCP schemas to SDK format |
 | **[`MCPToolExecutor`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/tool.py)** | Execution handler | Bridges agent actions to MCP calls |
-| **[`MCPToolAction`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/definition.py)** | Dynamic action model | Runtime-generated Pydantic model |
+| **[`MCPToolAction`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/definition.py)** | Action wrapper | Stores validated arguments in `data` |
 | **[`MCPToolObservation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/definition.py)** | Result wrapper | Wraps MCP tool results |
 
 ## MCP Client
@@ -109,7 +109,7 @@ flowchart TB
 - **Lifecycle Management:** `__enter__`/`__exit__` for context manager
 - **Timeout Support:** Configurable timeouts for MCP operations
 - **Error Handling:** Wraps MCP errors in observations
-- **Connection Pooling:** Reuses connections across tool calls
+- **Connection Reuse:** Tools share their connected MCP client
 
 ### MCP Server Configuration
 
@@ -143,12 +143,12 @@ mcp_config = {
 %%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
 flowchart TB
     Config["MCP Config"]
-    Spawn["Spawn Server"]
+    Spawn["Connect to Server"]
     List["List Tools"]
     
     subgraph Convert["Convert Each Tool"]
         Schema["MCP Schema"]
-        Action["Generate Action Model"]
+        Action["Generate Validation Model"]
         Def["Create ToolDefinition"]
     end
     
@@ -169,66 +169,42 @@ flowchart TB
 
 **Discovery Steps:**
 
-1. **Spawn Server:** Launch MCP server via stdio
+1. **Connect:** Launch a stdio server or connect to a configured HTTP server
 2. **List Tools:** Call `tools/list` MCP endpoint
 3. **Parse Schemas:** Extract tool names, descriptions, parameters
-4. **Generate Models:** Dynamically create Pydantic models for actions
+4. **Generate Models:** Create Pydantic models from input schemas for argument validation
 5. **Create Definitions:** Wrap in `ToolDefinition` objects
 6. **Register:** Add to agent's tool registry
 
 ### Schema Conversion
 
-MCP tool schemas are converted to SDK tool definitions:
+`MCPToolDefinition` keeps the original MCP tool metadata and input schema. The
+LLM-facing schema is built from that input schema, preserving nested properties.
+A separate Pydantic model derived from `Schema` validates the arguments.
 
-```mermaid
-%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
-flowchart LR
-    MCP["MCP Tool Schema<br><i>JSON Schema</i>"]
-    Parse["Parse Parameters"]
-    Model["Dynamic Pydantic Model<br><i>MCPToolAction</i>"]
-    Def["ToolDefinition<br><i>SDK format</i>"]
-    
-    MCP --> Parse
-    Parse --> Model
-    Model --> Def
-    
-    style Parse fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
-    style Model fill:#e8f3ff,stroke:#2b6cb0,stroke-width:2px
-```
+`MCPToolAction` is a wrapper with a `data` dictionary. Its fields do not change for
+each discovered tool. `action_from_arguments()` validates the arguments, removes
+null values and internal fields, and stores the sanitized result in `data`.
+The definition validates `action.data` again before execution.
 
-**Conversion Rules:**
-
-| MCP Schema | SDK Action Model |
-|------------|------------------|
-| **name** | Class name (camelCase) |
-| **description** | Docstring |
-| **inputSchema** | Pydantic fields |
-| **required** | Field(required=True) |
-| **type** | Python type hints |
-
-**Example:**
+For a discovered `fetch_url` tool whose input schema accepts a string `url` and a
+numeric `timeout`, argument conversion looks like this:
 
 ```python
-# MCP Schema
-{
-    "name": "fetch_url",
-    "description": "Fetch content from URL",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "url": {"type": "string"},
-            "timeout": {"type": "number"}
-        },
-        "required": ["url"]
-    }
-}
+from openhands.sdk.mcp.tool import MCPToolDefinition
 
-# Generated Action Model
-class FetchUrl(MCPToolAction):
-    """Fetch content from URL"""
-    url: str
-    timeout: float | None = None
+
+def prepare_fetch(tool_definition: MCPToolDefinition):
+    action = tool_definition.action_from_arguments(
+        {"url": "https://example.com", "timeout": 10}
+    )
+    # action.data holds the validated arguments.
+    # The executor forwards these arguments to the MCP server.
+    return action.to_mcp_arguments()
 ```
+
+See [`MCPToolDefinition`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/mcp/tool.py)
+for schema generation and argument validation.
 
 ## Tool Execution
 
@@ -267,9 +243,9 @@ flowchart TB
 
 1. **Action Creation:** LLM generates tool call, parsed into `MCPToolAction`
 2. **Executor Lookup:** Find `MCPToolExecutor` for tool name
-3. **Format Conversion:** Convert action fields to MCP arguments
+3. **Format Conversion:** Read the argument dictionary using `action.to_mcp_arguments()`
 4. **MCP Call:** Execute `call_tool` via MCP client
-5. **Result Parsing:** Parse MCP result (text, images, resources)
+5. **Result Parsing:** Convert text and image blocks; log and skip unsupported blocks, including resources
 6. **Observation Creation:** Wrap in `MCPToolObservation`
 7. **Error Handling:** Catch exceptions, return error observations
 
@@ -294,7 +270,7 @@ flowchart LR
 **Executor Responsibilities:**
 - **Client Management:** Hold reference to MCP client
 - **Tool Identification:** Know which MCP tool to call
-- **Argument Conversion:** Transform action fields to MCP format
+- **Argument Conversion:** Forward the action’s `data` dictionary as MCP arguments
 - **Result Handling:** Parse MCP responses
 - **Error Recovery:** Handle connection errors, timeouts, server failures
 
@@ -352,41 +328,23 @@ flowchart TB
 
 ## MCP Annotations
 
-MCP tools can include metadata hints for agents:
+MCP tool annotations are copied into the SDK's `ToolAnnotations` model:
 
-```mermaid
-%%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
-flowchart LR
-    Tool["MCP Tool"]
-    
-    subgraph Annotations
-        ReadOnly["readOnlyHint"]
-        Destructive["destructiveHint"]
-        Progress["progressEnabled"]
-    end
-    
-    Security["Security Analysis"]
-    
-    Tool --> ReadOnly
-    Tool --> Destructive
-    Tool --> Progress
-    
-    ReadOnly --> Security
-    Destructive --> Security
-    
-    style Destructive fill:#f3e8ff,stroke:#7c3aed,stroke-width:2px
-    style Security fill:#fff4df,stroke:#b7791f,stroke-width:2px
-```
+| Annotation | Meaning |
+|------------|---------|
+| **title** | Human-readable tool title |
+| **readOnlyHint** | Tool reports that it does not modify its environment |
+| **destructiveHint** | Tool may perform destructive updates |
+| **idempotentHint** | Repeated calls with the same arguments have no additional effect |
+| **openWorldHint** | Tool may interact with external entities |
 
-**Annotation Types:**
+When `readOnlyHint` is true, the MCP schema adapter omits the additional
+`security_risk` prediction field from the LLM-facing schema. These annotations
+are hints, not enforcement guarantees. `destructiveHint` does not by itself
+require confirmation: confirmation depends on the configured security analyzer
+and confirmation policy. See [Security](/sdk/arch/security).
 
-| Annotation | Meaning | Use Case |
-|------------|---------|----------|
-| **readOnlyHint** | Tool doesn't modify state | Lower security risk |
-| **destructiveHint** | Tool modifies/deletes data | Require confirmation |
-| **progressEnabled** | Tool reports progress | Show progress UI |
-
-These annotations feed into the security analyzer for risk assessment.
+The SDK's `ToolAnnotations` model does not define `progressEnabled`.
 
 ## Component Relationships
 
@@ -415,7 +373,7 @@ flowchart LR
 - **Skills → MCP**: Repository skills can embed MCP configurations
 - **MCP → Tools**: MCP tools registered alongside native tools
 - **Agent → Tools**: Agents use MCP tools like any other tool
-- **MCP → Security**: Annotations inform security risk assessment
+- **MCP → Security**: Read-only hints affect risk-prediction schema generation; the configured policy governs confirmation
 - **Transparent Integration**: Agent doesn't distinguish MCP from native tools
 
 ## Design Rationale
@@ -428,7 +386,7 @@ flowchart LR
 
 **FastMCP Foundation:** Building on FastMCP (MCP SDK for Python) provides battle-tested client implementation, protocol compliance, and ongoing updates as MCP evolves.
 
-**Annotation Support:** Exposing MCP hints (readOnly, destructive) enables intelligent security analysis and user confirmation flows based on tool characteristics.
+**Annotation Support:** MCP hints are preserved as tool metadata. Read-only hints affect risk-prediction schema generation, while confirmation is controlled by the configured policy.
 
 **Lifecycle Management:** Automatic spawn/cleanup of MCP servers in conversation lifecycle ensures resources are properly managed without manual bookkeeping.
 
