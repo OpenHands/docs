@@ -17,7 +17,8 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `openhands/usage/` — product docs for Web/Cloud/CLI/etc.
 - `sdk/` — Agent SDK docs (guides, architecture, API reference pages)
 - `openapi/` — OpenAPI specs consumed by Mintlify
-  - `openapi/openapi.json` — OpenHands REST API schema
+  - `openapi/V0_openapi.json` — OpenHands V0 REST API schema (legacy)
+  - `openapi/openhands-cloud.json` — OpenHands Cloud REST API schema (served by app.all-hands.dev; surfaced as a collapsible `REST API` group under the Cloud tab → Integrations)
   - `openapi/agent-sdk.json` — Agent SDK agent-server schema (synced from `software-agent-sdk`)
 - `scripts/` — automation for generating SDK API reference docs
 - `.github/workflows/` — CI workflows (broken link checks, sync jobs)
@@ -25,29 +26,45 @@ The site is built with **Mintlify** and deployed automatically by Mintlify on pu
 - `.agents/skills/` — prompt extensions for agents editing this repo (legacy: `.openhands/skills/`; formerly `microagents`)
 - `tests/` — pytest checks for docs consistency (notably LLM pricing docs)
 
+## Cross-Repository Boundaries
+
+This repository owns the unified documentation site and documentation-specific tooling. The documented source repositories have distinct responsibilities:
+
+- [`OpenHands/OpenHands`](https://github.com/OpenHands/OpenHands) owns Agent Canvas UI and local-stack orchestration.
+- [`OpenHands/software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) owns the Python SDK, Agent Server, agent/tool behavior, conversations, workspaces, events, and canonical API.
+- [`OpenHands/typescript-client`](https://github.com/OpenHands/typescript-client) owns the browser-compatible typed Agent Server client.
+- [`OpenHands/automation`](https://github.com/OpenHands/automation) owns scheduling, webhooks, run history, dispatch, and sandbox lifecycle orchestration.
+- [`OpenHands/extensions`](https://github.com/OpenHands/extensions) owns reusable skills, plugins, automations, and integrations.
+
+Documentation should describe these boundaries accurately. If a documentation PR is opened in the wrong source repository, explicitly recommend closing and moving it to the repository that owns the change. PRs must follow this repository's applicable code-review guidance.
+
+
 
 ## llms.txt / llms-full.txt (V1-only)
 
-Mintlify auto-generates `/llms.txt` and `/llms-full.txt`, but this repo **overrides** them by committing
-`llms.txt` and `llms-full.txt` at the repo root.
+Mintlify generates and hosts `/llms.txt` and `/llms-full.txt` on deployment.
+Do not commit custom files at those paths: they override Mintlify's generated files.
 
-We do this so LLMs get **V1-only** context while legacy V0 pages remain available for humans.
+The indexing policy lives in the repository:
 
-- Generator script: `scripts/generate-llms-files.py`
-- Sync workflow: `.github/workflows/check-llms-files.yml` runs weekly (and on demand) to open a PR when the files drift.
-- Regenerate (recommended):
-  ```bash
-  make llms
-  ```
-  Or directly:
-  ```bash
-  python3 scripts/generate-llms-files.py
-  ```
-- Local verify (optional):
-  ```bash
-  make llms-check
-  ```
-- Exclusions: `openhands/usage/v0/` and any `V0*`-prefixed page files.
+- `docs.json` explicitly sets `seo.indexing` to `"navigable"`. Keep this setting;
+  `"all"` opts hidden and noindex pages back into the generated LLM files.
+- Legacy pages under `openhands/usage/v0/`, `V0*`-prefixed page files, and the former
+  monorepo `openhands/usage/architecture/backend.mdx` and `runtime.mdx` use
+  `noindex: true` in their frontmatter. Add it to any new legacy pages too.
+- `noindex` preserves page URLs and navigation entries, but excludes pages from
+  both LLM files, site search, sitemaps, search engines, and AI assistant context.
+- Pages outside navigation are omitted automatically. Add current documentation
+  to `docs.json` when it should be included; the old generator scanned all MDX files.
+- Do not use `.mintignore` for legacy pages that must remain accessible to readers.
+
+See [Mintlify's llms.txt documentation](https://www.mintlify.com/docs/ai/llmstxt)
+and [indexing controls](https://www.mintlify.com/docs/organize/hidden-pages#search-seo-and-ai-indexing).
+
+After deployment, check `/llms.txt` and `/llms-full.txt` for current SDK, Agent Canvas,
+Cloud, and CLI pages, and confirm legacy page entries are absent. Links to legacy
+pages inside current page bodies can still appear; these settings filter page
+entries, not every mention of V0.
 
 ## Local development
 

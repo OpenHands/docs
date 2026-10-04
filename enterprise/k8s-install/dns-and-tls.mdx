@@ -1,0 +1,130 @@
+---
+title: DNS and TLS
+description: Automate DNS records and TLS certificates with external-dns and cert-manager
+icon: lock
+---
+
+OpenHands needs DNS records and TLS certificates for its hostnames. We recommend automating both with
+**external-dns** and **cert-manager**, which run on any Kubernetes distribution and support the major
+cloud DNS providers. If you can't run them, provision the records and certificates by hand, see
+[Manual Setup](#manual-setup).
+
+## Hostnames
+
+OpenHands serves these hostnames, using `openhands.example.com` as the base domain (matching the
+[Helm install](/enterprise/k8s-install/installation)):
+
+| Hostname | Purpose |
+|---|---|
+| `app.openhands.example.com` | Application |
+| `auth.openhands.example.com` | Login (Keycloak) |
+| `runtime-api.openhands.example.com` | Runtime API |
+| `<id>-runtime.openhands.example.com` | Per-session sandboxes |
+
+All of these must resolve to your ingress load balancer. Every hostname sits one label under the
+base domain, so a single **wildcard** DNS record and certificate for `*.openhands.example.com`
+cover everything, including the dynamically named sandboxes.
+
+## external-dns
+
+external-dns watches your Ingresses and Services and creates the matching DNS records automatically.
+
+- Install it from its [Helm chart](https://kubernetes-sigs.github.io/external-dns/).
+- Set `provider` to your DNS provider and grant it access to your zone (the access mechanism is
+  provider-specific).
+- Recommended settings:
+
+```yaml
+provider:
+  name: aws                   # or google, azure, cloudflare, ...
+policy: upsert-only           # only ever create/update, never delete
+registry: txt
+txtOwnerId: openhands
+domainFilters:
+  - openhands.example.com     # only manage names under your base domain
+```
+
+With `upsert-only` and a TXT registry, external-dns only ever touches records it created.
+
+## cert-manager
+
+cert-manager issues and renews certificates from Let's Encrypt. Use the **DNS-01** challenge, the
+only one that can issue **wildcard** certificates.
+
+<Steps>
+  <Step title="Install cert-manager">
+    Install it from its [Helm chart](https://cert-manager.io/docs/installation/helm/), and grant it
+    access to your DNS provider so it can solve DNS-01 challenges.
+  </Step>
+  <Step title="Create a ClusterIssuer">
+    The `solvers` block is specific to your DNS provider. The Route 53 solver is shown here.
+
+    ```yaml
+    apiVersion: cert-manager.io/v1
+    kind: ClusterIssuer
+    metadata:
+      name: letsencrypt-prod
+    spec:
+      acme:
+        server: https://acme-v02.api.letsencrypt.org/directory
+        email: you@example.com
+        privateKeySecretRef:
+          name: letsencrypt-prod
+        solvers:
+          - dns01:
+              route53:                 # swap for cloudDNS, azureDNS, cloudflare, ...
+                hostedZoneID: <your-zone-id>
+    ```
+
+    <Tip>
+      Start with the staging server (`https://acme-staging-v02.api.letsencrypt.org/directory`) while
+      you get the setup working (generous rate limits), then switch to production.
+    </Tip>
+  </Step>
+  <Step title="Request a wildcard certificate">
+    A single wildcard covers every hostname. With Traefik, serve it as the default `TLSStore` so
+    no per-ingress TLS config is needed.
+
+    ```yaml
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: openhands-wildcard
+      namespace: openhands
+    spec:
+      secretName: openhands-wildcard-tls
+      issuerRef:
+        name: letsencrypt-prod
+        kind: ClusterIssuer
+      dnsNames:
+        - "*.openhands.example.com"
+    ```
+  </Step>
+</Steps>
+
+## Manual Setup
+
+If you don't run external-dns and cert-manager, provision these by hand and point the ingress
+controller at them.
+
+**DNS**: create a single wildcard record `*.openhands.example.com` pointing to your ingress load
+balancer (typically a CNAME to the load balancer's hostname, or a cloud DNS alias).
+
+**TLS**: obtain a certificate with a `*.openhands.example.com` SAN and load it into the ingress
+controller as a Kubernetes TLS secret.
+
+If you can't use a wildcard certificate, obtain one with SANs for the `app`, `auth`, and
+`runtime-api` hostnames plus `runtime.openhands.example.com`, and set
+`runtime-api.env.RUNTIME_ROUTING_MODE: "path"` in your Helm values so sandboxes are served under
+`runtime.openhands.example.com/<id>` instead of their own hostnames.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/sysbox">
+    Install the sandbox runtime on your sandbox nodes.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy OpenHands once the cluster is ready.
+  </Card>
+</CardGroup>

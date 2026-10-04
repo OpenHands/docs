@@ -1,0 +1,110 @@
+---
+title: Run Each Conversation in Its Own Docker Container
+description: Keep Agent Canvas on the host while each conversation runs in its own hardened Agent Server container with bind-mounted workspace and persistence directories.
+---
+
+Use per-conversation Docker mode when you want Agent Canvas and the outer Agent Server to remain trusted host processes while each conversation runs in a separate, hardened Docker container.
+
+This mode differs from [running the entire Agent Canvas distribution in Docker](/openhands/usage/agent-canvas/backend-setup/docker). Here, only conversations run in containers; Agent Canvas and the outer Agent Server stay on the host.
+
+## Prerequisites
+
+- Docker installed and running on the Agent Server host
+- Permission for the user running `agent-canvas` to invoke Docker
+- An Agent Server image compatible with the installed Agent Server version
+
+## Start Agent Canvas
+
+Set the conversation runtime and image before starting Agent Canvas:
+
+```bash
+export OH_CONVERSATION_RUNTIME=docker
+export OH_CONVERSATION_IMAGE=ghcr.io/openhands/agent-server:latest-python
+agent-canvas
+```
+
+You can combine these variables with other launcher options. For example, to use another port:
+
+```bash
+OH_CONVERSATION_RUNTIME=docker \
+OH_CONVERSATION_IMAGE=ghcr.io/openhands/agent-server:latest-python \
+agent-canvas --port 9000
+```
+
+The launcher forwards the variables to the local Agent Server. No separate frontend configuration is required.
+
+## How Isolation Works
+
+For each conversation, the outer Agent Server starts a dedicated Docker container running a full Agent Server. The container starts lazily when the conversation first needs it.
+
+- The inner server runs with `OH_CONVERSATION_RUNTIME=local`, so it runs the agent loop and its own tools inside the container.
+- Each container has its own generated `OH_SECRET_KEY`, its own session API key, and its own persistence.
+- The outer Agent Server proxies and mediates conversation requests to the container, and resolves agent and profile settings before forwarding them.
+
+The container is hardened as follows:
+
+- Runs as the host user's UID and GID rather than root.
+- Drops all Linux capabilities (`--cap-drop ALL`) and sets `no-new-privileges`.
+- Publishes its API only on `127.0.0.1`, authenticated with the per-conversation session API key.
+- Maps `host.docker.internal` to the host gateway.
+- Is limited by the memory, CPU, and PID settings in the [configuration reference](#configuration-reference).
+
+## Workspace and Persistence
+
+Each container bind-mounts three host directories:
+
+| Container path | Host directory |
+|----------------|----------------|
+| `/var/openhands/conversations/<id>` | The conversation's directory under the outer server's conversations path |
+| `/var/openhands/.openhands` | A per-conversation persistence directory under the outer server's runtime data root |
+| `/workspace` | The conversation's host workspace |
+
+Because these are bind mounts, workspace files and conversation history persist after the container is removed. Conversations that share a host workspace share the same files.
+
+<Warning>
+  The `/workspace` mount gives tools in the container read and write access to that host directory. Point conversations at a dedicated workspace if you do not want the agent to modify existing project files.
+</Warning>
+
+Containers are stopped when a conversation has been idle for the idle timeout (`OH_CONVERSATION_IDLE_TTL_SECONDS`, 20 minutes by default). The conversation is not lost; its container is started again on next use. Stale containers from a previous Agent Server run are removed when the server starts.
+
+## Verify Isolation
+
+Create a new conversation and ask the agent to run:
+
+```bash
+id
+printf 'PWD=%s\nHOME=%s\n' "$PWD" "$HOME"
+```
+
+The command should report `/workspace` as `PWD`, and a `HOME` of `/var/openhands/.openhands` rather than your host home directory.
+
+On the host, inspect the active conversation container:
+
+```bash
+docker ps --filter name=agent-server-conversation-
+docker inspect <container-id> --format '{{json .Mounts}}'
+```
+
+The mounts output should list three bind mounts, with destinations `/var/openhands/conversations/<id>`, `/var/openhands/.openhands`, and `/workspace`. To check the other settings:
+
+```bash
+docker inspect <container-id> --format '{{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{.HostConfig.PortBindings}}'
+```
+
+## Configuration Reference
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `OH_CONVERSATION_RUNTIME` | `local` | Set to `docker` to run each conversation in its own container. |
+| `OH_CONVERSATION_IMAGE` | `ghcr.io/openhands/agent-server:latest-python` | Agent Server image used for conversation containers. |
+| `OH_CONVERSATION_CONTAINER_MEMORY` | `4g` | Memory limit for each container. |
+| `OH_CONVERSATION_CONTAINER_CPUS` | `2.0` | CPU limit for each container. |
+| `OH_CONVERSATION_CONTAINER_PIDS_LIMIT` | `512` | PID limit for each container. |
+| `OH_CONVERSATION_CONTAINER_STARTUP_TIMEOUT` | `120` | Seconds to wait for a container to become healthy. |
+| `OH_CONVERSATION_IDLE_TTL_SECONDS` | `1200` | Seconds a conversation can be idle before its container is stopped. |
+
+## Related Guides
+
+- [Use Docker with Agent Canvas](/openhands/usage/agent-canvas/backend-setup/docker) — run the entire Canvas distribution and backend in one container
+- [Agent Canvas Architecture](/openhands/usage/agent-canvas/architecture)
+- [Docker Sandbox](/sdk/guides/agent-server/docker-sandbox) — run the entire conversation through a remote Agent Server container

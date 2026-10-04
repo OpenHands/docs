@@ -1,0 +1,90 @@
+---
+title: Installing Sysbox
+description: Install the Sysbox runtime so agent sandboxes can run securely
+icon: cube
+---
+
+OpenHands runs each agent session in a sandbox that uses [Sysbox](https://github.com/nestybox/sysbox)
+for isolation. This guide covers installing Sysbox.
+
+## Node Requirements
+
+Sysbox nodes must:
+
+- Run a Sysbox-supported Linux distribution. **Ubuntu** is the most common and best-supported choice.
+- Have at least **4 vCPU** and 4 GiB of memory.
+- Use containerd (the default on most managed distributions).
+- Run a Kubernetes version [supported by Sysbox](https://github.com/nestybox/sysbox/blob/master/docs/user-guide/install-k8s.md).
+
+Run sandboxes on a **dedicated node pool** so these requirements (and the Sysbox install below)
+apply only to sandbox nodes, not the whole cluster.
+
+<Note>
+  On **Amazon EKS**, use Canonical's EKS-optimized Ubuntu AMI for the sandbox node pool. The default
+  Amazon Linux AMI isn't supported. See [Amazon EKS](/enterprise/k8s-install/eks#node-pools) for the
+  full node-pool setup.
+</Note>
+
+## Install Sysbox
+
+Sysbox installs per node via the `sysbox-deploy-k8s` DaemonSet. It targets nodes labeled
+`sysbox-install=yes`, installs the runtime, and registers a `sysbox-runc` RuntimeClass.
+
+<Steps>
+  <Step title="Label the sandbox nodes">
+    ```bash
+    kubectl label nodes <node-name> sysbox-install=yes
+    ```
+
+    If your nodes autoscale, set this label on the group so every node it launches is labeled
+    automatically.
+  </Step>
+  <Step title="Apply the installer">
+    ```bash
+    kubectl apply -f https://raw.githubusercontent.com/nestybox/sysbox/master/sysbox-k8s-manifests/sysbox-install.yaml
+    ```
+  </Step>
+  <Step title="Confirm the RuntimeClass exists">
+    ```bash
+    kubectl get runtimeclass sysbox-runc
+    ```
+  </Step>
+</Steps>
+
+The `sysbox-runc` RuntimeClass pins any pod that uses it to Sysbox nodes, so sandboxes only schedule
+where the runtime is installed.
+
+## Point OpenHands at Sysbox
+
+Tell the runtime API to launch sandboxes with the Sysbox runtime class, and enable native user
+namespaces:
+
+```yaml
+runtime-api:
+  env:
+    RUNTIME_CLASS: sysbox-runc
+    SET_HOST_USERS: "true"
+```
+
+## Verify
+
+Start a conversation in OpenHands, then confirm the sandbox pod landed on a Sysbox node with the
+runtime class applied:
+
+```bash
+kubectl get pod <sandbox-pod> -n openhands \
+  -o jsonpath='{.spec.runtimeClassName}{"\n"}'
+```
+
+The output should be `sysbox-runc`.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DNS and TLS" icon="lock" href="/enterprise/k8s-install/dns-and-tls">
+    Set up records and certificates for the OpenHands hostnames.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy OpenHands once the cluster is ready.
+  </Card>
+</CardGroup>

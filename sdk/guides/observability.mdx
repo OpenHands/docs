@@ -37,17 +37,18 @@ export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 That's it. Run your agent code normally and traces will be sent to Laminar automatically.
 
 <Note>
-If you run Agent Canvas with Docker, set the Laminar or OTEL variables on the Agent Canvas container. The built-in part is SDK trace instrumentation and OTLP export; Laminar, Jaeger, Grafana Tempo, and other collectors are external systems you configure separately. See [Docker Backend](/openhands/usage/agent-canvas/backend-setup/docker#built-in-tracing-vs-external-backends) for `docker run` examples, backend API inspection, and Docker networking notes.
+If you run Agent Canvas with Docker, set these variables on the Agent Canvas container. See [Enable SDK Tracing](/openhands/usage/agent-canvas/backend-setup/docker#enable-sdk-tracing) for `docker run` examples and Docker networking notes.
 </Note>
 
 <Note>
 For Laminar-specific walkthroughs, see the official docs for [OpenHands SDK tracing](https://laminar.sh/docs/tracing/integrations/openhands-sdk), [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability), [viewing traces](https://laminar.sh/docs/platform/viewing-traces), and [signals](https://laminar.sh/docs/signals/introduction).
 </Note>
 
-For **self-hosted Laminar** deployments, you can also configure custom ports:
+For **self-hosted Laminar** deployments, configure the instance base URL and ports:
 
 ```bash icon="terminal" wrap
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_BASE_URL=http://localhost
 export LMNR_HTTP_PORT=8000
 export LMNR_GRPC_PORT=8001
 ```
@@ -144,6 +145,31 @@ Each conversation gets its own session ID (the conversation UUID), allowing you 
 
 In `tool.execute`, the tool calls are traced individually, such as `bash`, `file_editor`, or `task_tracker`.
 
+### Named Child Spans for Signals
+
+<Note>
+`observability_span_name` is available in OpenHands SDK `v1.30.0` and later.
+</Note>
+
+By default, each conversation trace starts with a root span named `conversation`. Keep that root span name stable for trace grouping. When you need an observability backend to route or classify a run by span name, set `observability_span_name` on the conversation. The SDK emits that value as an immediate child span under the `conversation` root.
+
+This is useful for Laminar signals or other backend rules that match a specific span name:
+
+```python icon="python" wrap
+conversation = Conversation(
+    agent=agent,
+    workspace=".",
+    observability_span_name="pr_review_evaluation",
+    observability_tags=["pr-review", "evaluation"],
+    observability_metadata={
+        "repo": "OpenHands/software-agent-sdk",
+        "workflow": "nightly-eval",
+    },
+)
+```
+
+Use stable, low-cardinality names such as `pr_review_evaluation`, `support_triage`, or `release_note_check`. Span names must be non-empty strings up to 128 characters and may contain letters, numbers, dots, underscores, colons, slashes, and hyphens.
+
 ## Configuration Reference
 
 ### Environment Variables
@@ -153,6 +179,7 @@ The SDK checks for these environment variables (in order of precedence):
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `LMNR_PROJECT_API_KEY` | Laminar project API key | `your-laminar-api-key` |
+| `LMNR_BASE_URL` | Base URL for self-hosted Laminar | `http://localhost` |
 | `LMNR_HTTP_PORT` | HTTP port for self-hosted Laminar | `8000` |
 | `LMNR_GRPC_PORT` | gRPC port for self-hosted Laminar | `8001` |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL | `https://api.honeycomb.io:443/v1/traces` |
@@ -194,10 +221,11 @@ The SDK supports both HTTP and gRPC protocols:
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
 ```
 
-**Self-hosted Laminar**: If you are running a self-hosted Laminar instance, you can configure the HTTP and gRPC ports via environment variables:
+**Self-hosted Laminar**: If you are running a self-hosted Laminar instance, configure its base URL and the HTTP and gRPC ports via environment variables:
 
 ```bash icon="terminal" wrap
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_BASE_URL=http://localhost
 export LMNR_HTTP_PORT=8000
 export LMNR_GRPC_PORT=8001
 ```
@@ -211,7 +239,7 @@ If you are running OpenHands Enterprise (OHE), you can use the same Laminar inte
 1. Complete the [OpenHands Enterprise quick start](/enterprise/quick-start).
 2. Enable analytics in the Admin Console.
 3. Deploy OHE and wait for the analytics service to become ready.
-4. Open the Laminar UI at `https://analytics.app.<your-base-domain>`.
+4. Open the Laminar UI at `https://analytics.<your-base-domain>`.
 5. Create a Laminar project and an ingest-only API key.
 6. Save that key as the **Laminar Project API Key** in the Admin Console.
 7. Redeploy, then start a conversation in OpenHands.
