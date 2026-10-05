@@ -5,8 +5,9 @@ icon: microsoft
 ---
 
 Install OpenHands Enterprise on a dedicated Azure VM using Replicated Embedded
-Cluster. The installer manages Kubernetes on the VM. Start with an Anthropic API
-key, then optionally configure Azure OpenAI through the bundled LLM gateway.
+Cluster. The installer manages Kubernetes on the VM. This guide uses Anthropic
+for the initial model configuration; hosting OpenHands on Azure does not require
+Azure OpenAI.
 
 For an AKS deployment, use [Install with Helm](/enterprise/k8s-install/installation).
 AKS node pools, Helm values, and Kubernetes storage classes do not configure this
@@ -24,9 +25,7 @@ VM installation.
 - An Anthropic API key and a GitHub account with permission to create/install a GitHub App.
 
 Subscription `Contributor` normally covers the infrastructure in this guide.
-Azure RBAC assignments and model inference permissions are separate. If you
-choose Microsoft Entra authentication for Azure OpenAI, have an authorized
-administrator grant the required inference role.
+Azure RBAC assignments may require an authorized subscription administrator.
 
 ## Plan the Azure Resources
 
@@ -39,7 +38,6 @@ administrator grant the required inference role.
 | Ubuntu 24.04 LTS x86-64 VM | Run the Replicated installer and embedded Kubernetes cluster |
 | Premium SSD managed OS disk | Persist embedded-cluster, database, and sandbox data |
 | Wildcard DNS and TLS | Route and secure application services and dynamic sandbox hostnames |
-| Optional Azure OpenAI resource and deployment | Provide inference through the bundled LLM gateway |
 
 The example uses `Standard_D16s_v3` (16 vCPUs, 64 GB RAM) and a 1,024 GiB
 Premium SSD OS disk. The larger disk selects the P30 performance tier; it is not
@@ -572,96 +570,12 @@ to collect evidence before adding optional integrations.
 
 ![OpenHands is ready](/enterprise/images/openhands-ready.png)
 
-## Optional: Use Azure OpenAI Through the Bundled Gateway
-
-<Warning>
-Replicated Stable release `0.74.0` can remove configured Azure routes during
-background model reconciliation. We reproduced an absent `azure-gpt-4.1-mini`
-alias and HTTP 400 `Invalid model name` after a clean Azure VM install.
-
-The test package for [OpenHands-Cloud PR #1337](https://github.com/OpenHands/OpenHands-Cloud/pull/1337),
-release `1749` / OpenHands `0.75.0`, fixes this by rendering the configured API
-version directly into each route. On the same Azure installation, model
-discovery persisted across background refreshes, and an Azure-backed conversation
-and automation both completed real terminal commands successfully.
-
-This validation applies to that test package, not Stable `0.74.0`. Ask support
-for a release containing the fix before using Azure inference. Do not register
-models directly in LiteLLM to bypass Replicated configuration. Keep a working
-provider available through the Admin Console while upgrading.
-</Warning>
-
-Complete the Anthropic login and first-conversation checks before switching
-providers. Azure hosting and Azure inference are separate: an Azure VM can use
-Anthropic, and OpenHands on another cloud can use Azure OpenAI.
-
-### 1. Prepare the Azure Model Deployment
-
-In the Azure portal or Azure AI Foundry portal:
-
-1. Create a dedicated **Azure OpenAI** resource in a region that supports your
-   chosen model, or obtain access to an existing resource from its owner.
-2. Deploy a model that supports agent tool use. Record the **deployment name**,
-   which can differ from the model name. Confirm regional model quota and the
-   requested deployment's availability before creating it.
-3. Record the resource endpoint, such as
-   `https://<resource-name>.openai.azure.com/`, and an API version supported by
-   the model and request API mode. Obtain a resource API key through your
-   approved secret channel. An OpenHands application API key is a different
-   credential and cannot authenticate Azure model inference.
-4. Permit HTTPS egress from the VM to the resource endpoint. If it uses a private
-   endpoint, configure VNet connectivity and private DNS resolution from this
-   VM. Verify these before configuring OpenHands.
-
-For example, GPT-4.1-mini can use API version `2025-04-01-preview` for
-Responses. Choose the API version for your actual deployment/API mode and
-verify compatibility with your installed OpenHands release.
-
-### 2. Configure the Replicated Admin Console
-
-1. Open **Config → LLM Configuration** in the Admin Console.
-2. Select `Azure` as the LLM provider. If `Azure Providers` is shown, select
-   `Azure OpenAI` for this example.
-3. Select `API Key` under `Azure Authentication Method` and enter the resource
-   key in `Azure OpenAI API Key`.
-4. Enter the resource endpoint in `Azure OpenAI Endpoint`.
-5. Enter your supported API version in `Azure OpenAI API Version`. The displayed
-   `2024-10-21` default does not support the Responses example above.
-6. If your release exposes `Azure OpenAI Deployments`, enter one deployment name
-   per line without an `azure/` prefix. Older releases may expose only a single
-   deployment-name field; follow the fields in your installed release.
-7. Save the configuration and deploy the updated version. Wait for `Ready`.
-8. In OpenHands, open `Settings → LLM` and add an LLM profile. Select `OpenHands`
-   as the provider to access this installation's administrator-managed models,
-   then select the configured Azure model and save the profile. You do not need
-   to enter the Azure resource key again in the user profile.
-9. Select that profile for a new conversation and repeat the no-repository
-   terminal and file-readback check.
-
-If the Azure model is absent from the OpenHands selector, stop and collect
-troubleshooting evidence for OpenHands Support. A model added directly to LiteLLM
-and a successful direct gateway request do not validate the Replicated Azure
-provider configuration.
-
-This selects Azure as the managed provider. Do not assume the dropdown preserves
-Anthropic and Azure as simultaneous managed routes. If you need both, use the
-[External LLM Gateways](/enterprise/integrations/external-llm-gateways) guide or
-ask OpenHands Support for the supported configuration for your release.
-
-For Microsoft Entra authentication, select `Microsoft Entra ID — Service
-Principal` and provide the tenant ID, client ID, and client secret. An authorized
-Azure administrator must grant that principal `Cognitive Services OpenAI User`
-on the Azure OpenAI resource. Subscription Contributor does not itself grant
-inference permissions or permission to assign roles.
-
-The tested package also exposes `Azure AI Foundry` under `Azure Providers`.
-Foundry endpoints use their own Admin Console fields and were not validated in
-this evaluation. Follow the fields and supported endpoint format for your
-installed release; do not substitute a Foundry endpoint into the Azure OpenAI
-fields. See [Azure LLMs](/openhands/usage/llms/azure-llms) for the distinction
-between Azure endpoint families. Configure managed models through the Admin
-Console rather than copying Helm values or editing installer-managed Kubernetes
-resources.
+<Note>
+Azure hosting and Azure model inference are separate. The Azure VM installation
+and Anthropic workflow in this guide were validated on Replicated `0.74.0`.
+Azure OpenAI gateway setup is deferred until a release contains the required
+provider fix and that released package has been validated.
+</Note>
 
 ## Operations and Cleanup
 
@@ -692,30 +606,21 @@ az group delete --name "$RG"
 Delete the evaluation wildcard DNS record separately if its zone is outside the
 group. Retain a reused GitHub App if it is needed for another installation;
 otherwise remove its repository installation and app through GitHub settings.
-An Azure OpenAI resource in a separate group requires separate cleanup. Preserve
-shared DNS zones and model resources.
+Preserve shared DNS zones and resources outside the dedicated installation group.
 
 ## Validation Scope
 
-Validated on a dedicated Azure VM using `Standard_D16s_v3`, Ubuntu 24.04 LTS
-and a 1,024 GiB Premium SSD OS disk. Host and application preflights passed
-without overrides. Trusted HTTPS, GitHub login, persistent PostgreSQL storage,
-an Anthropic-backed conversation and automation, and a read-only repository
-conversation passed on the clean installation.
+<Note>
+Validated with Replicated `0.74.0` on a dedicated Azure VM using
+`Standard_D16s_v3`, Ubuntu 24.04 LTS and a 1,024 GiB Premium SSD OS disk:
+host and application preflights without overrides, trusted HTTPS, GitHub login,
+persistent PostgreSQL storage, an Anthropic-backed conversation and a manually
+dispatched automation, and a read-only repository conversation. The automation
+schedule was disabled after testing.
 
-After upgrading to the PR #1337 test package (release `1749`, OpenHands `0.75.0`,
-Enterprise server `1.68.0`), the `gpt-4.1-mini` Azure OpenAI deployment with API
-version `2025-04-01-preview` remained discoverable across background refreshes.
-A conversation and a manually dispatched automation using
-`openhands/azure-gpt-4.1-mini` both completed terminal commands with exit code 0.
-All managed-provider configuration used the Replicated Admin Console; validation
-used OpenHands surfaces. The automation schedule was disabled.
-
-Backup and restore, multiple nodes, automatic certificate renewal, Microsoft
-Entra inference authentication and other Azure model families have not been
-validated in this evaluation. Select a model available to your account for the
-initial profile; an unavailable prior Claude model produced an initial error
-before the explicitly selected Azure profile completed successfully.
+Backup/restore, multiple nodes and automatic certificate renewal were not
+covered by these checks. Replicated `0.76.0` was not validated for this guide.
+</Note>
 
 ## Next Steps
 
