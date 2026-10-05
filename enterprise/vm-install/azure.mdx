@@ -25,7 +25,6 @@ VM installation.
 - An Anthropic API key and a GitHub account with permission to create/install a GitHub App.
 
 Subscription `Contributor` normally covers the infrastructure in this guide.
-Azure RBAC assignments may require an authorized subscription administrator.
 
 ## Plan the Azure Resources
 
@@ -49,6 +48,9 @@ and the [Sizing Guide](/enterprise/sizing-guide) for larger deployments.
 Use persistent managed storage for installation data. Azure temporary/resource
 disks can be lost during host maintenance or redeployment. This example keeps
 installation data on the managed OS disk rather than adding a temporary disk.
+This single-disk layout was used for the validation below. For a deployment that
+needs to grow, follow the [Sizing Guide](/enterprise/sizing-guide) recommendation
+to use a separate expandable data volume.
 
 ## Provision Infrastructure
 
@@ -206,7 +208,12 @@ If you do not already have a certificate, install Certbot using its
 run a manual DNS-01 challenge on your administrator workstation:
 
 ```bash
-sudo certbot certonly --manual --preferred-challenges dns \
+umask 077
+mkdir -p "$HOME/letsencrypt"
+certbot certonly --manual --preferred-challenges dns \
+  --config-dir "$HOME/letsencrypt" \
+  --work-dir "$HOME/letsencrypt/work" \
+  --logs-dir "$HOME/letsencrypt/logs" \
   --cert-name openhands-azure -d "*.${BASE_DOMAIN}"
 ```
 
@@ -222,7 +229,8 @@ dig +short TXT "_acme-challenge.${BASE_DOMAIN}"
 ```
 
 After issuance, Certbot saves the full chain and private key under
-`/etc/letsencrypt/live/openhands-azure/`. Transfer those files through your
+`$HOME/letsencrypt/live/openhands-azure/`, owned by the user who ran Certbot.
+Transfer those files through your
 approved private channel, or substitute existing certificate files below. See
 [Certbot's manual challenge guide](https://eff-certbot.readthedocs.io/en/stable/using.html#manual).
 Manual challenges need to be repeated for renewal unless you configure an
@@ -352,6 +360,7 @@ If any check fails, stop and resolve before continuing:
 | `traefik.github.io` | Embedded cluster ingress chart repository |
 | `ghcr.io`, `registry-1.docker.io` | Container image pulls for platform components |
 | `github.com` | GitHub App setup/auth/webhooks and downloading public agent skills |
+| `api.anthropic.com` | Anthropic inference for the initial model configuration |
 
 ## Run the Installer
 
@@ -374,7 +383,10 @@ Select **"Outbound requests allowed"** for Network Availability, then click **Co
 
 The install guide provides commands to run on your VM. SSH into your VM and execute them in order:
 
-1. **Select a version** -- the latest version is pre-selected
+1. **Select a version** -- select `0.74.0` to reproduce the validated installation
+   below. The dashboard pre-selects the latest release; later releases were not
+   tested for this guide. If `0.74.0` is unavailable, ask OpenHands Support for a
+   supported release and repeat the preflight and first-conversation checks.
 2. **Download the installation assets** -- copy and run the `curl` command shown
 3. **Extract the installation assets** -- run the `tar` command shown (this includes your license file)
 4. **Install** -- run the install command shown
@@ -449,7 +461,7 @@ You should now see the application configuration page.
 ### Domain Configuration
 
 - Keep the Hostname Configuration Mode set to **"Simple (default)"**
-- Enter your base domain (e.g., `openhands.example.com`)
+- Enter your base domain (e.g., `azure.openhands.example.com`)
 
 ### Certificate Configuration
 
@@ -474,7 +486,7 @@ from that provider.
 ![LLM Configuration provider dropdown](/enterprise/images/llm-configuration-provider-dropdown.png)
 
 For the initial installation, select `Anthropic (Claude)` and enter your key in
-`Anthropic API Key`. If your release exposes `Anthropic Models`, enter model IDs
+`Anthropic API Key`. Keep or replace the default `Anthropic Models` entries with model IDs
 that your account can access, one per line. Confirm the model selected in
 OpenHands can complete a request before changing providers.
 
@@ -560,8 +572,7 @@ Start a new conversation without a repository. Ask it to run `pwd`, write
 `OPENHANDS_INSTALL_PASS` to `/tmp/openhands-install-smoke.txt`, and read the file
 back with `cat`. Expand the terminal tool result and verify the actual workspace
 path and marker output, rather than relying only on the model's summary. The
-Agent Canvas server status should show **Running**; API clients should verify
-that the sandbox reaches `READY`. Then verify repository discovery and a
+Agent Canvas server status should show **Running**. Then verify repository discovery and a
 repository-backed conversation.
 
 Deployment readiness alone does not prove that inference and sandbox startup work.
@@ -573,8 +584,10 @@ to collect evidence before adding optional integrations.
 <Note>
 Azure hosting and Azure model inference are separate. The Azure VM installation
 and Anthropic workflow in this guide were validated on Replicated `0.74.0`.
-Azure OpenAI gateway setup is deferred until a release contains the required
-provider fix and that released package has been validated.
+Keep **Anthropic (Claude)** selected for this installation. Do not select
+**Azure** in **LLM Configuration** for this validated path. Azure OpenAI gateway
+setup is deferred until a release contains the required provider fix and that
+released package has been validated.
 </Note>
 
 ## Operations and Cleanup
@@ -613,7 +626,8 @@ Preserve shared DNS zones and resources outside the dedicated installation group
 <Note>
 Validated with Replicated `0.74.0` on a dedicated Azure VM using
 `Standard_D16s_v3`, Ubuntu 24.04 LTS and a 1,024 GiB Premium SSD OS disk:
-host and application preflights without overrides, trusted HTTPS, GitHub login,
+host preflight passed on rerun without overrides, application preflights passed,
+trusted HTTPS, GitHub login,
 persistent PostgreSQL storage, an Anthropic-backed conversation and a manually
 dispatched automation, and a read-only repository conversation. The automation
 schedule was disabled after testing.
