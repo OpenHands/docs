@@ -63,7 +63,7 @@ jobs:
           set -euo pipefail
           make build
           mkdir -p "$(dirname "$SCHEMA_PATH")"
-          uv run python openhands-agent-server/openhands/agent_server/openapi.py
+          uv run python .github/scripts/export_agent_server_openapi.py --output "$SCHEMA_PATH"
 
       - name: Detect changes
         id: detect_changes
@@ -117,19 +117,29 @@ jobs:
       # Auto-approve using OPENHANDS_BOT_GITHUB_PAT_PUBLIC (all-hands-bot). PR is created by
       # github-actions[bot], so a different identity (all-hands-bot) can approve it.
       - name: Auto-approve PR
-        if: steps.cpr.outputs.pull-request-url && secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC != ''
+        if: steps.cpr.outputs.pull-request-url
         env:
           GH_TOKEN: ${{ secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC }}
         run: |
+          # Secrets are not available in step-level `if:` expressions, so guard here.
+          if [ -z "$GH_TOKEN" ]; then
+            echo "OPENHANDS_BOT_GITHUB_PAT_PUBLIC is not set; skipping auto-approve."
+            exit 0
+          fi
           gh pr review "${{ steps.cpr.outputs.pull-request-url }}" \
             --approve \
             --body "Auto-approving automated OpenAPI sync PR."
 
       - name: Enable auto-merge (squash)
-        if: steps.cpr.outputs.pull-request-url && secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC != ''
+        if: steps.cpr.outputs.pull-request-url
         env:
           GH_TOKEN: ${{ secrets.OPENHANDS_BOT_GITHUB_PAT_PUBLIC }}
         run: |
+          # Secrets are not available in step-level `if:` expressions, so guard here.
+          if [ -z "$GH_TOKEN" ]; then
+            echo "OPENHANDS_BOT_GITHUB_PAT_PUBLIC is not set; skipping auto-merge."
+            exit 0
+          fi
           PR_URL="${{ steps.cpr.outputs.pull-request-url }}"
 
           # Prefer auto-merge (merges when required checks finish).
