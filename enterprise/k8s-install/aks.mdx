@@ -13,13 +13,16 @@ Helm guide to deploy using the runtime values below. Skip
 or checks Sysbox, use the runc values and checks on this page instead.
 
 <Warning>
-Sysbox is not yet supported for OpenHands Enterprise on AKS. This guide uses the
-node’s default runc runtime, evaluated with ordinary coding workflows (see Validation Scope). Docker builds
-and Docker Compose inside the sandbox are unavailable in this configuration.
-Other system-container workloads, such as systemd or nested containers, were not validated.
-Runc does not provide Sysbox’s additional system-container isolation; review the
-isolation requirements for your workloads before production adoption.
+Sysbox is not yet supported for OpenHands Enterprise on AKS. Use the runc
+configuration below. Docker builds and Docker Compose inside the sandbox are
+unavailable, and runc does not provide Sysbox's additional isolation. Confirm that
+these limits meet your workload requirements before choosing this configuration.
 </Warning>
+
+<Note>
+The values below apply to Enterprise Helm chart `0.74.0` and Runtime API `0.10.0`.
+Check the values for your licensed release before installing or upgrading.
+</Note>
 
 ## Cluster Requirements
 
@@ -33,8 +36,8 @@ isolation requirements for your workloads before production adoption.
 
 Entra or Azure DevOps authentication alone does not establish subscription access.
 Check `az account list --all` and the selected subscription's permissions.
-Contributor was sufficient for the evaluated default managed-network deployment;
-Azure role assignments require additional permissions. Existing networks, private
+Grant the deployment identity access to create the cluster and its dependencies.
+Creating Azure role assignments requires additional permissions. Existing networks, private
 cluster access and workload identities need their own access checks.
 
 Check VM SKU restrictions as well as quota before selecting a region or availability
@@ -50,16 +53,16 @@ Use separate pools for application services and sandbox workloads:
   `workload=openhands-sandbox` as a persistent node-pool label so new nodes match
   the Runtime API selector. Do not install the Sysbox DaemonSet or add its installer label.
 
-The evaluation used Azure CNI overlay with Calico, two platform nodes and a sandbox
-pool with autoscaler bounds of one to two nodes. Size the pools using the
-[Sizing Guide](/enterprise/sizing-guide) and
-[Resource Limits](/enterprise/k8s-install/resource-limits), including node overhead,
-image storage and warm sandbox capacity. Validate scale-down behavior for active sessions.
+Size both pools using the [Sizing Guide](/enterprise/sizing-guide) and
+[Resource Limits](/enterprise/k8s-install/resource-limits). Leave capacity for
+Kubernetes services, existing workloads and concurrent sandboxes. Check
+PodDisruptionBudgets before draining nodes for maintenance or upgrades.
 
-AKS rejected a manual node-pool scale-down with `UnsatisfiablePDB` because of a
-sandbox PodDisruptionBudget with `maxUnavailable: 0`. Node-image and Kubernetes
-upgrades, which drain nodes, were not tested. Validate maintenance before relying
-on it; do not delete or patch PodDisruptionBudgets to force it.
+<Warning>
+Keep sufficient sandbox capacity available before users start conversations.
+Provisioning a new AKS node can exceed the sandbox startup timeout. Do not rely
+on cold autoscaling, including scale-from-zero, for immediate conversation startup.
+</Warning>
 
 ### Configure runc Sandboxes
 
@@ -83,57 +86,34 @@ install and upgrade, after your base values and feature overlays. For example:
 ```bash
 helm upgrade --install openhands <licensed-chart-source> --version 0.74.0 \
   --namespace openhands --create-namespace \
-  -f values.yaml -f values-automation.yaml -f values-aks-runc.yaml --timeout 10m
+  -f values.yaml -f values-aks-runc.yaml --timeout 10m
 ```
 
-Include `values-automation.yaml` only when enabling automations. Follow the Helm
-guide for namespaces, Secrets and other prerequisites. Omitting these overrides
+Use the licensed chart source from the [Helm guide](/enterprise/k8s-install/installation),
+and complete its namespace and Secret setup first. When enabling optional features,
+place their values files before `values-aks-runc.yaml`. Omitting these overrides
 can restore the chart’s Sysbox defaults and prevent new sandboxes from starting.
 If you add a sandbox-pool taint, configure a matching toleration instead of the empty list.
 
-After deployment, create a conversation and verify that its pod is in the
-sandbox pool with no `runtimeClassName` or `hostUsers` override:
+### Verify a Sandbox
 
-```bash
-kubectl get pod <sandbox-pod> -n <runtime-namespace> \
-  -o jsonpath='{.spec.nodeName}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.hostUsers}{"\n"}'
-```
+1. Sign in to OpenHands and start a conversation. Ask the agent to run `pwd`,
+   write a file in its workspace and read it back.
+2. Confirm the sandbox pod runs on the sandbox pool using the default runtime:
 
-Expect a sandbox-pool node name followed by two empty fields. Use the configured
-runtime namespace (`openhands-runtimes` in the evaluation). The evaluated
-sandboxes ran without privileged mode, a host Docker socket or added capabilities.
-Confirm the agent executes commands and writes and rereads a workspace marker.
-Python, Node/npm, Git (public clone; authenticated pushes not tested), browser
-navigation/screenshots, HTTP previews and workspace
-persistence passed the runc evaluation. Docker-in-sandbox failed; an installed
-Docker CLI or Compose binary does not establish daemon functionality.
-See [Docker in the agent sandbox](/enterprise/docker-in-sandbox) for that feature’s requirements.
+   ```bash
+   kubectl get pod <sandbox-pod> -n <runtime-namespace> \
+     -o jsonpath='{.spec.nodeName}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.hostUsers}{"\n"}'
+   ```
 
-### Keep Startup Capacity Ready
+   Expect a sandbox-pool node name followed by two empty fields. Use the runtime
+   namespace configured in your Helm values, such as `openhands-runtimes`.
+3. Stop the conversation runtime, reopen the conversation and ask the agent to
+   read the same file to confirm workspace persistence.
 
-Keep enough Ready sandbox nodes with the agent image cached to accommodate the
-expected concurrent sessions. Pool minimum counts alone do not establish available
-capacity: account for existing pods, memory requests, disk limits and node overhead.
-The tested defaults requested 500m CPU and 3 GiB memory per sandbox; a tested
-4-vCPU/16-GiB node accommodated three such sandboxes after Kubernetes reservations.
-Size production capacity using your own resources and workload measurements.
-
-In the October 6 evaluation, six starts on ready/cached capacity all succeeded in
-38–51 seconds. A separate three-start burst forcing a zero-node pool to scale up
-failed around 120 seconds: the new node became Ready at 143 seconds and sandbox
-pods at approximately 234–247 seconds. The failed startup tasks did not recover
-automatically after their pods became healthy. Three fresh starts on that same node
-with its image cached then all succeeded in 53–55 seconds.
-
-This locates the observed failure before sandbox execution, in cold provisioning
-and startup orchestration. It is not a runc-versus-Sysbox performance benchmark.
-Nodes that were already Ready with the image cached avoided this failure in testing.
-Pre-pulling images onto newly added nodes was not tested and would not remove the
-node-readiness delay. No startup deadline or recovery fix was validated. Do not
-rely on the autoscaler adding nodes, including scale-from-zero, to absorb interactive
-startups in the tested release. Validate scale-out, node replacement and maintenance
-for your target release. Pause orphaned sandboxes from failed startups through
-supported OpenHands APIs or the UI’s Stop Runtime action before retrying.
+If a sandbox fails to start, follow the
+[Troubleshooting guide](/enterprise/troubleshooting) and collect the pod events
+before contacting OpenHands support.
 
 ## Persistent Storage
 
@@ -143,12 +123,11 @@ Inspect the Azure Disk CSI StorageClass:
 kubectl get storageclass managed-csi -o yaml
 ```
 
-The evaluated class uses `disk.csi.azure.com`, `WaitForFirstConsumer`, reclaim
-policy `Delete` and volume expansion. The evaluated Azure Disk PVCs use
-`ReadWriteOnce`. Configure stateful components and workspace
-storage explicitly, including persistence for any in-cluster object store; the GKE
-`standard-rwo` and AWS gp3 examples do not apply. Add `STORAGE_CLASS` to the same
-`runtime-api.env` map as the runc values above; do not create duplicate YAML keys.
+Confirm that the class uses the Azure Disk CSI provisioner (`disk.csi.azure.com`)
+and supports the binding mode and expansion your workloads need. Azure Disk
+workspace PVCs use `ReadWriteOnce`. Configure storage explicitly for workspaces,
+PostgreSQL and any in-cluster object store. Merge the following settings into your
+base values file:
 
 ```yaml
 runtime-api:
@@ -162,9 +141,6 @@ postgresql:
 
 Account for node disk-attachment limits and availability-zone topology. Validate
 mounting, persisted content after reattachment, and expansion on a disposable PVC.
-The runc evaluation passed workspace read/write, stop/reopen persistence and
-cross-node disk reattachment. Expansion was not validated on the runc configuration;
-test it on a disposable PVC.
 See [Azure Disk CSI provisioning](https://learn.microsoft.com/en-us/azure/aks/create-volume-azure-disk).
 
 ## Object Storage
@@ -173,9 +149,10 @@ Conversation/session storage is separate from workspace PVCs. Helm chart 0.74.0
 supports S3-compatible and GCS filestore configuration; it does not expose an Azure
 Blob backend. Do not substitute Azure Blob credentials into the S3 settings.
 
-The tested configuration used the chart's optional RustFS store on Azure Disk CSI.
-Select an object store that meets your durability and availability requirements,
-and verify backup and restore for that configuration.
+For an in-cluster store, chart `0.74.0` includes optional RustFS. Configure its
+persistence with Azure Disk CSI, provide the object-store credential Secret, and
+create the conversation bucket before starting conversations. Select an object
+store that meets your durability requirements and configure backup and restore.
 When enabling automations, configure a separate automation package bucket. The
 automation service can create it at startup when bucket creation is enabled.
 
@@ -184,12 +161,12 @@ automation service can create it at startup when bucket creation is enabled.
 Use the [External PostgreSQL](/enterprise/external-postgres) guide for managed
 database requirements and Helm values. If choosing Azure Database for PostgreSQL,
 verify compatibility, TLS and network access against those requirements before deployment.
-The tested configuration used bundled PostgreSQL.
+For bundled PostgreSQL, set its persistence storage class as shown above.
 
 ## Ingress
 
-Run an ingress controller on the general pool. Traefik was validated with an Azure
-public LoadBalancer. In the Traefik Helm values (chart `41.6.0` was tested):
+Run an ingress controller on the general pool. For Traefik with an Azure public
+load balancer, use the following Traefik Helm values:
 
 ```yaml
 service:
@@ -204,24 +181,6 @@ Follow [DNS and TLS](/enterprise/k8s-install/dns-and-tls) for trusted certificat
 and hostname configuration. Use flat runtime hostnames with Traefik standard Ingress.
 If provisioning certificates manually, assign renewal and Secret-update ownership.
 
-## Validation Scope
-
-<Note>
-Validated October 6, 2026 with Helm chart `0.74.0`, OpenHands `1.67.0`, Runtime API
-`0.10.0` and agent-server `1.49.6-python` on AKS `1.35.8`, Ubuntu `24.04.5 LTS`
-and containerd `2.3.3-2`. The configuration used bundled PostgreSQL and RustFS.
-GitHub login, trusted HTTPS, ordinary coding/browser workflows, workspace persistence,
-cross-node disk movement and execution on an autoscaler-added node, after it
-became Ready, passed. Newly added nodes ran sandboxes without per-node runtime setup.
-
-Cold autoscaling exceeded the startup deadline. An earlier resume-related HTTP 401
-and a PodDisruptionBudget issue blocking manual pool scale-down remain unresolved.
-Automations and PVC expansion were not validated on this runc configuration. Managed Azure PostgreSQL, Azure Blob, private
-endpoints, backup/restore, cross-zone recovery, tenant isolation and network
-isolation between sandboxes were not covered. No NetworkPolicy targeted the
-sandbox namespace in the evaluation. This is evaluation evidence, not production acceptance.
-</Note>
-
 ## Next Steps
 
 <CardGroup cols={2}>
@@ -232,6 +191,6 @@ sandbox namespace in the evaluation. This is evaluation evidence, not production
     Deploy the application and validate a conversation.
   </Card>
   <Card title="Enable Automations" icon="clock" href="/enterprise/k8s-install/automations">
-    Configure automation storage and verify a completed run.
+    Configure optional automation services and storage.
   </Card>
 </CardGroup>
