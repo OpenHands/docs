@@ -1,0 +1,194 @@
+---
+title: GPG Commit Signing
+description: Configure GPG commit signing on every conversation with a SessionStart hook that imports a key from a custom secret.
+icon: file-signature
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@ce2b00e9e0b4fc69664fe4041d81cba917f1cb86 (gpg-commit-signing/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/gpg-commit-signing" horizontal />
+
+Configure **GPG commit signing at the start of every conversation** — not just
+when a repository is selected — using a `SessionStart` hook bundled in a plugin.
+
+The [`gpg-signer/`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/gpg-commit-signing/gpg-signer) plugin imports a private key from a
+[custom secret](#the-secret) and configures git to sign commits and tags
+**globally**, so signing applies to any repo the agent clones during the
+session.
+
+## The problem this solves
+
+Teams often configure signing today in `.openhands/setup.sh`:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+echo "$gpg_key" | gpg --import
+KEY_ID=$(echo "$gpg_key" | gpg --show-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
+git config user.signingkey "$KEY_ID"
+git config commit.gpgsign true
+git config user.name "$git_user_name"
+git config user.email "$git_user_email"
+```
+
+But **`setup.sh` only runs when the conversation is started with a repository
+selected.** Start a conversation with no repo (or have the agent clone a repo
+later) and signing is silently missing.
+
+A **`SessionStart` hook runs at the beginning of *every* conversation**,
+regardless of whether a repo was picked — exactly when you want signing set up.
+That is the whole idea behind this example.
+
+## Why the hook can read the same secret as `setup.sh`
+
+On the agent-server, hook scripts and `setup.sh` execute against the **same
+process environment**. A custom secret named `gpg_key` that `setup.sh` can read
+as `$gpg_key` is visible to the `SessionStart` hook the same way — so the logic
+you already run in `setup.sh` moves into the hook almost verbatim.
+
+Two differences from the raw `setup.sh` version, both deliberate:
+
+- **`git config --global`** instead of a bare `git config`. There is no
+  repository yet when `SessionStart` fires, and a global config applies to every
+  repo cloned afterwards.
+- **Never fails the session.** `SessionStart` hooks cannot block, so on any
+  problem (missing secret, bad key) the hook logs the reason to
+  `/tmp/openhands_gpg_setup.log` and exits `0`.
+
+## The secret
+
+Add these under **Settings → Secrets** in OpenHands (or pass them per
+conversation via the API):
+
+| Secret name      | Contents                                                                           | Required |
+| ---------------- | ---------------------------------------------------------------------------------- | -------- |
+| `gpg_key`        | ASCII-armored **private** key — `gpg --armor --export-secret-keys you@example.com` | Yes      |
+| `git_user_name`  | Git author name                                                                    | Optional |
+| `git_user_email` | Git author email (should match a key UID)                                          | Optional |
+
+If `gpg_key` is absent the hook does nothing (and says so in the log), so it is
+safe to load the plugin for everyone and let it activate only where a key is
+configured.
+
+> Secret names are configurable through the `GPG_KEY_SECRET_NAME`,
+> `GIT_USER_NAME_SECRET_NAME`, and `GIT_USER_EMAIL_SECRET_NAME` environment
+> variables if your org uses different names.
+
+## What's in the box
+
+```text
+gpg-signer/
+├── .claude-plugin/
+│   └── plugin.json                      # Plugin metadata
+├── hooks/
+│   ├── hooks.json                       # SessionStart hook (inline script)
+│   └── scripts/
+│       └── configure_gpg_signing.sh     # Readable reference copy of the inline script
+└── skills/
+    └── gpg-signer/
+        └── SKILL.md                     # Docs the agent reads (auto-loaded)
+```
+
+## The hook
+
+The logic lives in [`hooks/hooks.json`](https://github.com/OpenHands/enterprise-cookbook/blob/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/gpg-commit-signing/gpg-signer/hooks/hooks.json) under the
+`SessionStart` event:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "…import key + git config --global…", "timeout": 30 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**How it works:**
+
+1. **`SessionStart`** — runs once, when the conversation begins (no repo needed).
+2. Reads the armored key from `$gpg_key`, imports it with `gpg --batch --import`.
+3. Extracts the primary key fingerprint (`gpg --show-keys --with-colons`).
+4. Sets `user.signingkey`, `commit.gpgsign true`, `tag.gpgsign true`, and
+   `gpg.program` **globally**, plus the optional identity secrets.
+5. Exits `0` always; all human-readable output goes to
+   `/tmp/openhands_gpg_setup.log` (on a successful hook, stdout is parsed as
+   JSON, so it is kept clean).
+
+> **Why the script is inlined (and mirrored in `hooks/scripts/`).** When this
+> runs as a **plugin**, hooks execute with the working directory set to the
+> agent's workspace (not the plugin directory), and there is no plugin-root path
+> variable — so `command` **cannot** point at a bundled
+> `hooks/scripts/*.sh`. The runnable copy is therefore inlined in `hooks.json`;
+> [`hooks/scripts/configure_gpg_signing.sh`](https://github.com/OpenHands/enterprise-cookbook/blob/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/gpg-commit-signing/gpg-signer/hooks/scripts/configure_gpg_signing.sh)
+> is a readable reference that mirrors it. Edit the reference first, then mirror
+> it into `hooks.json`. (Same pattern as the
+> [`workspace-isolation`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/workspace-isolation) example.)
+
+## Try it
+
+### Option 1: Load via API
+
+Use the companion [`load-plugin`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/load-plugin) example. Because the plugin
+needs your key, pass it as a per-conversation secret:
+
+```bash
+cd ../load-plugin
+python load_plugin.py \
+  --repo-path gpg-commit-signing/gpg-signer \
+  --secret gpg_key="$(gpg --armor --export-secret-keys you@example.com)" \
+  --secret git_user_name="Your Name" \
+  --secret git_user_email="you@example.com" \
+  --message "Show me the output of: git config --global --get commit.gpgsign and git config --global --get user.signingkey"
+
+# Expected: commit.gpgsign=true and user.signingkey=<fingerprint>
+```
+
+> If you have already stored `gpg_key` as a user-level secret, the `--secret`
+> flags are unnecessary — the hook will pick it up automatically.
+
+### Option 2: Launch via badge
+
+Store `gpg_key` as a user secret first (the badge can't carry your private key),
+then click:
+
+[![Try GPG Signer](https://img.shields.io/badge/Try%20GPG%20Signer-blue)](https://app.all-hands.dev/launch?plugins=W3sic291cmNlIjogImdpdGh1YjpPcGVuSGFuZHMvZW50ZXJwcmlzZS1jb29rYm9vayIsICJyZWYiOiAibWFpbiIsICJyZXBvX3BhdGgiOiAiZ3BnLWNvbW1pdC1zaWduaW5nL2dwZy1zaWduZXIifV0%3D\&message=Show%20me%20the%20output%20of%3A%20git%20config%20--global%20--get%20commit.gpgsign%20and%20git%20config%20--global%20--get%20user.signingkey)
+
+> **Note:** Replace `ref: main` with your branch name if testing before merge.
+
+## Verifying a signed commit
+
+Once the hook has run, any commit is signed:
+
+```bash
+git clone https://github.com/octocat/Hello-World && cd Hello-World
+echo "test" >> README && git commit -am "signed test"
+git log --show-signature -1     # -> "Good signature from ..."
+```
+
+## Hook types
+
+`SessionStart` is one of several lifecycle events you can hook. See the other
+examples for blocking hooks:
+
+| Hook             | When It Runs                   | Can Block?     | Example                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ------------------------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PreToolUse       | Before tool execution          | ✅ Yes (exit 2) | [`command-blacklist`](/cookbook/command-blacklist), [`command-whitelist`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/command-whitelist), [`workspace-isolation`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/workspace-isolation) |
+| PostToolUse      | After tool execution           | ❌ No           | Logging, metrics                                                                                                                                                                                                                                                                                                                         |
+| UserPromptSubmit | Before processing user message | ✅ Yes          | Content filtering                                                                                                                                                                                                                                                                                                                        |
+| Stop             | When agent tries to finish     | ✅ Yes          | Require artifacts                                                                                                                                                                                                                                                                                                                        |
+| **SessionStart** | **When conversation starts**   | ❌ No           | **Environment setup (this example)**                                                                                                                                                                                                                                                                                                     |
+| SessionEnd       | When conversation ends         | ❌ No           | Cleanup                                                                                                                                                                                                                                                                                                                                  |
+
+## Related
+
+- [OpenHands Hooks Guide](/openhands/usage/customization/hooks) — repository `.openhands/hooks.json` format
+- [Hooks (SDK guide)](/sdk/guides/hooks) — programmatic hooks
+- [`load-plugin`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/load-plugin) — programmatic plugin loading (and passing per-conversation secrets)
+- [`per-conversation-secrets`](/cookbook/per-conversation-secrets) — how secrets reach a conversation
+- [`command-blacklist`](/cookbook/command-blacklist) / [`command-whitelist`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/command-whitelist) / [`workspace-isolation`](https://github.com/OpenHands/enterprise-cookbook/tree/ce2b00e9e0b4fc69664fe4041d81cba917f1cb86/workspace-isolation) — other hook examples
