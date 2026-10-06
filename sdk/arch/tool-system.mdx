@@ -115,7 +115,7 @@ flowchart TB
 **Tool System Boundary:**
 - **Input**: `dict[str, Any]` (JSON arguments) → validated `Action` instance
 - **Output**: `Observation` instance with structured result
-- **No knowledge of**: Events, LLM messages, conversation state
+- **Event ownership**: The agent wraps calls and results in events. Executors may receive the current `LocalConversation` when they need conversation state.
 
 ### Tool Definition
 
@@ -215,6 +215,42 @@ flowchart TB
 |---------|----------|----------|
 | **Direct Instantiation** | Stateless tools with no configuration needs | `finish`, `think`, simple utilities |
 | **Subclass with Factory** | Tools requiring runtime state or configuration | `execute_bash`, `file_editor`, `glob`, `grep` |
+
+### History and Context Tools (Development Branch)
+
+<Note>
+These optional tools target the SDK's
+[`feat/issue-4916-agent-reset` development branch](https://github.com/cbinhan/software-agent-sdk/tree/feat/issue-4916-agent-reset),
+not an established released SDK or Agent Server contract.
+</Note>
+
+`conversation_history` retrieves committed message and tool text from the current
+conversation's active branch. It works independently with any condenser, including
+no condenser. Forks can retrieve inherited history, while sibling branches and
+other conversations are outside the tool's scope.
+
+| Command | Inputs | Result |
+| --- | --- | --- |
+| `search` | Literal, case-insensitive `query`; optional `before_event_id` | Up to five newest-first matches with event IDs and snippets of at most 400 characters. Continue with `next_before_event_id`. |
+| `read` | `event_id`; optional character `offset` | Up to 4,000 characters and a `next_offset` for paging. An offset at or beyond the end returns an empty page. |
+
+The tool reports whether source events were in the active view at snapshot time.
+A batch shares one branch/view snapshot captured before its workers start; direct
+`execute_tool` calls take their own snapshot. System/internal events, provider
+reasoning, and history tool calls/results are excluded. Results are historical
+data, not new instructions. Retrieving history does not alter the active view;
+the resulting observation enters context through the usual tool-result path.
+
+`new_context` belongs to the opt-in `AgentResetCondenser` strategy. Its optional
+`handoff` stays in the real action arguments. The executor returns a result, and
+the agent requests the reset only after the complete tool batch is committed.
+It does not provide a separate notes store: use ordinary workspace file tools
+for durable notes. Settings add both required tools automatically for this
+strategy; direct `Agent` construction must include them explicitly.
+
+See [Agent-Requested Reset](/sdk/guides/context-condenser#agent-requested-reset-development-branch)
+for setup, batch/confirmation behavior, capacity recovery, and both runnable
+development examples.
 
 ### Tool Annotations
 
