@@ -15,7 +15,7 @@ A **context condenser** is a crucial component that addresses one of the most pe
 - **⏱️ Slower Response Times**: Larger contexts take longer to process
 - **📉 Reduced Effectiveness**: LLMs become less effective when dealing with excessive irrelevant information
 
-The context condenser solves this by intelligently summarizing older parts of the conversation while preserving essential information needed for the agent to continue working effectively.
+The context condenser controls which conversation events remain in the model's active context. The default strategy summarizes older events. Condensation changes the active view, while the original events remain in the conversation history. An optional [agent-requested reset strategy](#agent-requested-reset-development-branch) is also available on the development branch described below.
 
 ## Default Implementation: `LLMSummarizingCondenser`
 
@@ -64,7 +64,7 @@ This architecture allows you to implement custom condensation logic tailored to 
 Create a `LLMSummarizingCondenser` to manage the context. 
 The condenser will automatically truncate conversation history when it exceeds max_size, and replaces the dropped events with an LLM-generated summary.
 
-This condenser triggers when there are more than `max_context_length` events in
+This condenser triggers when there are more than `max_size` events in
 the conversation history, and always keeps the first `keep_first` events (system prompts,
 initial user messages) to preserve important context.
 
@@ -229,6 +229,132 @@ print(f"EXAMPLE_COST: {cost}")
 ```
 
 <RunExampleCode path_to_script="examples/01_standalone_sdk/14_context_condenser.py"/>
+
+## Agent-Requested Reset (Development Branch)
+
+<Note>
+The history tool and reset strategy below target the SDK's
+[`feat/issue-4916-agent-reset` development branch](https://github.com/cbinhan/software-agent-sdk/tree/feat/issue-4916-agent-reset).
+They require an SDK, and an Agent Server when used remotely, containing that
+implementation. These instructions do not imply support in an existing release.
+The default summarizing condenser is unchanged.
+</Note>
+
+### Retrieve History Independently
+
+`conversation_history` can be enabled with any condenser, or without one:
+
+```python icon="python"
+from openhands.sdk import Agent, Tool
+
+agent = Agent(llm=llm, tools=[Tool(name="conversation_history")])
+```
+
+The agent can search committed message and tool text on the current conversation's
+active branch, including events omitted from its active view. It can then read a
+matching event by ID in pages. This tool does not reset the context or change the
+default tool list. Cross-process access requires conversation persistence.
+See the [history tool contract](/sdk/arch/tool-system#history-and-context-tools-development-branch)
+for pagination and excluded fields.
+
+### Enable Agent-Requested Resets
+
+<Tabs>
+  <Tab title="Settings">
+
+```python icon="python"
+from openhands.sdk import OpenHandsAgentSettings
+from openhands.sdk.settings import AgentResetCondenserSettings
+
+settings = OpenHandsAgentSettings(
+    llm=llm,
+    tools=[],
+    condenser=AgentResetCondenserSettings(),
+)
+agent = settings.create_agent()
+```
+
+The settings factory adds the required `new_context` and `conversation_history`
+tools when missing, without mutating `settings.tools`. Add ordinary file tools
+to the settings if the agent should save notes in the workspace.
+
+  </Tab>
+  <Tab title="Direct Agent">
+
+```python icon="python"
+from openhands.sdk import Agent, Tool
+from openhands.sdk.context.condenser import AgentResetCondenser
+
+agent = Agent(
+    llm=llm,
+    condenser=AgentResetCondenser(),
+    tools=[Tool(name="new_context"), Tool(name="conversation_history")],
+)
+```
+
+Direct `Agent` construction requires both tools explicitly. Conversation
+initialization raises an error if either is missing.
+
+  </Tab>
+</Tabs>
+
+The serialized setting is `{"condenser_kind": "agent_reset", "enabled": true}`.
+This mode has no event-count threshold, fixed retained-event count, or separate
+summary-model setting.
+
+### Handoff, Files, and History
+
+| Mechanism | Purpose |
+| --- | --- |
+| `new_context(handoff="...")` | Carry the current task, progress, constraints, and next steps in the real tool-call arguments. The handoff is optional and is not rewritten by another model. |
+| Ordinary file tools | Save durable notes or artifacts in the workspace and refer to their paths in the handoff. File lifetime follows the workspace's own persistence. |
+| `conversation_history` | Retrieve original message and tool text when the next context needs more detail. The model chooses the query and event to read. |
+
+A successful reset takes effect after the entire tool batch finishes. The SDK
+retains the system prompt, the complete triggering batch and its results, and
+user messages that arrived after the model input was captured. Already-processed
+user messages can leave the active view. If the saved input boundary is missing,
+the reset conservatively retains all user messages. It also respects tool-batch
+and thinking-loop boundaries required by providers.
+
+Normal resets make no additional summary call. The handoff stays in its original
+action arguments; it is not copied into a synthetic message. Multiple resets in
+one batch coalesce, and a `finish` call takes precedence over reset. A rejected
+call, or an interrupted batch that never commits a reset request, is not restored
+as a fresh reset on resume. A request already committed before interruption can
+be completed on resume. Original events remain in the active branch's history.
+
+### Capacity and Recovery
+
+When a known model input limit is at least 80% used but not yet exceeded, the SDK
+adds one reminder to prepare a handoff or files and call `new_context`. A real
+context change enables the next reminder; a reset that removes nothing does not.
+The reminder does not guarantee that the model will reset in time.
+
+At a hard input limit, or after a provider context-overflow error, the SDK can
+attempt one summary rescue and retry the current model-generation attempt once.
+That rescue reuses the existing summarizer, whose default bounded loop allows up
+to five summary attempts and shortens event text after failed attempts. These
+internal attempts are distinct from the single outer rescue. The summary must
+reduce input size; if protected content cannot fit, summarization fails, or the
+retried request still exceeds capacity, the run stops with an error.
+
+The rescue summarizes only removable complete blocks and preserves the system
+prompt and all user messages. An explicit application request through
+`conversation.condense()` also uses this summary path. A normal `new_context`
+request whose protected handoff/batch and input cannot fit fails instead of
+silently summarizing away that required batch.
+
+### Development Examples
+
+- [History retrieval with the existing summarizing condenser](https://github.com/cbinhan/software-agent-sdk/tree/feat/issue-4916-agent-reset/examples/01_standalone_sdk/conversation_history): scripted retrieval, paging, and reopening persisted history.
+- [Agent reset with files and history](https://github.com/cbinhan/software-agent-sdk/tree/feat/issue-4916-agent-reset/examples/01_standalone_sdk/agent_reset): an offline run executes real file operations and resets with scripted responses; an optional live run demonstrates the phase transition.
+
+The offline examples validate the execution paths, not model recall quality or
+autonomous decisions about when to reset. History retrieval excludes system and
+internal events, provider reasoning, and history tool calls/results. It does not
+search other conversations or sibling branches, infer missing facts, or plan
+retrieval automatically.
 
 ## Next Steps
 
