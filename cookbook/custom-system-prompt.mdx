@@ -1,0 +1,425 @@
+---
+title: Custom System Prompt
+description: Override the default OpenHands system prompt with a custom one for specialized agents.
+icon: message
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@f167d5a002741a71c42df89f04f0ec00c4481b25 (custom-system-prompt/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/f167d5a002741a71c42df89f04f0ec00c4481b25/custom-system-prompt" horizontal />
+
+Override the OpenHands system prompt for one conversation with your own text,
+using the Cloud **App Conversation API**.
+
+`POST /api/v1/app-conversations` accepts a `system_prompt` field. When set,
+it **replaces** the default static system prompt for that conversation. The
+per-conversation dynamic context — repo context, loaded skills, custom
+secrets, current datetime — is still appended automatically, so your custom
+prompt composes with whatever runtime context the sandbox provides.
+
+Feature shipped in OpenHands Enterprise **1.62.0**
+([enterprise#335](https://github.com/OpenHands/enterprise/pull/335)) and is
+also live on OpenHands Cloud.
+
+## When to Use This
+
+- Your agent has a specialised role (research assistant, code reviewer,
+  documentation writer) and the default coding-agent framing gets in the way.
+- You're building a domain-specific product on top of OpenHands and want to
+  own the prompt without asking the agent to *ignore* the default one.
+- You need to enforce specific behaviour or persona for a single
+  conversation without changing user- or org-level settings.
+
+For long-lived overrides, put the text in an **agent profile** instead;
+`system_prompt` is a per-conversation override.
+
+## What Gets Replaced, and What Doesn't
+
+`SystemPromptEvent` is the first event in every conversation and carries
+two structured fields:
+
+| Field             | Contains                                                                                       | Overridden by `system_prompt`?                            |
+| ----------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `system_prompt`   | The static system prompt (a `{cache_prompt, type, text}` object)                               | **Yes** — its `.text` becomes your custom prompt verbatim |
+| `dynamic_context` | Runtime context: repo context, `<SKILLS>`, `<CUSTOM_SECRETS>`, `<CURRENT_DATETIME>`, host info | No — still appended by the server                         |
+
+`system_message_suffix` is a *separate* field on the same request and is
+appended to the dynamic context; you can set both.
+
+## Anatomy of the Default System Prompt
+
+Before you replace the default prompt wholesale, it's worth knowing what
+you're displacing. The SDK composes the prompt from a small set of named,
+guarded sections. The references below are pinned to
+[`software-agent-sdk@v1.50.1`](https://github.com/OpenHands/software-agent-sdk/tree/v1.50.1)
+so the line numbers and content stay stable; bump the tag when auditing a
+newer release.
+
+### Two blocks on one system message
+
+The default agent ships the prompt as a `SystemPromptEvent` with two
+content blocks on a single `role: system` message
+([`event/llm_convertible/system.py`](https://github.com/OpenHands/software-agent-sdk/blob/v1.50.1/openhands-sdk/openhands/sdk/event/llm_convertible/system.py)):
+
+| Block       | Field on the event     | What it carries                                                                                            | Cacheable                                                                     |
+| ----------- | ---------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 1 (static)  | `system_prompt.text`   | Identity, role, work habits, security policy, model-specific rules                                         | **Yes** — marked `cache_prompt=True`                                          |
+| 2 (dynamic) | `dynamic_context.text` | Current datetime, repo context, loaded `<SKILLS>`, custom `<CUSTOM_SECRETS>`, your `system_message_suffix` | **No** — left unmarked so the static prefix stays shared across conversations |
+
+The caching split is wired in
+[`llm/llm.py::_apply_prompt_caching`](https://github.com/OpenHands/software-agent-sdk/blob/v1.50.1/openhands-sdk/openhands/sdk/llm/llm.py)
+— for Anthropic-style prefix caching, only index 0 gets the cache marker.
+Every conversation your account starts can hit the same cached static
+block, which is the whole reason the two-block shape exists.
+
+### What goes into each block
+
+Static-tier sections live in
+[`context/prompts/sections/static.py`](https://github.com/OpenHands/software-agent-sdk/blob/v1.50.1/openhands-sdk/openhands/sdk/context/prompts/sections/static.py);
+dynamic-tier sections in
+[`context/prompts/sections/dynamic.py`](https://github.com/OpenHands/software-agent-sdk/blob/v1.50.1/openhands-sdk/openhands/sdk/context/prompts/sections/dynamic.py).
+The default composition order is pinned in
+[`context/prompts/presets.py`](https://github.com/OpenHands/software-agent-sdk/blob/v1.50.1/openhands-sdk/openhands/sdk/context/prompts/presets.py):
+
+**Static block, in order** — `<SOUL>` and `<ROLE>` (identity), `<MEMORY>`
+(AGENTS.md or persistent-memory guidance), `<EFFICIENCY>`,
+`<FILE_SYSTEM_GUIDELINES>`, `<CODE_QUALITY>`, `<VERSION_CONTROL>`,
+`<PULL_REQUESTS>`, `<PROBLEM_SOLVING_WORKFLOW>`, `<SELF_DOCUMENTATION>`
+(work habits), `<SECURITY>` and `<SECURITY_RISK_ASSESSMENT>` (safety
+policy), `<BROWSER_TOOLS>` (only if `enable_browser`),
+`<EXTERNAL_SERVICES>`, `<ENVIRONMENT_SETUP>`, `<TROUBLESHOOTING>`,
+`<PROCESS_MANAGEMENT>`, and `<IMPORTANT>` (per-model-family tweaks for
+Claude, Gemini, GPT-5).
+
+**Dynamic block, in order** — `<REPO_CONTEXT>`, `<MEMORY_CONTEXT>`,
+`<SKILLS>`, your `system_message_suffix` (raw, no wrapper),
+`<CUSTOM_SECRETS>`, and `<CURRENT_DATETIME>` **last** on purpose: it's
+the only per-conversation volatile value, so putting it at the tail keeps
+the stable dynamic content a cache-friendly prefix even on providers that
+cache the dynamic block too.
+
+Setting `system_prompt` on `POST /api/v1/app-conversations` **replaces the
+entire static block above** — all 17-ish sections, verbatim text and all —
+with your custom text. The dynamic block is unaffected.
+
+### Writing a custom `system_prompt` without breaking caching
+
+The static block's whole value is that it's the same bytes every time your
+account hits the LLM. Anthropic's prefix cache keys on the exact byte
+prefix: a one-character change splits one cached prefix into two, each
+with its own cold-start cost on the next miss. OpenAI's and Gemini's
+caches have the same shape of pitfall. So when you write your own
+`system_prompt`:
+
+- **Don't interpolate per-conversation volatile values** into the text.
+  No `datetime.now()`, no request id, no conversation id, no user email,
+  no repo URL, no sandbox id, no working directory. Any of these in the
+  static block means every conversation gets its own cache entry —
+  effectively no caching at all.
+- **Don't interpolate per-user profile fields** either (API key, display
+  name, org name). Even if the value changes rarely, it still shards the
+  cache per-user, and anything secret-shaped doesn't belong in a cached
+  blob.
+- **If you need date-aware behaviour, read the dynamic block.** The server
+  always appends `<CURRENT_DATETIME>` to `dynamic_context` — reference it
+  from the static text (e.g. "see `<CURRENT_DATETIME>` for today's date")
+  instead of baking a timestamp in.
+- **Keep the exact same bytes across runs that are logically "the same
+  agent".** If you tweak wording, do it on a deploy boundary, not inside
+  the request path.
+- **Front-load the parts you're least likely to edit.** On a tail-only
+  edit, the longest unchanged prefix still hits the cache; on a prefix
+  edit, nothing does.
+- **If you need per-conversation flavour, use `system_message_suffix`**
+  (goes into the uncached dynamic block) rather than templating it into
+  `system_prompt`.
+
+A sanity check: hash the string you're about to send
+(`hashlib.sha256(system_prompt.encode()).hexdigest()[:12]`) and log it. If
+that hash changes between two conversations that should be equivalent, you
+have a cache leak.
+
+### `system_prompt` vs. skills vs. `system_message_suffix` — when to use which
+
+All three let you shape the agent's instructions, but they pay very
+different context-window and caching costs:
+
+| Mechanism                                                                                              | Where it lands                                                         | Cost                                                                                          | Use for                                                                                                               |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `system_prompt`                                                                                        | Cached static block                                                    | Paid once per unique prompt, then free (within the cache window)                              | Identity, tone, hard rules, response format — things the agent should see on **every** turn of **every** conversation |
+| **Skills** (`disabled_skills` on the start request, or your own via the plugin / sandbox-upload paths) | Dynamic `<SKILLS>` block, with per-skill bodies loaded only on trigger | Catalog line costs tokens every turn; the full skill body only costs tokens on turns it fires | Specialised procedures, long reference material, service-specific recipes — things that matter **sometimes**          |
+| `system_message_suffix`                                                                                | Dynamic block (uncached), appended after `<CUSTOM_SECRETS>`            | Paid every turn, every conversation it's set on                                               | Short per-conversation nudges that compose with the default without rewriting the full static text                    |
+
+Rule of thumb — **if the instruction applies to every turn of every
+conversation this agent runs, it belongs in `system_prompt`. If it
+applies sometimes, make it a skill. If it's a one-conversation tweak,
+use `system_message_suffix`.**
+
+Resist the urge to pack long domain procedures into `system_prompt` just
+because it feels tidier. Every token in the static block is a token the
+LLM reads before responding to anything — a skill that fires on 1-in-20
+turns pays its full-body cost \~5% as often as the static block does.
+
+## How It Works
+
+### 1. Start the conversation
+
+`POST /api/v1/app-conversations` is asynchronous: it returns a
+[`AppConversationStartTask`](/) whose `id` is the
+**task id**, not the conversation id. Omit `sandbox_id` and the App Server
+provisions a fresh sandbox for you.
+
+```python
+payload = {
+    "system_prompt": "You are a research assistant...",
+    "initial_message": {
+        "role": "user",
+        "content": [{"type": "text", "text": "Say hello."}],
+    },
+    "title": "custom-system-prompt demo",
+}
+task = requests.post(
+    f"{base_url}/api/v1/app-conversations",
+    headers={"Authorization": f"Bearer {api_key}"},
+    json=payload,
+).json()
+task_id = task["id"]
+```
+
+### 2. Wait for `app_conversation_id`
+
+Poll `/api/v1/app-conversations/start-tasks?ids=<task_id>` until the task
+reaches `READY` and hands back `app_conversation_id` (and, if the server
+provisioned one, `sandbox_id`). The endpoint is a "search by ids"
+lookup — `ids` is a required, repeatable query parameter and the
+response is a JSON array of the matching tasks.
+
+```python
+while not conv_id:
+    time.sleep(3)
+    item = requests.get(
+        f"{base_url}/api/v1/app-conversations/start-tasks",
+        headers=headers,
+        params={"ids": task_id},
+    ).json()[0]
+    if item["status"] == "ERROR":
+        raise RuntimeError(item.get("detail"))
+    conv_id = item.get("app_conversation_id")
+    sandbox_id = item.get("sandbox_id") or sandbox_id
+```
+
+### 3. Verify from the `SystemPromptEvent`
+
+The Cloud events endpoint mirrors the agent-server view, so you can read
+the event without needing the sandbox's `session_api_key`.
+
+```python
+event = requests.get(
+    f"{base_url}/api/v1/conversation/{conv_id}/events/search",
+    headers=headers,
+    params={"kind__eq": "SystemPromptEvent", "limit": 1},
+).json()["items"][0]
+
+assert custom_prompt in event["system_prompt"]["text"]
+```
+
+Note the shape: `event["system_prompt"]` is a `{cache_prompt, type, text}`
+object — the actual prompt string is at `.text`.
+
+### 4. Cleanup
+
+`DELETE /api/v1/app-conversations/{id}` frees the conversation. Delete the
+sandbox separately when you're done with it. The sandbox delete endpoint
+is `DELETE /api/v1/sandboxes/{id}` and additionally requires `sandbox_id`
+as a query parameter — pass the same id in both places, or the server
+returns HTTP 422.
+
+```python
+requests.delete(f"{base_url}/api/v1/app-conversations/{conv_id}", headers=headers)
+requests.delete(
+    f"{base_url}/api/v1/sandboxes/{sandbox_id}",
+    headers=headers,
+    params={"sandbox_id": sandbox_id},
+)
+```
+
+## Prerequisites
+
+```bash
+pip install requests
+export OH_API_KEY="your-api-key"   # Cloud: Profile → API Keys.
+                                   # OHE: Settings → API Keys on your instance.
+```
+
+You do **not** need to set LLM credentials — the App Server uses whatever
+LLM your account is configured with.
+
+## Run It
+
+```bash
+python custom_system_prompt.py
+
+# or against an OpenHands Enterprise instance:
+python custom_system_prompt.py --base-url https://your-ohe.example.com
+
+# supply your own prompt / message:
+python custom_system_prompt.py \
+    --prompt "You are Sir Reginald, a pirate. Every reply starts with 'Arrr!'" \
+    --message "Say hello."
+
+# keep resources for inspection (no cleanup at the end):
+python custom_system_prompt.py --keep
+```
+
+The script starts a conversation with `system_prompt` set, fetches the first
+`SystemPromptEvent`, asserts the custom text is there, and cleans up.
+Exit status is non-zero if verification fails.
+
+### Real output
+
+Captured against an OpenHands Enterprise 1.67.0 instance:
+
+```text
+=== start conversation ===
+  custom prompt: You are a research assistant. Answer questions concisely and accurately. When wr...
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: SETTING_UP_SKILLS
+  start-task status: SETTING_UP_SKILLS
+  start-task status: STARTING_CONVERSATION
+  start-task status: STARTING_CONVERSATION
+  start-task status: READY
+conversation: 7698ab13bb994b3181ea01d23652a2ca
+sandbox: 3U13tOWV00GZpo1bhnhMBf
+
+=== verify SystemPromptEvent ===
+  system_prompt.text (124 chars): You are a research assistant. Answer questions concisely and accurately. When writing code, focus on clarity and simplic...
+  dynamic_context.text (47806 chars) — appended automatically; contains repo/skills/secrets/datetime blocks
+
+  PASS: custom prompt found in SystemPromptEvent
+
+=== cleanup ===
+  deleted conversation 7698ab13bb994b3181ea01d23652a2ca
+  deleted sandbox 3U13tOWV00GZpo1bhnhMBf
+```
+
+## Prompt Gallery
+
+Swap `--prompt` (or `SYSTEM_PROMPT`) for any of these to try them out.
+
+### Research assistant
+
+```text
+You are a research assistant. Answer questions concisely and accurately.
+When writing code, focus on clarity and simplicity. Always cite your sources
+when making factual claims.
+```
+
+### Code reviewer
+
+```text
+You are a code reviewer. Analyze code for correctness, security, and
+maintainability. Provide specific, actionable feedback. Focus on material
+issues, not style preferences.
+```
+
+### Documentation writer
+
+```text
+You are a technical documentation writer. Write clear, accurate, and
+comprehensive documentation. Use examples to illustrate concepts.
+Structure content with clear headings and logical flow.
+```
+
+### Data analyst
+
+```text
+You are a data analyst. Analyze data to extract insights and patterns.
+Use appropriate statistical methods and visualizations. Explain your
+findings clearly with supporting evidence.
+```
+
+## Composition with `system_message_suffix`
+
+`system_message_suffix` is a separate field appended to the dynamic
+context. You can use both together:
+
+```python
+payload = {
+    "system_prompt": "You are a research assistant...",
+    "system_message_suffix": "Focus on academic papers published after 2020.",
+    ...
+}
+```
+
+The resulting prompt structure is:
+
+```text
+[system_prompt.text          — your custom static prompt]
+
+[dynamic_context.text        — repo context, skills, secrets, datetime]
+[system_message_suffix       — appended to the dynamic context]
+```
+
+## Planning Agent (`agent_type=plan`)
+
+When `agent_type=plan` is set alongside `system_prompt`, the custom prompt
+still replaces the built-in planning static prompt, but the planning tools
+and workflow instructions are kept — the agent keeps its ability to create
+and update plans, with your text as the foundation.
+
+## ACP Agents
+
+For ACP (Agent Communication Protocol) agents, which delegate to external
+CLIs (Claude Code, Gemini CLI, etc.), `system_prompt` is **ignored** with a
+server-side warning (`app_conversation_start:system_prompt_ignored_for_acp_agent`).
+ACP agents own their own system prompt and cannot be overridden via the REST
+API.
+
+## Feature Availability
+
+- OpenHands Cloud (currently deployed)
+- OpenHands Enterprise **1.62.0+**
+  ([enterprise#335](https://github.com/OpenHands/enterprise/pull/335))
+
+To verify on a specific deployment, look for `system_prompt` in the
+`AppConversationStartRequest` schema:
+
+```bash
+curl -s https://your-deployment/openapi.json \
+  | jq '.components.schemas["AppConversationStartRequest-Input"].properties.system_prompt'
+```
+
+## APIs Used
+
+| Endpoint                                  | Method | Purpose                                       |
+| ----------------------------------------- | ------ | --------------------------------------------- |
+| `/api/v1/app-conversations`               | POST   | Start the conversation (returns a start task) |
+| `/api/v1/app-conversations/start-tasks`   | GET    | Poll the start task for `app_conversation_id` |
+| `/api/v1/conversation/{id}/events/search` | GET    | Read `SystemPromptEvent` to verify            |
+| `/api/v1/app-conversations/{id}`          | DELETE | Delete the conversation                       |
+| `/api/v1/sandboxes/{id}?sandbox_id={id}`  | DELETE | Delete the sandbox                            |
+
+All calls use `Authorization: Bearer <OH_API_KEY>`.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="conversation-tags" href="/cookbook/conversation-tags" icon="tags">
+    same App Conversation API pattern, showing how to attach and read back arbitrary metadata.
+  </Card>
+
+  <Card title="load-plugin" href="https://github.com/OpenHands/enterprise-cookbook/tree/f167d5a002741a71c42df89f04f0ec00c4481b25/load-plugin" icon="arrow-up-right-from-square">
+    start a conversation with a plugin pre-loaded, using the same start-task polling flow.
+  </Card>
+
+  <Card title="custom-agent-no-browser" href="/cookbook/custom-agent-no-browser" icon="sliders">
+    configure which tools the agent has access to (different customisation axis).
+  </Card>
+
+  <Card title="OpenHands SDK — Agent Settings" href="/sdk/guides/agent-settings" icon="book-open" />
+
+  <Card title="OpenHands Enterprise PR #335" href="https://github.com/OpenHands/enterprise/pull/335" icon="arrow-up-right-from-square" />
+</CardGroup>
