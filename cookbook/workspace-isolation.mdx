@@ -1,0 +1,342 @@
+---
+title: Workspace Isolation
+description: Enforce directory boundaries with hooks to prevent agents from navigating or writing outside assigned workspace.
+icon: folder-tree
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@a9865b8aed05a6377674000d13ea10ee1a2be646 (workspace-isolation/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/a9865b8aed05a6377674000d13ea10ee1a2be646/workspace-isolation" horizontal />
+
+An **advanced** hook example that enforces workspace isolation - preventing agents from navigating or writing outside their assigned directory. This is particularly useful when running **multiple parallel conversations on a local machine**, ensuring each conversation stays in its own sandbox without interfering with others.
+
+Based on the production implementation in [jpshackelford/lxa](https://github.com/jpshackelford/lxa/blob/main/src/hooks/sandbox.py).
+
+## What's in the Box
+
+The [`sandbox-enforcer/`](https://github.com/OpenHands/enterprise-cookbook/tree/a9865b8aed05a6377674000d13ea10ee1a2be646/workspace-isolation/sandbox-enforcer) plugin bundles:
+
+- **Hooks manifest** (`hooks/hooks.json`) - Two PreToolUse hooks (one for `terminal`,
+  one for `file_editor`) whose validation logic is **inlined** as POSIX-sh `command`s
+- **Reference scripts** (`hooks/scripts/*.sh`) - The same logic as standalone files,
+  kept for readability/diffing (see the note under [Hook Scripts](#hook-scripts) on why
+  the manifest inlines them rather than referencing these files)
+- **Skill** (`skills/sandbox-enforcer/SKILL.md`) - Documentation about isolation rules
+- **Plugin manifest** (`.claude-plugin/plugin.json`) - Standard Claude Code plugin format
+
+## The Problem This Solves
+
+**Scenario:** You're running a local OpenHands instance with multiple conversations in parallel:
+
+```text
+~/my-projects/
+├── web-app/      ← Conversation 1: "Refactor the auth module"
+├── api-server/   ← Conversation 2: "Add rate limiting"
+└── cli-tool/     ← Conversation 3: "Fix the parser bug"
+```
+
+**Without workspace isolation:**
+
+- Agent 1 might accidentally `cd ../api-server` and modify the wrong project
+- Agent 2 could `rm -rf ../web-app/node_modules` while cleaning up
+- Agent 3 might write test output to `/tmp` that conflicts with other agents
+
+**With workspace isolation:**
+
+- Each agent stays in its assigned directory
+- Attempts to navigate or write outside are blocked with helpful messages
+- Agents can still READ external files (with `# read-only` escape hatch)
+
+## How It Works
+
+```mermaid
+flowchart TD
+    A["User to Agent 1: #quot;Navigate to /tmp and create a cache file#quot;"] --> B["Agent 1: *prepares: cd /tmp*"]
+    B --> C["PreToolUse Hook (terminal): *intercepts command*"]
+    C --> C1["Detects: cd /tmp (outside workspace)"]
+    C1 --> C2["Workspace: /home/user/my-projects/web-app"]
+    C2 --> C3["Returns exit code 2 (block) + message"]
+    C3 --> D["Agent 1: *receives block, explains to user*"]
+    D --> E["User: *Agent stays safely in web-app directory*"]
+```
+
+Meanwhile, Agent 2 and Agent 3 work independently in their own workspaces without risk of collision.
+
+## Protected Operations
+
+The plugin enforces isolation for:
+
+### Terminal Commands
+
+- **Navigation:** `cd`, `pushd`, `popd` to external directories
+- **Write operations:** `rm`, `mv`, `cp`, `chmod`, `mkdir`, `touch`, `dd`, `ln`, etc.
+- **Output redirection:** `>`, `>>` to external paths
+
+### File Editor Operations
+
+- **Write commands:** `create`, `str_replace`, `insert`, `undo_edit` to external paths
+- **Read commands:** `view` is always allowed (can read anywhere)
+
+## Run It
+
+<Tabs>
+  <Tab title="Local Development Setup">
+    1. Create multiple project directories:
+
+    ```bash
+    mkdir -p ~/my-projects/{project-a,project-b,project-c}
+    ```
+
+    2. Load the plugin in each conversation with different workspace dirs:
+
+    ```bash
+    # Conversation 1 - workspace: ~/my-projects/project-a
+    cd ~/my-projects/project-a
+    # Load plugin with load-plugin example
+
+    # Conversation 2 - workspace: ~/my-projects/project-b
+    cd ~/my-projects/project-b
+    # Load plugin with load-plugin example
+    ```
+
+    3. Try cross-contamination (it will be blocked):
+
+    ```bash
+    # In Conversation 1
+    cd ../project-b  # BLOCKED
+    cp file.txt ../project-b/  # BLOCKED
+    ```
+  </Tab>
+
+  <Tab title="Via API">
+    ```bash
+    cd ../load-plugin
+
+    # This will be blocked (cd outside workspace)
+    python load_plugin.py \
+      --repo-path workspace-isolation/sandbox-enforcer \
+      --message "Navigate to /tmp and list files there"
+
+    # This will be allowed (within workspace)
+    python load_plugin.py \
+      --repo-path workspace-isolation/sandbox-enforcer \
+      --message "List all files in the current directory"
+    ```
+  </Tab>
+
+  <Tab title="Via Badge">
+    [![Try Sandbox Enforcer](https://img.shields.io/badge/Try%20Sandbox%20Enforcer-blue)](https://app.all-hands.dev/launch?plugins=W3sic291cmNlIjogImdpdGh1YjpPcGVuSGFuZHMvZW50ZXJwcmlzZS1jb29rYm9vayIsICJyZWYiOiAibWFpbiIsICJyZXBvX3BhdGgiOiAid29ya3NwYWNlLWlzb2xhdGlvbi9zYW5kYm94LWVuZm9yY2VyIn1d\&message=Navigate%20to%20%2Ftmp%20and%20create%20a%20file%20there)
+  </Tab>
+</Tabs>
+
+<Note>
+  **Note:** In cloud ephemeral workspaces, this isolation is less critical (each conversation gets its own container), but it still demonstrates the technique for local setups.
+</Note>
+
+## The `# read-only` Escape Hatch
+
+Sometimes you need to READ system files or shared resources outside your workspace.
+
+Add `# read-only` to your prompt:
+
+```bash
+# ✓ Allowed - read-only access to system file
+cat /etc/os-release  # read-only
+
+# ✓ Allowed - check system information
+uname -a  # read-only
+
+# ✗ Still blocked - write operation
+echo "data" > /tmp/output.txt  # read-only  (doesn't help with writes)
+```
+
+The hook detects the `# read-only` comment and allows non-destructive operations that reference external paths.
+
+## Hook Scripts
+
+<Note>
+  **Inline, not referenced.** When a plugin's PreToolUse hook fires, the hook
+  runner executes the `command` through `/bin/sh -c` with the working directory
+  set to the **agent's workspace**, not the plugin directory — and there is no
+  plugin-root path variable for hooks. A relative `hooks/scripts/validate_*.sh`
+  therefore won't resolve at runtime, and `{"type": "script", "path": ...}` is
+  **not** a supported hook type (only `command`, `prompt`, `agent`). So
+  `hooks/hooks.json` **inlines** each validator as a POSIX-sh `command`. The
+  `.sh` files below are byte-for-byte the same logic, kept as readable reference
+  (and easy to lint/diff); edit them and the inline `command` together.
+</Note>
+
+### 1. Terminal Validation (`validate_terminal.sh`)
+
+Checks terminal commands for:
+
+- Navigation commands (`cd`, `pushd`, `popd`) trying to leave workspace
+- Write commands (`rm`, `mv`, `cp`, `chmod`, `mkdir`, etc.) targeting external paths
+- Output redirects (`>`, `>>`) to external files
+
+```bash
+#!/bin/bash
+input=$(cat)
+workspace="${OPENHANDS_PROJECT_DIR:-$PWD}"
+
+# Check for navigation outside workspace
+if [[ command is cd/pushd/popd to external path ]]; then
+    echo '{"decision": "deny", "reason": "Cannot navigate outside workspace..."}'
+    exit 2
+fi
+
+# Check for write operations outside workspace
+# ...
+```
+
+### 2. File Editor Validation (`validate_file_editor.sh`)
+
+Checks file_editor operations:
+
+- Always allows `view` (read-only)
+- Blocks `create`, `str_replace`, `insert`, `undo_edit` to external paths
+
+```bash
+#!/bin/bash
+input=$(cat)
+workspace="${OPENHANDS_PROJECT_DIR:-$PWD}"
+
+# Always allow view
+if [[ command == "view" ]]; then
+    exit 0
+fi
+
+# Block writes outside workspace
+# ...
+```
+
+## Workspace Detection
+
+The hooks determine your workspace using (in order):
+
+1. **`OPENHANDS_PROJECT_DIR`** - Set by OpenHands Cloud/Enterprise
+2. **`PWD`** - Current working directory (fallback)
+
+This makes it work in both local and cloud environments.
+
+## Plugin Structure
+
+```text
+sandbox-enforcer/
+├── .claude-plugin/
+│   └── plugin.json              # Plugin metadata
+├── hooks/
+│   ├── hooks.json               # Hook config (validators inlined as POSIX-sh commands)
+│   └── scripts/
+│       ├── validate_terminal.sh     # Reference copy of the terminal validator
+│       └── validate_file_editor.sh  # Reference copy of the file_editor validator
+└── skills/
+    └── sandbox-enforcer/
+        └── SKILL.md             # Documentation (auto-loaded)
+```
+
+This follows the **Claude Code plugin format**. The validation logic lives inline
+in `hooks.json` (so it resolves at runtime as a plugin); the `scripts/*.sh` files
+hold the identical logic for readability.
+
+## Comparison with Other Examples
+
+| Example                                          | Approach                     | Security Level | Use Case                             | Complexity   |
+| ------------------------------------------------ | ---------------------------- | -------------- | ------------------------------------ | ------------ |
+| [command-blacklist](/cookbook/command-blacklist) | Block dangerous patterns     | Medium         | General protection                   | Simple       |
+| [command-whitelist](/cookbook/command-whitelist) | Allow only approved commands | High           | Read-only, educational               | Simple       |
+| **workspace-isolation** (this)                   | Enforce directory boundaries | High           | Parallel conversations, multi-tenant | **Advanced** |
+
+All three can be combined for defense-in-depth!
+
+## When to Use This
+
+**✅ Use workspace isolation when:**
+
+- Running multiple parallel conversations on one machine
+- Each conversation works on a different project/directory
+- You need to prevent cross-contamination between workspaces
+- Building multi-tenant local development environments
+- Teaching/educational scenarios with multiple students
+
+**⏭️ Skip workspace isolation when:**
+
+- Using cloud ephemeral workspaces (already isolated by containers)
+- Running only one conversation at a time
+- The agent needs to work across multiple project directories intentionally
+
+## Real-World Example: LXA
+
+This example is based on [jpshackelford/lxa](https://github.com/jpshackelford/lxa), a production tool that manages multiple OpenHands conversations in parallel:
+
+```text
+lxa schedule --all  # Process all jobs in parallel, each in its own workspace
+├── Job 1: /data/job-1234/  (isolated)
+├── Job 2: /data/job-5678/  (isolated)
+└── Job 3: /data/job-9012/  (isolated)
+```
+
+The hooks ensure each job stays in its assigned directory, preventing interference.
+
+## Limitations
+
+This is a **simplified, heuristic-based implementation** with limitations:
+
+1. **No full shell parsing** - Complex quoting might bypass detection
+2. **No path canonicalization** - Doesn't resolve symlinks or `.` / `..` fully
+3. **Simplified command extraction** - May not catch all edge cases
+4. **Fails open** - If hook can't parse input, it allows the operation (for safety)
+
+For production use, see the full [Python implementation in lxa](https://github.com/jpshackelford/lxa/blob/main/src/hooks/sandbox.py) which handles:
+
+- Full path resolution with `pathlib`
+- Symlink following
+- Complex shell command parsing with `shlex`
+- Proper handling of shell metacharacters and quoting
+
+## Extending the Example
+
+Want to add more restrictions? Edit the inlined `command` in `hooks/hooks.json`
+(and keep the reference `scripts/*.sh` in sync):
+
+```sh
+# Add more blocked write commands, e.g. npm and pip:
+if printf '%s' "$cmd_name" | grep -qE "^(rm|rmdir|mv|cp|chmod|chown|mkdir|touch|dd|ln|npm|pip)$"; then
+    # ...
+fi
+```
+
+Keep the logic POSIX-sh and inline so it runs correctly when loaded as a plugin
+(see the note under [Hook Scripts](#hook-scripts)).
+
+## Contributing
+
+This example prioritizes clarity and accessibility over completeness. If you're building a production system, refer to the [lxa implementation](https://github.com/jpshackelford/lxa/blob/main/src/hooks/sandbox.py) for a more robust approach.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="OpenHands Hooks Guide" href="/sdk/guides/hooks" icon="book-open">
+    Official documentation
+  </Card>
+
+  <Card title="jpshackelford/lxa" href="https://github.com/jpshackelford/lxa" icon="arrow-up-right-from-square">
+    Production implementation
+  </Card>
+
+  <Card title="command-blacklist" href="/cookbook/command-blacklist" icon="shield-halved">
+    Block dangerous commands
+  </Card>
+
+  <Card title="command-whitelist" href="/cookbook/command-whitelist" icon="user-shield">
+    Whitelist safe commands
+  </Card>
+
+  <Card title="load-plugin" href="/cookbook/load-plugin" icon="plug">
+    How to load this plugin
+  </Card>
+
+  <Card title="launch-plugin-badge" href="/cookbook/launch-plugin-badge" icon="rocket">
+    No-code launcher
+  </Card>
+</CardGroup>
