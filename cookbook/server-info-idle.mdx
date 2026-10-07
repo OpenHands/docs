@@ -1,0 +1,199 @@
+---
+title: Server Info Idle
+description: Poll the idle_time endpoint to detect when a workspace has gone quiet.
+icon: clock
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@cecd88c2f4bf85f9f7a17df0e24942167b95bdb7 (server-info-idle/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/cecd88c2f4bf85f9f7a17df0e24942167b95bdb7/server-info-idle" horizontal />
+
+Detect when an agent has gone quiet by polling the agent-server's built-in idle
+timer: `GET /server_info` reports `idle_time`, the seconds since the last
+activity on the server. This is the **exact signal `runtime-api` polls** to
+decide when a sandbox is idle enough to pause/reap — this example uses the same
+signal for your own "has the workspace gone quiet?" check.
+
+On **Cloud** (the default here), the same response also carries
+`runtime_idle_timeout_seconds`, the platform's real reap threshold, so you can
+see `idle_time` climbing toward the very number the platform acts on.
+
+One file:
+
+- [`idle_poll.py`](https://github.com/OpenHands/enterprise-cookbook/blob/cecd88c2f4bf85f9f7a17df0e24942167b95bdb7/server-info-idle/idle_poll.py) — start a Cloud sandbox, attach a conversation
+  (no LLM key needed), then poll `/server_info` until `idle_time` crosses a
+  threshold and declare the agent idle. Pass `--local` to run against an
+  agent-server you start in Docker instead.
+
+## How It Works
+
+```mermaid
+sequenceDiagram
+    participant P as idle_poll.py
+    participant S as Cloud app server / sandbox agent-server
+    P->>S: POST /api/v1/sandboxes
+    P->>S: GET /api/v1/sandboxes?id (until RUNNING)
+    P->>S: GET #lt;agent#gt;/server_info (baseline)
+    Note right of S: idle_time, runtime_idle_timeout_seconds
+    P->>S: POST /api/v1/app-conversations
+    Note right of S: attach (no LLM key)#59; poll start-task
+    P->>S: GET #lt;agent#gt;/server_info (loop)
+    Note right of S: idle_time climbing...
+    Note over P: ...until idle_time > threshold -> #quot;agent idle#quot;
+    P->>S: DELETE /api/v1/sandboxes/{id}
+    Note right of S: clean up
+```
+
+## `idle_time` vs. `execution_status`
+
+They answer different questions — pick per your need:
+
+|                                             | `idle_time` (this example)        | `execution_status`                                   |
+| ------------------------------------------- | --------------------------------- | ---------------------------------------------------- |
+| **Question**                                | "Has the *workspace* gone quiet?" | "Is *this conversation* done?"                       |
+| **Granularity**                             | Server-wide heartbeat             | Per-conversation state machine                       |
+| **Distinguishes finished / error / stuck?** | No                                | Yes (`is_terminal()`)                                |
+| **How to consume**                          | Poll `GET /server_info`           | Push via [WebSocket](/cookbook/watch-terminal-state) |
+| **Used by the platform for**                | Reaping idle sandboxes            | Reporting run completion                             |
+
+Use `idle_time` when you just want "nothing is happening anymore" without
+subscribing to a conversation; use `execution_status` when you need an
+authoritative terminal signal.
+
+## Run It
+
+```bash
+export OH_API_KEY=...        # your https://app.all-hands.dev API key
+pip install requests
+
+python idle_poll.py
+```
+
+No LLM key is required: attaching through the Cloud app server injects your
+account's configured LLM.
+
+### Flags
+
+| Flag                | Env var           | Default                                       |
+| ------------------- | ----------------- | --------------------------------------------- |
+| `--api-key`         | `OH_API_KEY`      | — (required)                                  |
+| `--base-url`        | `OH_API_BASE`     | `https://app.all-hands.dev`                   |
+| `--sandbox-spec-id` | `SANDBOX_SPEC_ID` | none (account default image)                  |
+| `--message`         | —                 | `Say hello in one short sentence, then stop.` |
+| `--poll-timeout`    | `POLL_TIMEOUT`    | `180` (sandbox / start-task)                  |
+| `--idle-threshold`  | —                 | `15` (seconds)                                |
+| `--poll-interval`   | —                 | `3` (seconds)                                 |
+| `--watch-timeout`   | —                 | `180`                                         |
+| `--keep`            | —                 | off (deletes the sandbox at the end)          |
+
+## What It Prints
+
+```text
+sandbox: 2UqRNuFbMFhgLLntVnla5k
+  sandbox status: RUNNING
+agent: https://tsjascgdpnrkidek.prod-runtime.all-hands.dev
+baseline /server_info: idle_time=101.0s runtime_idle_timeout_seconds=1200.0
+
+=== attaching conversation (start-task poll) ===
+  start-task status: SETTING_UP_SKILLS
+  start-task status: STARTING_CONVERSATION
+  start-task status: READY
+conversation: be8a7d2965f34f85b142e3ee44ed188b
+
+polling /server_info.idle_time every 3.0s; declaring idle at > 15.0s
+
+  idle_time=  0.0s  uptime=134.0s
+  idle_time=  3.0s  uptime=137.0s
+  idle_time=  1.0s  uptime=140.0s     # drops when the agent acts
+  idle_time=  4.0s  uptime=143.0s
+  idle_time=  7.0s  uptime=146.0s
+  idle_time= 10.0s  uptime=149.0s
+  idle_time= 13.0s  uptime=152.0s
+  idle_time= 16.0s  uptime=155.0s     # climbs after the agent stops
+
+agent idle: idle_time exceeded 15.0s — the workspace has gone quiet.
+(this is the same signal runtime-api uses to reap sandboxes; for a
+per-conversation terminal state use execution_status)
+
+Cleaning up sandbox…
+```
+
+## Running Locally Without Cloud
+
+The audience for this example is **Cloud**. If you have no Cloud account, pass
+`--local` to start an agent-server in Docker and poll it directly:
+
+```bash
+docker must be running
+pip install requests
+
+export LLM_API_KEY=...                     # required in --local mode
+export LLM_MODEL=litellm_proxy/...         # required in --local mode
+export LLM_BASE_URL=https://...            # optional (provider default if unset)
+
+python idle_poll.py --local
+```
+
+The only differences in `--local` mode: the script `docker run`s the
+`ghcr.io/openhands/agent-server:latest-python` image, creates the conversation
+directly on the agent-server (`POST /api/conversations`, which needs an LLM key),
+and reads `/server_info` at `http://localhost:8000`. Note that
+`runtime_idle_timeout_seconds` is **`null`** locally — there is no platform
+reaper — so only the `idle_time` heartbeat is meaningful. Local-only flags:
+`--llm-api-key`, `--llm-model`, `--llm-base-url`, `--session-key`, `--image`,
+`--server-port`, `--container-name`.
+
+## Notes
+
+- **Coarse by design.** `idle_time` cannot tell you *why* things went quiet
+  (finished vs. errored vs. stuck vs. simply waiting). It is a heartbeat, not a
+  state machine. That is exactly why the platform uses it for reaping and not for
+  reporting completion.
+- **Threshold choice.** Set `--idle-threshold` well above your longest expected
+  gap between agent actions (LLM latency, long tool calls), or you will declare
+  "idle" mid-run. The platform's default (`runtime_idle_timeout_seconds`, \~1200s
+  on Cloud) is deliberately large for this reason.
+- Full agent-server schema: `<agent-url>/openapi.json`.
+
+## APIs Used
+
+### Cloud app server — manages the sandbox lifecycle
+
+- Base URL: `https://app.all-hands.dev`, auth header `X-Session-API-Key: <OH_API_KEY>`.
+- `POST /api/v1/sandboxes` — start a sandbox
+- `GET  /api/v1/sandboxes?id=<id>` — poll until `RUNNING`
+- `POST /api/v1/app-conversations` — attach a conversation (returns a start task)
+- `GET  /api/v1/app-conversations/start-tasks?ids=<id>` — poll for the id
+- `DELETE /api/v1/sandboxes/{id}?sandbox_id=<id>` — clean up
+
+### Agent server — `GET /server_info`
+
+Read from the sandbox's `AGENT_SERVER` exposed URL with its `session_api_key`.
+Returns a `ServerInfo` object; the fields this example reads:
+
+| Field                          | Meaning                                                                                                                                                                                                                    |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `idle_time`                    | Seconds since the last activity (file ops, agent steps, ACP heartbeat). Drops while the agent works, climbs once it stops.                                                                                                 |
+| `uptime`                       | Seconds since the server started.                                                                                                                                                                                          |
+| `runtime_idle_timeout_seconds` | The platform's own reap threshold — how long `runtime-api` lets a sandbox sit idle before pausing/stopping it (e.g. `1200.0` on Cloud). **Populated on Cloud; `null` on a plain local agent-server, which has no reaper.** |
+
+On Cloud, `runtime-api` reaps a sandbox roughly when
+`idle_time >= runtime_idle_timeout_seconds`. This demo uses a much smaller
+threshold (`--idle-threshold`, default 15s) so you can watch idle detection fire
+quickly against the same `idle_time` signal.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="watch-terminal-state" href="/cookbook/watch-terminal-state" icon="terminal">
+    authoritative per-conversation terminal state over the WebSocket (push)
+  </Card>
+
+  <Card title="react-to-state-websocket" href="/cookbook/react-to-state-websocket" icon="bolt">
+    react to every execution_status transition over the WebSocket
+  </Card>
+
+  <Card title="start-sandbox" href="/cookbook/start-sandbox" icon="play">
+    the sandbox lifecycle this example builds on
+  </Card>
+</CardGroup>
