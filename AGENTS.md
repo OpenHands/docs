@@ -156,6 +156,18 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Runs the agent-server OpenAPI generator
 - Updates `openapi/agent-sdk.json` via an automated PR
 
+### 4) Cookbook tab generated from `OpenHands/enterprise-cookbook`
+
+Every page under `cookbook/` and the `Cookbook` tab in `docs.json` are generated from example READMEs in
+`OpenHands/enterprise-cookbook` by its `tools/docs-render` converter. **Do not edit them here**; change the
+example's `README.md` or `example.yaml` in that repository.
+
+- Each enterprise-cookbook PR gets a draft `cookbook-preview/pr-<N>` PR here for its Mintlify preview. These
+  are never merged and close with the source PR.
+- Merged changes arrive in a single `cookbook-sync` PR, opened by `openhands-release-bot` and refreshed nightly.
+- `.github/workflows/cookbook-generated.yml` fails PRs from any other branch that touch `cookbook/`, and
+  `sync_code_blocks.py` skips `cookbook/` because its code-block paths are relative to each example.
+
 ## Docs writing conventions
 
 - Most pages are `.mdx` with frontmatter:
