@@ -1,0 +1,137 @@
+---
+title: Conversation Tags
+description: Attach key-value metadata to a conversation with tags and read it back from AppConversation.tags.
+icon: tags
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@main (conversation-tags/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/main/conversation-tags" horizontal />
+
+Stash your own key-value metadata on an OpenHands conversation — for example an
+external `environment_url` or `environment_conversation_id` — and read it back
+later from your own tooling. Conversations expose a free-form **`tags`** map for
+exactly this.
+
+This is the supported replacement for adding a bespoke field (e.g. a custom
+`environment_url` column) to the conversation model: use `tags` instead.
+
+## How It Works
+
+OpenHands has a **Cloud app server** (manages accounts, sandboxes, and
+conversations) and, for each sandbox, an **agent server** (the runtime that owns
+the conversation). Tags live on the agent-side conversation, and their values
+surface on the Cloud's `AppConversation.tags` field.
+
+| Step                    | Server    | Call                                              |
+| ----------------------- | --------- | ------------------------------------------------- |
+| Start a conversation    | Cloud     | `POST /api/v1/app-conversations`                  |
+| Resolve agent URL + key | Cloud     | `GET /api/v1/app-conversations?ids=<id>`          |
+| **Write tags**          | **Agent** | `PATCH {conversation_url}` with `{"tags": {...}}` |
+| Read tags back          | Cloud     | `GET /api/v1/app-conversations?ids=<id>` → `tags` |
+
+Auth uses `X-Session-API-Key` on both servers, but with **different keys**:
+
+- Cloud app server → your `OH_API_KEY`
+- Agent server → the per-conversation `session_api_key` returned by the Cloud
+
+`conversation_url` from the Cloud is already the full agent resource URL
+`https://<agent-host>/api/conversations/<id>`, so you `PATCH` it directly.
+
+**Consistency:** the agent server is authoritative and reflects a `PATCH`
+immediately (`GET {conversation_url}` → `tags`). The Cloud's
+`AppConversation.tags` view is **eventually consistent** — it typically catches
+up within a few seconds — so this example confirms the write on the agent server
+and then *polls* the Cloud read instead of reading once.
+
+<Note>
+  Why not set tags on the Cloud create call? The Cloud
+  `POST/PATCH /api/v1/app-conversations` payloads do not expose `tags` today —
+  the agent server is the authoritative place to write them, and the Cloud
+  reflects the result. The agent `POST /api/conversations` also accepts `tags`
+  at creation time if you provision the sandbox yourself (see
+  [`clone-and-attach`](/cookbook/clone-and-attach)).
+</Note>
+
+## Tag Rules
+
+The agent server enforces:
+
+- **keys** must be **lowercase alphanumeric** — no `_` or `-`
+  (use `environmenturl`, not `environment_url`; an invalid key is rejected)
+- **values** are arbitrary strings, **≤ 256 characters**
+- `PATCH` **replaces all** tags — so this example does a read-modify-write to
+  merge instead of clobbering existing tags
+
+Need to store something structured or longer than 256 chars? Put a JSON string
+into a single tag value (within the limit), or split across multiple keys.
+
+## Run It
+
+```bash
+export OH_API_KEY=...        # your https://app.all-hands.dev API key
+pip install requests
+
+# Zero-config: starts a conversation, sets two demo tags, reads them back,
+# then deletes the conversation + sandbox.
+python tag_conversation.py
+```
+
+Sample output:
+
+```text
+=== start conversation ===
+  start-task status: STARTING_CONVERSATION
+  start-task status: READY
+conversation: b07894c6643c453e9091414056ba4828
+  sandbox status: RUNNING
+agent conversation_url: https://qplbjkyptdumixsu.prod-runtime.all-hands.dev/api/conversations/b07894c6643c453e9091414056ba4828
+
+=== set tags (agent server) ===
+  existing tags: {}
+  setting tags:  {'environmenturl': 'https://env.example.com/session/abc123', 'environmentconversationid': 'ext-0001'}
+  agent tags (authoritative): {'environmenturl': 'https://env.example.com/session/abc123', 'environmentconversationid': 'ext-0001'}
+
+=== read tags back (cloud server, eventually consistent) ===
+  AppConversation.tags: {'environmenturl': 'https://env.example.com/session/abc123', 'environmentconversationid': 'ext-0001'}
+
+round-trip OK: True
+
+=== cleanup ===
+  deleted conversation b07894c6643c453e9091414056ba4828
+  deleted sandbox 3NjFZz5JDyIVUdvxNsXi0R
+```
+
+## Set Your Own Tags
+
+Pass `--tag KEY=VALUE` (repeatable), and `--keep` to leave the conversation open
+so you can inspect the tags in the UI:
+
+```bash
+python tag_conversation.py \
+    --tag environmenturl=https://env.example.com/abc \
+    --tag environmentconversationid=ext-42 \
+    --keep
+```
+
+| Flag             | Env var           | Default                     | Purpose                               |
+| ---------------- | ----------------- | --------------------------- | ------------------------------------- |
+| `--api-key`      | `OH_API_KEY`      | — (required)                | Cloud API key                         |
+| `--base-url`     | `OH_API_BASE`     | `https://app.all-hands.dev` | Cloud app server                      |
+| `--tag`          | —                 | two demo tags               | `KEY=VALUE`, repeatable               |
+| `--message`      | `INITIAL_MESSAGE` | a hello prompt              | First message to the agent            |
+| `--sandbox-id`   | `SANDBOX_ID`      | none                        | Reuse a RUNNING sandbox               |
+| `--keep`         | —                 | off                         | Don't delete the conversation/sandbox |
+| `--poll-timeout` | `POLL_TIMEOUT`    | `240`                       | Seconds to wait for readiness         |
+
+## APIs Used
+
+| Endpoint                                         | Server | Purpose                                                    |
+| ------------------------------------------------ | ------ | ---------------------------------------------------------- |
+| `POST /api/v1/app-conversations`                 | Cloud  | Start a conversation                                       |
+| `GET /api/v1/app-conversations/start-tasks?ids=` | Cloud  | Poll for the conversation id                               |
+| `GET /api/v1/app-conversations?ids=`             | Cloud  | Resolve `conversation_url`, `session_api_key`, read `tags` |
+| `GET {conversation_url}`                         | Agent  | Read current tags before merging                           |
+| `PATCH {conversation_url}`                       | Agent  | Set the (merged) tags                                      |
+| `DELETE /api/v1/app-conversations/{id}`          | Cloud  | Clean up the conversation                                  |
+| `DELETE /api/v1/sandboxes/{id}?sandbox_id=`      | Cloud  | Clean up the sandbox                                       |
