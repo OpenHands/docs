@@ -1,0 +1,534 @@
+---
+title: Disabled Skills
+description: Persist an account-level deny-list of skills so every conversation starts with them disabled.
+icon: ban
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@main (disabled-skills/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/main/disabled-skills" horizontal />
+
+Keep specific OpenHands skills out of every conversation an account starts,
+using the Cloud **Settings API** — the same endpoint the UI's *Settings →
+Skills* page toggles. Once installed, the deny-list applies to every
+`POST /api/v1/app-conversations` call that account makes, without the
+caller having to pass anything on each request.
+
+`POST /api/v1/settings` with `{"disabled_skills": [...]}` persists an
+**account-level** deny-list. On every conversation start the App Server
+computes `effective_disabled_skills = member ∪ profile ∪ request` and drops
+matching skill names from the `<SKILLS>` block that ships in the first
+`SystemPromptEvent`. A skill disabled at any level stays off.
+
+Feature shipped in OpenHands Enterprise **1.62.0**
+([enterprise#335](https://github.com/OpenHands/enterprise/pull/335)) and is
+also live on OpenHands Cloud.
+
+## When to Use This
+
+Prefer the **account-level** setting for anything policy-shaped:
+
+- The team should never see a certain skill (e.g. no external git
+  integrations on an internal build; no `docker` when your sandbox base
+  image can't run nested Docker).
+- The deny-list must be enforced consistently — you can't accidentally
+  start a conversation without it because you forgot the field.
+- You don't want callers of the API to have to remember to include
+  `disabled_skills` on every request.
+
+Reach for the **per-request** field (`disabled_skills` on
+`POST /api/v1/app-conversations`) only as an escape hatch:
+
+- One-off runs that need extra skills off, on top of the account default.
+- Ad-hoc experiments where you're trying deny-lists without touching the
+  persisted setting.
+
+## Precedence
+
+`effective_disabled_skills` (from
+`openhands/app_server/app_conversation/live_status_app_conversation_service.py`)
+takes the union of three sources, order-preserving, de-duplicated:
+
+| Level                  | Where it lives                                          | How to set it                                                         |
+| ---------------------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
+| Account (member)       | `user.disabled_skills`                                  | `POST /api/v1/settings` with `disabled_skills: [...]` — this tutorial |
+| Launched Agent Profile | `agent_context.disabled_skills` on the resolved profile | `POST /api/v1/settings/profiles/{name}`                               |
+| Per-request            | `disabled_skills` on the start request                  | `POST /api/v1/app-conversations` with `disabled_skills: [...]`        |
+
+A name absent from the discovered skill catalog is a **harmless no-op** —
+you can safely include speculative names without failing the request. Names
+are matched exactly (case-sensitive) against the `<name>` values returned by
+`GET /api/v1/skills/search?q=<prefix>` (a bare call with no `q` returns
+microagents mixed in; pass a prefix like `?q=github` to see the skill names
+that appear in the `<SKILLS>` block).
+
+## ⚠ Caveat: Deny-First Means New OpenHands Skills Opt You In
+
+The current design is a **deny-list**, not an allow-list: anything that isn't
+explicitly disabled is loaded. That is deliberately drift-tolerant for most
+callers — a name you listed that no longer exists is a no-op, so your config
+survives rename/removal — but it has one consequence worth understanding
+before you ship this to production:
+
+<Info>
+  **When the OpenHands team adds a new built-in skill in a future SDK
+  release, every account whose `disabled_skills` doesn't name it will start
+  loading it on the next conversation, with no code change on your side.**
+</Info>
+
+For most teams that's the desired behaviour: you get new capabilities for
+free. But it's a problem when:
+
+- **Code (yours or an agent's) references skills by name.** A new skill
+  whose name collides with a trigger keyword or auto-injection rule you
+  depend on can start firing on turns it didn't fire on yesterday, changing
+  observable behaviour without a deploy on your side.
+- **The deny-list is policy, not preference.** If `disabled_skills` is
+  there because an auditor said "no external git integrations", the correct
+  guarantee is "no git integrations ever", not "no git integrations we knew
+  about at the time". A new `gerrit` or `codecommit` skill would quietly
+  bypass that intent.
+- **You need a stable per-turn context budget.** New skills (even if never
+  invoked) still show up in the `<SKILLS>` block of the dynamic context and
+  consume tokens.
+
+### Lock-down pattern: snapshot the catalog, then deny everything else
+
+When you need tight control, treat the current skill catalog as the
+authoritative set and deny everything in it except the names you want to
+keep. This inverts the deny-list into an effective allow-list while still
+using the only mechanism the server exposes.
+
+The authoritative source for "what skills does the agent see by default"
+is the `<SKILLS>` block of a `SystemPromptEvent` on a probe conversation
+started with **no** `disabled_skills` set. (`GET /api/v1/skills/search`
+without a `q` prefix returns microagents rather than the SDK skills that
+appear in `<SKILLS>`, so parsing the event is the reliable path — the
+same path `disabled_skills.py` uses to verify absence.)
+
+```python
+import re
+import requests
+
+headers = {"Authorization": f"Bearer {api_key}"}
+_SKILLS_BLOCK = re.compile(r"<SKILLS>(.*?)</SKILLS>", re.DOTALL)
+_SKILL_NAME = re.compile(r"<name>([^<]+)</name>")
+
+# 1. Clear any existing deny-list so the probe sees the full catalog.
+requests.post(
+    f"{base_url}/api/v1/settings", headers=headers, json={"disabled_skills": []},
+)
+
+# 2. Start a probe conversation and poll start-tasks until READY (omitted
+#    for brevity — see custom-system-prompt/custom_system_prompt.py).
+probe_conv_id = start_and_wait(base_url, headers)
+
+# 3. Read SystemPromptEvent and extract every <name> in <SKILLS>.
+event = requests.get(
+    f"{base_url}/api/v1/conversation/{probe_conv_id}/events/search",
+    headers=headers,
+    params={"kind__eq": "SystemPromptEvent", "limit": 1},
+).json()["items"][0]
+
+skills_block = _SKILLS_BLOCK.search(event["dynamic_context"]["text"]).group(1)
+all_skill_names = set(_SKILL_NAME.findall(skills_block))
+
+# 4. Decide the small set you *do* want.
+allowed = {"github", "linear", "uv"}
+
+# 5. Deny the complement.
+requests.post(
+    f"{base_url}/api/v1/settings",
+    headers=headers,
+    json={"disabled_skills": sorted(all_skill_names - allowed)},
+)
+```
+
+The probe is a one-time cost per catalog refresh; cache
+`all_skill_names` and reuse it until the next SDK upgrade.
+
+Operational notes for teams running this as policy:
+
+- **Re-snapshot on every SDK or platform upgrade.** A new build may ship
+  new skill names; your deny-list won't cover them until you refresh it.
+  Wire the snapshot step into your deploy pipeline (or run it on a
+  schedule) rather than treating the deny-list as set-and-forget.
+- **Diff before you apply.** `set(current) ^ set(snapshot)` tells you
+  exactly which skill names appeared or disappeared since the last run —
+  surface that in a code review or audit log so a human owns the decision
+  about any newcomer.
+- **The agent profile is the right place to persist a locked-down set.**
+  `POST /api/v1/settings/profiles/{name}` holds a `disabled_skills` list
+  that applies on top of the account-level one, so a `"locked-down"`
+  profile can carry the full complement without the account default
+  having to repeat it.
+
+An explicit allow-list field isn't currently exposed by the API; snapshot +
+deny-the-rest is the supported workaround.
+
+## How It Works
+
+### 1. Install the account-level deny-list
+
+```python
+requests.post(
+    f"{base_url}/api/v1/settings",
+    headers={"Authorization": f"Bearer {api_key}"},
+    json={"disabled_skills": ["github", "gitlab", "bitbucket"]},
+)
+```
+
+This is a partial settings save — the server deep-merges, so sending just
+this one field leaves every other setting untouched. It's the exact call
+the UI's *Settings → Skills* page makes via
+`useSkillMutations.saveDisabledSkills` in
+[`frontend/src/hooks/mutation/use-skill-mutations.ts`](https://github.com/OpenHands/enterprise/blob/main/frontend/src/hooks/mutation/use-skill-mutations.ts).
+
+One footgun: the server treats a `null` payload as "no change" (it copies
+the previously-persisted list forward). To clear the deny-list, send `[]`.
+`effective_disabled_skills` treats `None` and `[]` identically, so the
+observable behaviour is the same.
+
+### 2. Start a conversation with nothing on the request
+
+```python
+requests.post(
+    f"{base_url}/api/v1/app-conversations",
+    headers=headers,
+    json={
+        "initial_message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "Say hello."}],
+        },
+        "title": "no per-request disabled_skills",
+    },
+)
+```
+
+No `disabled_skills` field is sent — the account-level setting is doing
+all the work.
+
+### 3. Verify from the `SystemPromptEvent`
+
+The `SystemPromptEvent` is the first event in every conversation. Its
+`dynamic_context.text` contains a `<SKILLS>...</SKILLS>` block listing
+every skill the agent can invoke:
+
+```xml
+<SKILLS>
+The following skills are available. ...
+<available_skills>
+  <skill>
+    <name>github-resilience</name>
+    <description>...</description>
+  </skill>
+  ...
+</available_skills>
+</SKILLS>
+```
+
+The script parses out every `<name>` and asserts none of the denied names
+are present:
+
+```python
+event = requests.get(
+    f"{base_url}/api/v1/conversation/{conv_id}/events/search",
+    headers=headers,
+    params={"kind__eq": "SystemPromptEvent", "limit": 1},
+).json()["items"][0]
+
+skills_block = re.search(
+    r"<SKILLS>(.*?)</SKILLS>",
+    event["dynamic_context"]["text"],
+    re.DOTALL,
+).group(1)
+loaded = re.findall(r"<name>([^<]+)</name>", skills_block)
+
+assert set(disabled_names).isdisjoint(loaded)
+```
+
+See the [`custom-system-prompt`](/cookbook/custom-system-prompt) tutorial for
+the full shape of `SystemPromptEvent`.
+
+### 4. Cleanup and restore
+
+```python
+requests.delete(f"{base_url}/api/v1/app-conversations/{conv_id}", headers=headers)
+requests.delete(
+    f"{base_url}/api/v1/sandboxes/{sandbox_id}",
+    headers=headers,
+    params={"sandbox_id": sandbox_id},
+)
+requests.post(
+    f"{base_url}/api/v1/settings",
+    headers=headers,
+    json={"disabled_skills": original or []},
+)
+```
+
+The script always restores the original account setting, even on error
+(via `try / finally`), so a failed run never leaves the account with a
+stuck deny-list.
+
+## Prerequisites
+
+```bash
+pip install requests
+export OH_API_KEY="your-api-key"   # Cloud: Profile → API Keys.
+                                   # OHE: Settings → API Keys on your instance.
+```
+
+The account whose API key you use is the one whose `disabled_skills`
+setting the script mutates and then restores.
+
+## Run It
+
+```bash
+# default: 'no-git-integrations' gallery, account-level only
+python disabled_skills.py
+
+# pick a different gallery
+python disabled_skills.py --gallery no-docker
+python disabled_skills.py --gallery no-github-automations
+
+# explicit skill names (overrides --gallery)
+python disabled_skills.py --disable docker kubernetes pdflatex
+
+# also start a second conversation with additional per-request skills
+# to demonstrate account ∪ request:
+python disabled_skills.py --per-request
+
+# target an OpenHands Enterprise instance:
+python disabled_skills.py --base-url https://your-ohe.example.com
+
+# keep conversations for inspection (account setting is still restored):
+python disabled_skills.py --keep
+```
+
+The script:
+
+1. Reads and remembers the current account-level `disabled_skills`.
+2. Installs the requested deny-list via `POST /api/v1/settings`.
+3. Starts a conversation with **no** `disabled_skills` on the request,
+   proving the account-level setting alone keeps the skills out.
+4. Parses `<SKILLS>` in `dynamic_context.text` and asserts every disabled
+   name is absent.
+5. Optionally repeats with per-request `disabled_skills` to show union.
+6. Deletes the conversation(s) and sandbox(es), and restores the original
+   account-level setting — the beta instance is left as it was found.
+
+Exit status is non-zero if any verification fails.
+
+### Real output
+
+Captured against `https://app.all-hands.dev` with `--per-request`:
+
+```text
+=== install account-level deny-list ===
+  disabling: ['github', 'gitlab', 'bitbucket', 'bitbucket-cloud', 'bitbucket-data-center', 'azure-devops']
+  previous account setting: []
+  new account setting:      ['github', 'gitlab', 'bitbucket', 'bitbucket-cloud', 'bitbucket-data-center', 'azure-devops']
+
+=== conversation 1: no per-request disabled_skills ===
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: SETTING_UP_SKILLS
+  start-task status: SETTING_UP_SKILLS
+  start-task status: STARTING_CONVERSATION
+  start-task status: STARTING_CONVERSATION
+  start-task status: READY
+  conversation: 445d3864b33f4ad594522abddee5169b sandbox: 3sHSpWbMEFoSvEzl9g7NyN
+  account-only: loaded 103 skills
+    - github                                   absent
+    - gitlab                                   absent
+    - bitbucket                                absent
+    - bitbucket-cloud                          absent
+    - bitbucket-data-center                    absent
+    - azure-devops                             absent
+  PASS (account-only): all denied skills absent from SystemPromptEvent
+
+=== conversation 2: per-request disabled_skills = ['flarglebargle'] (union should be ['github', 'gitlab', 'bitbucket', 'bitbucket-cloud', 'bitbucket-data-center', 'azure-devops', 'flarglebargle']) ===
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: WAITING_FOR_SANDBOX
+  start-task status: SETTING_UP_SKILLS
+  start-task status: SETTING_UP_SKILLS
+  start-task status: STARTING_CONVERSATION
+  start-task status: READY
+  conversation: f73fc9ad970a4cb88f1030851f47f8a9 sandbox: 2V2xzlr0wGG6oRLLho59jf
+  account + request: loaded 102 skills
+    - github                                   absent
+    - gitlab                                   absent
+    - bitbucket                                absent
+    - bitbucket-cloud                          absent
+    - bitbucket-data-center                    absent
+    - azure-devops                             absent
+    - flarglebargle                            absent
+  PASS (account + request): all denied skills absent from SystemPromptEvent
+
+=== cleanup ===
+  deleted conversation 445d3864b33f4ad594522abddee5169b
+  deleted sandbox 3sHSpWbMEFoSvEzl9g7NyN
+  deleted conversation f73fc9ad970a4cb88f1030851f47f8a9
+  deleted sandbox 2V2xzlr0wGG6oRLLho59jf
+
+=== restore original account-level setting ===
+  restored account setting: []
+```
+
+Conversation 1 loaded 103 skills; conversation 2 loaded 102 (the extra
+`flarglebargle` denial removed one). Every denied name is absent from
+the `<SKILLS>` block of the `SystemPromptEvent`.
+
+## Deny-List Gallery
+
+Common recipes, all exposed through `--gallery`:
+
+### `no-git-integrations`
+
+Drop every git-hosting integration skill. Useful for internal-only
+environments or when you're deliberately keeping the agent off customer
+repos.
+
+```python
+[
+    "github",
+    "gitlab",
+    "bitbucket",
+    "bitbucket-cloud",
+    "bitbucket-data-center",
+    "azure-devops",
+]
+```
+
+### `no-browser`
+
+Turn off skills whose primary value is browsing/preview flows. (The
+browser *tool* itself is off via the agent config, not this deny-list;
+see [`../custom-agent-no-browser/`](/cookbook/custom-agent-no-browser).)
+
+```python
+["frontend-design", "vercel"]
+```
+
+### `no-docker`
+
+Keep the agent out of Docker and Kubernetes skills — appropriate when
+your sandbox base image doesn't support nested Docker.
+
+```python
+["docker", "kubernetes"]
+```
+
+### `no-github-automations`
+
+Keep the general `github` skill available but hide the automation
+recipes (workflows, monitors, watchdogs) if they're not for this team.
+
+```python
+[
+    "github-actions",
+    "github-agents-md-maintainer",
+    "github-delivery-watchdog",
+    "github-issue-to-pr",
+    "github-issue-triage",
+    "github-pr-review",
+    "github-pr-reviewer",
+    "github-repo-monitor",
+    "github-stale-ci-pr-closer",
+]
+```
+
+Roll your own with `--disable name1 name2 name3`. Skill names come from
+`GET /api/v1/skills/search?q=<prefix>`.
+
+## Per-Request Escape Hatch
+
+Set `disabled_skills` on the start request to *extend* the deny-list for
+a single conversation:
+
+```python
+requests.post(
+    f"{base_url}/api/v1/app-conversations",
+    headers=headers,
+    json={
+        "disabled_skills": ["flarglebargle"],
+        "initial_message": {
+            "role": "user",
+            "content": [{"type": "text", "text": "Say hello."}],
+        },
+        "title": "one-off deny-list bump",
+    },
+)
+```
+
+The three levels union — you can't *re-enable* an account- or
+profile-level denial by omitting it here. If the account has `[github]`
+and the request sends `[docker]`, the effective deny-list is
+`[github, docker]`.
+
+## Feature Availability
+
+- OpenHands Cloud (currently deployed)
+- OpenHands Enterprise **1.62.0+**
+  ([enterprise#335](https://github.com/OpenHands/enterprise/pull/335))
+
+To verify on a specific deployment, look for `disabled_skills` in both the
+`GETSettingsModel` and the `AppConversationStartRequest-Input` schemas:
+
+```bash
+curl -s https://your-deployment/openapi.json | jq '
+  .components.schemas.GETSettingsModel.properties.disabled_skills,
+  .components.schemas["AppConversationStartRequest-Input"].properties.disabled_skills
+'
+```
+
+To confirm the endpoint you're calling is the same one the UI uses,
+grep the enterprise frontend:
+
+```bash
+gh repo clone OpenHands/enterprise
+grep -rn "disabled_skills" enterprise/frontend/src/hooks/mutation/
+# -> use-skill-mutations.ts calls SettingsService.saveSettings({ disabled_skills })
+# -> settings-service.api.ts posts to /api/v1/settings
+```
+
+## APIs Used
+
+| Endpoint                                  | Method | Purpose                                              |
+| ----------------------------------------- | ------ | ---------------------------------------------------- |
+| `/api/v1/settings`                        | GET    | Read current account `disabled_skills` (for restore) |
+| `/api/v1/settings`                        | POST   | Install / clear the account-level deny-list          |
+| `/api/v1/app-conversations`               | POST   | Start the conversation (`disabled_skills` optional)  |
+| `/api/v1/app-conversations/start-tasks`   | GET    | Poll the start task for `app_conversation_id`        |
+| `/api/v1/conversation/{id}/events/search` | GET    | Read `SystemPromptEvent` to verify                   |
+| `/api/v1/app-conversations/{id}`          | DELETE | Delete the conversation                              |
+| `/api/v1/sandboxes/{id}?sandbox_id={id}`  | DELETE | Delete the sandbox                                   |
+| `/api/v1/skills/search?q=<prefix>`        | GET    | Discover valid skill names for the deny-list         |
+
+All calls use `Authorization: Bearer <OH_API_KEY>`.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="custom-system-prompt" href="/cookbook/custom-system-prompt" icon="message">
+    sibling tutorial covering the other half of enterprise#335: replacing the static system prompt.
+  </Card>
+
+  <Card title="custom-agent-no-browser" href="/cookbook/custom-agent-no-browser" icon="sliders">
+    turn off the browser tool (a different customisation axis; deny-list here operates on skills).
+  </Card>
+
+  <Card title="load-plugin" href="/cookbook/load-plugin" icon="plug">
+    start a conversation with a plugin pre-loaded, using the same start-task polling flow.
+  </Card>
+
+  <Card title="OpenHands Enterprise PR #335" href="https://github.com/OpenHands/enterprise/pull/335" icon="arrow-up-right-from-square" />
+
+  <Card title="OpenHands SDK — Agent Settings" href="/sdk/guides/agent-settings" icon="book-open" />
+</CardGroup>
