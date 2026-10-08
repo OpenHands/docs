@@ -1,0 +1,473 @@
+---
+title: Warm Sandbox Pool
+description: Keep a pool of pre-initialized sandboxes warm and attach conversations to them on demand.
+icon: fire
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@28d5c99b53a1c4917a090ab75a06586665a3960a (warm-sandbox-pool/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/28d5c99b53a1c4917a090ab75a06586665a3960a/warm-sandbox-pool" horizontal />
+
+Demonstrates maintaining a pool of pre-initialized "warm" sandboxes that late-bind to conversations on demand, taking sandbox startup and initialization out of the end user's wait.
+
+**This example demonstrates a technique for any situation where expensive setup must finish before an agent can start working**, using OpenHands Cloud APIs. It shows that custom images are not the only viable approach for handling initialization that takes more than a few seconds, and it can also be combined with custom images.
+
+<Accordion title="Context: Alternative to Custom Images">
+  When applications have components that run outside the agent control loop and must be available on the system where the agent is running, a custom image is not the only mechanism for packaging these dependencies.
+
+  Although OpenHands Enterprise has robust support for [custom sandbox images](/enterprise/custom-sandbox-images), custom images are not yet supported on OpenHands SaaS. Where they are supported, a custom image may still not fully address the situation:
+
+  - The required setup may change over a shorter period than is practical for rebuilding the image.
+  - A significant part of the setup may vary so much by task that an image for each variation is impractical.
+
+  Even when using custom images in OpenHands Enterprise, some scenarios require additional tasks to be completed on the running sandbox to make it ready for use. **If these tasks take more than a few seconds, the Warm Sandbox Pool technique removes that delay from what an end-user waits for** by preparing a pool of pre-initialized sandboxes that late-bind to conversations when an end-user begins to interact with the agent.
+
+  This same approach can be used to install and prepare application services in sandboxes via API calls available in OpenHands SaaS, providing a viable alternative to custom images for your deployment needs.
+</Accordion>
+
+## How It Works
+
+Instead of waiting for sandbox provisioning and initialization every time a user starts a conversation, this approach:
+
+1. **Maintains a pool** of pre-initialized sandboxes (e.g., 3 sandboxes)
+2. **Pre-installs dependencies** (Ruby, gems, application services) during sandbox preparation
+3. **Late-binds conversations** - when a user needs a sandbox, one is pulled from the pool with no boot or setup wait
+4. **Auto-refills** - when pool drops below threshold, new sandboxes are automatically provisioned and prepared in the background
+
+This is particularly valuable when:
+
+- Setup tasks take more than a few seconds (installing Ruby, gems, starting services)
+- You want consistent, fast conversation startup times
+- You need services running and ready before the agent starts working
+- You're using OpenHands SaaS, where custom images are not yet supported
+
+### Architecture
+
+```mermaid
+flowchart TD
+    subgraph UI["Web UI"]
+        PV["Pool Visualization<br/>🟢 Sandbox 1: READY<br/>🟡 Sandbox 2: PREPARING<br/>🔴 Sandbox 3: STARTING"]
+        CI["Conversation Interface<br/>[Waiting for pool to be ready]<br/>[Then: conversation input box]"]
+    end
+    UI --> PC["Pool Controller<br/>(Flask Backend)"]
+    PC --> S1["Sandbox<br/>(READY)"]
+    PC --> S2["Sandbox<br/>(READY)"]
+    PC --> S3["Sandbox<br/>(READY)"]
+    S1 & S2 & S3 --- N["Each sandbox has Ruby +<br/>Sinatra gem + demo service"]
+```
+
+## Prerequisites
+
+- Python 3.10+
+- OpenHands Cloud API key (`OH_API_KEY`)
+- `uv` or standard Python environment
+
+## Run It
+
+### Installation
+
+```bash
+# Install dependencies
+uv pip install -e .
+
+# Or with pip
+pip install -r requirements.txt
+```
+
+<Tabs>
+  <Tab title="Run the Demo">
+    ```bash
+    export OH_API_KEY=your_api_key_here
+    python pool_controller.py
+    ```
+
+    Then open [http://localhost:12000](http://localhost:12000) in your browser. The controller prints a random
+    **access code** when it starts (look for `ACCESS CODE:` in its output). Paste it into
+    the page to sign in. Nothing is served without it, and a restart issues a new code.
+
+    <Warning>
+      **Heads up: this creates real sandboxes.** The controller immediately starts
+      `POOL_SIZE` sandboxes (default 3) and keeps topping the pool up as you use them.
+      Keep the defaults (pool of 3, threshold 2): a smaller pool leaves nothing to watch,
+      because the refill only starts once ready drops below the threshold. Press Ctrl-C
+      (or send SIGTERM) to stop: every sandbox still sitting in the pool is deleted. Sandboxes already
+      attached to a conversation are left running, like any other conversation sandbox.
+      If the controller is killed with SIGKILL it cannot clean up, so check your sandbox
+      list afterwards.
+    </Warning>
+  </Tab>
+
+  <Tab title="Run It From an OpenHands Sandbox and Watch the Web UI">
+    You can run this example inside an OpenHands sandbox (for example, ask an OpenHands
+    agent to "run the warm-sandbox-pool example") and watch the web UI from your own
+    browser. OpenHands sandboxes publish app ports as "work" URLs, so the agent starts the
+    controller on one of those ports, binds it to all interfaces, and gives you the link.
+
+    Steps for the agent (or for you, in a sandbox terminal):
+
+    1. Check which port the sandbox publishes. The controller's default, 12000, is the
+       first one: its work URL is `https://work-1-<id>-runtime.<domain>/`. Port 12001 is
+       `https://work-2-<id>-runtime.<domain>/`. If your environment lists different ports,
+       set `PORT` to one of them.
+
+    2. Start the controller with the **default pool settings** (pool of 3, threshold 2;
+       do not lower them, or there is little to watch), bound to `0.0.0.0` because the
+       default `127.0.0.1` is not reachable through the work URL:
+
+       ```bash
+       export OH_API_KEY=your_api_key_here
+       HOST=0.0.0.0 python pool_controller.py
+       ```
+
+    3. Read the access code from the controller's output (the line starting
+       `ACCESS CODE:`), then give the user **both** the matching work URL
+       (`https://work-1-<id>-runtime.<domain>/` for port 12000) and the code. They paste
+       the code into the page to sign in, then watch the pool fill, claim a sandbox with
+       Start Conversation, and follow the refill and the activity feed live.
+
+    4. When the user is done, stop the controller (Ctrl-C or `kill <pid>`; SIGTERM also
+       works). It deletes the unused pool sandboxes. Sandboxes already claimed by
+       conversations are left running, so delete those too if you do not need them.
+
+    This was verified through a real work URL: sign-in, the page, the live stream, and
+    starting a conversation all work through the proxy.
+
+    <Warning>
+      **Security: what the access code does and does not protect.** A work URL is reachable
+      by anyone who has it, so the controller gates **everything** (the page, the status
+      API, the live stream, and Start Conversation) behind a random one-time access code.
+      Without the code, a visitor sees only the sign-in page. The code is 10 characters
+      from a 32-character alphabet, is generated fresh on every start, lives only in the
+      controller's memory, and is checked in constant time.
+
+      What it does not do: whoever has the URL **and** the code can use **Start
+      Conversation** to run an agent with **any prompt they type**, on **your** account
+      (your credits, and any secrets your account makes available to conversations).
+      Sandboxes themselves are never exposed, because session keys stay in the controller.
+      The rules for a safe demo:
+
+      - Give the code only to the person who should have it. It is printed in the
+        controller's output, so do not paste that output into public places.
+      - Run it briefly and stop it when you are done. Do not leave it running.
+      - Keep the default `POOL_SIZE` of 3. Each claim can trigger a refill, so the total
+        number of sandboxes grows by one per conversation started.
+      - This is a demo gate, not a production login: there are no user accounts and no
+        rate limiting on guesses. For anything longer-lived, put real authentication in
+        front of it.
+    </Warning>
+  </Tab>
+</Tabs>
+
+### What to Expect (and what the pool does not speed up)
+
+The pool removes **sandbox boot plus your init script** from the user's wait. It does
+not remove the time OpenHands needs to start the conversation itself. Measured on one
+beta instance (your numbers will differ, and the web UI shows yours live):
+
+|                                                                                  | Time                                          |
+| -------------------------------------------------------------------------------- | --------------------------------------------- |
+| Sandbox boot + init script, per pool sandbox ("warm-up", paid in the background) | about 10-25s, up to \~40s on a cold apt cache |
+| Starting a conversation cold (no `sandbox_id`), before any Ruby install          | 12-26s                                        |
+| Starting a conversation on a warm sandbox ("attach")                             | about 10-12s                                  |
+
+So a cold start costs roughly *conversation start + warm-up*, and a warm start costs
+*conversation start*. The more expensive your init script, the bigger the win. For a
+cheap init script like this demo's, the saving is modest.
+
+### What You'll See
+
+1. **Initial State**: "Preparing pool..." message while the sandboxes initialize
+   (roughly 10-30 seconds each when the platform has capacity, longer otherwise)
+2. **Pool Visualization**: Real-time status of each sandbox:
+   - 🔴 **STARTING**: OpenHands is provisioning the sandbox
+   - 🟡 **PREPARING**: Installing Ruby, gems, starting service
+   - 🟢 **READY**: Fully initialized and available
+3. **Conversation UI**: Once pool is ready, type a message to start a conversation
+4. **Sandbox Allocation**: A ready sandbox is pulled from the pool and attached to your conversation
+5. **Auto-Refill**: Watch as a new sandbox automatically begins initializing to refill the pool
+
+### Configuration
+
+Environment variables:
+
+- `OH_API_KEY`: OpenHands Cloud API key (required)
+- `OH_API_BASE`: API base URL (default: `https://app.all-hands.dev`). Set this to
+  point at a different OpenHands instance.
+- `POOL_SIZE`: Target pool size (default: `3`)
+- `POOL_THRESHOLD`: Trigger refill when pool drops below this (default: `2`)
+- `SANDBOX_SPEC_ID`: Optional sandbox spec (runtime image) to use for pool sandboxes
+- `INIT_TIMEOUT`: Seconds the init script may run in a sandbox (default: `300`)
+- `MAX_FAILURES`: Stop refilling after this many provisioning failures in a row
+  (default: `3`). A failed sandbox is deleted immediately, so a broken init script
+  cannot silently create sandboxes forever.
+- `HOST`: Address the web UI binds to (default: `127.0.0.1`). Use `0.0.0.0` to reach
+  it through an OpenHands sandbox work URL. The UI can start conversations with your
+  API key, so it is gated by the access code the controller prints at startup; see
+  the security note above.
+- `PORT`: Web server port (default: `12000`, one of the ports an OpenHands sandbox
+  publishes as a work URL)
+
+### Testing the Ruby Service
+
+Once a sandbox is in READY state, the Sinatra service is listening on port 4567
+**inside** the sandbox. That port is not exposed publicly, so reach it from the
+sandbox itself. The easiest way is to start a conversation and ask the agent:
+
+```text
+"Call the quote service running on localhost:4567 and show me today's quote"
+```
+
+## Demo Application: Ruby Sinatra Service
+
+This example installs a Ruby/Sinatra web service in each sandbox to demonstrate the warm pool technique in a realistic scenario. **The Ruby service is only an example:** any long-running startup job can be installed and running before agent conversations begin, such as cloning a very large monorepo or downloading the Maven dependencies of a Java monorepo with many projects.
+
+The initialization process (installing Ruby runtime, gems, starting the service) shows how to deploy application services using the same API-driven preparation approach for your specific use case.
+
+## Implementation Details
+
+### Sandbox Initialization Process
+
+The controller uploads `sandbox_prep/init_ruby_service.sh` and
+`sandbox_prep/quote_service.rb` to the sandbox's agent-server (`POST /api/file/upload`)
+and runs the script (`POST /api/bash/execute_bash_command`). The script does the
+following (sandboxes run as a non-root user, so it uses `sudo` for installs):
+
+1. **Install Ruby**: `apt-get install ruby-full` (Ruby 3.3 on current sandbox images)
+2. **Install Sinatra**: `gem install sinatra rackup puma`
+3. **Deploy Service**: Copies the uploaded `quote_service.rb` into `/workspace/services`
+4. **Start Service**: Launches the Sinatra app in the background on port 4567
+5. **Verify**: Confirms the service responds to health checks
+
+This simulates a realistic scenario where your agent needs specific tools/services pre-installed.
+
+### Pool Management
+
+The `PoolController` class handles:
+
+- **Provisioning**: Creates sandboxes via OpenHands Cloud API
+- **Monitoring**: Polls sandbox status until RUNNING
+- **Initialization**: Executes preparation scripts via agent-server API
+- **Queue Management**: Thread-safe queue of ready sandboxes
+- **Auto-Refill**: Background thread maintains pool size, and stops after
+  `MAX_FAILURES` consecutive failures
+- **Cleanup**: Deletes failed sandboxes immediately and all unused pool sandboxes
+  on shutdown
+- **Conversation Binding**: Attaches conversations to pre-warmed sandboxes
+
+### Real-Time Updates
+
+The web UI uses Server-Sent Events (SSE) to stream pool state to the browser every
+couple of seconds. Besides the sandbox cards it shows live stats (claims, average
+warm-up, average attach time), the sandboxes already claimed by conversations, and an
+activity feed of every pool event: created, ready, pulled from the pool, claimed,
+failed, deleted, refilling halted.
+
+## Files
+
+```text
+warm-sandbox-pool/
+├── README.md                          # This file
+├── QUICKSTART.md                      # Short run-it-now guide
+├── pool_controller.py                 # Flask backend + pool manager
+├── requirements.txt                   # Python dependencies
+├── pyproject.toml                     # Same dependencies, for uv
+├── test_structure.py                  # Sanity check of the example's files
+├── sandbox_prep/
+│   ├── init_ruby_service.sh          # Bash script to initialize each sandbox
+│   └── quote_service.rb              # Ruby/Sinatra demo service (uploaded to each sandbox)
+├── static/
+│   ├── app.js                        # Frontend JavaScript
+│   └── styles.css                    # UI styling
+└── templates/
+    └── index.html                    # Main web page
+```
+
+## Use Cases
+
+### 1. Custom Runtime Environments
+
+Pre-install language runtimes (Ruby, Java, Go) that take time to set up:
+
+```bash
+# In init script (sandboxes run as a non-root user; use sudo for system installs)
+sudo apt-get install -y ruby-full
+sudo gem install rails bundler
+```
+
+### 2. Service Dependencies
+
+Start databases, caches, or mock APIs before the agent runs:
+
+```bash
+# In init script
+docker run -d -p 5432:5432 postgres
+redis-server --daemonize yes
+./mock-api-server &
+```
+
+### 3. Large Codebases
+
+Clone and prepare large repositories with dependencies, such as a very large monorepo or a Java monorepo with heavy Maven dependencies:
+
+```bash
+# In init script
+git clone --depth 1 https://github.com/your-org/monorepo /workspace/project
+cd /workspace/project
+bundle install
+npm install
+make build
+```
+
+### 4. Custom Application Integration
+
+Replace the demo Sinatra service with your actual application initialization:
+
+```bash
+# In init script (replace sandbox_prep/init_ruby_service.sh contents)
+# Install Ruby (or use a runtime that already has it)
+sudo apt-get install -y ruby-full
+
+# Install your application gems
+sudo gem install your_gem_name
+
+# Initialize your application
+cd /workspace
+# ... your app-specific setup commands
+bundle install
+
+# Start your services in daemon mode
+rails server -d -p 4567
+
+# Wait for service to be ready
+until curl -f http://localhost:4567/health; do
+    echo "Waiting for application..."
+    sleep 2
+done
+
+echo "✅ Application ready"
+```
+
+By pre-warming sandboxes with your application already running, agents can use your services as soon as the conversation starts, without waiting for sandbox boot and initialization (tens of seconds for this demo, more for heavier setups) on every conversation.
+
+## Benefits vs. Custom Images
+
+| Approach              | Pros                                                    | Cons                                                                    |
+| --------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Custom Images**     | Fastest cold start, baked-in dependencies               | Requires OpenHands Enterprise, image build pipeline, version management |
+| **Warm Sandbox Pool** | Works on SaaS, flexible initialization, no image builds | Requires pool management code, higher resource usage                    |
+| **Just-in-Time Init** | Simplest code, minimal resources                        | Slow user experience, wait time on every conversation                   |
+
+**Warm Sandbox Pool is ideal when**:
+
+- You're on OpenHands SaaS (custom images not yet supported)
+- Setup time is 10-60 seconds (too slow for UX, too fast to justify custom image complexity)
+- You want flexibility to change initialization without rebuilding images
+- You have predictable conversation volume
+
+## Extending the Example
+
+### Add More Preparation Steps
+
+Edit `sandbox_prep/init_ruby_service.sh` to install additional tools:
+
+```bash
+# Install Node.js
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Install Python packages
+pip install pandas numpy jupyter
+```
+
+### Customize the Demo Service
+
+Replace `sandbox_prep/quote_service.rb` with your own Ruby application or gem.
+
+### Adjust Pool Parameters
+
+```bash
+POOL_SIZE=5 POOL_THRESHOLD=3 INIT_TIMEOUT=600 python pool_controller.py
+# Maintain 5 ready sandboxes, refill when below 3, allow 10 minutes for init
+```
+
+### Add Health Checks
+
+Extend the initialization to verify services are actually ready:
+
+```bash
+# In init script
+until curl -f http://localhost:4567/health; do
+    echo "Waiting for service..."
+    sleep 2
+done
+```
+
+## Troubleshooting
+
+### Pool Never Reaches Ready State
+
+Check the controller's terminal output and the init log in the web UI. After
+`MAX_FAILURES` failures in a row the controller stops creating sandboxes and the UI
+says so. Common issues:
+
+- Ruby installation timeout (increase `INIT_TIMEOUT`)
+- Network issues downloading gems
+- Insufficient sandbox resources
+
+### Sandboxes Get Stuck in PREPARING
+
+Failed sandboxes are deleted right away, so to debug the init script keep a
+sandbox alive and run it by hand. Create one with the `start-sandbox/` example (or
+`POST /api/v1/sandboxes`), then read its `session_api_key` and `AGENT_SERVER` URL
+from `GET /api/v1/sandboxes?id=<sandbox-id>`:
+
+```bash
+AGENT=https://<agent-server-url>
+KEY=<session-api-key>
+
+curl -X POST "$AGENT/api/file/upload?path=/tmp/init.sh" \
+  -H "X-Session-API-Key: $KEY" -F file=@sandbox_prep/init_ruby_service.sh
+curl -X POST "$AGENT/api/file/upload?path=/tmp/quote_service.rb" \
+  -H "X-Session-API-Key: $KEY" -F file=@sandbox_prep/quote_service.rb
+curl -X POST "$AGENT/api/bash/execute_bash_command" \
+  -H "X-Session-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"command": "bash /tmp/init.sh", "timeout": 300}'
+```
+
+Delete the sandbox when you are done (`DELETE /api/v1/sandboxes/<id>?sandbox_id=<id>`).
+
+### High Resource Usage
+
+Reduce `POOL_SIZE` or implement smarter pool management:
+
+- Scale pool size based on time of day
+- Implement idle timeout (destroy sandboxes after 30 min unused)
+- Use pool only for peak hours, fall back to JIT otherwise
+
+## Next Steps
+
+1. **Production Deployment**: Add error handling, logging, metrics
+2. **Persistent Storage**: Save pool state to Redis/database for crash recovery
+3. **Multi-Tenant**: Separate pools per user/organization
+4. **Dynamic Scaling**: Adjust pool size based on demand
+5. **Cost Optimization**: Implement sandbox recycling (reset instead of destroy)
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="start-sandbox" href="/cookbook/start-sandbox" icon="play">
+    Basic sandbox provisioning
+  </Card>
+
+  <Card title="clone-and-attach" href="/cookbook/clone-and-attach" icon="code-branch">
+    Conversation attachment patterns
+  </Card>
+
+  <Card title="upload-skills" href="/cookbook/upload-skills" icon="upload">
+    Pre-loading agent skills
+  </Card>
+</CardGroup>
+
+## License
+
+MIT - See repository root LICENSE file
