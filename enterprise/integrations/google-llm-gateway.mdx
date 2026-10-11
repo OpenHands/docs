@@ -1,0 +1,300 @@
+---
+title: Google LLM Gateway
+description: Connect Google AI Studio and Vertex AI models through the OpenHands Enterprise LLM gateway.
+icon: google
+---
+
+OpenHands Enterprise connects to Google models through its bundled LiteLLM
+gateway. These configurations apply whether OpenHands runs on GKE or another
+supported Kubernetes platform. The Helm examples configure Google credentials
+on the bundled gateway. Replicated also provides Vertex credentials to sandbox
+environments, as described below.
+
+Choose your installation method:
+
+- **Replicated**: configure the gateway in the Admin Console.
+- **Helm**: configure the gateway through your installation values.
+
+## Choose the Provider Route
+
+Choose the route that matches your Google credentials:
+
+| Route | Google Authentication | LiteLLM Model Prefix |
+| --- | --- | --- |
+| Google AI Studio (Gemini API) | Gemini API key | `gemini/` |
+| Google Cloud Platform (Vertex AI) | Google Cloud project, location, and service account | `vertex_ai/` |
+
+These are separate APIs, even when both serve a model named
+`gemini-2.5-flash`. In Replicated, the Admin Console selects one Google API
+type. A Helm installation can expose both as different gateway aliases.
+
+## Configure the Gateway
+
+<Tabs>
+<Tab title="Replicated">
+
+1. Open the [Admin Console LLM configuration](/enterprise/vm-install/admin-console-configuration#llm-configuration)
+   and select `Google` as the provider.
+2. Under `Google API Type`, choose one route:
+   - `Google AI Studio (Gemini API)`: enter the `Google Gemini API Key` from
+     [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key). In
+     `Gemini Models`, enter one model ID per line.
+   - `Google Cloud Platform (Vertex AI)`: enter the `Google Cloud Project ID`
+     and `Google Cloud Location`, then upload the `Google Cloud Service Account
+     JSON file`. In `Vertex AI Models`, enter one model ID per line. Enable the
+     Vertex AI API in the project and grant the service account the
+     [Vertex AI User role](https://docs.cloud.google.com/iam/docs/roles-permissions/aiplatform)
+     or equivalent model-inference permissions.
+3. Enter the raw model IDs, without a `gemini/` or `vertex_ai/` prefix. For
+   example, the Vertex field can contain:
+
+   ```text
+   gemini-2.5-flash
+   gemini-2.5-pro
+   ```
+
+   The Admin Console creates one bundled-gateway route per line, and the first
+   line becomes the installation default. Confirm that each model is available
+   to your account and, for Vertex, in your selected location.
+4. Save the configuration and deploy the updated version.
+
+The uploaded service-account file is used by the bundled gateway. Replicated
+also passes its JSON contents into sandbox environments as
+`VERTEXAI_CREDENTIALS`, together with the configured project and location. Scope
+that service account for this deployment behavior; do not assume its credential
+is available only to the gateway. Keep the file out of source control. The `Allow users to configure their own LLM providers
+(BYOK)` checkbox is separate from these administrator-managed models.
+
+</Tab>
+<Tab title="Helm">
+
+### Prerequisites
+
+- A working [OpenHands Enterprise Helm installation](/enterprise/k8s-install/installation).
+- A Google model that supports tool use and is available through your chosen
+  API. The examples use `gemini-2.5-flash`.
+- HTTPS access from the bundled LiteLLM pod to `generativelanguage.googleapis.com`
+  for Gemini API, or your Vertex API endpoint and `oauth2.googleapis.com` for Vertex.
+- For Vertex, a project with billing and the Vertex AI API enabled, a supported
+  model/location, and service-account inference permissions.
+- Enough model quota for agent prompts and tool definitions.
+
+Choose either route below, or add both to your **complete** installation
+`values.yaml`. Keep your existing `litellm-helm.proxy_config.model_list`,
+`environmentSecrets`, `volumes`, and `volumeMounts` entries when adding new
+ones: Helm replaces lists when applying overrides. Use distinct `model_name`
+aliases when both routes expose the same Google model ID.
+
+### Google AI Studio (Gemini API)
+
+Create a Kubernetes Secret from a private file containing your
+[Gemini API key](https://ai.google.dev/gemini-api/docs/api-key):
+
+```bash
+kubectl -n openhands create secret generic google-ai-studio-gateway \
+  --from-file=GOOGLE_API_KEY=/path/to/private/gemini-api-key
+```
+
+Add that Secret to the gateway's existing `environmentSecrets` list and append
+one route per model to `model_list`:
+
+```yaml
+litellm-helm:
+  environmentSecrets:
+    - litellm-env-secrets
+    - google-ai-studio-gateway
+  proxy_config:
+    model_list:
+      # Retain your existing model entries here.
+      - model_name: google-ai-studio-flash
+        litellm_params:
+          model: gemini/gemini-2.5-flash
+          api_key: os.environ/GOOGLE_API_KEY
+```
+
+The API key belongs to the LiteLLM gateway. It is separate from an OpenHands
+API key for conversations or automations.
+
+### Google Cloud Platform (Vertex AI)
+
+Enable Vertex AI in your Google Cloud project. Grant a dedicated service
+account the `roles/aiplatform.user` role or equivalent model-inference
+permissions, and confirm that `gemini-2.5-flash` is available in your chosen
+location. This example uses a service-account JSON file, matching the
+Replicated Admin Console path. Follow your organization's policy for
+[service-account key creation and rotation](https://cloud.google.com/iam/docs/keys-create-delete).
+A workstation `gcloud` login does not supply credentials to the LiteLLM pod.
+Create the Secret from a private file:
+
+```bash
+kubectl -n openhands create secret generic google-vertex-gateway \
+  --from-file=credentials.json=/path/to/private/service-account.json
+```
+
+Mount that Secret only in the bundled LiteLLM pod. Add one gateway route per
+model. Replace the project ID and location with your own:
+
+```yaml
+litellm-helm:
+  volumes:
+    # Retain any existing volumes here.
+    - name: google-vertex-credentials
+      secret:
+        secretName: google-vertex-gateway
+  volumeMounts:
+    # Retain any existing volume mounts here.
+    - name: google-vertex-credentials
+      mountPath: /etc/gcloud/vertex-credentials.json
+      subPath: credentials.json
+      readOnly: true
+  envVars:
+    GOOGLE_APPLICATION_CREDENTIALS: /etc/gcloud/vertex-credentials.json
+  proxy_config:
+    model_list:
+      # Retain your existing model entries here.
+      - model_name: google-vertex-flash
+        litellm_params:
+          model: vertex_ai/gemini-2.5-flash
+          vertex_project: <google-cloud-project-id>
+          vertex_location: us-central1
+```
+
+The credentials file, project, and location are used by LiteLLM to call
+Vertex AI. OpenHands and its sandboxes use the gateway alias; they do not
+need this file mounted into their pods.
+
+### Apply the Updated Values
+
+Use the licensed chart URL and version from your installation, then confirm
+the bundled gateway is ready:
+
+```bash
+helm upgrade openhands "$OPENHANDS_CHART_URL" \
+  --namespace openhands \
+  --version "$OPENHANDS_CHART_VERSION" \
+  --values values.yaml \
+  --wait --timeout 10m
+
+kubectl -n openhands rollout status deployment/openhands-litellm
+```
+
+Adjust the namespace, release name, and Deployment name if they differ in your
+installation. To make one of these aliases the installation default, set
+`env.LITELLM_DEFAULT_MODEL` to `litellm_proxy/<alias>` in the same values file.
+
+</Tab>
+</Tabs>
+
+## Select the Model in OpenHands
+
+For Replicated, select the Google models in the Admin Console and deploy the
+configuration. Users do not need to open LiteLLM or enter the Google credential.
+
+For Helm, set the desired gateway alias as the installation default in your
+complete values file before upgrading. For the Vertex example:
+
+```yaml
+env:
+  LITELLM_DEFAULT_MODEL: litellm_proxy/google-vertex-flash
+```
+
+For the Gemini API example, use `litellm_proxy/google-ai-studio-flash` instead.
+Users do not need a personal Google key to use an administrator-managed route.
+Configure the provider credential through your installation's Helm values or
+Admin Console; the Replicated credential distribution described above still applies.
+
+On the tested chart `0.74.0` / OpenHands `1.67.0`, a fresh user's `Default`
+profile resolved to `openhands/google-vertex-flash` with the internal gateway
+base URL `http://openhands-litellm.openhands.svc.cluster.local:4000`. No user
+profile override or provider key entry was required. Existing users may retain
+previously selected profiles; confirm the model selected for the new conversation.
+
+To offer both Helm aliases as administrator-managed profiles, open the
+organization's **Language Model (LLM)** defaults at `/settings/org-defaults`.
+Choose **Add LLM Profile → Advanced** and use the internal gateway URL:
+
+
+| Field | Vertex AI | Gemini API |
+| --- | --- | --- |
+| Name (Optional) | `Google-Vertex-Flash` | `Google-Gemini-Flash` |
+| Custom Model | `openhands/google-vertex-flash` | `openhands/google-ai-studio-flash` |
+| Base URL | `http://openhands-litellm.openhands.svc.cluster.local:4000` | `http://openhands-litellm.openhands.svc.cluster.local:4000` |
+
+OpenHands supplies the managed gateway credential, so no key entry is required.
+On OpenHands `1.67.0`, saving on this page also makes the profile the
+organization's active default. Re-activate the intended default after testing.
+
+Use your actual gateway Service name and namespace. The selected model points to
+the bundled gateway alias; configure its provider route through Helm values
+or the Replicated Admin Console.
+
+The Helm gateway calls Vertex AI. The sandbox calls the gateway, so this path does
+not require mounting Google credentials into the sandbox or rebuilding the
+agent-server image with `ENABLE_VERTEX=1`. That build flag applies when the
+agent-server calls `vertex_ai/*` directly; see
+[Vertex AI dependencies](/openhands/usage/llms/google-llms#vertex-ai-dependencies).
+
+## Start Using the Model
+
+1. Sign in and confirm the conversation UI loads without an additional backend
+   URL or API-key prompt. If it prompts, check the Canvas configuration in the
+   [Helm installation guide](/enterprise/k8s-install/installation).
+2. Start a new conversation using the installation's `Default` profile.
+3. Ask the agent to run `pwd`, create a small workspace file and read it back.
+4. Confirm the sandbox reaches `READY`, tool results contain the expected path
+   and file contents, and the agent completes its response. A successful direct
+   gateway request alone does not validate the OpenHands conversation path.
+
+<Note>
+The Vertex route passed end-to-end tests on GKE with Helm chart `0.74.0`,
+OpenHands `1.67.0`, agent-server `1.49.6-python`, and `gemini-2.5-flash` in
+`us-central1`. The unmodified agent-server image ran terminal and file tools
+and completed the conversation. A fresh conversation using a named organization
+profile also passed terminal file operations through the OpenHands API on this
+release. The organization defaults UI also saved the named Vertex profile with the
+expected URL. Fresh startup for that UI-created profile remains unvalidated. On Replicated release `0.74.0`, the Admin
+Console Vertex configuration also passed GitHub login, terminal file operations
+and a read-only repository conversation. The Gemini API examples were checked
+against the provider and chart configuration; they have not yet been validated
+with an end-to-end conversation in this evaluation.
+</Note>
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="Google AI Studio authentication error">
+Check the Gemini API key in the Kubernetes Secret and confirm that it can use
+the selected model. The model route must use `gemini/`, not `vertex_ai/`.
+</Accordion>
+<Accordion title="Vertex AI permission or credential error">
+Check that Vertex AI is enabled, the service account can call the model, the
+Secret contains a valid JSON file, and the LiteLLM pod mounts it at the path
+in `GOOGLE_APPLICATION_CREDENTIALS`.
+</Accordion>
+<Accordion title="Model not found or unavailable">
+Check the model ID and the Google API type. For Vertex AI, also check the
+project and location. Model availability can differ between Google AI Studio
+and Vertex AI and across locations.
+</Accordion>
+<Accordion title="The profile cannot reach the gateway">
+Check the internal LiteLLM Service DNS name, namespace, and selected model alias.
+Confirm the LiteLLM Deployment is ready.
+</Accordion>
+<Accordion title="Google `429` or repeated retries">
+Check request and token quotas, billing, and model capacity for the chosen API.
+A small direct completion can succeed while a larger agent prompt is rate limited.
+</Accordion>
+<Accordion title="Sandbox cannot start">
+Check runtime registration, pod readiness and Kubernetes events using the
+[Troubleshooting guide](/enterprise/troubleshooting). For GKE, verify your Sysbox
+installation. A runtime startup failure does not by itself establish a Google
+credential problem.
+</Accordion>
+</AccordionGroup>
+
+For provider-specific configuration, see LiteLLM's
+[Google AI Studio](https://docs.litellm.ai/docs/providers/gemini) and
+[Vertex AI](https://docs.litellm.ai/docs/providers/vertex) references.
+
+If your organization uses an existing external gateway, follow
+[External LLM Gateways](/enterprise/integrations/external-llm-gateways).
