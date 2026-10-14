@@ -1,0 +1,166 @@
+---
+title: Custom Agent With Tool
+description: Add custom server-side tools via source file upload and tool_module_qualnames.
+icon: wrench
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@main (custom-agent-with-tool/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/main/custom-agent-with-tool" horizontal />
+
+Add a **completely custom, server-side tool** to an OpenHands Cloud agent — without
+forking or rebuilding the agent-server. The agent-server loads your tool at
+conversation-creation time via the `tool_module_qualnames` mechanism.
+
+The example ships a small demo tool (the **Bureau of Bug Registration**) and proves,
+end to end, that the agent **registers**, **uses**, and **reports output from** it.
+
+Why this tool? It does something an LLM would never produce on its own and **could not
+fake**: it assigns each bug a deterministic, hash-derived **Case ID** (e.g. `BUG-59C20D`)
+plus a gloriously bureaucratic classification. Because the Case ID is a SHA-256 slice
+of the bug report, the only way the agent's answer can contain the correct ID is if
+it actually called the tool — making the demonstration unfalsifiable.
+
+## How It Works
+
+1. **Create a sandbox** (`POST /api/v1/sandboxes`) and wait for `RUNNING`. Read the
+   `AGENT_SERVER` URL and the `session_api_key` from the sandbox record.
+2. **Deploy the tool** as an importable package in the conversation's working
+   directory, `/workspace/bug_registry/`, using the agent-server file API
+   (`POST /api/file/upload?path=...`). Two files are uploaded: `__init__.py` and
+   `tool.py` (the contents of `custom_tool_definition.py`).
+3. **Create a conversation** (`POST /api/conversations`) that lists the tool in
+   `agent.tools` and maps it in `tool_module_qualnames`.
+4. **Run and verify** (`POST .../run`, then read events). The custom tool must show
+   up in the `SystemPromptEvent.tools` list (registered) and as an `ActionEvent`
+   `tool_name` (used).
+
+### Why upload into the working directory (and not `pip install`)?
+
+On OpenHands Cloud the agent-server is a **frozen, self-contained binary** (built
+with PyInstaller). A normal `pip install` targets a *different* Python interpreter
+that the frozen server cannot see, so the module would never be importable and the
+tool would fail to register.
+
+The conversation's **working directory is on the agent-server's import path**, so
+dropping the package there makes `import rubber_duck.tool` work with no install
+step. The tool's own imports (`openhands.sdk`, `pydantic`) resolve from inside the
+frozen server, where they're always available.
+
+Uploading the file (rather than writing it through a shell heredoc) also means the
+**tool source can contain anything** — quotes, `EOF` markers, backslashes — with no
+escaping or injection pitfalls.
+
+## The Core Idea: Declare + Locate
+
+Creating a conversation with a custom tool is a two-part contract:
+
+- `agent.tools` — **which** tools to activate, by name:
+  `[{"name": "terminal"}, {"name": "file_editor"}, {"name": "bug_registry"}]`
+- `tool_module_qualnames` — **where** a tool comes from, as an importable module:
+  `{"bug_registry": "bug_registry.tool"}`
+
+On conversation creation the agent-server imports each mapped module. Importing has
+a **side effect**: the module's `register_tool("bug_registry", BugRegistryTool)` call
+runs and registers the tool. If the name is requested but nothing registered it,
+the server returns `ToolDefinition '<name>' is not registered`.
+
+Built-in tools (`terminal`, `file_editor`, ...) don't need an entry — the server
+already knows where those live. **Only your custom tools need a qualname mapping.**
+
+## Prerequisites
+
+```bash
+pip install requests
+export OH_API_KEY=your-openhands-cloud-api-key
+export LLM_API_KEY=your-llm-api-key
+```
+
+Optional overrides (sensible defaults are used otherwise):
+
+```bash
+export LLM_MODEL=litellm_proxy/claude-sonnet-4-5-20250929
+export LLM_BASE_URL=https://llm-proxy.app.all-hands.dev/
+```
+
+## Run It
+
+```bash
+python working_example.py            # runs and cleans up the sandbox
+python working_example.py --keep     # leave the sandbox up for inspection
+```
+
+<Warning>
+  **⚠️ Timing note**: If the script runs and deletes the sandbox too quickly, conversation
+  events may not have synced from the agent-server to the main API yet, making the
+  conversation appear empty or incomplete in the Cloud UI. To inspect conversation events
+  in real time, **run with `--keep`** to leave the sandbox alive, or add a delay before
+  cleanup. The script prints the conversation URL — you can view it while the sandbox is
+  still running.
+</Warning>
+
+Expected output:
+
+```text
+[demo] === Verification ===
+[demo]   registered tools: ['terminal', 'file_editor', 'bug_registry', 'finish', 'think']
+[demo]   tools used: ['bug_registry']
+[demo]   Case ID issued by tool: BUG-59C20D
+[demo]   PASS: custom tool 'bug_registry' is registered
+[demo]   PASS: custom tool 'bug_registry' was used by the agent
+[demo]   PASS: agent reported the tool's Case ID (BUG-59C20D) in its answer
+[demo] SUCCESS: the custom tool was loaded and used in OpenHands Cloud.
+```
+
+## Verifying Registration (Same Technique as `custom-agent-no-browser`)
+
+The agent-server records a `SystemPromptEvent` whose `tools` array is the exact set
+of tools the agent was given. Both examples read it the same way:
+
+```python
+system_events = [e for e in items if e.get("kind") == "SystemPromptEvent"]
+registered = [t.get("title") for t in system_events[0].get("tools", [])]
+assert "bug_registry" in registered          # registered / available
+assert "bug_registry" in tools_used          # actually invoked (from ActionEvents)
+```
+
+The verification also extracts the **Case ID** from the tool's observation (the ground
+truth) and confirms that exact ID appears in the agent's final answer — proving the
+tool's output shaped the response and the agent didn't fabricate it.
+
+## The Example Tool
+
+`custom_tool_definition.py` defines a `bug_registry` tool with the OpenHands SDK: a
+`ToolDefinition` + typed `Action`/`Observation` + an `Executor`. It takes a `problem`
+(and optional `code`) and deterministically derives a **hash-based Case ID** plus an
+absurd bureaucratic classification ("Haunted Copy-Paste Residue", "Gaslighting Boolean",
+etc.) from the SHA-256 of the report. Importing the module registers the tool.
+
+The prompt in `working_example.py` is **directive** — it explicitly asks the agent to
+file the bug and report the official Case ID — so the happy path is deterministic and
+unfalsifiable: the hash-derived ID can only come from the tool. This proves the tool is
+registered, callable, returns output, and that output demonstrably reaches the agent's
+answer.
+
+## Files
+
+| File                        | Purpose                                                                       |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `working_example.py`        | End-to-end runner: create sandbox -> deploy tool -> run -> verify -> clean up |
+| `custom_tool_definition.py` | The custom tool, implemented with the OpenHands SDK (uploaded as `tool.py`)   |
+
+## Cleanup
+
+Without `--keep` the sandbox is deleted automatically. With `--keep`, delete it when
+done:
+
+```bash
+curl -X DELETE "https://app.all-hands.dev/api/v1/sandboxes/<id>?sandbox_id=<id>" \
+  -H "Authorization: Bearer $OH_API_KEY"
+```
+
+<Note>
+  Note: `DELETE /api/v1/sandboxes/{id}` requires `sandbox_id` as **both** the path
+  segment and a query parameter; omitting the query parameter returns HTTP 422 and
+  leaks the sandbox.
+</Note>

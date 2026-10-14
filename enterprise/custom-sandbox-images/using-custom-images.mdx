@@ -1,0 +1,64 @@
+---
+title: Using Custom Images
+description: How users select a custom sandbox image and how to target a specific image per conversation via the API.
+icon: play
+---
+
+Once warm runtime pool configurations are saved, the application makes them
+available to users and the API within about a minute (the application caches
+the configuration list for 60 seconds).
+
+## Per-User Selection
+
+Each user opens **Settings → Application** and picks an image in the
+**Default Sandbox** dropdown. Entries are the image references from your
+saved configurations.
+
+Leaving the setting on **System default** uses the configuration named
+`v1_current`, or the first configuration in the list if no `v1_current`
+exists. All of the user's new conversations use their selected image.
+
+## Per-Conversation via the API
+
+To target a specific image for a single conversation regardless of the user's
+default:
+
+```bash
+# 1. Start a sandbox from a specific image (the spec ID is the image reference)
+curl -X POST \
+  "https://app.<your-base-domain>/api/v1/sandboxes?sandbox_spec_id=ghcr.io/your-org/openhands-php:8.4-v1" \
+  -H "Authorization: Bearer $API_KEY"
+
+# 2. Create the conversation on that sandbox, using "id" from the response above
+curl -X POST \
+  "https://app.<your-base-domain>/api/v1/app-conversations" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"sandbox_id": "<id from step 1>"}'
+```
+
+## How Warm Pods Are Claimed
+
+A conversation claims a warm pod only when the pod **exactly matches** the
+requested image, command, working directory, environment (ignoring a fixed set
+of session-specific variables), and `run_as_user` / `run_as_group` /
+`fs_group`. Because the application requests exactly what the selected
+configuration declares, conversations started through the OpenHands UI match
+automatically.
+
+Cold starts still happen when:
+
+- All warm pods for the selected image are already claimed (`count` too low
+  for current traffic).
+- The configuration changed in the last minute, so old pods no longer match
+  and replacements are still starting.
+- Warm pods cannot reach `Ready` (image pull failures, insufficient node
+  resources).
+
+Cold-started conversations run the same image and work normally — they just
+take 20 seconds or more to begin rather than a few seconds.
+
+To confirm a conversation claimed a warm pod, note that its sandbox was ready
+in a few seconds. To verify from the cluster: the claimed runtime deployment
+acquires a `session_id` label, and the reconciler creates a fresh warm pod to
+replace it within a minute.

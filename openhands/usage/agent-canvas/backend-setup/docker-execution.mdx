@@ -1,11 +1,11 @@
 ---
-title: Isolate Tool Execution with Docker
-description: Keep Agent Canvas orchestration on the host while running filesystem and process tools in an ephemeral Docker container per conversation.
+title: Run Each Conversation in Its Own Docker Container
+description: Keep Agent Canvas on the host while each conversation runs in its own hardened Agent Server container with bind-mounted workspace and persistence directories.
 ---
 
-Use Docker execution mode when you want Agent Canvas and Agent Server to remain trusted host processes while isolating filesystem and process tools in a separate container for each conversation.
+Use per-conversation Docker mode when you want Agent Canvas and the outer Agent Server to remain trusted host processes while each conversation runs in a separate, hardened Docker container.
 
-This mode differs from [running the entire Agent Canvas distribution in Docker](/openhands/usage/agent-canvas/backend-setup/docker). The outer Agent Server retains conversation state, LLM calls, credentials, policy, persistence, and orchestration. Supported tool actions run inside an ephemeral execution container.
+This mode differs from [running the entire Agent Canvas distribution in Docker](/openhands/usage/agent-canvas/backend-setup/docker). Here, only conversations run in containers; Agent Canvas and the outer Agent Server stay on the host.
 
 ## Prerequisites
 
@@ -15,23 +15,19 @@ This mode differs from [running the entire Agent Canvas distribution in Docker](
 
 ## Start Agent Canvas
 
-Set the execution runtime and image before starting Agent Canvas:
+Set the conversation runtime and image before starting Agent Canvas:
 
 ```bash
-export OH_EXECUTION_RUNTIME=docker
-export OH_EXECUTION_IMAGE=ghcr.io/openhands/agent-server:latest-python
-export OH_EXECUTION_PLATFORM=linux/amd64
+export OH_CONVERSATION_RUNTIME=docker
+export OH_CONVERSATION_IMAGE=ghcr.io/openhands/agent-server:latest-python
 agent-canvas
 ```
-
-Use `linux/arm64` for an ARM host such as Apple Silicon.
 
 You can combine these variables with other launcher options. For example, to use another port:
 
 ```bash
-OH_EXECUTION_RUNTIME=docker \
-OH_EXECUTION_IMAGE=ghcr.io/openhands/agent-server:latest-python \
-OH_EXECUTION_PLATFORM=linux/amd64 \
+OH_CONVERSATION_RUNTIME=docker \
+OH_CONVERSATION_IMAGE=ghcr.io/openhands/agent-server:latest-python \
 agent-canvas --port 9000
 ```
 
@@ -39,73 +35,73 @@ The launcher forwards the variables to the local Agent Server. No separate front
 
 ## How Isolation Works
 
-For each local conversation, Agent Server creates a `DockerExecutionWorkspace` with `/workspace` as its working directory. The container starts lazily when the conversation first invokes a supported tool.
+For each conversation, the outer Agent Server starts a dedicated Docker container running a full Agent Server. The container starts lazily when the conversation first needs it.
 
-The following built-in tools execute in the container:
+- The inner server runs with `OH_CONVERSATION_RUNTIME=local`, so it runs the agent loop and its own tools inside the container.
+- Each container has its own generated `OH_SECRET_KEY`, its own session API key, and its own persistence.
+- The outer Agent Server proxies and mediates conversation requests to the container, and resolves agent and profile settings before forwarding them.
 
-- `terminal`
-- `file_editor`
-- `grep`
-- `glob`
-- `apply_patch`
+The container is hardened as follows:
 
-The outer Agent Server continues to run the agent loop and all LLM requests. It sends supported tool actions to an authenticated execution-only endpoint in the container. The inner server does not expose conversation, profile, settings, LLM, persistence, or WebSocket APIs.
+- Runs as the host user's UID and GID rather than root.
+- Drops all Linux capabilities (`--cap-drop ALL`) and sets `no-new-privileges`.
+- Publishes its API only on `127.0.0.1`, authenticated with the per-conversation session API key.
+- Maps `host.docker.internal` to the host gateway.
+- Is limited by the memory, CPU, and PID settings in the [configuration reference](#configuration-reference).
+
+## Workspace and Persistence
+
+Each container bind-mounts three host directories:
+
+| Container path | Host directory |
+|----------------|----------------|
+| `/var/openhands/conversations/<id>` | The conversation's directory under the outer server's conversations path |
+| `/var/openhands/.openhands` | A per-conversation persistence directory under the outer server's runtime data root |
+| `/workspace` | The conversation's host workspace |
+
+Because these are bind mounts, workspace files and conversation history persist after the container is removed. Conversations that share a host workspace share the same files.
 
 <Warning>
-  Tools without a Docker execution adapter continue to run in the outer Agent Server process. Review custom and additional tools before treating the container as their security boundary.
+  The `/workspace` mount gives tools in the container read and write access to that host directory. Point conversations at a dedicated workspace if you do not want the agent to modify existing project files.
 </Warning>
 
-## Keep the Sandbox Ephemeral
-
-By default, the execution container has no host filesystem mounts. Leave `OH_EXECUTION_VOLUMES` unset to keep the workspace ephemeral and prevent host files from appearing under `/workspace`.
-
-To mount data deliberately, provide a JSON array of Docker volume specifications:
-
-```bash
-export OH_EXECUTION_VOLUMES='["/path/on/host:/workspace/project"]'
-```
-
-<Warning>
-  A volume gives tools in the container access to the mounted host path. Do not configure volumes when you require a disposable sandbox with no host filesystem access.
-</Warning>
-
-The execution container:
-
-- Publishes its API only on host loopback.
-- Receives a generated per-workspace capability instead of the outer server's credentials.
-- Is removed when its workspace closes.
-- Does not store the outer conversation state or LLM configuration.
-
-Conversation history persists in the outer Agent Server according to its normal persistence configuration. Files created only inside an unmounted execution container do not persist after that container is removed.
+Containers are stopped when a conversation has been idle for the idle timeout (`OH_CONVERSATION_IDLE_TTL_SECONDS`, 20 minutes by default). The conversation is not lost; its container is started again on next use. Stale containers from a previous Agent Server run are removed when the server starts.
 
 ## Verify Isolation
 
 Create a new conversation and ask the agent to run:
 
 ```bash
+id
 printf 'PWD=%s\nHOME=%s\n' "$PWD" "$HOME"
-find "$HOME" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort
 ```
 
-A default execution image should report `/workspace` as `PWD` and a container-local home directory such as `/home/openhands`. It must not display the Agent Server host's home-directory contents.
+The command should report `/workspace` as `PWD`, and a `HOME` of `/var/openhands/.openhands` rather than your host home directory.
 
-On the host, inspect the active execution container:
+On the host, inspect the active conversation container:
 
 ```bash
-docker ps --filter name=openhands-execution-
+docker ps --filter name=agent-server-conversation-
 docker inspect <container-id> --format '{{json .Mounts}}'
 ```
 
-For an ephemeral configuration, the mounts output should be `[]`.
+The mounts output should list three bind mounts, with destinations `/var/openhands/conversations/<id>`, `/var/openhands/.openhands`, and `/workspace`. To check the other settings:
+
+```bash
+docker inspect <container-id> --format '{{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}} {{.HostConfig.PortBindings}}'
+```
 
 ## Configuration Reference
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OH_EXECUTION_RUNTIME` | `local` | Set to `docker` to enable one execution container per local conversation. |
-| `OH_EXECUTION_IMAGE` | `ghcr.io/openhands/agent-server:latest-python` | Agent Server image used for execution containers. |
-| `OH_EXECUTION_PLATFORM` | `linux/amd64` | Docker platform for execution containers. |
-| `OH_EXECUTION_VOLUMES` | `[]` | Optional JSON array of Docker volume specifications. |
+| `OH_CONVERSATION_RUNTIME` | `local` | Set to `docker` to run each conversation in its own container. |
+| `OH_CONVERSATION_IMAGE` | `ghcr.io/openhands/agent-server:latest-python` | Agent Server image used for conversation containers. |
+| `OH_CONVERSATION_CONTAINER_MEMORY` | `4g` | Memory limit for each container. |
+| `OH_CONVERSATION_CONTAINER_CPUS` | `2.0` | CPU limit for each container. |
+| `OH_CONVERSATION_CONTAINER_PIDS_LIMIT` | `512` | PID limit for each container. |
+| `OH_CONVERSATION_CONTAINER_STARTUP_TIMEOUT` | `120` | Seconds to wait for a container to become healthy. |
+| `OH_CONVERSATION_IDLE_TTL_SECONDS` | `1200` | Seconds a conversation can be idle before its container is stopped. |
 
 ## Related Guides
 

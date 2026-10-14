@@ -39,10 +39,12 @@ Open `Customize > Apps`, then select `Add app`.
 
 <Tabs>
   <Tab title="Git Repository">
-    1. Enter the Git source, such as `github:owner/repository`.
+    1. Enter the Git source, such as `github:owner/repository`, or paste the app folder's browser URL from GitHub, GitLab, Bitbucket, Gitea, or Forgejo.
     2. Optionally enter a branch, tag, or commit in `Ref`.
     3. If the app is not at the repository root, enter its directory in `Repo path`.
     4. Select `Add app`.
+
+    When you paste a browser folder URL, Agent Canvas reads the source, `Ref`, and `Repo path` from the URL. A value you enter in `Ref` or `Repo path` overrides the corresponding part of the URL.
   </Tab>
   <Tab title="Backend-Local Path">
     1. Enter the absolute path to the app directory.
@@ -73,6 +75,14 @@ Enabling an app runs its JavaScript in the same browser context as Agent Canvas.
 
 Only enable apps whose code and resolved revision you trust. An enabled app has the browser authority available to Agent Canvas and can use an authenticated helper to call the active Agent Server.
 
+### Update an App
+
+Apps installed from a Git repository or a backend-local path can be updated in place. Use the app's `Update` action to re-resolve its source and copy the new files over the installed version, without uninstalling and reinstalling it. This picks up changes even when the app's manifest version did not change. If the copy fails, the previously installed version keeps working.
+
+### App Icons
+
+An app can declare an `icon` in its manifest. When present, Agent Canvas loads the SVG from that path and shows it on the app's sidebar item and card.
+
 ## Build an App
 
 An app is a directory containing:
@@ -92,6 +102,7 @@ The current package format uses manifest schema `1` and host API `1`.
   "display_name": "Example dashboard",
   "version": "0.1.0",
   "description": "A project dashboard for Agent Canvas.",
+  "icon": "icon.svg",
   "entrypoint": "extension.js",
   "contributes": {
     "pages": [
@@ -108,7 +119,7 @@ The current package format uses manifest schema `1` and host API `1`.
 
 Use lowercase letters, numbers, and hyphens for app names and page IDs. Page paths must start with `/`, and every page ID and path must be unique within the app.
 
-The `entrypoint` must stay inside the app root. Bundle dependencies, CSS, and required assets into one browser ESM file; unresolved package imports and external runtime chunks cannot be loaded.
+The `entrypoint` must stay inside the app root. Bundle dependencies, CSS, and required assets into one browser ESM file; unresolved package imports and external runtime chunks cannot be loaded. If you declare an `icon`, it must also stay inside the app root; Agent Canvas serves it from `GET /api/canvas-extensions/installed/{name}/icon`.
 
 ### Register the Page
 
@@ -155,6 +166,14 @@ const serverInfo = await host.agentServer.request({
 Request paths must be root-relative, begin with exactly one `/`, and must not be full URLs. Do not derive backend URLs or authentication credentials from Agent Canvas internals.
 
 The beta host API does not expose the backend origin or a WebSocket authentication capability. Use the authenticated HTTP helper, polling where appropriate, or a backend-owned bridge instead of opening a direct Agent Server WebSocket.
+
+### Embed a Backend View
+
+An app can embed an app-owned HTTP UI — for example, a web editor — through the optional `host.appBackendView` helper. The helper is present only when the active Agent Server exposes the bridge contract: its `server_info` advertises the backend bridge capability and an HTTP(S) ingress URL, and the installed `@openhands/typescript-client` exports the app backend session methods.
+
+Call `host.appBackendView.mount({ container })` to mount the view. The helper requests a short-lived session from the discovered ingress and renders it in an iframe; the app never receives an Agent Server session key and must not construct the ingress origin or derive it from `window.location`. Canvas validates that the returned URL shares the ingress origin and applies only the server-provided sandbox tokens, rejecting top-navigation, downloads, and storage access. The host owns loading, safe errors, retry, a validated new-tab fallback, session revocation, and disposal on page unmount or backend switch.
+
+The feature is additive: self-contained ESM loading, routed page registration, and the native editor are unchanged.
 
 ## Design for the Beta Lifecycle
 

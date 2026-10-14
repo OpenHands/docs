@@ -1,0 +1,277 @@
+---
+title: Issue to Pull Request Automation
+description: Automatically implement issues from your issue tracker and create pull requests.
+---
+
+Use Issue to Pull Request automations when you want Agent Canvas to watch your issue tracker for implementation-ready issues and automatically create pull requests with the requested changes.
+
+## What It Does
+
+Issue to Pull Request automations monitor your issue tracker (GitHub Issues, GitLab Issues, Jira, or Linear) for issues marked as ready for implementation. When an issue is labeled or moved to an implementation-ready state, the automation:
+
+1. **Reads the issue** — Fetches the issue title, description, acceptance criteria, and any linked dependencies
+2. **Starts an agent conversation** — Launches an independent OpenHands agent that implements the requested change
+3. **Creates a branch** — The agent clones the repository, creates a feature branch, and implements the change
+4. **Tests the changes** — Runs tests to verify the implementation works
+5. **Opens a pull request** — Creates a PR with a summary of changes and links back to the original issue
+6. **Updates the issue** — Posts progress updates and the PR link back to the issue tracker
+
+## Available Combinations
+
+Issue to Pull Request automations are available for the following combinations:
+
+### GitHub Issues → Source Control
+
+| Issue Tracker | Source Control | Automation |
+|---------------|----------------|------------|
+| GitHub Issues | GitHub | GitHub issue to PR |
+
+### GitLab Issues → Source Control
+
+| Issue Tracker | Source Control | Automation |
+|---------------|----------------|------------|
+| GitLab Issues | GitLab | GitLab issue to MR |
+
+### Jira → Source Control
+
+| Issue Tracker | Source Control | Automation |
+|---------------|----------------|------------|
+| Jira Cloud | GitHub | Jira issue to GitHub PR |
+| Jira Cloud | GitLab | Jira issue to GitLab MR |
+| Jira Cloud | Bitbucket | Jira issue to Bitbucket PR |
+
+### Linear → Source Control
+
+| Issue Tracker | Source Control | Automation |
+|---------------|----------------|------------|
+| Linear | GitHub | Linear issue to GitHub PR |
+| Linear | GitLab | Linear issue to GitLab MR |
+| Linear | Bitbucket | Linear issue to Bitbucket PR |
+
+## Common Setup Steps
+
+All Issue to Pull Request automations follow a similar setup pattern:
+
+### Prerequisites
+
+Before setting up an Issue to Pull Request automation, make sure you have:
+
+- **Agent Canvas** installed and running with a configured backend
+- **LLM configured** for the backend that will run the automation
+- **Issue tracker access** — API token or OAuth connection to your issue tracker
+- **Source control access** — Personal access token or SSH keys for your code repository
+- **Agent profile** (recommended) — A saved agent profile with appropriate secrets and tools
+- **Git available** in the automation runtime environment
+
+### General Setup Process
+
+1. **Connect integrations**
+   - Set up MCP servers or save API tokens for your issue tracker (GitHub, GitLab, Jira, or Linear)
+   - Set up MCP servers or save API tokens for your source control system
+   - Ensure tokens have the required permissions (see [Permissions](#permissions) below)
+
+2. **Configure the automation**
+   - Navigate to `Automate` in Agent Canvas
+   - Find the appropriate Issue to PR workflow for your combination
+   - Configure the automation settings:
+     - **Repositories** — Select which repositories to monitor
+     - **Trigger label or state** — Define what marks an issue as implementation-ready
+     - **Branch prefix** — Set how feature branches should be named (e.g., `openhands/issue`)
+     - **Pull request mode** — Choose whether PRs open as drafts or ready for review
+     - **Schedule** — Set how often to check for new issues (default: every 15 minutes)
+
+3. **Select an agent profile**
+   - Choose a saved agent profile that has access to the necessary secrets
+   - The profile should include the tokens needed for both the issue tracker and source control
+
+4. **Review and deploy**
+   - Review the automation configuration
+   - Deploy the automation
+
+5. **Test the automation**
+   - Apply the trigger label to a test issue
+   - Verify the agent starts working on the issue
+   - Check that a pull request is created successfully
+   - Confirm the issue is updated with progress and the PR link
+
+## Permissions
+
+### Issue Tracker Permissions
+
+<Tabs>
+  <Tab title="GitHub">
+    Your GitHub personal access token needs:
+    - **Issues**: Read and write (to read issues and post progress comments)
+    - **Contents**: Read (to access issue content)
+    - **Metadata**: Read-only
+  </Tab>
+  
+  <Tab title="GitLab">
+    Your GitLab personal access token needs:
+    - **api** scope (full API access)
+    - **read_repository** (to read issues)
+    - **write_repository** (to post comments)
+  </Tab>
+  
+  <Tab title="Jira">
+    Your Jira API token needs:
+    - **Browse projects** permission
+    - **View issues** permission
+    - **Add comments** permission on the project
+  </Tab>
+  
+  <Tab title="Linear">
+    Your Linear API key needs:
+    - **read** permission for issues
+    - **write** permission to post comments
+  </Tab>
+</Tabs>
+
+### Source Control Permissions
+
+<Tabs>
+  <Tab title="GitHub">
+    Your GitHub personal access token needs:
+    - **Contents**: Read and write (to clone, commit, and push)
+    - **Pull requests**: Read and write (to create PRs)
+    - **Metadata**: Read-only
+    - **workflow** scope (required if issues might modify `.github/workflows/`)
+  </Tab>
+  
+  <Tab title="GitLab">
+    Your GitLab personal access token needs:
+    - **api** scope (full API access)
+    - **read_repository** (to clone)
+    - **write_repository** (to push branches)
+  </Tab>
+  
+  <Tab title="Bitbucket">
+    Your Bitbucket app password needs:
+    - **Repositories**: Read and write
+    - **Pull requests**: Read and write
+  </Tab>
+</Tabs>
+
+## How It Works
+
+### Polling and State Management
+
+Issue to Pull Request automations run on a schedule (typically every 15 minutes, configurable). Each run:
+
+1. **Polls the issue tracker** — Queries for issues with the configured trigger label or state
+2. **Deduplicates** — Tracks which issues have already been processed using persistent state
+3. **Dispatches conversations** — Starts one independent agent conversation per new issue
+4. **Caps parallel work** — Limits how many conversations start per poll to prevent overwhelming the system
+
+### Agent Conversation Flow
+
+For each issue, the automation starts a fresh agent conversation that:
+
+1. **Fetches issue details** — Reads the full issue description and any discussion
+2. **Clones the repository** — Creates a local copy of the default branch
+3. **Creates a feature branch** — Names it using the configured prefix and issue number (e.g., `openhands/issue-42`)
+4. **Implements the change** — Writes or modifies code based on the issue requirements
+5. **Runs tests** — Verifies the implementation with the project's test suite
+6. **Commits and pushes** — Creates commits with descriptive messages and pushes to the feature branch
+7. **Opens a pull request** — Creates a PR titled `[#42] <issue title>` with a summary and `Closes #42` in the body
+8. **Posts to the issue** — Adds a comment with the PR link
+
+The agent conversation has access to:
+- The issue tracker API (to read issues and post comments)
+- The source control API (to push branches and create PRs)
+- Only the secrets explicitly included in the agent profile (principle of least privilege)
+
+### Re-running Failed Attempts
+
+To re-run an automation on an issue:
+
+1. Remove the trigger label from the issue
+2. Re-apply the trigger label
+
+The automation will treat it as a new request and create a fresh branch and conversation.
+
+## Security Considerations
+
+Issue to Pull Request automations handle content from external sources (issue descriptions, comments) and execute code changes. Keep these security practices in mind:
+
+<Warning>
+  **Content is untrusted** — Issue descriptions and comments can be written by anyone with issue tracker access. The agent treats this content as a task to implement, not as trusted instructions.
+</Warning>
+
+- **Use agent profiles** — Explicitly define which secrets the spawned conversation can access
+- **Limit token scope** — Grant tokens only the minimum permissions needed
+- **Review PRs before merging** — Open PRs as drafts by default so they undergo code review
+- **Monitor automation runs** — Check the automation activity regularly for unexpected behavior
+
+## Verification
+
+After the automation is deployed:
+
+1. Open `Automate` in Agent Canvas
+2. Verify the automation appears and is enabled
+3. Check the automation details for correct configuration
+4. Apply the trigger label to a test issue
+5. Monitor the automation run in the activity log
+6. Verify:
+   - The agent conversation starts
+   - A feature branch is created
+   - Tests pass (if applicable)
+   - A pull request is opened
+   - The issue is updated with progress and the PR link
+
+## Troubleshooting
+
+### Common Issues
+
+<AccordionGroup>
+  <Accordion title="Automation doesn't start for labeled issues">
+    **Check:**
+    - The automation is enabled in the Automate view
+    - The trigger label matches exactly (case-sensitive)
+    - The issue hasn't been processed before (check state)
+    - The next scheduled run hasn't occurred yet (check schedule)
+  </Accordion>
+
+  <Accordion title="Agent can't access the repository">
+    **Check:**
+    - The source control token is saved in Agent Canvas secrets
+    - The token has write access to Contents and Pull requests
+    - The token is included in the agent profile's allowed secrets
+    - For GitHub workflows: the token has the `workflow` scope
+  </Accordion>
+
+  <Accordion title="Pull request isn't created">
+    **Check:**
+    - The agent conversation completed successfully (check logs)
+    - The agent pushed the branch (check repository branches)
+    - The source control token has pull request write permissions
+    - Network connectivity between Agent Canvas and the source control service
+  </Accordion>
+
+  <Accordion title="Issue isn't updated with progress">
+    **Check:**
+    - The issue tracker token has write permissions for comments
+    - The issue tracker integration is correctly configured
+    - The automation has the correct issue tracker API endpoint
+  </Accordion>
+</AccordionGroup>
+
+## Customization Options
+
+When setting up an Issue to Pull Request automation, you can customize:
+
+- **Trigger label** — The label that marks issues as ready for implementation (default: `openhands`)
+- **Branch prefix** — How feature branches are named (default: `openhands/issue`)
+- **Pull request mode** — Whether PRs open as drafts or ready for review (default: draft)
+- **Check frequency** — How often to poll for new issues (default: every 15 minutes)
+- **Repository selection** — Which repositories to monitor (can monitor multiple repos)
+- **Agent profile** — Which saved profile runs the implementation conversations
+
+## Related Guides
+
+- [Setup a Pre-built Automation](/openhands/usage/agent-canvas/prebuilt-automations)
+- [GitHub PR Review Assistant](/openhands/usage/agent-canvas/prebuilt/github-pr-review)
+- [GitHub Repository Monitor](/openhands/usage/agent-canvas/prebuilt/github-repo-monitor)
+- [Managing Automations](/openhands/usage/agent-canvas/managing-automations)
+- [Agent Profiles](/openhands/usage/agent-canvas/agent-profiles)
+- [Customize and Settings](/openhands/usage/agent-canvas/customize-and-settings)

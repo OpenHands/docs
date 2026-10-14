@@ -11,7 +11,12 @@ from pathlib import Path
 # Add the script directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / ".github" / "scripts"))
 
-from sync_code_blocks import escape_embedded_backticks, extract_code_blocks, normalize_content
+from sync_code_blocks import (
+    escape_embedded_backticks,
+    extract_code_blocks,
+    find_mdx_files,
+    normalize_content,
+)
 
 
 class TestEscapeEmbeddedBackticks:
@@ -171,3 +176,16 @@ class TestNormalizeContent:
         # splitlines() handles all line ending types
         lines = result.split('\n')
         assert len(lines) == 3
+
+
+def test_find_mdx_files_skips_generated_cookbook(tmp_path):
+    """cookbook/ is generated from enterprise-cookbook and must not be rewritten."""
+    (tmp_path / "sdk" / "cookbook").mkdir(parents=True)
+    (tmp_path / "sdk" / "page.mdx").write_text("x")
+    (tmp_path / "sdk" / "cookbook" / "nested.mdx").write_text("x")
+    (tmp_path / "cookbook").mkdir()
+    (tmp_path / "cookbook" / "example.mdx").write_text("x")
+
+    found = {p.relative_to(tmp_path).as_posix() for p in find_mdx_files(tmp_path)}
+
+    assert found == {"sdk/page.mdx", "sdk/cookbook/nested.mdx"}

@@ -69,6 +69,13 @@ For a Helm installation, run the Kubernetes command from a workstation with
 The bundle includes cluster health, Kubernetes resource state, application logs,
 and OHE service checks.
 
+<Warning>
+  A support bundle may contain sensitive cluster configuration or logs. Keep it
+  local while you inspect it, and review it before attaching it to a ticket or
+  uploading it. A healthy analyzer summary does not prove that a user can open
+  the conversation UI and complete a conversation.
+</Warning>
+
 ### Open a Support Ticket
 
 Open the OpenHands Support Portal provided during Enterprise onboarding. Please
@@ -129,6 +136,14 @@ kubectl get nodes -o wide
 kubectl get pods -n openhands -o wide
 kubectl get deployments,statefulsets -n openhands
 kubectl get events -n openhands --sort-by=.metadata.creationTimestamp
+```
+
+For Helm installations that use the separate sandbox namespace from the
+[installation guide](/enterprise/k8s-install/installation), also check it:
+
+```bash
+kubectl get pods -n openhands-runtimes -o wide
+kubectl get events -n openhands-runtimes --sort-by=.metadata.creationTimestamp
 ```
 
 Start with the `STATUS`, `READY`, and `RESTARTS` columns:
@@ -192,6 +207,47 @@ short investigation:
 3. Save and deploy, then reproduce the problem.
 4. Collect the logs or a support bundle.
 5. Return `Log Level` to `INFO`, then save and deploy again.
+
+## First-Conversation Checks
+
+Use these checks after login if the conversation UI does not open or the first
+conversation cannot run. Start with the error visible to the user. Keep the
+investigation read-only; apply corrections through Helm values or the documented Secret
+creation path after you identify the cause.
+
+| Symptom | Check |
+|---|---|
+| Login succeeds but the conversation UI fails or asks for a backend URL or API key | Check the frontend Deployment, Service, and Ingress for your chart version. On chart `0.71.1`, a redirect to `/canvas` requires the [version-specific Canvas values](/enterprise/k8s-install/installation#step-3-configure-values). A healthy application pod alone does not prove the frontend is ready. |
+| Conversation says “Failed to start sandbox” | Inspect `runtime-api` logs and the sandbox namespace. If Runtime API `GET /list` returns 401, verify that `default-api-key` and `sandbox-api-key` contain the same value. Do not print either value. |
+| First model request fails with an invalid proxy token, wrong model, or OpenAI endpoint | Check the user's selected LLM profile, `env.LITELLM_DEFAULT_MODEL`, the bundled LiteLLM model list, and the profile's base URL. On chart `0.71.1`, the first user's `Default` profile can differ from the configured model. |
+
+For a Helm install, inspect the application resources and sandbox state with:
+
+```bash
+kubectl get deployment,service,ingress -n openhands
+kubectl get pods,events -n openhands-runtimes
+```
+
+If the Runtime API logs show a 401, compare the two Secret fields without
+displaying their values or hashes:
+
+```bash
+if [ "$(kubectl -n openhands get secret default-api-key \
+  -o jsonpath='{.data.default-api-key}')" = \
+  "$(kubectl -n openhands get secret sandbox-api-key \
+  -o jsonpath='{.data.sandbox-api-key}')" ]; then
+  echo "Runtime API keys match"
+else
+  echo "Runtime API keys differ"
+fi
+```
+
+Do not run this comparison with shell tracing (`set -x`) enabled. If you
+correct either Secret, the application pod must restart before its
+secret-backed environment reloads. Use your deployment's normal rollout
+procedure, then retry a new conversation. If the profile points at the wrong
+model endpoint, inspect the selected profile before changing infrastructure
+credentials or entering an API key in the browser.
 
 ## Related Guides
 
