@@ -156,9 +156,9 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Runs the agent-server OpenAPI generator
 - Updates `openapi/agent-sdk.json` via an automated PR
 
-### 4) Cookbook tab generated from `OpenHands/enterprise-cookbook`
+### 4) Enterprise Cookbook tab generated from `OpenHands/enterprise-cookbook`
 
-Every page under `cookbook/` and the `Cookbook` tab in `docs.json` are generated from example READMEs in
+Every page under `cookbook/` and the `Enterprise Cookbook` tab in `docs.json` are generated from example READMEs in
 `OpenHands/enterprise-cookbook` by its `tools/docs-render` converter. **Do not edit them here**; change the
 example's `README.md` or `example.yaml` in that repository.
 
