@@ -52,11 +52,15 @@ Configuration is passed via `-e` flags on `docker run`:
 | Variable | Purpose |
 |----------|---------|
 | `PORT` | Ingress port inside the container (default `8000`). Map it with `-p <host>:<PORT>`. |
-| `LOCAL_BACKEND_API_KEY` | API key for the server. Auto-generated and persisted if not set. |
+| `LOCAL_BACKEND_API_KEY` | API key for the Agent Canvas backend API. If not set, a key is generated and saved to `~/.openhands/agent-canvas/api-key.txt` in the mounted persistence directory. |
 | `OH_SECRET_KEY` | Secret used to protect stored settings and secrets. |
 | `AGENT_CANVAS_DISABLE_TELEMETRY` | Set to `1` or `true` to disable Agent Canvas product telemetry. |
+| `LMNR_PROJECT_API_KEY` | Enables SDK tracing to Laminar. See [Enable SDK Tracing](#enable-sdk-tracing). |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Enables SDK trace export to an OTLP-compatible backend such as Jaeger, Grafana Tempo, Honeycomb, Datadog, or New Relic. |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | OTLP transport protocol, usually `http/protobuf` or `grpc`. |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Optional authentication headers for your OTLP backend. |
 
-You can also pass `--disable-telemetry` to the Agent Canvas runtime. Use the environment variable for deployment configuration because older images ignore an unknown environment variable but reject an unknown runtime flag.
+You can also pass `--disable-telemetry` to the Agent Canvas runtime. Use the environment variable for deployment configuration because older images ignore an unknown environment variable but reject an unknown runtime flag. Product telemetry is separate from the SDK tracing variables above, which send traces only to a backend you configure.
 
 <Warning>
   The agent server can execute arbitrary shell commands inside the container. If exposing it beyond localhost, set `LOCAL_BACKEND_API_KEY` to a strong secret.
@@ -108,6 +112,75 @@ docker exec -it <container> docker info
   [Running Docker in the Agent Sandbox](/enterprise/docker-in-sandbox).
 </Note>
 
+## Enable SDK Tracing
+
+The container runs the OpenHands Agent Server, which uses the OpenHands SDK. The SDK emits traces automatically when Laminar or OpenTelemetry environment variables are set, so pass them to `docker run` to trace Agent Canvas conversations. For the full variable reference, see [Observability & Tracing](/sdk/guides/observability).
+
+### Laminar example
+
+```bash icon="terminal" wrap
+mkdir -p ~/projects ~/.openhands
+
+docker run -it --rm \
+  -p 8000:8000 \
+  -e LMNR_PROJECT_API_KEY="your-laminar-api-key" \
+  -v ~/.openhands:/home/openhands/.openhands \
+  -v ~/projects:/projects \
+  ghcr.io/openhands/agent-canvas:latest
+```
+
+### OTLP collector example
+
+If your collector runs on the host, `localhost` inside the container refers to the container itself. Use `host.docker.internal`; on Linux, also add the host gateway alias as shown:
+
+```bash icon="terminal" wrap
+mkdir -p ~/projects ~/.openhands
+
+docker run -it --rm \
+  --add-host=host.docker.internal:host-gateway \
+  -p 8000:8000 \
+  -e OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://host.docker.internal:4317" \
+  -e OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="grpc" \
+  -v ~/.openhands:/home/openhands/.openhands \
+  -v ~/projects:/projects \
+  ghcr.io/openhands/agent-canvas:latest
+```
+
+If the collector runs in another container, put both containers on the same Docker network and use the collector's container or Compose service name in the endpoint, for example `http://jaeger:4317`.
+
+<Note>
+  Exporters do not backfill earlier conversations. Configure tracing before starting the conversations you want to observe.
+</Note>
+
+### What the Image Provides
+
+The image includes SDK trace instrumentation and export. It does not include a trace backend: Laminar, Jaeger, Grafana Tempo, Datadog, Honeycomb, and New Relic are services you run or subscribe to separately.
+
+It also does not expose a Prometheus `/metrics` endpoint. The SDK exporter sends traces, not scrape metrics. To view traces in Grafana, export them to Grafana Tempo or another trace backend and add that backend as a Grafana data source. The SDK's token, cost, and latency tracking is a separate feature for SDK integrations; see [Metrics Tracking](/sdk/guides/metrics).
+
+## Inspect Conversations Through the Backend API
+
+The backend API is separate from tracing and uses the same `LOCAL_BACKEND_API_KEY` as the UI. You can use it to inspect conversations stored in the Docker backend, including one that does not appear in the left panel.
+
+```bash icon="terminal" wrap
+# Use the value you passed as LOCAL_BACKEND_API_KEY, or the generated key.
+export LOCAL_BACKEND_API_KEY="$(cat ~/.openhands/agent-canvas/api-key.txt)"
+
+curl -sS \
+  -H "X-Session-API-Key: $LOCAL_BACKEND_API_KEY" \
+  http://localhost:8000/api/conversations/search
+```
+
+After you find a conversation ID, list its most recent events:
+
+```bash icon="terminal" wrap
+export CONVERSATION_ID="conversation-id"
+
+curl -sS \
+  -H "X-Session-API-Key: $LOCAL_BACKEND_API_KEY" \
+  "http://localhost:8000/api/conversations/$CONVERSATION_ID/events/search?limit=20&sort_order=TIMESTAMP_DESC"
+```
+
 ## Connect from the Frontend
 
 Start the frontend separately and point it at the container:
@@ -122,7 +195,7 @@ Then add the Docker backend:
 2. Fill in:
    - **Name** — e.g. `docker-backend`
    - **Host / Base URL** — `http://localhost:8000`
-   - **API Key** — the `LOCAL_BACKEND_API_KEY` value (check container logs if auto-generated)
+   - **API Key** — the `LOCAL_BACKEND_API_KEY` value, or the generated key in `~/.openhands/agent-canvas/api-key.txt`
 3. Save and select it as the active backend.
 
 ## Related Guides
