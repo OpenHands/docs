@@ -127,7 +127,11 @@ When you remove a DigitalOcean backend in **Manage Backends**, Agent Canvas asks
 
 ### Reconnecting After a Restart
 
-Agent Canvas keeps the backend entry when you quit, but the connection to the sandbox closes. When you reopen the app, Agent Canvas reconnects to the selected DigitalOcean backend automatically. A DigitalOcean backend can show as disconnected in **Manage Backends** while it is not selected. Select it to reconnect.
+The desktop app keeps the backend entry when you quit, but the connection to the sandbox closes. When you reopen the app, Agent Canvas reconnects to the selected DigitalOcean backend automatically. A DigitalOcean backend can show as disconnected in **Manage Backends** while it is not selected. Select it to reconnect.
+
+<Note>
+  In the web build or Docker, the token is not kept across restarts, even with a persistent settings volume. To stay signed in, load `MARS_TOKEN` from an env file each time you start the server or container. See [Store Your Token in an Env File](#store-your-token-in-an-env-file).
+</Note>
 
 ## Costs
 
@@ -144,7 +148,8 @@ Sessions pause when all of your DigitalOcean balances reach $0, and stay paused 
 
 ## Security
 
-- Your DigitalOcean token stays in the Agent Canvas desktop process and is never sent to the web page. Revoke the token in DigitalOcean to disconnect Agent Canvas.
+- In the desktop app, your DigitalOcean token stays in the desktop process and is never sent to the web page. Revoke the token in DigitalOcean to disconnect Agent Canvas.
+- In the web build, anyone who can read your env file can use your DigitalOcean account. Keep the file readable only by you (`chmod 600`) and out of version control. Revoke the token in DigitalOcean if the file is exposed.
 - Each session runs in its own microVM, separate from your machine and from other sessions.
 - Secrets and API keys you add in a session's settings are stored in that sandbox. The agent can read them while it works, as with any backend.
 - Sessions can reach the public internet. They cannot reach private DigitalOcean VPC resources.
@@ -158,55 +163,114 @@ The DigitalOcean option appears in the browser version of Agent Canvas only when
 |----------|---------|
 | `MARS_WEB=1` | Turns on the DigitalOcean integration for the web build. |
 | `MARS_TOKEN` | Optional. A personal access token to sign in with when the server starts. |
-| `MARS_WEB_KEY` | Optional. The key the browser must present to use the integration. Defaults to the server's session API key. |
+| `MARS_WEB_KEY` | Optional. Authentication key for the DigitalOcean bridge. Falls back to the server's session API key if omitted. |
+| `LOCAL_BACKEND_API_KEY` | Optional. Sets the Docker stack's session API key, which the bridge uses when `MARS_WEB_KEY` is not set. If omitted, the image generates a key and saves it in the settings volume. This is not your DigitalOcean token. |
 
-In the web build, the token is held in the server's memory only, so restarting the server signs you out unless `MARS_TOKEN` is set.
+The web build, including Docker, uses personal access tokens and does not offer OAuth sign-in. Tokens entered in the UI stay in server memory, not in the settings volume. After each container or server restart, enter the token again unless you supply `MARS_TOKEN` at startup.
 
-Set `MARS_WEB=1` in the same command that starts Agent Canvas.
+For Docker, explicitly set `MARS_WEB=1`. Images that require opt-in leave the integration disabled without it. Because Docker binds to a non-loopback address inside the container, the bridge requires an authentication key and refuses to start without one. The official image always supplies one: if you set neither `LOCAL_BACKEND_API_KEY` nor `MARS_WEB_KEY`, it generates a session key on first start, as described in [Environment Variables](/openhands/usage/agent-canvas/setup#environment-variables). The Docker example below sets `LOCAL_BACKEND_API_KEY` so you know the key's value and the bridge and local backend share it.
+
+For CLI and source launches, the launcher can supply the session key.
+
+### Store Your Token in an Env File
+
+Keep `MARS_TOKEN` in an env file rather than typing it into commands. A token typed into a command is saved in your shell history and can show up in process listings. With an env file, every start uses the same values, and Agent Canvas signs in to DigitalOcean automatically.
 
 <Tabs>
-  <Tab title="Installed CLI">
-    ```bash
-    MARS_WEB=1 agent-canvas
-    ```
-  </Tab>
+  <Tab title="Installed CLI or npx">
+    The installed CLI does not read env files on its own. Create `~/.agent-canvas.env`, the same file used in [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm), and make it readable only by you:
 
+    ```bash
+    touch ~/.agent-canvas.env
+    chmod 600 ~/.agent-canvas.env
+    ```
+
+    Open the file in a text editor and add:
+
+    ```bash
+    export MARS_WEB=1
+    export MARS_TOKEN="<your-digitalocean-token>"
+    ```
+
+    Load the file in the same command that starts Agent Canvas:
+
+    ```bash
+    source ~/.agent-canvas.env && agent-canvas
+    ```
+
+    For `npx`, replace `agent-canvas` with `npx @openhands/agent-canvas`.
+  </Tab>
+  <Tab title="Docker">
+    Use the same `~/.agent-canvas.env` file as the Installed CLI tab. Add a local backend key to it once:
+
+    ```bash
+    echo "export LOCAL_BACKEND_API_KEY=\"$(openssl rand -hex 32)\"" >> ~/.agent-canvas.env
+    ```
+
+    Load the file, then pass each variable to the container by name. With `-e NAME` and no value, Docker copies the value from your shell, so the token never appears in the command:
+
+    ```bash
+    source ~/.agent-canvas.env
+    mkdir -p ~/projects
+
+    docker run -it --rm \
+      -p 127.0.0.1:8000:8000 \
+      -e MARS_WEB \
+      -e MARS_TOKEN \
+      -e LOCAL_BACKEND_API_KEY \
+      -v openhands-data:/home/openhands/.openhands \
+      -v ~/projects:/projects \
+      ghcr.io/openhands/agent-canvas:latest
+    ```
+
+    Open `http://localhost:8000/canvas`. If you add this server as a backend in **Manage Backends**, enter the `LOCAL_BACKEND_API_KEY` value from `~/.agent-canvas.env` in the **API Key** field.
+
+    This example mounts the named volume `openhands-data`, which Docker creates on first use and keeps after the container exits. On Linux, a named volume prevents the UID ownership mismatch between your host user and the container user that can cause `unable to open database file`. See [Install Agent Canvas](/openhands/usage/agent-canvas/setup#install-and-run) for more Docker setup details and Windows commands.
+  </Tab>
   <Tab title="From source (npm run dev)">
-    From a clone of the [OpenHands repository](https://github.com/OpenHands/OpenHands):
+    `npm run dev` reads a `.env` file in the repository root automatically. In your clone of the [OpenHands repository](https://github.com/OpenHands/OpenHands), add these lines to `.env`:
+
+    ```ini
+    MARS_WEB=1
+    MARS_TOKEN=<your-digitalocean-token>
+    ```
+
+    Then start Agent Canvas:
 
     ```bash
     npm install
-    MARS_WEB=1 npm run dev
+    npm run dev
     ```
 
-    `npm run dev` also reads a `.env` file in the repository root, so you can add `MARS_WEB=1` there instead of setting it on each run.
+    The repository's `.gitignore` excludes `.env`. Do not commit it or copy the token into `.env.sample`.
   </Tab>
-
 </Tabs>
-
-To sign in automatically when the server starts, add your token to the same command:
-
-```bash
-MARS_WEB=1 MARS_TOKEN=<your-digitalocean-token> agent-canvas
-```
 
 Then open Agent Canvas in your browser and go to **Manage Backends** → **Add Backend** → **Providers**.
 
+### Persist Sign-In Across Restarts
+
+The bridge does not save your DigitalOcean token to disk. A token you enter in the UI lasts only until the server or container stops. To stay signed in, load your env file every time you start Agent Canvas, as shown in [Store Your Token in an Env File](#store-your-token-in-an-env-file). For Docker, that includes each time you recreate the container.
+
+When the token expires or you revoke it, replace `MARS_TOKEN` in the env file and restart Agent Canvas.
 
 ## Troubleshooting
 
 | Message or symptom | What to do |
 |--------------------|------------|
-| No **Providers** tab in **Add Backend** | Use the desktop app, or set `MARS_WEB=1` on the server that hosts the web build. |
-| **Could not connect to DigitalOcean.** | Copy the token again and check that it has not expired. |
+| **No Providers tab in Add Backend** | Use the desktop app, or set `MARS_WEB=1` on the server that hosts the web build. |
+| **Docker logs report a missing bridge authentication key** | Set `LOCAL_BACKEND_API_KEY` or `MARS_WEB_KEY` along with `MARS_WEB=1`, then recreate the container. |
+| **Linux: unable to open database file** | Use the named settings volume in the Docker example instead of binding `~/.openhands`. |
+| **Asked for a DigitalOcean token after restarting Docker** | This is expected because UI-entered tokens are held in memory only. Enter the token again, or [load `MARS_TOKEN` from an env file](#store-your-token-in-an-env-file) at startup. OAuth is not available in the web build. |
+| **Could not connect to DigitalOcean.** | Copy the token again and check that it has not expired. If you load it from an env file, check that the value has no extra spaces and that the file is loaded before Agent Canvas starts. |
 | **DigitalOcean refused the connection.** | Create a new token with **Full Access**, and confirm your team can use Managed Agents. |
 | **This DigitalOcean sign-in has expired.** | Create a new token and sign in again. |
 | **This team has no OpenHands agents yet.** | Select **New Agent**. Agents for other harnesses are hidden. |
 | **This session isn't running an OpenHands agent server…** | The session was not started from an OpenHands agent. Launch a session from an agent created in Agent Canvas. |
 | **Could not launch a new session.** | Stop sessions you no longer need, and check that your DigitalOcean balance is above $0. |
-| A session stays on **Waking the session…** | Add funds to your DigitalOcean account. Sessions stay paused at a $0 balance. |
+| **A session stays on Waking the session…** | Add funds to your DigitalOcean account. Sessions stay paused at a $0 balance. |
 | **Your system keychain is unavailable…** | Unlock or install a keychain (common on Linux), or sign in again each time you open the app. |
-| Conversations fail right after connecting | Add an LLM profile in **Settings → LLM**, then try again. |
+| **Conversations fail right after connecting** | Add an LLM profile in **Settings → LLM**, then try again. |
 
 ## Related Guides
 
