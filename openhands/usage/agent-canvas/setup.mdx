@@ -89,16 +89,16 @@ The `agent-canvas` launcher can run the Canvas client with Agent Server, Automat
   </Tab>
 
   <Tab title="Docker">
-    Create host directories for persistent settings and project files, then start the container.
+    Use a named Docker volume for persistent settings and a host directory for project files, then start the container.
 
     **macOS / Linux:**
 
     ```bash
-    mkdir -p ~/projects ~/.openhands
+    mkdir -p ~/projects
 
     docker run -it --rm \
-      -p 8000:8000 \
-      -v ~/.openhands:/home/openhands/.openhands \
+      -p 127.0.0.1:8000:8000 \
+      -v openhands-data:/home/openhands/.openhands \
       -v ~/projects:/projects \
       ghcr.io/openhands/agent-canvas:latest
     ```
@@ -106,16 +106,34 @@ The `agent-canvas` launcher can run the Canvas client with Agent Server, Automat
     **Windows (PowerShell):**
 
     ```powershell
-    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.openhands", "$env:USERPROFILE\projects" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\projects" | Out-Null
 
     docker run -it --rm `
-      -p 8000:8000 `
-      -v "$($env:USERPROFILE)\.openhands:/home/openhands/.openhands" `
+      -p 127.0.0.1:8000:8000 `
+      -v openhands-data:/home/openhands/.openhands `
       -v "$($env:USERPROFILE)\projects:/projects" `
       ghcr.io/openhands/agent-canvas:latest
     ```
 
-    The Docker image serves Agent Canvas at `http://localhost:8000/canvas`. The agent can access project files under the mounted `/projects` directory.
+    The Docker image serves Agent Canvas at `http://localhost:8000/canvas`. The agent can access project files under the mounted `/projects` directory. The `127.0.0.1:` prefix publishes the port on your machine only, so other devices on your network cannot reach the agent server.
+
+    Docker creates `openhands-data` on first use and keeps it after the container exits, including with `--rm`. Reuse the same volume on subsequent runs.
+
+    <Warning>
+      On Linux, binding `~/.openhands` can cause `unable to open database file`: the container user defaults to UID `10001`, while the host directory is usually owned by your own user, such as UID `1000`. A named volume avoids this ownership mismatch. Switching to a new volume does not copy existing settings from `~/.openhands`.
+    </Warning>
+
+    To move existing settings from `~/.openhands` into the volume, run this once before starting Agent Canvas:
+
+    ```bash
+    docker run --rm -u 0 --entrypoint sh \
+      -v ~/.openhands:/from:ro \
+      -v openhands-data:/to \
+      ghcr.io/openhands/agent-canvas:latest \
+      -c 'cp -a /from/. /to/ && chown -R 10001:10001 /to'
+    ```
+
+    To use DigitalOcean sandboxes, follow the [DigitalOcean Docker setup](/openhands/usage/agent-canvas/backend-setup/digitalocean#use-it-from-the-web-build) to enable the integration and configure authentication.
 
     <Note>
       PowerShell uses backticks (`` ` ``) for line continuation. If Docker reports that it cannot connect to the daemon, start Docker Desktop and run the command again.
@@ -264,7 +282,7 @@ agent-canvas --port 3000
   </Tab>
 </Tabs>
 
-Your settings and conversation data are stored outside the package or image when you use the documented `~/.openhands` mount.
+Your settings and conversation data are stored outside the package or image: in `~/.openhands` for npm and npx, and in the `openhands-data` volume for Docker. Pulling a new image does not change the volume.
 
 <Note>
   **Recover or reset:** Use [Troubleshooting](/openhands/usage/agent-canvas/troubleshooting) when the browser is blank, a port is busy, the backend is unreachable, a model or API key fails, or an update or uninstall is stuck. It also explains clean removal and reinstall.
@@ -301,10 +319,16 @@ Your settings and conversation data are stored outside the package or image when
     docker stop <container-id-or-name>
     docker rmi ghcr.io/openhands/agent-canvas:latest
     ```
+
+    To also delete settings, secrets, and conversation history, remove the settings volume:
+
+    ```bash
+    docker volume rm openhands-data
+    ```
   </Tab>
 </Tabs>
 
-Uninstalling the package or image does not automatically remove your persisted data. If you want to delete local settings, secrets, and conversation history, remove the persistence directory you mounted or used, such as `~/.openhands`.
+Uninstalling the package or image does not automatically remove your persisted data. To delete local settings, secrets, and conversation history, remove `~/.openhands` for npm and npx, or the `openhands-data` volume for Docker. If you bound `~/.openhands` in an older Docker setup, remove that directory too.
 
 ## Desktop App (Preview Build)
 
