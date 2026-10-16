@@ -1,0 +1,182 @@
+---
+title: Google GKE
+description: Prepare a Google Kubernetes Engine cluster to run OpenHands Enterprise
+icon: cloud
+---
+
+Running OpenHands Enterprise on Google Kubernetes Engine (GKE) follows the standard
+[Helm installation](/enterprise/k8s-install/installation), with provider-specific
+choices for node pools, storage, ingress and the sandbox runtime. This guide covers
+preparing the cluster. Once it is ready, follow the Helm guide to deploy.
+
+## Cluster Requirements
+
+| Requirement | Recommendation |
+| --- | --- |
+| Access | A Google Cloud project with billing, the GKE API enabled, and permissions to create the cluster, node pools and networking |
+| Cluster mode | GKE Standard with control over Ubuntu sandbox nodes |
+| GKE version | A supported GKE version compatible with [Sysbox](/enterprise/k8s-install/sysbox); verify the actual node image and containerd version |
+| Sandbox OS | Ubuntu containerd nodes with a working Sysbox runtime |
+| Storage class | Persistent Disk CSI, such as `standard-rwo`, with expansion enabled |
+| Capacity | Sufficient regional compute, disk and address quota for application nodes, sandbox nodes and upgrades |
+
+Google CLI authentication alone does not establish deployment permissions.
+Confirm the selected project, billing and Kubernetes access before provisioning.
+Use a dedicated evaluation cluster, explicit project and zone or region, and an
+isolated kubeconfig. Existing networks, private cluster access and workload
+identities need their own access checks.
+
+## Node Pools
+
+Use separate pools for application services and sandbox workloads:
+
+- **General pool:** runs OpenHands services and cluster add-ons. Keep application
+  workloads here through node affinity or selectors.
+- **Sysbox pool:** an Ubuntu containerd node pool for agent sandboxes. Configure
+  `sysbox-install=yes` as a persistent node-pool label so new nodes receive the installer.
+
+The evaluation used a zonal GKE Standard cluster with two `e2-standard-4` platform
+nodes and one `e2-standard-4` sandbox node. Size the pools using the
+[Sizing Guide](/enterprise/sizing-guide) and
+[Resource Limits](/enterprise/k8s-install/resource-limits), including node overhead,
+image storage and warm sandbox capacity. Verify new nodes can start a sandbox
+before relying on autoscaling or node replacement.
+
+### Set Up the Sandbox Runtime
+
+1. Follow [Installing Sysbox](/enterprise/k8s-install/sysbox) to install Sysbox on
+   your Ubuntu sandbox pool.
+2. Verify the installer and RuntimeClass, then start a real pod using
+   `runtimeClassName: sysbox-runc`. Installer readiness alone does not establish
+   that sandbox workloads can start.
+3. After installing OpenHands, start a conversation and ask it to run `pwd`.
+   Confirm it returns the workspace directory and the pod runs on the sandbox pool.
+
+The tested nodes used GKE `1.35.8-gke.1225000`, Ubuntu `24.04.4`, kernel
+`6.8.0-1061-gke` and containerd `2.2.7`, with Sysbox installer `v0.7.1-0`.
+A real conversation sandbox ran successfully without a containerd registration repair.
+Check compatibility again before changing node images or Kubernetes versions.
+
+## Persistent Storage
+
+Inspect the Persistent Disk CSI StorageClass:
+
+```bash
+kubectl get storageclass standard-rwo -o yaml
+```
+
+The evaluated class uses `pd.csi.storage.gke.io`, `WaitForFirstConsumer`,
+`ReadWriteOnce` and volume expansion. Configure stateful components and workspace
+storage explicitly:
+
+```yaml
+runtime-api:
+  env:
+    STORAGE_CLASS: standard-rwo
+postgresql:
+  primary:
+    persistence:
+      storageClass: standard-rwo
+```
+
+Account for node disk-attachment limits and zone topology. Validate mounting,
+persisted content after reattachment, and expansion on a disposable PVC for your
+deployment. The evaluation verified workspace read/write.
+
+## Object Storage
+
+Conversation/session storage is separate from workspace PVCs. Helm chart `0.74.0`
+supports S3-compatible and GCS filestore configuration. Select a supported object
+store and configure its access before installing.
+
+`filestore.type: gcs` is the chart default. GCS uses the application's ambient
+Google identity through Application Default Credentials; the chart's filestore
+credential Secret settings apply to S3, not GCS. Configure [Workload Identity Federation for GKE](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
+for the application and grant access to the selected bucket. The
+Vertex credential configured on the LLM gateway is a separate configuration.
+
+The evaluation set `filestore.type: s3` and used the chart's optional RustFS
+store on Persistent Disk CSI, which required a credential Secret and a
+separate Job to create the conversation bucket. Select an object store that meets
+your durability and availability requirements, and verify backup and restore for
+that configuration.
+
+## Database
+
+Use the [External PostgreSQL](/enterprise/external-postgres) guide for managed
+database requirements and Helm values. If choosing Cloud SQL for PostgreSQL,
+verify compatibility, TLS and network access against those requirements before
+deployment. The tested configuration used bundled PostgreSQL.
+
+## Ingress
+
+Run an ingress controller on the general pool. Traefik was validated with a Google
+Cloud public LoadBalancer:
+
+```yaml
+service:
+  type: LoadBalancer
+```
+
+Read the Service's external IP and create a wildcard A record for your base domain.
+DNS can remain with another provider. For private ingress, select the appropriate
+Google Cloud load-balancer configuration and verify client access separately.
+
+Follow [DNS and TLS](/enterprise/k8s-install/dns-and-tls) for trusted certificates
+and hostname configuration. Use flat runtime hostnames with Traefik standard Ingress.
+If provisioning certificates manually, assign renewal and Secret-update ownership.
+The evaluation used manual DNS-01 issuance; automatic renewal was not configured.
+
+## LLM Configuration
+
+Configure your provider through the bundled gateway in the shared Helm installation
+values. For Vertex AI, provider credentials belong to the LiteLLM gateway; users
+select the configured model in OpenHands. The validated configuration and model
+checks are recorded in the companion Google gateway guide.
+
+## Validate the Installation
+
+1. Follow the shared Helm guide for registry authentication, namespaces, Secrets
+   and complete installation values.
+2. Verify trusted application HTTPS and sign in through your identity provider.
+   Canvas should load without an additional backend URL or API-key prompt; use the
+   Canvas values in the Helm guide if your chart requires them.
+3. Start a new conversation, ask the agent to run `pwd`, write a workspace marker
+   and read it back. Confirm sandbox `READY`, successful tool results and a completed reply.
+4. Verify unauthenticated Enterprise API requests are rejected. Loading the static
+   frontend does not grant access to backend conversations or credentials.
+
+The evaluation passed these checks with an unmodified agent-server
+`1.49.6-python` image. Ready application pods or a short model completion alone
+are not sufficient first-use validation.
+
+## Validation Scope
+
+<Note>
+Validated with Helm chart `0.74.0`, OpenHands `1.67.0` and agent-server
+`1.49.6-python`: GitHub login, trusted HTTPS, normal Canvas loading, a Sysbox
+sandbox, workspace read/write, Vertex gateway inference and a completed tool-using
+conversation. The tested configuration used GKE Standard, bundled PostgreSQL,
+RustFS and manually issued wildcard TLS.
+
+Autopilot, Cloud SQL, GCS, storage reattachment/expansion, cross-zone recovery,
+autoscaling, node replacement, backup/restore and automatic certificate renewal
+were not covered by these checks. The Google AI Studio API-key route was not tested.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installing Sysbox" icon="cube" href="/enterprise/k8s-install/sysbox">
+    Configure and verify the sandbox runtime.
+  </Card>
+  <Card title="DNS and TLS" icon="lock" href="/enterprise/k8s-install/dns-and-tls">
+    Configure hostnames and trusted certificates.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy the application and validate a conversation.
+  </Card>
+  <Card title="External PostgreSQL" icon="database" href="/enterprise/external-postgres">
+    Configure an external database.
+  </Card>
+</CardGroup>
