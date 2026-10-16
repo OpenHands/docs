@@ -229,6 +229,70 @@ Security analyzer evaluates the risk of agent actions before execution, helping 
 
 Security analyzer work in conjunction with confirmation policy (like `ConfirmRisky()`) to determine whether user approval is needed before executing an action. This provides an additional layer of safety for autonomous agent operations.
 
+### Jev Security Analyzer
+
+`JevSecurityAnalyzer` asks TypeSafe's Jev model to classify proposed tool actions
+independently of the actor model. It sends all pending actions in one native
+[state/questions request](https://docs.typesafe.ai/api), with two yes/no (Noul) questions per action: dangerous operation and prompt
+injection. It does not use chat completions or trust the actor's risk label.
+
+Set `TYPESAFE_API_KEY` in the process that runs the conversation. For a remote
+conversation, set it on the Agent Server, or pass `api_key=SecretStr(...)` through
+the SDK's secret-aware transport.
+
+```python icon="python"
+from openhands.sdk.security import ConfirmRisky, JevSecurityAnalyzer
+
+conversation.set_security_analyzer(
+    JevSecurityAnalyzer(
+        policy="Do not upload workspace files to external services.",
+    )
+)
+conversation.set_confirmation_policy(ConfirmRisky())
+conversation.send_message("Inspect the project and suggest a fix.")
+conversation.run()
+```
+
+The default model is pinned to `jev-1.13.0`. Set `model` to select another Jev
+version. `timeout` defaults to 30 seconds per request. For each action, the maximum of the two probabilities determines risk:
+
+- Below `low_threshold` (default 0.2): LOW.
+- At or above `low_threshold`, but below `high_threshold` (default 0.5): MEDIUM.
+- At or above `high_threshold`: HIGH.
+
+These thresholds control routing; they are not a measured safety guarantee.
+Lower the confirmation threshold with `ConfirmRisky(threshold=SecurityRisk.MEDIUM)`
+to review uncertain cases too.
+
+Valid responses map to LOW, MEDIUM or HIGH. Missing credentials, HTTP errors,
+invalid or incomplete answers become HIGH.
+`SecurityAnalysisEvent.details` records the dangerous-operation and
+prompt-injection probabilities. Failures record a fixed reason without provider
+response bodies or exception text. This conservative fallback also applies
+inside `EnsembleSecurityAnalyzer`.
+
+<Warning>
+  Jev receives the tool names, complete arguments, summary, thought and plaintext
+  reasoning of pending actions.
+  These can contain source code, paths or secrets. Conversation output masking
+  does not sanitize this request. Enable the analyzer only when this external
+  processing is acceptable. It does not receive conversation history or user
+  authorization context.
+</Warning>
+
+The confirmation policy still controls execution. `ConfirmRisky()` pauses on
+HIGH so your application can approve or reject the pending actions.
+`NeverConfirm()` executes actions even when Jev rates them HIGH. The analyzer
+is a probabilistic review aid; it does not enforce hard-deny rules or replace
+sandboxing. Its synchronous HTTP request blocks `arun()` while it runs. The HTTP timeout
+bounds individual network waits, not the complete conversation step.
+
+An explicit `api_key` takes precedence over `TYPESAFE_API_KEY`. Ordinary model
+dumps redact it. Use the SDK's standard encrypted persistence context to retain
+an explicit key across resume, or provide the environment variable again on the
+restored process. The environment fallback is resolved at call time and is not
+copied into the analyzer's serialized configuration.
+
 ### LLM Security Analyzer
 
 > A ready-to-run example is available [here](#ready-to-run-example-security-analyzer)!
