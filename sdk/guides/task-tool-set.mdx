@@ -300,6 +300,83 @@ print(f"\nEXAMPLE_COST: {cost}")
 
 <RunExampleCode path_to_script="examples/01_standalone_sdk/40_task_tool_set.py"/>
 
+## Remote Workspaces Per Sub-Agent
+
+A local parent can run children as `RemoteConversation` instances, each with its
+own workspace. Pass a factory to `TaskToolSet.create()`, `TaskManager`, or
+`DelegateExecutor`:
+
+```python
+import os
+
+from openhands.tools.delegate import DelegateExecutor
+from openhands.tools.task import TaskToolSet
+from openhands.workspace import DockerWorkspace
+
+
+def create_subagent_workspace(child_id: str, agent_type: str):
+    return DockerWorkspace(
+        server_image=os.environ["AGENT_SERVER_IMAGE"],
+        working_dir="/workspace",
+    )
+
+
+# Given an existing local parent conversation:
+tools = TaskToolSet.create(
+    parent.state, workspace_factory=create_subagent_workspace
+)
+executor = DelegateExecutor(workspace_factory=create_subagent_workspace)
+```
+
+For an agent configured with `Tool(name=...)`, register a subclass that injects
+the factory. Do not put the callable in `Tool.params`, which must be serializable:
+
+```python
+from openhands.sdk.tool import Tool, register_tool
+
+
+class RemoteTaskToolSet(TaskToolSet):
+    @classmethod
+    def create(cls, conv_state):
+        return super().create(
+            conv_state, workspace_factory=create_subagent_workspace
+        )
+
+
+register_tool("remote_tasks", RemoteTaskToolSet)
+# Include Tool(name="remote_tasks") in the parent agent's tools.
+```
+
+The ownership contract is:
+
+- The factory is called once per new child, with its ID and agent type.
+- Returning `None` selects the existing local execution behavior.
+- The executor enters and owns the returned workspace. Every child must receive
+  a distinct workspace, not another wrapper around the same sandbox.
+- Remote task conversations and workspaces remain allocated for the lifetime of
+  their `TaskManager` to support resume. Delegate children remain allocated until
+  `DelegateExecutor.close()` or replacement of that child ID.
+- Close directly created managers/executors in a `finally` block. Parent tool
+  cleanup closes registered executors. Cleanup closes child conversations, exits
+  their workspaces, and closes their HTTP clients. Workspace subclasses determine
+  whether exiting destroys infrastructure; plain `RemoteWorkspace` does not stop
+  an externally managed agent server.
+- If the factory fails before returning, it must clean up resources it allocated.
+
+Task resume is supported only within the same manager instance. It reuses the
+existing remote conversation without calling the factory again. A missing server
+or conversation produces an error; it does not create a replacement.
+Cross-process task restoration is not supported.
+
+Use an agent-server image compatible with your SDK and containing the child's
+tools. The parent's files are not copied automatically; prepare the child's
+repository or upload files in the factory when needed.
+
+Results, confirmation approve/reject behavior, and parent-child tracing retain
+their existing interfaces. Task children use their agent definition's
+`max_budget_per_run`, or inherit the parent's budget. The server enforces remote
+budgets; a server that does not acknowledge the budget is rejected before execution.
+
 ## Next Steps
 
 - **[Custom Tools](/sdk/guides/custom-tools)** — Build your own tools
