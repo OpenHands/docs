@@ -1,12 +1,12 @@
 ---
 title: Custom Tools with Remote Agent Server
-description: Learn how to use custom tools with a remote agent server by building a custom base image that includes your tool implementations.
+description: Learn how to use custom tools with a remote agent server, including source-mode Docker images and prebuilt binary images with extra Python paths.
 ---
 
 > A ready-to-run example is available [here](#ready-to-run-example)!
 
 
-When using a [remote agent server](/sdk/guides/agent-server/overview), custom tools must be available in the server's Python environment. This guide shows how to build a custom base image with your tools and use `DockerDevWorkspace` to automatically build the agent server on top of it.
+When using a [remote agent server](/sdk/guides/agent-server/overview), custom tools must be importable by both the client process and the server process. This guide shows two ways to bring your own tools to the agent server: build a custom base image for source-mode development, or run a prebuilt/binary agent server image with an extra Python path that points at your tool modules.
 
 <Note>
 For standalone custom tools (without remote agent server), see the [Custom Tools guide](/sdk/guides/custom-tools).
@@ -15,11 +15,11 @@ For standalone custom tools (without remote agent server), see the [Custom Tools
 ## How It Works
 
 1. **Define custom tool** with `register_tool()` at module level
-2. **Create Dockerfile** that copies tools and sets `PYTHONPATH`
-3. **Build custom base image** with your tools
-4. **Use `DockerDevWorkspace`** with `base_image` parameter - it builds the agent server on top
-5. **Import tool module** in client before creating conversation
-6. **Server imports modules** dynamically, triggering registration
+2. **Make the module importable** in the client and on the remote agent server
+3. **Import the tool module in the client** before creating the conversation so the SDK can include the tool's module qualname in the remote request
+4. **Start the server with the same module available** through `PYTHONPATH`, `OH_EXTRA_PYTHON_PATH`, or `--extra-python-path`
+5. **Server imports the module** at startup or when a conversation is created, triggering registration
+6. **Agent uses the tool remotely** while execution happens inside the server workspace
 
 ## Key Files
 
@@ -221,17 +221,64 @@ COPY custom_tools /app/custom_tools
 ENV PYTHONPATH="/app:${PYTHONPATH}"
 ```
 
+## Running with a Prebuilt Binary Image
+
+If you are using the published `ghcr.io/openhands/agent-server:*` binary images, you do not need to rebuild the image just to load a `.py` file. Mount or copy your tool package into the container, then point the agent server at the parent directory with `OH_EXTRA_PYTHON_PATH` or `--extra-python-path`.
+
+```bash icon="terminal"
+# Run from the directory that contains custom_tools/log_data.py
+CUSTOM_TOOLS_ROOT="$PWD"
+
+docker run --rm -p 8000:8000 \
+  -v "$CUSTOM_TOOLS_ROOT/custom_tools:/opt/custom_tools:ro" \
+  -e OH_EXTRA_PYTHON_PATH=/opt \
+  ghcr.io/openhands/agent-server:latest-python \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --import-modules custom_tools.log_data
+```
+
+You can pass the path as a CLI flag instead of an environment variable:
+
+```bash icon="terminal"
+docker run --rm -p 8000:8000 \
+  -v "$PWD/custom_tools:/opt/custom_tools:ro" \
+  ghcr.io/openhands/agent-server:latest-python \
+  --extra-python-path /opt \
+  --import-modules custom_tools.log_data
+```
+
+On the client side, import the same module before creating the remote conversation so the SDK knows which tool module qualname to send to the server:
+
+```python icon="python"
+import custom_tools.log_data  # Registers LogDataTool in the client registry
+
+from openhands.sdk import Agent, Conversation, Tool, Workspace
+
+workspace = Workspace(host="http://localhost:8000")
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name="LogDataTool")],
+)
+conversation = Conversation(agent=agent, workspace=workspace)
+```
+
+<Note>
+The value passed to `OH_EXTRA_PYTHON_PATH` or `--extra-python-path` should be the directory that makes the module importable by its full module name. For `custom_tools.log_data`, use the parent directory that contains the `custom_tools/` package. Multiple directories can be separated with the platform path separator (`:` on Linux/macOS, `;` on Windows).
+</Note>
+
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Tool not found | Ensure `register_tool()` is called at module level, import tool before creating conversation |
-| Import errors on server | Check `PYTHONPATH` in Dockerfile, verify all dependencies installed |
+| Tool not found | Ensure `register_tool()` is called at module level and import the tool module in the client before creating the conversation |
+| Works in client but not on server | Make the same module path importable on the server; for binary images, mount/copy the tools and set `OH_EXTRA_PYTHON_PATH` or `--extra-python-path` |
+| Import errors on server | Check `PYTHONPATH`, `OH_EXTRA_PYTHON_PATH`, or `--extra-python-path`; verify any third-party dependencies are installed in the server image |
 | Build failures | Verify file paths in `COPY` commands, ensure Python 3.12+ |
 
-<Warning>
-**Binary Mode Limitation**: Custom tools only work with **source mode** deployments. When using `DockerDevWorkspace`, set `target="source"` (the default). See [GitHub issue #1531](https://github.com/OpenHands/software-agent-sdk/issues/1531) for details.
-</Warning>
+<Note>
+For `DockerDevWorkspace` with a custom base image, source mode is still the most convenient path because the tool code and dependencies are baked into the image before the server starts. For prebuilt or PyInstaller binary images, use `OH_EXTRA_PYTHON_PATH` or `--extra-python-path` to make external tool modules importable at runtime.
+</Note>
 
 ## Ready-to-run Example
 
@@ -351,7 +398,10 @@ with DockerDevWorkspace(
     base_image=CUSTOM_BASE_IMAGE_TAG,
     host_port=8011,
     platform=detect_platform(),
-    target="source",  # NOTE: "binary" target does not work with custom tools
+    # This example uses source mode because the custom base image exposes tools
+    # via PYTHONPATH. Binary images can load external tools with
+    # OH_EXTRA_PYTHON_PATH or --extra-python-path.
+    target="source",
 ) as workspace:
     logger.info("✅ Custom agent server started!")
 
