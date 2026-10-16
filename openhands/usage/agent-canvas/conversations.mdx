@@ -7,9 +7,52 @@ A conversation is a single agent session on the active backend. It has its own m
 
 ## Child Conversations
 
-When an agent uses `launch_child_conversation`, Agent Canvas can launch a child conversation on a local or Cloud target. Local children can use either an isolated worktree or the parent's shared workspace. Cloud children use the repository and branch selected for the launch.
+When an agent uses `launch_child_conversation`, Agent Canvas starts a new, independent conversation. A local child runs in the parent conversation's workspace, in its own git worktree by default or in the shared directory when `isolation` is `shared`. A cloud child runs in its own sandbox from a repository and branch. The child does not see the parent conversation, so the task brief has to contain the goal, constraints, and expected result.
 
-The child remains linked to its parent, and its result is returned to the parent conversation. Agent Canvas validates the launch inputs before creating the child conversation.
+The result comes back to the parent as a follow-up message starting with `[child-conversation]`. That message names the target, the conversation id and URL, and the agent profile and model that were applied, or it says the default settings path was inherited.
+
+This is separate from in-conversation sub-agents (the task and delegate tools). Those stay inside the current conversation, do not take `agent_profile`, and do not create a separately tracked conversation. Use `launch_child_conversation` with `agent_profile` when the delegated task should run on a different saved agent profile or model.
+
+### Parameters
+
+| Parameter | Required | Applies to |
+| --- | --- | --- |
+| `target` | yes | `local` or `cloud` |
+| `task` | yes | both |
+| `title` | no | both |
+| `agent_profile` | no | both. A saved agent profile name or id. |
+| `repository` | no | cloud only, as `owner/repo` |
+| `branch` | no | cloud only, and only together with `repository` |
+| `isolation` | no | local only. `worktree` (default) or `shared` |
+
+Omit `agent_profile` to keep the default path: a local child starts from the current agent settings, and a cloud child starts without an agent profile so the cloud backend applies its own default.
+
+An unknown or unreadable `agent_profile` launches nothing and returns corrective guidance. A local profile whose LLM profile is missing does the same. On cloud, a saved agent profile whose model cannot be confirmed from the visible LLM profile list still launches. That includes an organization-only LLM profile while the parent conversation is local. The follow-up sets the model to null and says the model was not confirmed. It does not switch to another model.
+
+A profile with a secret allow-list runs the child with only those secrets. It does not inherit the parent conversation's full secret set.
+
+### Example: local child on a saved profile
+
+`repository` and `branch` are cloud-only and must be omitted. `isolation` defaults to `worktree`.
+
+```text
+launch_child_conversation
+  target: "local"
+  task: "Add a unit test for parseConfig. Report the file you changed."
+  agent_profile: "fast"
+```
+
+### Example: cloud child on the default profile
+
+Do not pass `isolation` with `target` `cloud`.
+
+```text
+launch_child_conversation
+  target: "cloud"
+  task: "Fix the flaky checkout test and open a pull request."
+  repository: "octocat/hello-world"
+  branch: "main"
+```
 
 ## Conversation List Controls
 
