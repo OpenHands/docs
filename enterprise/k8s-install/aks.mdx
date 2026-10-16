@@ -1,0 +1,187 @@
+---
+title: Azure AKS
+description: Prepare an Azure Kubernetes Service cluster to run OpenHands Enterprise
+icon: /enterprise/images/azure-logo.svg
+---
+
+Running OpenHands Enterprise on Azure Kubernetes Service (AKS) follows the standard
+[Helm installation](/enterprise/k8s-install/installation), with provider-specific
+choices for node pools, storage, ingress and the sandbox runtime. This guide covers
+preparing the cluster with standard runc sandboxes. Once it is ready, follow the
+Helm guide to deploy using the runtime values below. Skip
+[Installing Sysbox](/enterprise/k8s-install/sysbox). Wherever the Helm guide installs
+or checks Sysbox, use the runc values and checks on this page instead.
+
+<Note>
+The values below apply to Enterprise Helm chart `0.74.0` and Runtime API `0.10.0`.
+Check the values for your licensed release before installing or upgrading.
+</Note>
+
+For an agent-assisted installation on a dedicated test cluster, use the
+[AKS installation skill](https://github.com/OpenHands/OpenHands-Cloud/blob/main/.agents/skills/aks-install.md)
+and its [setup scripts and templates](https://github.com/OpenHands/OpenHands-Cloud/tree/main/aks-install).
+
+## Cluster Requirements
+
+| Requirement | Recommendation |
+| --- | --- |
+| Access | An Azure subscription and permissions to create the resource group, cluster, node pools and networking |
+| AKS version | An AKS-supported version; verify the actual Ubuntu image and containerd version against your target Enterprise release |
+| Sandbox OS | Ubuntu nodes using the default containerd/runc runtime |
+| Storage class | Azure Disk CSI, such as `managed-csi`, with expansion enabled |
+| Capacity | Sufficient regional and VM-family vCPU quota for application nodes, sandbox nodes and upgrades |
+
+Entra or Azure DevOps authentication alone does not establish subscription access.
+Check `az account list --all` and the selected subscription's permissions.
+Grant the deployment identity access to create the cluster and its dependencies.
+Creating Azure role assignments requires additional permissions. Existing networks, private
+cluster access and workload identities need their own access checks.
+
+Check VM SKU restrictions as well as quota before selecting a region or availability
+zones. Use a dedicated resource group and explicit subscription and kubeconfig.
+
+## Node Pools
+
+Use separate pools for application services and sandbox workloads:
+
+- **General pool:** runs OpenHands services and cluster add-ons. Keep application
+  workloads here through node affinity or selectors.
+- **Sandbox pool:** an Ubuntu user node pool for agent sandboxes. Set
+  `workload=openhands-sandbox` as a persistent node-pool label so new nodes match
+  the Runtime API selector. Do not install the Sysbox DaemonSet or add its installer label.
+
+Size both pools using the [Sizing Guide](/enterprise/sizing-guide) and
+[Resource Limits](/enterprise/k8s-install/resource-limits). Leave capacity for
+Kubernetes services, existing workloads and concurrent sandboxes. Check
+PodDisruptionBudgets before draining nodes for maintenance or upgrades.
+
+### Configure runc Sandboxes
+
+Override the Sysbox defaults in the Enterprise chart through Helm values:
+
+```yaml
+runtime-api:
+  env:
+    RUNTIME_CLASS: ""
+    SET_HOST_USERS: "false"
+    RUNTIME_NODE_SELECTOR: '{"workload":"openhands-sandbox"}'
+    RUNTIME_TOLERATIONS: '[]'
+```
+
+An empty `RUNTIME_CLASS` omits `runtimeClassName` from new sandbox pods, using
+containerd’s default runtime. `SET_HOST_USERS: "false"` omits the `hostUsers` override;
+it does not request the Sysbox user-namespace configuration. Save these values in
+`values-aks-runc.yaml` and pass that file as the **last** `-f` argument on every
+install and upgrade, after your base values and feature overlays. For example:
+
+```bash
+helm upgrade --install openhands <licensed-chart-source> --version 0.74.0 \
+  --namespace openhands --create-namespace \
+  -f values.yaml -f values-aks-runc.yaml --timeout 10m
+```
+
+Use the licensed chart source from the [Helm guide](/enterprise/k8s-install/installation),
+and complete its namespace and Secret setup first. When enabling optional features,
+place their values files before `values-aks-runc.yaml`. Omitting these overrides
+can restore the chart’s Sysbox defaults and prevent new sandboxes from starting.
+If you add a sandbox-pool taint, configure a matching toleration instead of the empty list.
+
+### Verify a Sandbox
+
+1. Sign in to OpenHands and start a conversation. Ask the agent to run `pwd`,
+   write a file in its workspace and read it back.
+2. Confirm the sandbox pod runs on the sandbox pool using the default runtime:
+
+   ```bash
+   kubectl get pod <sandbox-pod> -n <runtime-namespace> \
+     -o jsonpath='{.spec.nodeName}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.hostUsers}{"\n"}'
+   ```
+
+   Expect a sandbox-pool node name followed by two empty fields. Use the runtime
+   namespace configured in your Helm values, such as `openhands-runtimes`.
+3. Stop the conversation runtime, reopen the conversation and ask the agent to
+   read the same file to confirm workspace persistence.
+
+If a sandbox fails to start, follow the
+[Troubleshooting guide](/enterprise/troubleshooting) and collect the pod events
+before contacting OpenHands support.
+
+## Persistent Storage
+
+Inspect the Azure Disk CSI StorageClass:
+
+```bash
+kubectl get storageclass managed-csi -o yaml
+```
+
+Confirm that the class uses the Azure Disk CSI provisioner (`disk.csi.azure.com`)
+and supports the binding mode and expansion your workloads need. Azure Disk
+workspace PVCs use `ReadWriteOnce`. Configure storage explicitly for workspaces,
+PostgreSQL and any in-cluster object store. Merge the following settings into your
+base values file:
+
+```yaml
+runtime-api:
+  env:
+    STORAGE_CLASS: managed-csi
+postgresql:
+  primary:
+    persistence:
+      storageClass: managed-csi
+```
+
+Account for node disk-attachment limits and availability-zone topology. Validate
+mounting, persisted content after reattachment, and expansion on a disposable PVC.
+See [Azure Disk CSI provisioning](https://learn.microsoft.com/en-us/azure/aks/create-volume-azure-disk).
+
+## Object Storage
+
+Conversation/session storage is separate from workspace PVCs. Helm chart 0.74.0
+supports S3-compatible and GCS filestore configuration; it does not expose an Azure
+Blob backend. Do not substitute Azure Blob credentials into the S3 settings.
+
+For an in-cluster store, chart `0.74.0` includes optional RustFS. Configure its
+persistence with Azure Disk CSI, provide the object-store credential Secret, and
+create the conversation bucket before starting conversations. Select an object
+store that meets your durability requirements and configure backup and restore.
+When enabling automations, configure a separate automation package bucket. The
+automation service can create it at startup when bucket creation is enabled.
+
+## Database
+
+Use the [External PostgreSQL](/enterprise/external-postgres) guide for managed
+database requirements and Helm values. If choosing Azure Database for PostgreSQL,
+verify compatibility, TLS and network access against those requirements before deployment.
+For bundled PostgreSQL, set its persistence storage class as shown above.
+
+## Ingress
+
+Run an ingress controller on the general pool. For Traefik with an Azure public
+load balancer, use the following Traefik Helm values:
+
+```yaml
+service:
+  type: LoadBalancer
+```
+
+Read the Service's external IP and create a wildcard A record for your base domain.
+DNS can remain with another provider. For private ingress, select the appropriate
+Azure load-balancer configuration and verify client access separately.
+
+Follow [DNS and TLS](/enterprise/k8s-install/dns-and-tls) for trusted certificates
+and hostname configuration. Use flat runtime hostnames with Traefik standard Ingress.
+If provisioning certificates manually, assign renewal and Secret-update ownership.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DNS and TLS" icon="lock" href="/enterprise/k8s-install/dns-and-tls">
+    Configure hostnames and trusted certificates.
+  </Card>
+  <Card title="Install with Helm" icon="ship" href="/enterprise/k8s-install/installation">
+    Deploy the application and validate a conversation.
+  </Card>
+  <Card title="Enable Automations" icon="clock" href="/enterprise/k8s-install/automations">
+    Configure optional automation services and storage.
+  </Card>
+</CardGroup>
