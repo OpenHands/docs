@@ -25,8 +25,8 @@ source = Conversation(agent=agent, workspace=workspace)
 source.send_message("Analyse the sales report.")
 source.run()
 
-# Fork the conversation with a title
-fork = source.fork(title="Follow-up exploration")
+# Fork the conversation
+fork = source.fork()
 
 # The fork has the same events — agent remembers the full history
 fork.send_message("Now focus on the EMEA region.")
@@ -56,7 +56,6 @@ alt_agent = Agent(llm=alt_llm, tools=[Tool(name=TerminalTool.name)])
 
 fork = source.fork(
     agent=alt_agent,
-    title="GPT-4o experiment",
     tags={"variant": "B"},
 )
 fork.run()  # Same history, different model
@@ -64,17 +63,37 @@ fork.run()  # Same history, different model
 
 ### Tags and metadata
 
-Forks support `title` and arbitrary `tags` for organization:
+Forks support arbitrary `tags` for organization:
 
 ```python icon="python" wrap
 fork = source.fork(
-    title="Debug investigation",
     tags={"purpose": "debugging", "triggered_by": "ci-pipeline"},
 )
 
 print(fork.state.tags)
-# {'title': 'Debug investigation', 'purpose': 'debugging', 'triggered_by': 'ci-pipeline'}
+# {'purpose': 'debugging', 'triggered_by': 'ci-pipeline'}
 ```
+
+### Titles
+
+`LocalConversation` does not store titles. Its `fork(title=...)` parameter is
+deprecated since `1.54.0`, with removal scheduled for `1.60.0`. Passing a title is
+still accepted for compatibility, but emits a `DeprecationWarning` and has no
+effect. Use `fork()` without `title` for local conversations.
+
+`RemoteConversation.fork(title=...)` continues to support titles through the
+agent server:
+
+```python icon="python" wrap
+remote_fork = remote_source.fork(
+    title="Debug investigation",
+    tags={"purpose": "debugging"},
+)
+```
+
+The server stores the title in `StoredConversation.title` and returns it in
+`ConversationInfo.title`. The title parameter never adds or overwrites a tag;
+an explicitly supplied `tags["title"]` remains a user-defined tag.
 
 ### Metrics reset
 
@@ -96,7 +115,7 @@ def fork(
     *,
     conversation_id: ConversationID | None = None,  # auto-generated if None
     agent: AgentBase | None = None,                  # deep-copy of source agent if None
-    title: str | None = None,                        # sets tags["title"]
+    title: str | None = None,                        # remote forks only; deprecated locally
     tags: dict[str, str] | None = None,              # arbitrary metadata
     reset_metrics: bool = True,                      # cost/tokens start fresh
 ) -> Conversation:
@@ -106,7 +125,7 @@ def fork(
 |-----------|---------|-------------|
 | `conversation_id` | auto-generated UUID | ID for the forked conversation |
 | `agent` | deep-copy of source | Agent for the fork (swap model, tools, etc.) |
-| `title` | `None` | Sets `tags["title"]` on the fork |
+| `title` | `None` | Sets the agent-server fork title for `RemoteConversation`; deprecated and ignored by `LocalConversation` |
 | `tags` | `None` | Arbitrary key-value metadata |
 | `reset_metrics` | `True` | Whether cost/token stats start at zero |
 
@@ -151,6 +170,9 @@ When you call `fork()` on a `RemoteConversation`, the SDK sends this request for
 you and returns a new `RemoteConversation` pointing at the server-side copy.
 Remote forks always reuse the server-managed agent configuration, so
 `RemoteConversation.fork(agent=...)` is intentionally unsupported.
+
+The request's `title` is stored separately from `tags` and is included in the
+response's `title` field.
 
 ## Agent-Server Example
 
@@ -369,24 +391,24 @@ This example is available on GitHub: [examples/01_standalone_sdk/48_conversation
 </Note>
 
 ```python icon="python" expandable examples/01_standalone_sdk/48_conversation_fork.py
-"""Fork a conversation to branch off for follow-up exploration.
+"""Branch a conversation. The conversation is a tree (every event has a
+``parent_id``; the HEAD is ``leaf_event_id``), exposing three primitives:
 
-``Conversation.fork()`` deep-copies a conversation — events, agent config,
-workspace metadata — into a new conversation with its own ID.  The fork
-starts in ``idle`` status and retains full event memory of the source, so
-calling ``run()`` picks up right where the original left off.
+  - ``fork()`` — deep-copy the whole conversation into a new one; ``run()``
+    resumes with full event memory.
+  - ``fork(from_event_id=...)`` — fork only the branch up to a chosen event;
+    the fork's HEAD is that event.
+  - ``navigate_to(event_id)`` — move HEAD within one conversation; appending
+    after navigating creates a sibling branch, abandoned events stay on disk.
 
-Use cases:
-  - CI agents that produced a wrong patch — engineer forks to debug
-    without losing the original run's audit trail
-  - A/B-testing prompts — fork at a given turn, change one variable,
-    compare downstream
-  - Swapping tools mid-conversation (fork-on-tool-change)
+Use cases: debugging a wrong CI patch off the original's audit trail,
+A/B-testing prompts, fork-on-tool-change, edit-a-past-turn-and-re-run.
 """
 
 import os
 
 from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.sdk.event import MessageEvent
 from openhands.tools.terminal import TerminalTool
 
 
@@ -394,7 +416,7 @@ from openhands.tools.terminal import TerminalTool
 # Setup
 # -----------------------------------------------------------------
 llm = LLM(
-    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    model=os.getenv("LLM_MODEL", "gpt-5.5"),
     api_key=os.getenv("LLM_API_KEY"),
     base_url=os.getenv("LLM_BASE_URL", None),
 )
@@ -418,13 +440,12 @@ print(f"Source events count    : {len(source.state.events)}")
 # =================================================================
 # 2. Fork and continue independently
 # =================================================================
-fork = source.fork(title="Follow-up fork")
+fork = source.fork()
 source_event_count = len(source.state.events)
 
 print("\n--- Fork created ---")
 print(f"Fork ID                : {fork.id}")
 print(f"Fork events (copied)   : {len(fork.state.events)}")
-print(f"Fork title             : {fork.state.tags.get('title')}")
 
 assert fork.id != source.id
 assert len(fork.state.events) == source_event_count
@@ -442,7 +463,7 @@ print(f"Fork events (grew)       : {len(fork.state.events)}")
 # 3. Fork with a different agent (tool-change / A/B testing)
 # =================================================================
 alt_llm = LLM(
-    model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+    model=os.getenv("LLM_MODEL", "gpt-5.5"),
     api_key=os.getenv("LLM_API_KEY"),
     base_url=os.getenv("LLM_BASE_URL", None),
     usage_id="alt",
@@ -451,7 +472,6 @@ alt_agent = Agent(llm=alt_llm, tools=[Tool(name=TerminalTool.name)])
 
 fork_alt = source.fork(
     agent=alt_agent,
-    title="Tool-change experiment",
     tags={"purpose": "a/b-test"},
 )
 
@@ -463,6 +483,51 @@ fork_alt.send_message("What command did you run earlier? Just tell me, no tools.
 fork_alt.run()
 
 print(f"Fork events : {len(fork_alt.state.events)}")
+
+# =================================================================
+# 4. Branch-slice fork: fork from a chosen past event
+# =================================================================
+# Fork from the first user message: copies only path_to_root(event) and sets
+# the fork's HEAD there.
+cut_event_id = next(
+    e.id
+    for e in source.state.events
+    if isinstance(e, MessageEvent) and e.source == "user"
+)
+
+fork_slice = source.fork(from_event_id=cut_event_id)
+
+print("\n--- Branch-slice fork (from_event_id) ---")
+print(f"Cut event id          : {cut_event_id}")
+print(f"Source events (full)  : {len(source.state.events)}")
+print(f"Fork events (sliced)  : {len(fork_slice.state.events)}")
+print(f"Fork HEAD             : {fork_slice.state.leaf_event_id}")
+
+# The slice contains only the branch up to the cut point.
+assert len(fork_slice.state.events) <= len(source.state.events)
+assert fork_slice.state.leaf_event_id == cut_event_id
+
+fork_slice.send_message("Run `echo sliced-branch` in the terminal.")
+fork_slice.run()
+print(f"Fork events after run : {len(fork_slice.state.events)}")
+assert any("sliced-branch" in str(e) for e in fork_slice.state.events)
+
+# =================================================================
+# 5. In-conversation navigation: move HEAD and create a sibling branch
+# =================================================================
+# Move HEAD back to the cut point and send a new message: a sibling branch.
+# The abandoned branch stays on disk but leaves the agent's active context.
+events_before_nav = len(source.state.events)
+
+source.navigate_to(cut_event_id)
+print("\n--- navigate_to (in-conversation branching) ---")
+print(f"HEAD moved to         : {source.state.leaf_event_id}")
+print(f"Active branch length  : {len(source.state.view.events)} events in context")
+print(f"Events still on disk  : {events_before_nav}")
+
+source.send_message("Actually, instead run `echo sibling-branch`.")
+source.run()
+print(f"Events on disk now     : {len(source.state.events)} (old branch retained)")
 
 # =================================================================
 # Summary
