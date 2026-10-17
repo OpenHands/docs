@@ -4,12 +4,9 @@ description: "Connect Okta to OpenHands Enterprise through a managed OpenID Conn
 ---
 
 <Warning>
-This preview guide covers a managed OIDC candidate tested on a Helm deployment.
-Use it only with a chart and application image that include the managed OIDC,
-realm-selection, session-expiry and concurrent-provisioning fixes. Stock release
-numbers alone do not establish compatibility. Replicated package qualification
-is deferred until those fixes are packaged; this guide does not certify a
-Replicated installation or upgrade.
+Managed Okta OIDC is a preview integration. These instructions cover Helm
+installations. Confirm a compatible chart and application release with OpenHands
+before deployment.
 </Warning>
 
 Okta authenticates users through OpenID Connect (OIDC). OpenHands-managed Keycloak
@@ -27,18 +24,14 @@ For a deployment that supports the existing SAML option, see
 - A working baseline: application sign-in, model inference and one conversation sandbox.
 - Okta administrator access to create a dedicated web application and assign users.
 - HTTPS application and authentication hostnames with trusted certificates.
-- Network access from Keycloak to your Okta issuer, token, user information and signing-key endpoints.
+- Outbound HTTPS from the OpenHands application pod's provisioning init container to Okta discovery, and from Keycloak to Okta token, UserInfo and signing-key endpoints. Users' browsers must also reach the Okta sign-in endpoint.
 - Two test users with distinct accounts and separate browser profiles.
 
-Record the installed chart, application image and Keycloak versions before setup.
-The tested Helm candidate used a customized chart based on `0.81.0`, an
-application image based on `1.71.0`, and Keycloak `26.3.0`. These are test versions,
-not minimum supported release versions. Keycloak `26.8.0` and a released
-Replicated package have not been qualified by this test. Confirm the matching
-candidate or supported release with OpenHands before deployment.
+Record your chart, application and Keycloak versions before setup. Use the
+version-specific installation and upgrade instructions for your deployment.
 
 <Note>
-Do not switch an existing SAML installation to OIDC in place. The candidate
+Do not switch an existing SAML installation to OIDC in place. The managed integration
 refuses to overwrite a SAML broker or change an existing OIDC issuer or client
 identity. Use a new installation or a separately planned realm with matching application
 routing. Plan account migration with OpenHands; changing the selected realm does
@@ -47,7 +40,7 @@ not migrate users, organizations or conversation ownership.
 
 ### Create the Okta Application
 
-1. In the [Okta Admin Console](https://developer.okta.com/docs/guides/create-an-app-integration/openidconnect/main/), open `Applications and Resources` → `Applications` and select `Create App Integration`.
+1. In your Okta Admin Console, open `Applications and Resources` → `Applications` and select `Create App Integration`. See Okta's [application integration instructions](https://developer.okta.com/docs/guides/create-an-app-integration/openidconnect/main/).
 2. Select `OIDC - OpenID Connect`, then `Web Application`.
 3. Give the application a distinct name, such as `OpenHands OIDC`.
 4. Use the `Authorization Code` grant and client-secret authentication. The broker uses `client_secret_basic` and S256 PKCE.
@@ -67,10 +60,12 @@ Keep the existing OpenHands-to-Keycloak application client configuration in plac
 Use your Okta organization issuer, for example `https://company.okta.com`. Its
 discovery document is at `https://company.okta.com/.well-known/openid-configuration`.
 Use the issuer exactly as returned by discovery. The Okta Admin Console hostname
-is not the issuer. This candidate expects discovery endpoints on the same HTTPS
+is not the issuer. The integration requires discovery endpoints on the same HTTPS
 origin as the issuer.
 
-Request the `openid profile email` scopes. The user must have an email address and an `email_verified: true` claim.
+The broker requests the `openid profile email` scopes; no custom scope setup is
+needed for the organization authorization server. The user must have an email
+address and an `email_verified: true` claim.
 The broker reads a validated ID-token claim first and falls back to the
 subject-bound UserInfo response when that claim is absent from the ID token.
 An explicit false ID-token claim is not overridden by UserInfo. Profile claims
@@ -80,14 +75,13 @@ not a substitute for a stable subject.
 
 <Note>
 A [custom Okta authorization server](https://developer.okta.com/docs/concepts/auth-servers/) has different issuer and endpoint URLs and
-may require API Access Management in production. This guide's test configuration
-uses the organization authorization server.
+may require API Access Management in production. This guide uses the organization authorization server.
 </Note>
 
 ### Configure OpenHands
 
 Create a Kubernetes Secret using your organization's secret-management workflow.
-The candidate reads the client secret from the key `client-secret`. Reference
+The chart reads the client secret from the key `client-secret`. Reference
 that Secret in the values for your existing Helm installation:
 
 ```yaml
@@ -111,7 +105,7 @@ enterpriseSSO:
 | `existingSecret` | Kubernetes Secret in the OpenHands release namespace |
 | `clientSecretKey` | Key containing the client secret; defaults to `client-secret` |
 | `displayName` | Label shown to users for the SSO option |
-| `enforceOnly` | Keep `false`; the candidate's enforcement option is SAML-only |
+| `enforceOnly` | Keep `false`; this release's enforcement option is SAML-only |
 
 This requires chart-managed Keycloak realm provisioning. It runs when the bundled
 Keycloak is enabled. For an existing split deployment, use the chart's
@@ -120,18 +114,18 @@ configuration. Keep the selected realm consistent with the Okta redirect URI.
 
 Deploy the matching chart and application image through your normal Helm
 procedure. Store the client secret only in the Secret; exclude it from values
-files, screenshots and troubleshooting logs. After rotating that Secret, perform
-an application rollout through Helm to rerun provisioning. Updating an external
-Secret alone does not restart existing pods.
+files, screenshots and troubleshooting logs.
 
 <Note>
-Replicated uses the same chart but adds Admin Console fields, Secret transport
-and package version selection. A focused configuration, login/conversation and
-upgrade-persistence check will be performed once the fixes are packaged. Live
-Replicated setup instructions are deferred until that qualification is complete.
+For client-secret rotation on this preview, contact OpenHands for the procedure
+for your release. Updating an external Secret alone, or running Helm with
+unchanged values, does not restart the application pods or apply the new secret
+to the broker. Keep the old Okta secret active until a new upstream sign-in with
+the replacement has been confirmed. Changing the issuer or client ID requires a
+new realm or installation.
 </Note>
 
-The candidate validates discovery and reconciles the broker on startup. It enables
+The managed integration validates discovery and reconciles the broker on startup. It enables
 signature verification against the issuer's signing keys, S256 PKCE and nonce
 checking. It checks the verified-email claim on every broker login and does not expose the upstream
 broker token as a repository credential. A provisioning failure blocks the new
@@ -168,12 +162,13 @@ assignment does not by itself revoke an existing Keycloak or OpenHands session.
 Include application sessions and any repository-provider credentials in your
 organization's offboarding process. Revoke both the user's upstream Okta
 sessions and the corresponding Keycloak sessions when testing coordinated
-revocation. An already issued OpenHands access token can remain valid until its
+revocation. With default Keycloak cookie authentication, the Keycloak
+access token inside the OpenHands session cookie can remain valid until its
 configured expiry; this is not immediate revocation. After that window, the
 retained application cookie must no longer return the user's identity or files.
-Test a fresh request rather than a cached browser page. The tested environment
-used a five-minute access-token lifetime; confirm your release's configured
-lifetime rather than assuming that value applies everywhere.
+Test a fresh request rather than a cached browser page. Confirm the realm's
+configured access-token lifetime with your administrator. API keys and other
+authentication modes require their own offboarding controls.
 
 For interactive logout, use OpenHands' supported logout control and confirm a
 protected application request requires sign-in again. API keys and other device
@@ -188,7 +183,7 @@ Repository access is configured separately through supported
 [Enterprise integrations](/enterprise/integrations/overview). Signing in with Okta
 does not grant repository permissions. Validate the chosen provider's account
 connection, repository eligibility and a bounded clone/read operation separately.
-This OIDC test has not validated GitHub, GitLab, Bitbucket or Azure DevOps access.
+
 
 ## Upgrades and Recovery
 
@@ -197,9 +192,9 @@ backup appropriate to your Keycloak database. Test the matching chart and
 application together. Confirm provisioning, sign-in, original account/history,
 conversation execution and isolation after the upgrade.
 
-For the first rollout of the locking provisioner, ensure older provisioners have
-stopped before starting the new code. Use a controlled maintenance window when
-needed. A Helm rollback does not reverse a Keycloak database migration or migrate
+Use a maintenance window when required by your release's upgrade procedure.
+Sign-in can pause during provisioning; a sign-in in progress may need to be restarted.
+A Helm rollback does not reverse a Keycloak database migration or migrate
 accounts between realms; follow the version-specific recovery procedure.
 
 ## Troubleshooting
@@ -214,32 +209,36 @@ own OAuth callback URL in the upstream Okta application.
 
 Confirm the issuer matches discovery exactly, every required endpoint uses HTTPS
 on the issuer's origin, discovery advertises S256 and client-secret Basic
-authentication, and the Secret contains the configured key. Check sanitized
-init-container errors. Do not disable TLS, signature or nonce verification.
+authentication, and the Secret contains the configured key. Check outbound
+HTTPS from the application provisioning init container as well as Keycloak.
+Use the chart's CA bundle configuration for an approved private CA; the bundle
+is also mounted into the init container. Check sanitized init-container errors.
+Do not disable TLS, signature or nonce verification.
 
-### Provisioning Reports a Lock Conflict
+### Provisioning Reports a Conflict
 
-Concurrent provisioners serialize changes for the target realm. If a provisioner
-was terminated without cleanup, the candidate deliberately leaves its lock
-rather than reclaiming it based on age. Stop conflicting provisioners and ask
-OpenHands to verify the lock's ownership before recovery. Do not delete an
-unverified lock or repeatedly switch protocols to work around the error.
+Avoid starting overlapping configuration changes or upgrades. If a provisioning
+conflict persists after the previous operation has stopped, contact OpenHands
+for recovery. Do not make unmanaged changes to the broker or its login flows.
 
 ### Email Verification Is Rejected
 
-The candidate requires `email_verified: true` in the validated ID token or,
+The integration requires `email_verified: true` in the validated ID token or,
 when that claim is absent there, the subject-bound UserInfo response. Missing
 or false verification blocks a new login session. Resolve the claim at the
 identity provider; do not hardcode a true value to complete setup.
 
 ### The Existing Account Is Not Reused
 
-Repeat sign-in uses the same issuer and subject. A new identity that collides
+Okta email and name claims are synchronized on each sign-in. Changing to an email
+already used by another account is rejected. Repeat sign-in uses the same issuer
+and subject. A new identity that collides
 with an existing email or username is rejected; the managed flow does not link
 accounts by email or send account-linking email. Contact your administrator to
 plan migration or linking with separate proof of account ownership.
 
 A new identity rejected by the verification check may leave a Keycloak user
 record and broker link without an application session. Administrators should
-review those records during test cleanup. Existing sessions require a separate
-revocation procedure.
+review those records during normal administration as well as test cleanup; a
+leftover record can reserve an email and block a different identity using it.
+Existing sessions require a separate revocation procedure.
