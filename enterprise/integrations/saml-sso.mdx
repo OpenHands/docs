@@ -5,18 +5,32 @@ icon: user-shield
 ---
 
 This guide explains how to let users sign in to an OpenHands Enterprise
-installation with your corporate identity provider (for example Okta, Microsoft
-Entra ID, Google Workspace, or ADFS) over SAML.
+installation with a SAML 2.0 corporate identity provider. Use the shared setup
+below together with your provider’s application-registration instructions.
+
+This page describes the managed Keycloak integration for Helm and Replicated.
+OIDC identity providers use a different configuration; do not enter an OIDC
+discovery URL in the SAML metadata field.
 
 ## Prerequisites
 
-- An OpenHands Enterprise installation.
+- An OpenHands Enterprise installation with managed SAML support and working
+  application sign-in. Record the installed chart and application versions.
+- Access to the Replicated Admin Console or Helm deployment configuration.
+- An administrator who can recover the installation through the Admin Console
+  or Helm configuration, and a saved copy of the existing configuration.
 - Administrator access to your corporate identity provider, so you can create a
   SAML application and read its metadata.
 - Your installation's Authentication hostname, which is
   `auth.<your-openhands-domain>` by default.
 
-The URLs below use the default realm name, `allhands`.
+The URLs below use the default realm name, `allhands`, and broker alias,
+`enterprise_sso`. If your installation uses another realm, confirm its configured
+name before registering the application. Changing the realm or identity provider
+does not migrate existing accounts or conversation ownership.
+
+Start with a small group of assigned users. Keep your identity provider's
+existing MFA requirements in place.
 
 ## Step 1: Register OpenHands with Your Identity Provider
 
@@ -28,12 +42,26 @@ Create a SAML application in your identity provider with these values. Replace
 | --- | --- |
 | Assertion Consumer Service (ACS) URL, or Reply URL | `https://<your-auth-hostname>/realms/allhands/broker/enterprise_sso/endpoint` |
 | Entity ID, or Audience | `https://<your-auth-hostname>/realms/allhands` |
-| Name ID format | `persistent` (recommended) or `email` |
+| Name ID format | Match the format advertised in your IdP metadata and configured in the broker; see below |
 
-Send these attribute statements with the SAML response:
+The metadata import selects the first advertised NameID format. Use your
+provider-specific instructions to configure the matching format; do not choose
+`persistent` or `emailAddress` independently of the metadata. If the metadata
+omits NameID formats, confirm the broker's NameID policy with OpenHands Support.
+
+Keep each employee's NameID stable and never reassign it. If an email address is
+used as NameID and later given to another employee, the new holder could gain
+access to the previous employee's OpenHands account. Plan account renames and
+provider migrations before changing existing identities.
+
+Send these case-sensitive attribute statements with the SAML response:
 
 - `email` (required)
 - `firstName` and `lastName` (recommended)
+
+OpenHands trusts the email supplied by this identity provider as verified.
+Map `email` from an administrator-controlled directory attribute, and restrict
+who can change the SAML application's attribute mappings.
 
 Assign the application to the users and groups that should have access to
 OpenHands. Then copy the application's SAML metadata URL, sometimes called the
@@ -42,15 +70,20 @@ with a certificate from a trusted certificate authority (OpenHands fetches the
 metadata server-side and rejects untrusted or self-signed TLS certificates). You
 need this URL in the next step.
 
+If the provider supplies only a metadata download, host the XML unchanged at a
+stable, organization-controlled HTTPS URL. The endpoint must return metadata
+without interactive sign-in or a temporary browser session. Verify the tenant
+entity ID, SSO endpoint and signing certificate against the provider's admin
+console. Restrict who can change the hosted file: it determines the provider
+OpenHands trusts.
+
 <Warning>
   Your identity provider must **sign SAML assertions** and publish a **signing
   certificate** in its metadata. OpenHands validates the assertion signature, so
   the metadata must contain an entity ID, a single sign-on service URL, and a
-  signing certificate. If the signing certificate is missing, OpenHands skips
-  creating the SSO provider and users fall back to the built-in login page. Most
-  identity providers include the signing certificate by default, but some
-  require you to explicitly assign a signing certificate to the SAML
-  application.
+  signing certificate. Missing signing metadata prevents successful SSO
+  provisioning. Some providers require you to explicitly assign a signing
+  certificate to the SAML application.
 </Warning>
 
 For provider-specific, step-by-step instructions, see the guide for your
@@ -83,12 +116,18 @@ Pick the path that matches how OpenHands Enterprise is deployed.
       idpMetadataUrl: "https://idp.example.com/saml/metadata"
     ```
 
-    Then redeploy the `openhands` chart.
+    Merge this overlay into your existing values; preserve all other settings
+    and secrets. Review the rendered changes, then redeploy the existing release
+    using your normal [Helm procedure](/enterprise/k8s-install/installation).
   </Tab>
 </Tabs>
 
-If your identity provider rotates its signing certificates, redeploy to pick up
-the new metadata.
+Wait for deployment to complete, then verify sign-in before assigning the rest
+of your users. A visible SSO button does not establish that metadata provisioning
+completed successfully.
+
+Keep persistent settings in the Admin Console or Helm values. Manual edits to a
+managed Keycloak provider can be overwritten by deployment reconciliation.
 
 ## Step 3: Verify Sign-In
 
@@ -96,36 +135,118 @@ the new metadata.
 2. Choose the Enterprise SSO button. Its label is the **Identity Provider
    Display Name** you configured (for example, `Company SSO`).
 3. Complete sign-in with your identity provider.
-4. Confirm you return to OpenHands signed in.
+4. Confirm you return to the intended OpenHands account with the expected email
+   and name. Create a conversation and confirm its sandbox starts.
+5. Repeat with a second assigned user in a separate browser profile. Verify the
+   expected workspace and their own conversation history for each user.
+6. Sign out and sign in again to confirm the same account and history return.
+
+Start from OpenHands. Sign-in from an IdP dashboard tile is not covered by this
+guide.
+
+## Manage Application Access
+
+Assign users or groups to the SAML app in your identity provider. App assignment
+controls eligibility to authenticate through that provider. Configure OpenHands
+organization membership and roles separately through your installation's
+administration controls; an IdP group assignment does not by itself establish
+OpenHands group-to-role synchronization.
+
+<Note>
+  Enabling SAML adds a sign-in route. It does not by itself require SAML for all
+  interactive logins or disable other configured providers. A connected Git
+  identity may also permit sign-in when that provider remains enabled for login.
+  Confirm the available login methods and corporate-only enforcement options
+  with OpenHands Support before relying on SAML as the only entry path. Hiding
+  a button is not an access policy.
+</Note>
+
+### Connect a Repository Provider
+
+After signing in through SAML, users connect repository access separately:
+
+1. Open **Settings → Integrations** and choose the required Git provider.
+2. Select **Connect**, complete the provider's account-ownership verification,
+   and authorize the intended account.
+3. Have the repository administrator install or approve the integration and grant
+   access to the required repositories, where the provider requires it.
+4. Open a permitted repository in OpenHands and confirm a conversation can read it.
+
+The exact setup depends on the
+[repository integration](/enterprise/integrations/overview). Corporate SSO does
+not grant repository permissions or select a user's Git account. App eligibility,
+user authorization and repository access are separate controls. A Git identity
+already linked to another OpenHands account cannot be connected to a second
+account. Contact OpenHands Support to resolve the ownership conflict; do not
+unlink or merge accounts as a routine setup workaround.
+
+### Remove User Access
+
+Remove the employee's app assignment or assigned-group membership in the IdP.
+Confirm that a fresh upstream sign-in is denied. An existing OpenHands or
+Keycloak session may still work until it expires or is revoked.
+
+If other login methods remain enabled, removing a SAML assignment does not block
+those routes. Review all of the employee's OpenHands login identities.
+
+Remove the employee's OpenHands membership and revoke their connected-provider
+authorizations through the relevant administration controls. Contact OpenHands
+Support for help ending application/Keycloak sessions and removing remaining
+API or device credentials. Removing an IdP assignment is not a complete
+credential-revocation procedure. SAML alone does not provide SCIM provisioning
+or automatic deprovisioning.
+
+## Signing Certificate Renewal
+
+Assign an owner to track the IdP signing certificate's expiry. Before rotating
+it, confirm with OpenHands Support how your installed release re-imports
+metadata and what application rollout is required. Updating a hosted XML file
+alone does not establish that the broker has loaded the new certificate.
+
+Update any hosted metadata copy and complete the planned re-import. Confirm a
+new sign-in succeeds with the replacement certificate before retiring the old
+one. Keep a recovery administrator available during the maintenance. Do not
+assume automatic background metadata refresh.
 
 ## Troubleshooting
 
-### The SSO button shows the OpenHands login form instead of your identity provider
+### Selecting the SSO Button Does Not Reach Your Identity Provider
 
-This means OpenHands did not create the SSO provider from your metadata. The
-most common cause is a missing signing certificate in the identity provider's
-SAML metadata. Confirm the metadata includes a signing certificate (see the
-warning in [Step 1](#step-1-register-openhands-with-your-identity-provider)),
-then save and deploy again.
+This can happen when the SSO provider was not provisioned from your metadata.
+Check deployment completion and sanitized provisioning errors as well as the
+signing certificate in the identity provider's SAML metadata. Confirm it includes
+a signing certificate (see the warning in [Step 1](#step-1-register-openhands-with-your-identity-provider)).
+If you changed the metadata URL, save and deploy again. If the URL is unchanged,
+confirm with OpenHands Support how your release re-imports metadata, as described
+in [Signing Certificate Renewal](#signing-certificate-renewal), then test sign-in
+again.
 
-You can inspect the metadata for a signing certificate by downloading it and
-checking for an `X509Certificate` element inside a `KeyDescriptor` with
-`use="signing"`:
+Inspect the XML for the expected IdP entity ID, SSO endpoint and a usable signing
+certificate. Finding an `X509Certificate` element alone does not establish that
+the metadata is valid or belongs to the correct tenant. Do not disable signature
+validation to resolve provisioning failures.
 
-```bash
-curl -sL "https://idp.example.com/saml/metadata" | grep -c X509Certificate
-```
-
-A result of `0` means no certificate is published, and SSO provisioning will
-fail.
-
-### OpenHands cannot fetch the metadata URL
+### OpenHands Cannot Fetch the Metadata URL
 
 OpenHands fetches the metadata URL server-side. Make sure the URL is reachable
 from the cluster and is served with a certificate from a trusted certificate
 authority. Self-signed or untrusted TLS certificates cause the fetch to fail.
 
-### Sign-in succeeds but no account is created
+### Sign-In Succeeds but No Account Is Created
 
-The SAML response is missing the `email` attribute. Configure your identity
-provider to release `email` (see [Step 1](#step-1-register-openhands-with-your-identity-provider)).
+Check that the response includes the exact `email` attribute. If an account with
+the same email already exists, for example through GitHub sign-in, contact
+OpenHands Support to resolve the conflict and check profile import. Do not
+bypass ownership checks by manually attaching a new identity to an existing
+account.
+
+### The Identity Provider Rejects the Request
+
+Compare the ACS URL, Entity ID and NameID format with the configured realm and
+provider. Check the user's effective app assignment before resetting credentials.
+For rejected assertions, review the certificate, audience, destination, clock
+skew and sanitized error timestamps with your administrator.
+
+If you need assistance, provide OpenHands Support with the deployment method,
+chart/application versions, error timestamps and sanitized provisioning errors.
+Do not include passwords, tokens or raw SAML assertions.
