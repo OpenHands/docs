@@ -1,0 +1,179 @@
+---
+title: Microsoft Entra ID
+description: Connect Microsoft Entra ID to OpenHands Enterprise with SAML single sign-on.
+icon: key
+---
+
+Use Microsoft Entra ID as the SAML identity provider for OpenHands Enterprise.
+This guide is a provider-specific companion to [SAML SSO](/enterprise/integrations/saml-sso).
+
+## Prerequisites
+
+- An OpenHands Enterprise installation and access to its Replicated Admin Console
+  or Helm configuration.
+- Entra administrator access to create an enterprise application, edit its SAML
+  settings, and assign users.
+- Your OpenHands Authentication hostname, such as `auth.openhands.example.com`.
+- Intended users with a nonempty email address, given name, and surname in Entra.
+
+## Step 1: Create an Enterprise Application
+
+1. Open the [Microsoft Entra admin center](https://entra.microsoft.com) and select
+   the directory that contains your users.
+2. Go to `Entra ID > Enterprise apps > All applications` and create a non-gallery
+   application for OpenHands.
+3. Open the application's `Single sign-on` page and choose `SAML`.
+4. Under `Basic SAML Configuration`, enter these values:
+
+| Entra Field | Value |
+| --- | --- |
+| Identifier (Entity ID) | `https://<your-auth-hostname>/realms/allhands` |
+| Reply URL (ACS) | `https://<your-auth-hostname>/realms/allhands/broker/enterprise_sso/endpoint` |
+| Sign On URL | Your OpenHands application URL, such as `https://app.openhands.example.com` |
+
+Replace `<your-auth-hostname>` with your Authentication hostname. These URLs use
+realm `allhands` and broker alias `enterprise_sso`; confirm your installation's
+realm before registering the application. The Reply URL must be the broker
+endpoint, not the application homepage.
+
+## Step 2: Configure Claims
+
+Open `Attributes & Claims`. Add these claims with the exact, case-sensitive names
+shown below and leave each claim's namespace empty:
+
+| Claim Name | Source Attribute |
+| --- | --- |
+| `email` | `user.mail` |
+| `firstName` | `user.givenname` |
+| `lastName` | `user.surname` |
+
+The default URI-named claims do not replace these simple names. Ensure each
+assigned user has nonempty values for the selected source attributes. The broker
+trusts the supplied email as verified, so use an attribute controlled by trusted
+administrators.
+
+If your organization uses the UPN as its email address, you can select
+`user.userprincipalname` for `email` instead. Confirm it contains the intended
+address; UPN and mailbox addresses are not generally interchangeable.
+
+For `Unique User Identifier (Name ID)`, select `Persistent` and use
+`user.objectid` as the source. Keep this identifier stable. Entra can honor the
+service provider's requested NameID format; if your installed broker requires a
+different policy, confirm the compatible configuration with OpenHands Support.
+See Microsoft's [NameID and claim configuration](https://learn.microsoft.com/en-us/entra/identity-platform/saml-claims-customization).
+
+Changing the application, tenant, or subject configuration can affect account
+linking. Plan those changes as an identity migration rather than changing the
+identifier to resolve a sign-in problem.
+
+## Step 3: Configure Signing and Copy Metadata
+
+1. Under `SAML Certificates`, select `Sign SAML assertion` and `SHA-256`.
+2. Copy the `App Federation Metadata URL` for this application.
+3. Confirm the metadata URL uses trusted HTTPS and publishes the intended tenant
+   issuer, SSO endpoint, and active application signing certificate.
+
+OpenHands uses the metadata to configure SAML trust and verify signatures.
+OpenHands enables SAML signature validation; do not disable it. No Entra OIDC
+client secret is needed for this SAML application. See Microsoft's [signing options](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/certificate-signing-options).
+
+## Step 4: Assign Users
+
+1. Open the application's `Properties` and set `Assignment required?` to `Yes`.
+2. Under `Users and groups`, assign the users who should be allowed to sign in.
+
+You can assign users individually. Group-based assignment requires Entra ID P1
+or P2 and does not include nested groups. See Microsoft's [assignment requirements](https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/assign-user-or-group-access-portal).
+Keep your existing MFA and Conditional Access policies in effect.
+
+Entra app assignment permits sign-in through this application. OpenHands
+organization memberships, roles, and repository permissions are managed
+separately; app assignment does not synchronize them.
+
+## Step 5: Configure OpenHands
+
+Save your existing deployment configuration and preserve other settings while
+adding the Entra metadata URL.
+
+<Tabs>
+  <Tab title="Replicated">
+    In the Admin Console configuration page, find
+    `Enterprise SSO (SAML) Authentication`:
+
+    1. Enable `Enable Enterprise SSO Authentication`.
+    2. Set `Identity Provider Display Name` to `Microsoft Entra ID`.
+    3. Paste the `App Federation Metadata URL` into `SAML Metadata URL`.
+    4. Save, review the new version and preflight results, then deploy it.
+  </Tab>
+  <Tab title="Standalone Helm">
+    Merge these settings into your existing values file:
+
+    ```yaml
+    enterpriseSSO:
+      enabled: true
+      displayName: "Microsoft Entra ID"
+      idpMetadataUrl: "https://<your-app-federation-metadata-url>"
+    ```
+
+    Review the rendered changes and redeploy the existing release using your
+    normal [Helm installation procedure](/enterprise/k8s-install/installation).
+  </Tab>
+</Tabs>
+
+Wait for deployment to complete before signing in. A completed deployment does
+not confirm that SSO was configured. If sign-in returns to the built-in login
+page, or provisioning logs report a metadata, certificate, or profile-mapper
+error, contact OpenHands Support with your release and the error. Manual broker
+edits can be overwritten by managed configuration and are not a substitute for
+a supported release.
+
+## Step 6: Sign In
+
+1. Open OpenHands in a separate browser profile or private window.
+2. Choose the Enterprise SSO button. Its label may be `Login with Enterprise SSO`
+   or your configured provider display name.
+3. Sign in as an assigned Entra user and complete any required MFA prompts.
+4. Confirm your imported email and name, then create a conversation to check
+   that your workspace is available.
+
+Start sign-in from OpenHands. If an existing OpenHands account uses the same
+email address, follow its account-verification prompts rather than bypassing
+account ownership checks.
+
+## Repository Access and Access Management
+
+To connect repositories after SSO, use `Settings > Integrations` and the intended
+provider's `Connect` flow. Follow the relevant guide for
+[GitHub](/enterprise/integrations/github),
+[Azure DevOps](/enterprise/integrations/azure-devops),
+[GitLab](/enterprise/integrations/gitlab), or
+[Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center).
+Entra sign-in does not by itself grant repository access.
+
+Enabling SAML adds a sign-in route; it does not automatically disable other login
+methods. Confirm your supported release's policy before requiring corporate-only
+login.
+
+Removing a user's effective assignment blocks a new Entra sign-in to this app.
+Check both direct assignments and access through assigned groups. Existing
+application sessions, API credentials, and repository grants need separate
+revocation steps when offboarding a user. Review other enabled login methods and
+linked provider identities as part of offboarding.
+
+Track the signing certificate's expiry. When rotating it, confirm the metadata
+update and required deployment procedure with OpenHands Support. Verify the new
+certificate is loaded before retiring the old trust; do not assume automatic
+background refresh.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Entra rejects the Reply URL | Exact scheme, hostname, realm, alias, and broker endpoint path |
+| `AADSTS50105` | Intended directory, assignment requirement, and direct user or eligible group assignment |
+| Sign-in returns to the built-in login page | Metadata HTTPS trust, signing certificate, provisioning errors, and supported release |
+| Email or name is missing | Exact simple claim names, empty namespaces, nonempty source attributes, and managed profile importers |
+| Account-linking error or unexpected account | Subject stability and existing-account verification; contact Support before merging identities |
+
+Do not disable TLS validation, signature verification, MFA, or account ownership
+checks to resolve an error.
