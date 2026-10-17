@@ -25,6 +25,9 @@ Use this page when Agent Canvas does not start, the browser cannot reach it, the
 - [`LLM Provider NOT provided`](#llm-provider-not-provided)
 - [ACP Agent Credentials Are Not Used](#acp-agent-credentials-are-not-used).
 
+**Automations stopped working after an update or an API key change**
+- [Automations Fail After The API Key Changed](#automations-fail-after-the-api-key-changed)
+
 **You need to remove or reset Canvas**
 - [Update Or Uninstall Is Stuck](#update-or-uninstall-is-stuck)
 - [Uninstall Agent Canvas](/openhands/usage/agent-canvas/setup#uninstall-agent-canvas) for clean removal and reinstall.
@@ -348,6 +351,128 @@ If the `Automations` view shows an unavailable or unhealthy state:
 4. Confirm required MCP servers and secrets are configured on the same backend as the automation.
 
 See [Pre-built Automations](/openhands/usage/agent-canvas/prebuilt-automations).
+
+## Automations Fail After The API Key Changed
+
+Agent Canvas versions up to 1.26.0 encrypted automation state with the backend API key, unless you set `AUTOMATION_KV_SECRET`. If that key changed, the automation backend can no longer read the state it saved before. That happens when you delete `~/.openhands/agent-canvas/api-key.txt` to get a new key, or start with a different `LOCAL_BACKEND_API_KEY`.
+
+Newer versions keep the encryption key fixed when the API key changes. They save it the first time they start, though, so an install whose API key had already changed needs the old key back.
+
+You may see:
+
+- The `Automations` view reports the automation backend as unavailable after an update, and the terminal shows `Failed to apply SQLite migrations` followed by one of:
+  - `duplicate column name: consecutive_auth_failures`
+  - `there is already another table or index with this name: automation_kv_legacy`
+  - `Failed to decrypt value: invalid token`
+  - `AUTOMATION_KV_SECRET must be the secret this state was written with`
+- Automations run, but reading their saved state fails with `Failed to decrypt value`.
+
+### Restore The Old Key
+
+1. Stop Agent Canvas.
+2. Back up the `~/.openhands/automation` directory. It holds the automation database.
+3. [Update Agent Canvas](/openhands/usage/agent-canvas/setup#update-agent-canvas) to the latest version.
+4. Find the API key Agent Canvas used before the change. That is the `LOCAL_BACKEND_API_KEY` value you set, or the contents of `~/.openhands/agent-canvas/api-key.txt` from a backup.
+5. Save the old key as the automation encryption key. Create the file if it does not exist, or replace its contents if it does:
+
+   <Tabs>
+     <Tab title="npm (macOS / Linux)">
+       ```bash
+       printf '%s\n' '<old-api-key>' > ~/.openhands/agent-canvas/automation-kv-secret.txt
+       chmod 600 ~/.openhands/agent-canvas/automation-kv-secret.txt
+       ```
+     </Tab>
+
+     <Tab title="npm (Windows PowerShell)">
+       ```powershell
+       Set-Content -NoNewline -Path "$env:USERPROFILE\.openhands\agent-canvas\automation-kv-secret.txt" -Value '<old-api-key>'
+       ```
+     </Tab>
+
+     <Tab title="Docker">
+       Write the file from inside the image, so it belongs to the container user:
+
+       ```bash
+       docker run --rm \
+         -v ~/.openhands:/home/openhands/.openhands \
+         --entrypoint sh \
+         ghcr.io/openhands/agent-canvas:latest \
+         -c "printf '%s\n' '<old-api-key>' > ~/.openhands/agent-canvas/automation-kv-secret.txt && chmod 600 ~/.openhands/agent-canvas/automation-kv-secret.txt"
+       ```
+     </Tab>
+   </Tabs>
+
+6. Start Agent Canvas. The automation backend finishes its database update, including one that an earlier failed start left half-done, and your automations keep their saved state.
+
+<Note>
+  If you set `AUTOMATION_KV_SECRET` yourself, it takes precedence over `automation-kv-secret.txt`. Set it to the old key instead.
+</Note>
+
+<Warning>
+  Deleting `automation-kv-secret.txt` does not give you a new encryption key. It makes the automation state saved so far unreadable.
+</Warning>
+
+### If You No Longer Have The Old Key
+
+Without the old key, the saved state cannot be decrypted. Your automations and their run history are not affected. What is lost is the state automations saved between runs and, if you use Git Sync, its saved token.
+
+1. Stop Agent Canvas and back up the `~/.openhands/automation` directory.
+2. Delete the state that can no longer be read:
+
+   <Tabs>
+     <Tab title="npm (macOS / Linux)">
+       ```bash
+       python3 - <<'EOF'
+       import os, sqlite3
+       db = os.path.expanduser("~/.openhands/automation/automations.db")
+       con = sqlite3.connect(db)
+       for table in ("automation_kv", "automation_kv_legacy", "automation_kv_meta"):
+           if con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+               con.execute(f"DELETE FROM {table}")
+       con.commit()
+       con.close()
+       EOF
+       ```
+     </Tab>
+
+     <Tab title="npm (Windows PowerShell)">
+       ```powershell
+       @'
+       import os, sqlite3
+       db = os.path.expanduser("~/.openhands/automation/automations.db")
+       con = sqlite3.connect(db)
+       for table in ("automation_kv", "automation_kv_legacy", "automation_kv_meta"):
+           if con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+               con.execute(f"DELETE FROM {table}")
+       con.commit()
+       con.close()
+       '@ | python -
+       ```
+     </Tab>
+
+     <Tab title="Docker">
+       Run it from inside the image, so it can write the database the container owns:
+
+       ```bash
+       docker run --rm -i \
+         -v ~/.openhands:/home/openhands/.openhands \
+         --entrypoint python3 \
+         ghcr.io/openhands/agent-canvas:latest - <<'EOF'
+       import os, sqlite3
+       db = os.path.expanduser("~/.openhands/automation/automations.db")
+       con = sqlite3.connect(db)
+       for table in ("automation_kv", "automation_kv_legacy", "automation_kv_meta"):
+           if con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+               con.execute(f"DELETE FROM {table}")
+       con.commit()
+       con.close()
+       EOF
+       ```
+     </Tab>
+   </Tabs>
+
+3. Start Agent Canvas.
+4. If you use Git Sync, enter its token again on the `Git Sync` page.
 
 ## LLM Profiles Do Not Match OpenHands Cloud
 
