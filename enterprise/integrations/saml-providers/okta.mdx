@@ -1,0 +1,260 @@
+---
+title: Okta
+description: Configure Okta as a SAML identity provider for OpenHands Enterprise.
+icon: key
+---
+
+This guide configures Okta SAML sign-in for OpenHands Enterprise through its
+managed Keycloak realm. It is a provider-specific companion to the
+[SAML SSO](/enterprise/integrations/saml-sso) guide.
+
+<Warning>
+  This draft requires validation on a supported corrected release before
+  publication. The tested Replicated package, 0.75.0, required fixes for SAML
+  certificate provisioning and profile import. Persistent Okta-only enforcement
+  has not yet been validated on a deployed release.
+</Warning>
+
+## How Sign-In Works
+
+| Connection | Purpose |
+| --- | --- |
+| Okta → Keycloak, using SAML | Authenticate the employee with the company's identity provider |
+| Keycloak → OpenHands, using OpenID Connect (OIDC) | Complete application sign-in |
+| OpenHands → Keycloak GitHub broker → GitHub, using OAuth | Link the employee's GitHub identity; repository installation controls app access |
+
+SSO describes the sign-in experience. SAML and OIDC are protocols used at
+different points in this flow. This guide does not configure Okta as an OIDC
+identity provider. Direct Okta OIDC is a separate configuration, not a requirement for this setup.
+
+## Prerequisites
+
+- An OpenHands Enterprise installation with managed Keycloak and Enterprise SSO settings.
+- Okta administrator access to create a SAML application and assign users or groups.
+- Your installation's public Authentication hostname and application URL.
+- Two test users with populated email addresses.
+- Working OpenHands administrator access and an approved Keycloak recovery path
+  through your deployment administrator. Verify recovery before restricting login.
+
+The examples use `auth.openhands.example.com` and
+`https://app.openhands.example.com`. Replace these with your installation's
+hostnames. Do not change the fixed realm `allhands` or broker alias `enterprise_sso`.
+
+## Step 1: Create the Okta Application
+
+In the Okta Admin Console, open **Applications → Applications**, choose
+**Create App Integration**, and select **SAML 2.0**. Name the application
+`OpenHands` and configure these values:
+
+| Okta Field | Value |
+| --- | --- |
+| Single sign-on URL | `https://auth.openhands.example.com/realms/allhands/broker/enterprise_sso/endpoint` |
+| Recipient URL and Destination URL | Use the same single sign-on URL |
+| Audience URI (SP Entity ID) | `https://auth.openhands.example.com/realms/allhands` |
+| Default RelayState | Leave empty |
+| Name ID format | `Persistent` |
+| Application username | `Okta username`; use a stable, administrator-controlled identifier |
+
+Keep the application username stable after rollout. Changing the identifier sent
+as NameID can break the existing broker link, create a different identity, or
+cause an account collision. Plan and test employee rename handling separately.
+
+Complete the application wizard. Under advanced SAML settings, keep
+**Assertion Signature** set to **Signed**, with **RSA-SHA256** and **SHA256**
+where offered. A signed response alone does not replace a signed assertion.
+The metadata must publish the active signing certificate.
+
+<Note>
+  The SAML signing certificate and the HTTPS certificate serving the metadata
+  are separate. OpenHands also requires the metadata URL to use trusted HTTPS
+  and be reachable from the cluster.
+</Note>
+
+### Configure Profile Attributes
+
+Open the application's **Sign On** tab. Under **Attribute statements**, choose
+**Add expression** for each attribute, then save:
+
+| Name | Expression |
+| --- | --- |
+| `email` | `user.profile.email` |
+| `firstName` | `user.profile.firstName` |
+| `lastName` | `user.profile.lastName` |
+
+<Frame>
+  <img
+    src="/enterprise/integrations/saml-providers/images/okta-claims.png"
+    alt="Okta attribute expressions for email, firstName, and lastName"
+  />
+</Frame>
+
+These expressions match the tested Okta Identity Engine **Add expression**
+interface. Legacy attribute statements use different syntax. See
+[Okta custom claims](https://help.okta.com/oie/en-us/content/topics/apps/federated-claims-overview.htm).
+Attribute names are case-sensitive. Persistent NameID identifies the user;
+it does not replace the required `email` attribute.
+
+The profile import mappings initialize new accounts. Do not assume that later
+Okta profile changes update existing OpenHands accounts automatically.
+
+## Step 2: Assign Users and Groups
+
+Use individual company Okta identities. Do not share the administrator account.
+
+1. In **Directory → Groups**, create or select a group such as `OpenHands Users`.
+2. Add the employees who should have access. Use existing directory identities
+   rather than creating duplicate users.
+3. Open the OpenHands application and choose **Assignments → Assign → Assign
+   to Groups**. Assign the group and confirm its application usernames.
+4. Confirm each test user has an email address and is active. Users complete
+   any password change and authenticator enrollment required by company policy.
+
+For a new directory, use Okta's supported provisioning or
+[CSV import](https://help.okta.com/oie/en-us/content/topics/users-groups-profiles/usgp-import-users-csv.htm)
+workflow. Review activation and invitation behavior before importing employees.
+
+<Note>
+  Okta app assignment allows authentication; it does not assign OpenHands roles.
+  Establish the OpenHands organization owner and membership policy separately.
+  If you use **Default OpenHands Organization**, review **Automatically Add
+  Signed-In Users**. See
+  [Organizations](/openhands/usage/cloud/organizations/overview).
+  This SAML setup does not configure SCIM or group-to-role synchronization.
+</Note>
+
+## Step 3: Enable SAML SSO in OpenHands
+
+Copy the application's metadata URL from its **Sign On** area. Use the URL
+provided for this application; do not construct it from the tenant name.
+It must return SAML XML containing the IdP entity ID, SSO endpoint, and signing
+certificate without requiring an administrator's browser session.
+
+| OpenHands Setting | Value |
+| --- | --- |
+| SAML Metadata URL | The metadata URL copied from Okta |
+| Identity Provider Display Name | `Company SSO (via Okta)` |
+
+Use these values in
+[Step 2: Enable SAML SSO](/enterprise/integrations/saml-sso#step-2-enable-saml-sso).
+Choose the **Replicated** or **Standalone Helm** tab for your deployment,
+save the configuration, and deploy it. Keep the prior configuration and release
+revision for recovery. Wait for the application to be ready before sign-in.
+
+
+<Note>
+  Certificate rotation requires refreshing the metadata imported by the managed
+  broker. A Helm upgrade with unchanged values may not restart the provisioning
+  container. Confirm the release-specific procedure with OpenHands Support;
+  do not remove the old signing certificate until the replacement is validated.
+</Note>
+
+## Step 4: Verify Sign-In
+
+1. Open the OpenHands application URL in a clean browser session.
+2. Choose the configured Enterprise SSO entry and confirm it opens the expected Okta tenant.
+3. Sign in as an assigned test user and complete the required MFA.
+4. If a profile review appears, verify the email and names are populated from
+   Okta. Do not manually fill empty fields to conceal a mapping problem.
+5. Confirm the correct OpenHands email, organization, and role. Review and
+   accept the application terms when prompted.
+6. Start a small conversation and confirm that its sandbox and response work.
+7. Sign out and repeat sign-in. Confirm the same account and history are retained.
+8. Repeat with a second user. Confirm each user cannot open the other's private conversation.
+9. Verify that an active user without an app assignment cannot sign in.
+
+Start from OpenHands for this procedure. The managed setup described here does
+not configure IdP-initiated SAML tile launch. Give employees a bookmark to the
+OpenHands application URL rather than the Okta SAML endpoint. An existing Okta
+session may allow sign-in without another password or MFA prompt.
+
+For employees who previously used GitHub login with the same email, verify the
+existing-account ownership flow before rollout. Do not assume matching email
+automatically links accounts or create duplicate users to bypass a collision.
+
+## Connect GitHub After Okta Sign-In
+
+This section is required only for users who need GitHub repository access.
+
+Okta authentication does not provide a GitHub token. Repository installation
+and individual user authorization are separate requirements.
+
+### Administrator Setup
+
+1. Follow the [Enterprise GitHub guide](/enterprise/integrations/github) to
+   register the installation's GitHub App and configure its credentials and callback.
+2. Review app ownership and visibility. A personally owned private app cannot
+   serve unrelated GitHub accounts. For an organization-owned private app,
+   verify employee eligibility under
+   [GitHub's visibility rules](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/making-a-github-app-public-or-private).
+3. Have the repository owner install the app on the permitted repositories.
+   Choose **Only select repositories** when appropriate and review the requested
+   permissions. Employees may need an organization owner to approve installation.
+4. Confirm the employee's GitHub account also has access to the intended repository.
+
+Public app visibility does not make repositories public, but it broadens who
+can install or authorize the app. Choose ownership and visibility before rollout.
+Returning an app to private can require removing installations on other accounts.
+Do not make a private app public merely to work around an authorization error;
+review the intended ownership and eligibility model first.
+
+### User Setup
+
+1. Sign in to OpenHands through Okta.
+2. Open **Settings → Integrations** and choose **GitHub → Connect**.
+3. Complete any account-ownership verification. On GitHub, select the intended
+   identity, review the authorization, and approve it.
+4. Confirm **GitHub Connected**, with the same OpenHands account and workspace.
+5. In Canvas, choose **Open Repository**, select the repository and branch, and confirm.
+6. Start a read-only conversation to verify checkout and file access.
+
+**Configure** opens GitHub's installation settings; **Connect** authorizes the
+user's identity. Both repository installation and user authorization must be
+complete before repository use.
+
+<Warning>
+  The Connect flow in package 0.75.0 can request a local Keycloak password
+  from an Okta-only user. This is a known issue requiring a corrected release.
+  Do not create a local password, edit authentication URLs, or unlink an existing
+  account to bypass the problem. Resolve account-ownership conflicts separately.
+</Warning>
+
+## Require Okta for Application Sign-In
+
+<Note>
+  Enabling SAML does not enforce Okta-only login. Other configured sign-in
+  providers remain available unless a separate enforcement policy restricts them.
+  This guide does not yet provide validated release-specific enforcement steps.
+  Keep GitHub available for repository authorization; hiding a login button or
+  disabling the Git integration is not a complete enforcement policy.
+</Note>
+
+## Remove User Access
+
+Remove the employee from the assigned Okta group or remove their app assignment.
+Verify that a new OpenHands sign-in is denied.
+
+<Warning>
+  Removing an Okta assignment did not immediately revoke an existing OpenHands
+  session in the test. Offboarding must also address application and Keycloak
+  sessions, API keys, device credentials, and connected-provider access through
+  the supported administration procedures. Do not assume a login-policy change
+  revokes credentials already issued.
+</Warning>
+
+This guide does not establish SCIM deprovisioning, Single Logout, automatic
+session revocation, or repository-token renewal behavior.
+
+## Troubleshooting
+
+| Symptom | What to Check |
+| --- | --- |
+| Okta says the user is not assigned | App assignment and membership in its assigned group; check these before resetting passwords |
+| SSO falls back to built-in login | Metadata reachability, signing certificate, deployment completion, and provider provisioning errors |
+| Metadata fields appear present but provisioning fails | Known certificate-newline handling defect in the tested package; obtain a supported fix rather than disabling signature validation |
+| Profile fields are empty | Exact attribute names and provisioning of profile import mappings; NameID alone does not populate email and names |
+| SAML response is rejected | Assertion signature, certificate, audience, recipient, destination, NameIDPolicy, and clock skew |
+| GitHub authorization returns 404 | App ownership, visibility, and user eligibility |
+| GitHub is connected but no repository appears | Repository installation scope and the user's own repository access |
+| GitHub identity is already linked elsewhere | Existing account ownership; do not unlink or merge accounts as a routine workaround |
+| Login works but organization access is incorrect | OpenHands organization membership, role, and invitation policy |
+| Login fails after certificate rotation | Imported certificate and the release-specific metadata refresh procedure |
