@@ -3,7 +3,7 @@ title: Condenser
 description: High-level architecture of the conversation history compression system
 ---
 
-The **Condenser** system manages conversation history compression to keep agent context within LLM token limits. It reduces long event histories into condensed summaries while preserving critical information for reasoning. For more details, read the [blog here](https://openhands.dev/blog/openhands-context-condensensation-for-more-efficient-ai-agents).
+The **Condenser** system manages the active conversation view used as LLM input. A condensation can remove events from that view and optionally insert a summary. The original events remain in the event log. For the default summarizing strategy, read the [context condensation blog](https://openhands.dev/blog/openhands-context-condensensation-for-more-efficient-ai-agents).
 
 **Source:** [`openhands-sdk/openhands/sdk/context/condenser/`](https://github.com/OpenHands/software-agent-sdk/tree/main/openhands-sdk/openhands/sdk/context/condenser)
 
@@ -13,7 +13,7 @@ The Condenser system has four primary responsibilities:
 
 1. **History Compression** - Reduce event lists to fit within context windows
 2. **Threshold Detection** - Determine when condensation should trigger
-3. **Summary Generation** - Create meaningful summaries via LLM or heuristics
+3. **Optional Summary Generation** - Create a summary when required by the strategy
 4. **View Management** - Transform event history into LLM-ready views
 
 ## Architecture
@@ -72,7 +72,7 @@ flowchart TB
 | **[`LLMSummarizingCondenser`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/condenser/llm_summarizing_condenser.py)** | LLM summarization | Uses LLM to generate summaries |
 | **[`NoOpCondenser`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/condenser/no_op_condenser.py)** | No-op implementation | Returns view unchanged |
 | **[`PipelineCondenser`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/condenser/pipeline_condenser.py)** | Multi-stage pipeline | Chains multiple condensers |
-| **[`View`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/view.py)** | Event view | Represents history for LLM |
+| **[`View`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/view/view.py)** | Event view | Represents active-branch history for the LLM |
 | **[`Condensation`](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/event/condenser.py)** | Condensation event | Metadata about compression |
 
 ## Condenser Types
@@ -100,7 +100,7 @@ Uses an LLM to generate summaries of conversation history:
 ```mermaid
 %%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
 flowchart LR
-    View["Long View<br><i>120+ events</i>"]
+    View["Long View"]
     Check["Threshold<br>exceeded?"]
     Summarize["LLM Summarization"]
     Summary["Summary Text"]
@@ -131,9 +131,52 @@ flowchart LR
 6. **Next Step:** `View.from_events()` filters forgotten events and inserts summary
 
 **Configuration:**
-- **`max_size`:** Event count threshold before condensation triggers (default: 120)
-- **`keep_first`:** Number of initial events to preserve verbatim (default: 4)
+- **`max_size`:** Event count threshold before condensation triggers (default: 240)
+- **`keep_first`:** Number of initial events to preserve verbatim (default: 2)
 - **`llm`:** LLM instance for summarization (often cheaper model than reasoning LLM)
+
+### AgentResetCondenser (Development Branch)
+
+<Note>
+This optional strategy is documented against the
+[`feat/issue-4916-agent-reset` development branch](https://github.com/cbinhan/software-agent-sdk/tree/feat/issue-4916-agent-reset).
+See the [configuration and recovery guide](/sdk/guides/context-condenser#agent-requested-reset-development-branch)
+for setup and release availability.
+</Note>
+
+`AgentResetCondenser` returns an unchanged view during ordinary steps. A successful
+`new_context` tool call causes the harness to persist a `CondensationRequest` with
+a `trigger_action_id` after the complete tool batch is committed. The condenser
+then returns the existing `Condensation` event with `summary=None` and the real
+triggering response ID. No extra model summary is generated for this path.
+
+```mermaid
+flowchart LR
+    Call["new_context with optional handoff"] --> Batch["Commit complete tool batch"]
+    Batch --> Request["CondensationRequest: trigger_action_id"]
+    Request --> Reset["Condensation: no summary"]
+    Reset --> View["Apply to active view"]
+    History["Original active-branch events"] --> Retrieval["conversation_history"]
+    Retrieval --> Later["Later tool result in model input"]
+```
+
+The successful `NewContextObservation` stores the input boundary captured by the
+harness. The reset protects system events, user input after that boundary, and
+the triggering response's complete tool batch. Missing boundaries preserve all
+user input. `View.manipulation_indices` expands these protections to provider-safe
+tool and thinking-loop blocks.
+
+`View` derives the pending request and reminder state by replaying events. Applying
+a condensation consumes the request; only a changed view re-enables a reminder.
+The event log remains the source of truth across reopening and forking. History
+retrieval reads the active branch, including events omitted from the view, rather
+than searching every branch in the log.
+
+The capacity fallback uses `LLMSummarizingCondenser.hard_context_reset()` on only
+the removable blocks, preserves all system/user input, and remaps the summary
+offset into the retained full view. Its bounded internal retries do not create an
+unbounded agent retry loop: one generation attempt permits one outer rescue.
+The guide describes failure conditions and explicit application condensation.
 
 ### PipelineCondenser
 
@@ -203,7 +246,7 @@ flowchart TB
 - **Who:** Agent (on LLM context window error) or application code
 - **Purpose:** Force compression when context limit exceeded
 
-### Condensation Workflow
+### Summarizing Condensation Workflow
 
 ```mermaid
 %%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
@@ -249,21 +292,22 @@ flowchart TB
 4. **Condensation Creation:** Create `Condensation` event with `forgotten_event_ids` and summary
 5. **Return to Agent:** Condenser returns `Condensation` (not `View`)
 6. **History Update:** Agent adds `Condensation` to event log and exits step
-7. **Next Step:** `View.from_events()` ([source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/view.py)) processes Condensation to filter events and insert summary
+7. **Next Step:** `View.from_events()` ([source](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/context/view/view.py)) processes Condensation to filter events and insert summary
 
 ## View and Condensation
 
 ### View Structure
 
-A `View` represents the conversation history as it will be sent to the LLM:
+A `View` projects the selected active branch into the events used to build model
+input. It is distinct from both the complete event log and the active branch:
 
 ```mermaid
 %%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30}} }%%
 flowchart LR
-    Events["Full Event List<br><i>+ Condensation events</i>"]
+    Events["Active Branch Events<br><i>+ Condensation events</i>"]
     FromEvents["View.from_events()"]
     Filter["Filter forgotten events"]
-    Insert["Insert summary"]
+    Insert["Insert optional summary"]
     View["View<br><i>LLMConvertibleEvents</i>"]
     Convert["events_to_messages()"]
     LLM["LLM Input"]
@@ -282,8 +326,12 @@ flowchart LR
 **View Components:**
 - **`events`:** List of `LLMConvertibleEvent` objects (filtered by Condensation)
 - **`unhandled_condensation_request`:** Flag for pending manual condensation
-- **`condensations`:** List of all Condensation events processed
 - **Methods:** `from_events()` creates view from raw events, handling Condensation semantics
+
+The development reset strategy also uses `pending_condensation_request` to retain
+the request's action reference and `context_window_reminded` to avoid repeating
+the same preparation reminder. Both are derived by replay, not a second history
+store.
 
 ### Condensation Event
 
@@ -308,9 +356,10 @@ flowchart LR
 ```
 
 **Condensation Fields:**
-- **`forgotten_event_ids`:** List of event IDs to filter out
-- **`summary`:** Compressed text representation of forgotten events
-- **`summary_offset`:** Index where summary event should be inserted
+- **`forgotten_event_ids`:** Set of event IDs to filter out of the view
+- **`summary`:** Optional text representation of forgotten events
+- **`summary_offset`:** Optional insertion index in the view after filtering
+- **`llm_response_id`:** Real response ID that caused the condensation; for a normal agent reset, this is the response containing `new_context`
 - Inherits from `Event`: `id`, `timestamp`, `source`
 
 ## Rolling Window Pattern
@@ -320,7 +369,7 @@ flowchart LR
 ```mermaid
 %%{init: {"theme": "default", "flowchart": {"nodeSpacing": 30, "rankSpacing": 40}} }%%
 flowchart TB
-    View["Current View<br><i>120+ events</i>"]
+    View["Current View"]
     Check["Count Events"]
     
     Compare{"Count ><br>max_size?"}
@@ -328,11 +377,11 @@ flowchart TB
     Keep["Keep All Events"]
     
     Split["Split Events"]
-    Head["Head<br><i>First 4 events</i>"]
-    Middle["Middle<br><i>~56 events</i>"]
-    Tail["Tail<br><i>~56 events</i>"]
+    Head["Head<br><i>First keep_first events</i>"]
+    Middle["Middle<br><i>Older complete blocks</i>"]
+    Tail["Tail<br><i>Recent complete blocks</i>"]
     Summarize["LLM Summarizes Middle"]
-    Result["Head + Summary + Tail<br><i>~60 events total</i>"]
+    Result["Head + Summary + Tail"]
     
     View --> Check
     Check --> Compare
@@ -355,10 +404,10 @@ flowchart TB
 ```
 
 **Rolling Window Strategy:**
-1. **Keep Head:** Preserve first `keep_first` events (default: 4) - usually system prompts
+1. **Keep Head:** Preserve first `keep_first` events (default: 2) - usually system prompts
 2. **Keep Tail:** Preserve last `target_size - keep_first - 1` events - recent context
 3. **Summarize Middle:** Compress events between head and tail into summary
-4. **Target Size:** After condensation, view has `max_size // 2` events (default: 60)
+4. **Target Size:** Aim for `max_size // 2` events (default: 120), subject to safe manipulation boundaries
 
 ## Component Relationships
 
