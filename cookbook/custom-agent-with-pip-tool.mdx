@@ -25,13 +25,15 @@ with messy numbering and adds a table of contents.
 ## How It Works
 
 1. **Create a sandbox** (`POST /api/v1/sandboxes`) and wait for `RUNNING`.
-2. **Install the package** into `/workspace` via `pip install --target`:
+2. **Install the package** into the agent-server's working directory via
+   `pip install --target`. The script reads that directory from the sandbox spec (see
+   [Where the Server Imports Tools From](#where-the-server-imports-tools-from)):
    ```bash
-   pip install --target /workspace --no-deps oh-markdown-tool[openhands]==0.2.1
-   pip install --target /workspace mdformat pymarkdownlnt
+   pip install --target <working_dir> --no-deps oh-markdown-tool[openhands]==0.2.1
+   pip install --target <working_dir> mdformat pymarkdownlnt
    ```
-   The `--target` flag puts the package into the conversation's working directory,
-   which is on the agent-server's `sys.path`. We use `--no-deps` to skip dependencies
+   The `--target` flag puts the package into the agent-server's working directory,
+   which is on its `sys.path`. We use `--no-deps` to skip dependencies
    that are already **bundled** in the frozen agent-server (`openhands-sdk`, `pydantic`,
    `rich`), then install only the **non-bundled** deps (`mdformat`, `pymarkdownlnt`)
    explicitly.
@@ -74,6 +76,7 @@ export LLM_BASE_URL=https://llm-proxy.app.all-hands.dev/
 ```bash
 python working_example.py            # runs and cleans up the sandbox
 python working_example.py --keep     # leave the sandbox up for inspection
+python working_example.py --install-dir /workspace   # app servers older than 1.53.0
 ```
 
 <Warning>
@@ -103,14 +106,37 @@ On OpenHands Cloud the agent-server is a **frozen, self-contained binary** (buil
 PyInstaller). A plain `pip install` targets the sandbox's *system* Python interpreter,
 which the frozen server cannot see — so the module would never be importable.
 
-The conversation's **working directory is on the agent-server's import path**, so
-`pip install --target /workspace` places the package where the server can actually
+The **agent-server's working directory is on its import path**, so
+`pip install --target <working_dir>` places the package where the server can actually
 import it. The bundled dependencies (`openhands-sdk`, `pydantic`, `rich`) are already
 available inside the frozen binary, so we skip them (`--no-deps`) and only install the
 package's own code plus its *non-bundled* dependencies.
 
 This approach works for any published package, not just `oh-markdown-tool` — the key is
-installing into the working directory and being aware of what's already bundled.
+installing into the agent-server's working directory and being aware of what's already
+bundled.
+
+## Where the Server Imports Tools From
+
+The agent-server runs from the sandbox spec's `working_dir`, which is
+`/workspace/project` on OpenHands Cloud today. The tool has to go in that directory,
+so the script looks it up instead of hardcoding a path. The sandbox record carries a
+`sandbox_spec_id`, and `GET /api/v1/sandbox-specs?id=<sandbox_spec_id>` returns the
+spec's `working_dir`.
+
+<Info>
+  The conversation's `workspace.working_dir` (`/workspace` in this example) is a
+  separate setting. Installing there does not make the package importable.
+</Info>
+
+<Note>
+  Before app server 1.53.0, the sandbox started the agent-server in `/workspace`
+  whatever the spec's `working_dir` said. Check `info.version` in `/openapi.json`, and
+  on older servers run with `--install-dir /workspace`.
+
+  That the agent-server's working directory is on its import path is observed
+  behavior of the frozen binary, not a documented guarantee.
+</Note>
 
 ## Verification (Same Technique as the Other Examples)
 
