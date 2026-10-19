@@ -4,9 +4,9 @@ description: Add custom server-side tools via source file upload and tool_module
 icon: wrench
 ---
 
-{/* GENERATED from OpenHands/enterprise-cookbook@main (custom-agent-with-tool/README.md). Edit the source, not this file. */}
+{/* GENERATED from OpenHands/enterprise-cookbook@e0539545d07377ea8d14043207d3346cdb91b983 (custom-agent-with-tool/README.md). Edit the source, not this file. */}
 
-<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/main/custom-agent-with-tool" horizontal />
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/e0539545d07377ea8d14043207d3346cdb91b983/custom-agent-with-tool" horizontal />
 
 Add a **completely custom, server-side tool** to an OpenHands Cloud agent — without
 forking or rebuilding the agent-server. The agent-server loads your tool at
@@ -25,10 +25,12 @@ it actually called the tool — making the demonstration unfalsifiable.
 
 1. **Create a sandbox** (`POST /api/v1/sandboxes`) and wait for `RUNNING`. Read the
    `AGENT_SERVER` URL and the `session_api_key` from the sandbox record.
-2. **Deploy the tool** as an importable package in the conversation's working
-   directory, `/workspace/bug_registry/`, using the agent-server file API
-   (`POST /api/file/upload?path=...`). Two files are uploaded: `__init__.py` and
-   `tool.py` (the contents of `custom_tool_definition.py`).
+2. **Deploy the tool** as an importable package in the agent-server's working
+   directory, `<working_dir>/bug_registry/`, using the agent-server file API
+   (`POST /api/file/upload?path=...`). The script reads `<working_dir>` from the
+   sandbox spec (see [Where the Server Imports Tools From](#where-the-server-imports-tools-from)).
+   Two files are uploaded: `__init__.py` and `tool.py` (the contents of
+   `custom_tool_definition.py`).
 3. **Create a conversation** (`POST /api/conversations`) that lists the tool in
    `agent.tools` and maps it in `tool_module_qualnames`.
 4. **Run and verify** (`POST .../run`, then read events). The custom tool must show
@@ -42,7 +44,7 @@ with PyInstaller). A normal `pip install` targets a *different* Python interpret
 that the frozen server cannot see, so the module would never be importable and the
 tool would fail to register.
 
-The conversation's **working directory is on the agent-server's import path**, so
+The **agent-server's working directory is on its import path**, so
 dropping the package there makes `import rubber_duck.tool` work with no install
 step. The tool's own imports (`openhands.sdk`, `pydantic`) resolve from inside the
 frozen server, where they're always available.
@@ -88,6 +90,7 @@ export LLM_BASE_URL=https://llm-proxy.app.all-hands.dev/
 ```bash
 python working_example.py            # runs and cleans up the sandbox
 python working_example.py --keep     # leave the sandbox up for inspection
+python working_example.py --import-dir /workspace   # app servers older than 1.53.0
 ```
 
 <Warning>
@@ -111,6 +114,28 @@ Expected output:
 [demo]   PASS: agent reported the tool's Case ID (BUG-59C20D) in its answer
 [demo] SUCCESS: the custom tool was loaded and used in OpenHands Cloud.
 ```
+
+## Where the Server Imports Tools From
+
+The agent-server runs from the sandbox spec's `working_dir`, which is
+`/workspace/project` on OpenHands Cloud today. The tool has to go in that directory,
+so the script looks it up instead of hardcoding a path. The sandbox record carries a
+`sandbox_spec_id`, and `GET /api/v1/sandbox-specs?id=<sandbox_spec_id>` returns the
+spec's `working_dir`.
+
+<Info>
+  The conversation's `workspace.working_dir` (`/workspace` in this example) is a
+  separate setting. Uploading the tool there does not make it importable.
+</Info>
+
+<Note>
+  Before app server 1.53.0, the sandbox started the agent-server in `/workspace`
+  whatever the spec's `working_dir` said. Check `info.version` in `/openapi.json`, and
+  on older servers run with `--import-dir /workspace`.
+
+  That the agent-server's working directory is on its import path is observed
+  behavior of the frozen binary, not a documented guarantee.
+</Note>
 
 ## Verifying Registration (Same Technique as `custom-agent-no-browser`)
 
