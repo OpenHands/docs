@@ -12,6 +12,18 @@ This page describes the managed Keycloak integration for Helm and Replicated.
 OIDC identity providers use a different configuration; do not enter an OIDC
 discovery URL in the SAML metadata field.
 
+<Warning>
+  Release qualification is pending. A minimum supported Helm chart, application,
+  and Replicated package version has not yet been established for this procedure.
+  SAML setup requires the certificate-handling and profile-import fixes in
+  [Cloud #1422](https://github.com/OpenHands/OpenHands-Cloud/pull/1422) and
+  [Cloud #1423](https://github.com/OpenHands/OpenHands-Cloud/pull/1423).
+  The repository connection steps also require the Git Connect fix tracked in
+  [Enterprise #838](https://github.com/OpenHands/enterprise/pull/838).
+  Confirm that your release includes the applicable fixes before proceeding;
+  a successful test on a repaired candidate does not qualify a stock release.
+</Warning>
+
 ## Prerequisites
 
 - An OpenHands Enterprise installation with managed SAML support and working
@@ -137,8 +149,7 @@ managed Keycloak provider can be overwritten by deployment reconciliation.
 ## Step 3: Verify Sign-In
 
 1. Open `https://app.<your-openhands-domain>` in a private browser window.
-2. Choose the Enterprise SSO option. Depending on your application version,
-   it may be labeled `Login with Enterprise SSO` or use the configured provider name.
+2. Choose `Login with Enterprise SSO`.
 3. Complete sign-in with your identity provider.
 4. Confirm you return to the intended OpenHands account with the expected email
    and name. Create a conversation and confirm its sandbox starts.
@@ -203,15 +214,26 @@ or automatic deprovisioning.
 
 ## Signing Certificate Renewal
 
-Assign an owner to track the IdP signing certificate's expiry. Before rotating
-it, confirm with OpenHands Support how your installed release re-imports
-metadata and what application rollout is required. Updating a hosted XML file
-alone does not establish that the broker has loaded the new certificate.
+Assign an owner to track the IdP signing certificate's expiry. The managed
+provisioner fetches and re-imports SAML metadata on every application pod start.
+Updating the metadata alone does not refresh the broker configuration.
 
-Update any hosted metadata copy and complete the planned re-import. Confirm a
-new sign-in succeeds with the replacement certificate before retiring the old
-one. Keep a recovery administrator available during the maintenance. Do not
-assume automatic background metadata refresh.
+1. Publish the replacement signing certificate in the IdP metadata. Update any
+   organization-hosted metadata copy as well.
+2. If the metadata URL changed, update it in the Replicated Admin Console or
+   Helm values and deploy the configuration.
+3. Restart the OpenHands application pods through your deployment's normal
+   application restart or rollout procedure. For Replicated, use the Admin
+   Console; for Helm, use your Helm deployment's application rollout procedure.
+   If the configuration deployment already recreated all application pods, a
+   separate restart is unnecessary. Restarting Keycloak alone does not run the
+   application's metadata provisioner.
+4. Wait for provisioning and the application rollout to complete. Confirm a
+   fresh sign-in succeeds with the replacement certificate before retiring the
+   old one.
+
+Keep a recovery administrator available during the maintenance. Do not assume
+automatic background metadata refresh.
 
 ## Troubleshooting
 
@@ -221,10 +243,9 @@ This can happen when the SSO provider was not provisioned from your metadata.
 Check deployment completion and sanitized provisioning errors as well as the
 signing certificate in the identity provider's SAML metadata. Confirm it includes
 a signing certificate (see the warning in [Step 1](#step-1-register-openhands-with-your-identity-provider)).
-If you changed the metadata URL, save and deploy again. If the URL is unchanged,
-confirm with OpenHands Support how your release re-imports metadata, as described
-in [Signing Certificate Renewal](#signing-certificate-renewal), then test sign-in
-again.
+If you changed the metadata URL, save and deploy again. If the metadata changed
+at the same URL, restart the application pods to re-import it, as described in
+[Signing Certificate Renewal](#signing-certificate-renewal), then test sign-in again.
 
 Inspect the XML for the expected IdP entity ID, SSO endpoint and a usable signing
 certificate. Finding an `X509Certificate` element alone does not establish that
