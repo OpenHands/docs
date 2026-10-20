@@ -122,9 +122,9 @@ Fill in the provider details:
 | SLS URL | leave blank (optional) |
 
 <Note>
-  `enterprise_sso` and `allhands` are fixed values that OpenHands expects. Do
-  not change them. Replace only the `auth.openhands.example.com` hostname with
-  your Authentication hostname.
+  `enterprise_sso` is the managed broker alias. `allhands` is the default realm;
+  confirm the realm configured for your installation before registering the app.
+  Replace the example hostname with your Authentication hostname.
 </Note>
 
 <Accordion title="Screenshot: Protocol settings">
@@ -142,7 +142,7 @@ Expand **Advanced protocol settings** and configure:
 | Field | Value |
 | --- | --- |
 | Signing Certificate | select a certificate, for example `authentik Self-signed Certificate` |
-| Property mappings | keep the defaults (7 mappings are selected, including Email, Name, and Username) |
+| Property mappings | Retain needed defaults and add the OpenHands mappings described below |
 | Service Provider Binding | `Post` |
 | Default NameID Policy | `Persistent` |
 | Digest algorithm | `SHA256` (default) |
@@ -193,12 +193,28 @@ their defaults:
   </Frame>
 </Accordion>
 
-<Note>
-  OpenHands provisions accounts from the SAML assertion and requires an email
-  address. The default property mappings already include
-  `authentik default SAML Mapping: Email`, so leave the selection as-is unless
-  you have customized it.
-</Note>
+### Configure OpenHands Profile Mappings
+
+The managed OpenHands profile importers read the case-sensitive SAML attributes
+`email`, `firstName` and `lastName`. Authentik's default Email mapping emits a
+URI-named attribute; it does not supply the simple `email` attribute.
+
+Create a custom SAML property mapping with SAML Attribute Name `email` and this
+expression, then select it in this provider's property mappings:
+
+```python
+return request.user.email
+```
+
+Use an administrator-controlled email and restrict who can change it; OpenHands
+trusts the supplied email as verified. If you import names, add mappings with
+SAML Attribute Names `firstName` and `lastName` from the corresponding trusted
+directory fields. Avoid deriving structured names by splitting a display name.
+The managed mappings initialize new accounts and do not synchronize later changes.
+
+Keep the user's persistent subject stable. Confirm the requested NameID policy
+matches your metadata and provider; a default policy alone does not establish
+which format an SP-initiated request uses.
 
 The remaining provider options include the Service Provider Binding, Default
 NameID Policy, and digest and signature algorithms shown below.
@@ -215,12 +231,12 @@ NameID Policy, and digest and signature algorithms shown below.
 
 Choose **Next**.
 
-## Step 4: Configure Bindings (Optional)
+## Step 4: Restrict Application Access
 
 The **Configure Bindings** step controls which users can access the application.
-By default there are no bound policies, which allows all Authentik users to sign
-in — convenient for initial testing. To restrict access, choose **Bind existing
-policy/group/user** and bind the group(s) that should have access.
+Without restrictive bindings, all Authentik users may be eligible to sign in.
+Choose **Bind existing policy/group/user** and bind the intended group(s) before
+rollout. Check the effective access of an assigned and an unassigned user.
 
 Choose **Next**.
 
@@ -256,7 +272,8 @@ with an email address.
 1. Go to **Directory → Users** and choose **Create**.
 2. Set a username and an **email address** (required for account provisioning in
    OpenHands).
-3. Set a password for the user, or use the existing `akadmin` account.
+3. Complete the user's normal onboarding and MFA requirements. Use a separate
+   employee account for sign-in verification.
 
 ## Values for OpenHands
 
@@ -273,7 +290,8 @@ Replace the hostname and slug with your own.
   Use the bare `.../metadata/` URL. OpenHands fetches it server-side, where
   Authentik serves the raw XML directly, so no `?download` suffix is needed. If
   you open that URL in a browser you may be redirected to the Authentik login;
-  that redirect does not affect OpenHands' server-side fetch.
+  confirm that the URL supplied to OpenHands returns XML to the server-side
+  provisioning process without an interactive session.
 </Note>
 
 To inspect the metadata yourself and confirm it contains a signing certificate,
@@ -281,5 +299,26 @@ add `?download` and follow redirects:
 
 ```bash
 curl -sL "https://<your-authentik-host>/application/saml/openhands/metadata/?download" \
-  | grep -c X509Certificate   # expect >= 1
+  | grep -c X509Certificate   # preliminary presence check only
 ```
+
+
+Also verify the metadata issuer, SSO endpoint and certificate fingerprint against
+the intended Authentik provider. A certificate element alone does not establish trust.
+
+## Verify Sign-In and Manage Access
+
+Complete the shared [sign-in check](/enterprise/integrations/saml-sso#step-3-verify-sign-in)
+after deploying through the **Replicated** or **Standalone Helm** tab. Confirm the
+expected profile, a working conversation and the same account on repeat sign-in.
+
+Authentik bindings control this login route. Manage OpenHands organization
+membership, roles and repository grants separately. Enabling SAML does not by
+itself disable other login routes or configure SCIM or group-to-role synchronization.
+Follow the shared guidance for [repository connections](/enterprise/integrations/saml-sso#connect-a-repository-provider),
+[access removal](/enterprise/integrations/saml-sso#remove-user-access) and
+[certificate renewal](/enterprise/integrations/saml-sso#signing-certificate-renewal).
+
+For sign-in failures, check the effective binding, exact ACS and audience, metadata
+reachability, signing certificate and case-sensitive claims. Removing a binding
+does not revoke existing OpenHands sessions, API keys or repository credentials.
