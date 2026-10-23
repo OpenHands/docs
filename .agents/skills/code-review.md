@@ -151,3 +151,50 @@ SDK guide files under `sdk/guides/` **must** use a category prefix:
 - `convo-` for Conversation-related guides (e.g., `convo-async.mdx`, `convo-persistence.mdx`)
 
 Flag any new SDK guide that does not follow this naming convention.
+
+## Enterprise
+
+Apply these checks to changes under `enterprise/` and to the Enterprise tab in `docs.json`. Unless
+a change states something inaccurate, these are non-blocking: use `COMMENT` with a suggested rewrite.
+
+### Deployment positioning
+
+- Recommend **Docker Compose for trials and proofs of concept** and **Kubernetes (Helm) for
+  production**. Flag content that presents them differently.
+- Enterprise docs cover self-hosted options only. Flag content that offers OpenHands Cloud as a
+  deployment option.
+- The VM install is a last resort. Flag new content that suggests or links to it as a deployment
+  path. Existing VM install pages stay in the navigation, at the end of the Deployment section.
+
+### Tone: inspire confidence
+
+- State a limitation once, in plain inline text. Flag caveats that repeat across sections or pages
+  (for example, a "use Kubernetes for production" reminder in the intro, a callout, and a closing
+  "Next steps" section on the same page).
+- Flag excessive `<Note>`, `<Warning>`, and `<Info>` blocks. Most information belongs in the body
+  text. Reserve callouts for something the reader would otherwise get wrong.
+
+### Keep instructions simple
+
+- Prefer the shortest path that works. For the Docker Compose install, that is
+  `git clone https://github.com/OpenHands/enterprise.git`, `cd enterprise`, and
+  `docker compose up --wait`. Flag version lookups, file downloads, or extra flags that add steps
+  without adding value.
+- Point readers at the product's own flows instead of describing every click. For example, "Open
+  `http://localhost:3100` and follow the onboarding flow to create your first user and configure
+  your LLM provider" beats deep links to sign-up URLs or instructions to open Settings.
+- Keep prerequisite lists short: name the tool or credential (Git, Docker and Docker Compose, an LLM
+  API key) without explaining it.
+- Verify Docker Compose and Helm claims (ports, variables, commands) against
+  [`OpenHands/enterprise`](https://github.com/OpenHands/enterprise).
+
+### Navigation
+
+- The Enterprise tab is organized into Get Started, Deployment, Configuration, Integrations,
+  Features, and Administration. New pages must go in the matching section. Flag pages added as
+  long flat lists or in an unrelated section.
+- Group related pages into nested groups, which Mintlify collapses by default. When a group has an
+  overview page, set it as the group's `root` instead of listing it as a separate page.
+- Keep sidebar labels short enough to fit on one line. When a page title is long, add a
+  `sidebarTitle` to the frontmatter rather than shortening the page title (for example,
+  "Running Docker in the Agent Sandbox" uses `sidebarTitle: "Docker in the Sandbox"`).
