@@ -27,7 +27,7 @@ with your licensed chart values before installing or upgrading.
 - A durable S3-compatible or GCS bucket for automation packages, with access to
   list the bucket and read, write, and delete objects. Provision storage and
   permissions separately from the application values below.
-- Three independent, random secret values stored in your secret manager:
+- Required and optional Kubernetes Secrets, with values stored in your secret manager:
 
 | Secret | Key | Purpose |
 | --- | --- | --- |
@@ -162,7 +162,8 @@ capacity, availability, backups and restore for the in-cluster store.
 
 ## Step 1: Create Secrets
 
-Create the three required Kubernetes Secrets in the `openhands` namespace, plus
+Use independent, random values for the database password, service key and webhook
+secret. Create these three Kubernetes Secrets in the `openhands` namespace, plus
 the filestore credential Secret if using S3-compatible access keys. Create the
 optional Git sync and KV Secrets if you need those features; without them, Git
 sync credential storage is unavailable and the KV store is disabled. If you
@@ -273,18 +274,29 @@ object-store client authenticated with your approved storage identity:
 
 ```bash
 # Amazon S3
-aws s3 ls s3://<automation-package-bucket>/
+aws s3 ls s3://<automation-package-bucket>/ --recursive
 
 # GCS
-gcloud storage ls gs://<automation-package-bucket>/
+gcloud storage ls --recursive gs://<automation-package-bucket>/
 
-# RustFS or another S3-compatible service
-aws --endpoint-url <s3-api-url> s3 ls s3://<automation-package-bucket>/
+# External S3-compatible service, or RustFS from a client inside the cluster
+aws --endpoint-url <s3-api-url> s3 ls s3://<automation-package-bucket>/ --recursive
 ```
 
-In a test environment, replace the automation pod during planned maintenance,
-then run the same automation again and confirm it completes. This checks that
-package storage survives pod replacement. A healthy pod alone does not verify
+An in-cluster RustFS service name is reachable only inside the cluster. Run its
+listing command from a client pod, or port-forward `svc/<rustfs-service>` with
+`kubectl -n openhands port-forward svc/<rustfs-service> 9000:9000` and use
+`--endpoint-url http://localhost:9000` from your workstation.
+
+In a test environment, restart the automation deployment:
+
+```bash
+kubectl -n openhands rollout restart deployment/automation
+kubectl -n openhands rollout status deployment/automation
+```
+
+Run the same automation again with `Run now` and confirm it completes. This checks
+that package storage survives pod replacement. A healthy pod alone does not verify
 storage access or persistence.
 
 ### Troubleshooting Storage
