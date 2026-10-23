@@ -13,7 +13,7 @@ The shared configuration below uses bundled PostgreSQL. Choose automation packag
 storage for your provider before applying it. For production, use
 [external PostgreSQL](/enterprise/external-postgres) and adapt the database host and credentials accordingly.
 
-The storage settings below apply to [chart `0.88.0`](https://github.com/OpenHands/OpenHands-Cloud/blob/openhands/0.88.0/charts/openhands/charts/automation/values.yaml#L146-L181),
+The storage settings below apply to [chart `0.88.0`](https://github.com/OpenHands/OpenHands-Cloud/blob/openhands/0.88.0/charts/openhands/charts/automation/values.yaml#L146-L176),
 which ships Automation `1.23.2`. Keep the automation image supplied by your licensed
 chart unless your release instructions require an override. Compare these settings
 with your licensed chart values before installing or upgrading.
@@ -34,6 +34,9 @@ with your licensed chart values before installing or upgrading.
 | `automation-db-secret` | `db-password` | Password for `automation_user` |
 | `automation-service-key` | `automation-service-key` | Authenticates OpenHands requests to the automation service |
 | `automation-webhook-secret` | `webhook-secret` | Verifies automation webhook signatures |
+| `automation-filestore-credentials` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Required when using S3-compatible access keys; omit for ambient AWS identity or GCS |
+| `automation-git-sync-secret` | `git-sync-secret` | Optional: enables storing encrypted Git sync credentials |
+| `automation-kv-secret` | `kv-secret` | Optional: enables persistent automation KV state |
 
 ## Choose Package Storage
 
@@ -41,6 +44,8 @@ Enterprise conversation storage (`filestore`) and automation package storage
 (`automation.filestore`) are separate consumers. Configuring one does not configure
 the other. Use a separate automation bucket, such as `automation-data`, even when
 both consumers use the same object-store endpoint. Workspace PVCs are separate again.
+The chart defaults to `automation.filestore.type: gcs`; explicitly set `type: s3`
+when using S3 or RustFS.
 
 <Tabs>
   <Tab title="Amazon EKS">
@@ -69,12 +74,12 @@ both consumers use the same object-store endpoint. Workspace PVCs are separate a
     S3 storage; Azure workload identity does not supply those access keys.
 
     1. Follow [AKS Object Storage](/enterprise/k8s-install/aks#object-storage) and the
-       [RustFS provisioning example](https://github.com/OpenHands/OpenHands-Cloud/blob/main/aks-install/values.yaml.tmpl)
+       [RustFS provisioning example](https://github.com/OpenHands/OpenHands-Cloud/blob/openhands/0.88.0/aks-install/values.yaml.tmpl)
        to configure Azure Disk CSI persistence and the store's credential Secret.
        Create the conversation bucket separately if using RustFS for conversations.
     2. Configure a separate `automation-data` bucket using the
        [S3-compatible settings below](#s3-compatible-settings-for-rustfs-or-external-storage).
-       The existing [AKS automation overlay](https://github.com/OpenHands/OpenHands-Cloud/blob/main/aks-install/values-automation.yaml.tmpl)
+       The existing [AKS automation overlay](https://github.com/OpenHands/OpenHands-Cloud/blob/openhands/0.88.0/aks-install/values-automation.yaml.tmpl)
        shows the RustFS service endpoint and Secret reference.
 
     That overlay pins Automation `1.15.1` for chart `0.74.0`. Do not carry that image
@@ -91,7 +96,8 @@ both consumers use the same object-store endpoint. Workspace PVCs are separate a
     running automation pods. Provision a separate automation bucket and grant access to
     the identity used by the automation pod's Kubernetes service account
     (`automation.serviceAccount.name`, default `automation-sa`). Configure the
-    GKE identity binding for that account, independently of the Enterprise
+    GKE identity binding for that account in the release namespace (`openhands`
+    in this guide), independently of the Enterprise
     application account. If using IAM service-account impersonation, set the
     required `iam.gke.io/gcp-service-account` annotation through
     `automation.serviceAccount.annotations` as described in Google's guide.
@@ -135,9 +141,11 @@ automation:
 Replace the endpoint with the reachable S3 API URL and use the region required by
 your store (`us-east-1` in the AKS RustFS example). The URL scheme determines TLS;
 use the appropriate trusted HTTPS endpoint for an external service. The referenced
-Secret must be in the automation namespace and contain the two named keys. It can
+Secret must be in the `openhands` release namespace and contain the two named keys. It can
 reference the same credential Secret as the store if its grants cover the separate
-automation bucket; never put real access keys in values or Git.
+automation bucket. If reusing a Secret with different key names, set
+`accessKeyIdKey` and `secretAccessKeyKey` to match. Never put real access keys in
+values or Git.
 
 Provision the bucket first, or set `automation.filestore.createBucket: true` and
 grant bucket-creation permission to let the automation service create it at startup.
@@ -146,25 +154,30 @@ capacity, availability, backups and restore for the in-cluster store.
 
 <Warning>
   For new installations, follow the Helm guide's `minio.enabled: false` and use
-  external storage or RustFS. Older MinIO image pulls failed during
-  [Helm validation](https://github.com/OpenHands/docs/pull/854#issuecomment-5935488585).
+  external storage or RustFS. [Legacy MinIO images](https://github.com/OpenHands/docs/pull/854#issuecomment-5935488585)
+  can fail to pull.
   Check custom values for MinIO overrides. Before replacing an existing store,
   plan backup and data migration.
 </Warning>
 
 ## Step 1: Create Secrets
 
-Create the three Kubernetes Secrets in the `openhands` namespace. If you create
-them with `kubectl`, use `--from-file` or your secret manager rather than putting
+Create the three required Kubernetes Secrets in the `openhands` namespace, plus
+the filestore credential Secret if using S3-compatible access keys. Create the
+optional Git sync and KV Secrets if you need those features; without them, Git
+sync credential storage is unavailable and the KV store is disabled. If you
+create Secrets with `kubectl`, use `--from-file` or your secret manager rather than putting
 values directly in a shell command. The service key and webhook secret should
-differ. Keep all three values out of your Helm values file and Git repository.
+differ. Keep secret values out of your Helm values file and Git repository.
 
 ## Step 2: Add Helm Values
 
 Add the following to the values you already use for the `openhands` release.
 Replace the host and database settings with your own, and merge exactly one
 storage choice from above into this configuration. Keep your existing
-installation values alongside these overrides when upgrading.
+installation values alongside these overrides when upgrading. Remove
+`automation.image.tag` overrides copied from older versions of this guide or the
+AKS overlay, unless your release instructions explicitly require an override.
 
 ```yaml
 automationServiceKey:
@@ -226,7 +239,21 @@ helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
   --values values-automation.yaml
 
 kubectl -n openhands rollout status deployment/automation
+kubectl -n openhands get deployment automation \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+# Chart 0.88.0: ghcr.io/openhands/automation:1.23.2
 curl -f https://app.openhands.example.com/api/automation/health
+```
+
+On AKS, the upgrade command is:
+
+```bash
+helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+  --namespace openhands \
+  --version <installed-chart-version> \
+  --values values.yaml \
+  --values values-automation.yaml \
+  --values values-aks-runc.yaml
 ```
 
 Before running an automation, check that the selected bucket exists, the pod uses
@@ -241,13 +268,24 @@ appears in `Activity Log`. For example, ask it to summarize the README of a
 test repository without changing files or posting messages. Disable the test
 schedule afterward if you do not want it to run again.
 
-For package storage, upload a disposable package using the supported automation
-workflow, confirm its object appears in the automation bucket, and run it once.
-In an evaluation environment, verify the package remains available after an
-automation pod replacement and can run again. Confirm the completion callback
-succeeds and the activity log reaches a completed state. Remove the disposable
-package afterward and confirm deletion. These checks distinguish durable package
-storage from a prompt-only run or workspace persistence.
+Check the automation bucket for the package object after the test run, using an
+object-store client authenticated with your approved storage identity:
+
+```bash
+# Amazon S3
+aws s3 ls s3://<automation-package-bucket>/
+
+# GCS
+gcloud storage ls gs://<automation-package-bucket>/
+
+# RustFS or another S3-compatible service
+aws --endpoint-url <s3-api-url> s3 ls s3://<automation-package-bucket>/
+```
+
+In a test environment, replace the automation pod during planned maintenance,
+then run the same automation again and confirm it completes. This checks that
+package storage survives pod replacement. A healthy pod alone does not verify
+storage access or persistence.
 
 ### Troubleshooting Storage
 
@@ -255,6 +293,7 @@ storage from a prompt-only run or workspace persistence.
 | --- | --- |
 | S3 connection or TLS error | The S3 API endpoint is reachable from the automation pod, uses the correct port and URL scheme, and has a trusted certificate when using HTTPS. |
 | S3 access denied or missing bucket | The Secret name and key names match, the bucket exists, and credentials grant access to the automation bucket. Bucket auto-creation also requires creation permission. |
+| Unexpected GCS or ADC error on AKS/EKS | Confirm `automation.filestore.type: s3` is set when using S3-compatible storage. |
 | GCS authentication or permission error | Workload Identity is enabled on the automation node pool, the pod uses the intended Kubernetes service account, and that identity has access to the automation bucket. |
 | Healthy pod but package cannot be read | Check `automation.filestore`, not just the application's top-level `filestore`, and verify the package object is in the selected automation bucket. |
 
