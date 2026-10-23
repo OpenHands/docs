@@ -2,6 +2,9 @@
   const APP_HOST = "app.all-hands.dev";
   const HANDOFF_PARAM = "oh_ph_handoff";
   const HANDOFF_TTL_MS = 5 * 60 * 1000;
+  const CAMPAIGN_KEY = "openhands_docs_campaign_visit";
+  const CAMPAIGN_TTL_MS = 30 * 60 * 1000;
+  const UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign"];
   const ATTRIBUTION_KEYS = [
     "utm_source",
     "utm_medium",
@@ -13,9 +16,37 @@
   ];
 
   function cleanValue(value) {
-    if (typeof value !== "string") return undefined;
+    if (typeof value !== "string" || /[@/?\\]/.test(value)) return undefined;
     const trimmed = value.trim().toLowerCase().replace(/[^a-z0-9_:-]+/g, "_");
     return trimmed ? trimmed.slice(0, 80) : undefined;
+  }
+
+  function visitCampaign() {
+    const params = new URLSearchParams(window.location.search);
+    const current = {};
+    for (const key of UTM_KEYS) {
+      const value = cleanValue(params.get(key));
+      if (value) current[key] = value;
+    }
+    try {
+      if (Object.keys(current).length) {
+        sessionStorage.setItem(CAMPAIGN_KEY, JSON.stringify({ campaign: current, expiresAt: Date.now() + CAMPAIGN_TTL_MS }));
+        return current;
+      }
+      const stored = sessionStorage.getItem(CAMPAIGN_KEY);
+      if (!stored) return {};
+      const parsed = JSON.parse(stored);
+      if (parsed.expiresAt > Date.now()) {
+        return Object.fromEntries(UTM_KEYS.flatMap((key) => {
+          const value = cleanValue(parsed.campaign?.[key]);
+          return value ? [[key, value]] : [];
+        }));
+      }
+      sessionStorage.removeItem(CAMPAIGN_KEY);
+    } catch {
+      return current;
+    }
+    return {};
   }
 
   function isDoNotTrackEnabled() {
@@ -100,25 +131,21 @@
   }
 
   function buildAttribution(url) {
-    const params = new URLSearchParams(window.location.search);
     const attribution = {
+      ...visitCampaign(),
       landing_page_category: landingPageCategory(),
       cta_id: targetCategory(url),
       cta_surface: "docs_link",
       referring_domain_category: referringDomainCategory(),
     };
 
-    for (const key of ["utm_source", "utm_medium", "utm_campaign"]) {
-      const value = cleanValue(params.get(key));
-      if (value) attribution[key] = value;
-    }
-
     return attribution;
   }
 
   function buildHandoffUrl(href) {
     const url = new URL(href, window.location.href);
-    if (url.hostname !== APP_HOST) return href;
+    if (url.protocol !== "https:" || url.hostname !== APP_HOST) return href;
+    url.searchParams.set("signup_entry_source", "docs");
 
     const posthog = getPostHog();
     if (!posthog) return url.toString();
@@ -133,6 +160,7 @@
       nonce: randomNonce(),
       distinct_id: String(distinctId).slice(0, 256),
       session_id: String(sessionId).slice(0, 256),
+      signup_entry_source: "docs",
       attribution: buildAttribution(url),
     };
 
@@ -150,6 +178,8 @@
     url.hash = hash.toString();
     return url.toString();
   }
+
+  if (getPostHog()) visitCampaign();
 
   document.addEventListener(
     "click",
