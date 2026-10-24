@@ -4,7 +4,7 @@ description: Await existing child conversations on the agent server without poll
 ---
 
 <Note>
-This guide accompanies the backend foundation for [SDK issue #6129](https://github.com/OpenHands/software-agent-sdk/issues/6129). The endpoint must be present in your server build. It is not available in the v1.58.1 release. Mailbox result delivery and an agent tool remain separate integration work.
+This guide describes [SDK PR #6177](https://github.com/OpenHands/software-agent-sdk/pull/6177). Use a server and client build containing that change. These APIs and tools are not available in the v1.58.1 release.
 </Note>
 
 Use one server request to wait for existing direct child conversations. The server uses execution lifecycle notifications, so the parent and children can run without an attached browser or WebSocket.
@@ -39,7 +39,8 @@ The deadline starts after validation and runtime loading. Stop/delete cleanup fo
     "conversation_id": "a-child-conversation-uuid",
     "execution_status": "finished",
     "settled": true,
-    "deleted": false
+    "deleted": false,
+    "mailbox_message_id": "a-persisted-message-id"
   }],
   "timed_out": false,
   "interrupted": false
@@ -52,7 +53,56 @@ On timeout, the server returns HTTP 200 with `timed_out: true` and the pending c
 
 A parent pause, interrupt, or close returns `interrupted: true` without applying timeout cleanup. Disconnecting or cancelling a pending wait releases the waiters and leaves child execution running. Any destructive cleanup that has already started is drained before the request exits.
 
-Cleanup skips a child that has started another run. Check `deleted` to see whether this request removed it. Keep the default retention policy if you still need to read the child's history or final response. This operation returns lifecycle states only; finish-result delivery belongs to [the mailbox feature, #6127](https://github.com/OpenHands/software-agent-sdk/issues/6127).
+Cleanup skips a child that has started another run. Check `deleted` to see whether this request removed it. Keep the default retention policy if you still need the child's full history.
+
+Before deleting a settled child, the server persists its final result in the parent's mailbox. `mailbox_message_id` identifies that event. Its typed `decision` body contains JSON with `conversation_id`, `execution_status`, and `result`. Repeating a wait for the same settled run reuses its message identity. A deleted or still-pending child has no result message. The wait response carries the message ID; the persisted mailbox event carries the result.
+
+## Agent Tools
+
+Include the registered tools when constructing an agent hosted by the same server:
+
+```python
+from openhands.sdk import Agent, Tool
+from openhands.tools.child_conversation import (
+    SendMailboxMessageTool,
+    WaitForChildrenTool,
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=WaitForChildrenTool.name),
+        Tool(name=SendMailboxMessageTool.name),
+    ],
+)
+```
+
+`wait_for_children` accepts the wait request fields above. It releases the parent's conversation state lock while awaiting the canonical HTTP endpoint. Other tools in the same batch run separately, so state mutations do not race the released lock. Interrupting the parent cancels the request and drains its worker before the lock is reacquired.
+
+The tools use `OH_INTERNAL_SERVER_URL` (default `http://127.0.0.1:8000`) and the server's existing `OH_SESSION_API_KEYS_0` or `SESSION_API_KEY`. Configure the internal URL when the server listens on a different port. These tools coordinate conversations on that backend; they do not launch children or provide cross-server orchestration.
+
+## Typed Mailbox Messages
+
+Call `POST /api/conversations/{sender_id}/mailbox` to send agent input to a parent, child, or sibling in the same conversation tree:
+
+```json
+{
+  "recipient_id": "recipient-conversation-uuid",
+  "idempotency_key": "review-commit-abc",
+  "kind": "review-request",
+  "body": "Please review this change",
+  "evidence": ["commit abc; test run passed"],
+  "delivery": "steer"
+}
+```
+
+The `send_mailbox_message` tool accepts this object under its `message` argument. Available kinds are `question`, `proposal`, `review-request`, `blocker`, and `decision`. `proposal`, `review-request`, and `blocker` require nonempty evidence.
+
+Each message is an agent-attributed `MessageEvent` with `source: "environment"`, the sender's conversation ID, and typed `mailbox` metadata. It remains in the recipient's persisted event history and appears in its model context as agent mailbox input. It is not presented as a human instruction or the recipient's own response.
+
+Use a stable `idempotency_key` per intended message. An identical retry returns the same `message_id` with `duplicate: true`; different contents under that key return 409. Keys are scoped to sender and recipient. An unrelated recipient or a self-send returns 404.
+
+Default `steer` preserves the recipient's in-flight work and active goal. Active runs incorporate new input on a following step. An idle recipient stays idle and receives the persisted message on its next run, including after a server restart. Explicit `interrupt` stops its active run and goal; the typed persisted message records the sender, delivery mode, and reason in `body`. Retrying it does not interrupt twice.
 
 ## TypeScript Client
 
@@ -62,6 +112,13 @@ A client build containing `ConversationClient.waitForChildren` can call the same
 const result = await client.waitForChildren(parentId, {
   conversation_ids: childIds,
   timeout_seconds: 120,
+});
+
+const delivered = await client.sendMailboxMessage(parentId, {
+  recipient_id: childId,
+  idempotency_key: 'handoff-1',
+  kind: 'decision',
+  body: 'Use the revised acceptance criteria',
 });
 ```
 
