@@ -113,10 +113,40 @@ If you attach to an existing conversation by `conversation_id`, use `ACPAgent` f
 
 - **Subprocess delegation**: `ACPAgent` spawns the ACP server and communicates via JSON-RPC over stdin/stdout
 - **Server-managed execution**: The ACP server handles its own LLM calls, tools, and context — your code just sends messages
-- **Auto-approval**: Permission requests from the server are automatically granted, so ensure you trust the ACP server you're running
+- **Permission decisions**: Requests are automatically granted by default. A runtime permission handler can approve or cancel individual requests.
 - **Metrics collection**: Token usage and costs from the server are captured into the agent's `LLM.metrics`
 
 ## Configuration
+
+### Custom Permission Decisions
+
+Call `agent.set_permission_handler(handler)` to handle ACP permission requests
+in the process that runs the agent. The handler receives the session ID,
+`ToolCallUpdate`, and offered `PermissionOption` objects. It can return a
+`RequestPermissionResponse` directly or await an asynchronous decision.
+
+```python icon="python"
+from acp.schema import DeniedOutcome, RequestPermissionResponse
+from openhands.sdk.agent import ACPAgent
+
+
+async def cancel_permission(session_id, tool_call, options):
+    return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+
+
+agent = ACPAgent(acp_command=["your-acp-server"])
+agent.set_permission_handler(cancel_permission)
+```
+
+To approve a request, return an `AllowedOutcome` with an `option_id` from the
+offered options. Returning another response type or an unoffered option raises
+an error. Handler exceptions propagate without falling back to approval.
+
+The handler is runtime-only: it is not serialized with agent settings or sent
+to a remote agent-server. Install it in the execution process after loading an
+agent. The setter also updates an already initialized agent. Calling
+`agent.set_permission_handler(None)` restores the existing automatic approval
+behavior. Only run ACP servers you trust when using that default.
 
 ### Server Command and Arguments
 
