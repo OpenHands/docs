@@ -437,9 +437,17 @@ omitting it or sending `null` leaves the conversation unbounded.
 
 Despite the option's name, the existing SDK limiter compares the limit with
 **accumulated conversation cost** across all tracked LLMs, including the
-condenser. Starting another run does not reset that cost. The server preserves
-the configured limit on restart and fork. A fork resets cost by default;
-`reset_metrics=false` preserves it.
+condenser. Starting another run does not reset that cost.
+
+The SDK persists the limit in `base_state.json`, alongside conversation state;
+the server's `meta.json` does not store it. Both standalone SDK resume and server
+restart restore the saved limit. A fork keeps the limit and resets cost by
+default; `reset_metrics=false` preserves cost.
+
+When reopening a local conversation, omitting `max_budget_per_run` or passing
+`None` keeps its saved limit. Passing a number replaces it. Set
+`conversation.max_budget_per_run = None` on the local conversation to clear and
+persist the limit.
 
 The limit is checked after each agent step. An LLM call or step can overshoot
 the budget. If the agent still has work to do, the run stops with
@@ -464,8 +472,10 @@ const percentage = limit != null && limit > 0 ? (spent / limit) * 100 : null;
 
 While the conversation runs, `ConversationStateUpdateEvent` messages with
 `key="stats"` carry updated metrics. Replace the cached stats with the event's
-`value` and recalculate the sum. REST and `base_state.json` reflect completed
-steps; an in-flight call's cost is available only after usage is reported.
+`value` and recalculate the sum. A state update with
+`key="max_budget_per_run"` carries a changed limit. REST and `base_state.json`
+reflect completed steps; an in-flight call's cost is available only after usage
+is reported.
 
 Hide the percentage when the limit is absent or `null`. It can exceed 100%:
 keep the actual spend visible even if the progress bar is capped visually.
