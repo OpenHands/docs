@@ -112,6 +112,35 @@ never destroys data.
 See [OpenHands#18942](https://github.com/OpenHands/OpenHands/issues/18942) for a
 proposal to make cache persistence a built-in platform feature.
 
+### Lint the Script for Convergence
+
+Re-running a setup script only works if every construct in it is re-runnable.
+A small static lint catches the patterns that silently break convergence:
+unbounded appends (`>> ~/.bashrc` grows on every run), `mkdir` without `-p`,
+`ln -s` without `-f`, unguarded `git clone`, pipe-to-shell installs, and
+unquoted `rm -rf $VAR`. A standard-library Python script is enough:
+
+```python
+# .openhands/hooks/convergence_lint.py — exits 1 on any non-convergent pattern
+import re, sys
+
+ERRORS = [
+    (r"\bgit\s+clone\b(?![^|]*\|\|\s*true)", "unguarded `git clone` fails on re-run"),
+    (r"\bmkdir\s+(?!-p\b)",                  "`mkdir` without `-p` fails when the dir exists"),
+    (r"\bln\s+-s\b(?![^|;]*-[fn]\b)",        "`ln -s` without `-f`/`-n` fails when the link exists"),
+    (r"\b(curl|wget)\b[^|]*\|\s*(ba|z|k)?sh\b", "pipe-to-shell is non-convergent and unsafe"),
+    (r"\brm\s+-rf\b\s+(?![\"'])\$\{?\w+\}?", "quote `rm -rf \"$VAR\"` — an empty var is catastrophic"),
+]
+# `>>` is only legal if the same path was truncated (`>`) earlier in the file.
+```
+
+Wire it into your [stop hook](#repository-specific-stop-hooks) so a pull
+request cannot introduce a non-convergent setup script, and run it in CI as
+well so the check is visible in review. The lint must score zero findings on
+your current script — if it flags a truncating `printf > file` followed by
+`cat >> file`, that is convergent; teach the lint about the truncate-then-append
+idiom rather than deleting the guard.
+
 ## Hooks
 
 You can add a `.openhands/hooks.json` file to run custom shell scripts at key moments during agent execution — such as
