@@ -1,0 +1,107 @@
+---
+title: Train Models with the OpenHands Harness
+description: Use the OpenHands SDK as the agent harness for reinforcement learning, so the agent you train is the agent you deploy.
+---
+
+The OpenHands SDK is not only for running agents with frontier models. You can also use it as the
+**harness for reinforcement learning (RL)**: a trainer samples rollouts from the model being trained,
+the OpenHands agent runs each rollout with its normal tools, and a reward scores the result.
+
+Training with the same harness you deploy has two benefits:
+
+- **No train/serve mismatch**: the prompts, tools, and agent loop the model learns on are the ones it runs with later.
+- **No agent rewrite**: you keep your tools, workspace, and stopping rule. Training only changes which model the agent talks to.
+
+## How It Works
+
+Any RL trainer that serves its policy behind an OpenAI-compatible endpoint can drive the OpenHands agent:
+
+1. The trainer serves the current policy behind an OpenAI-compatible chat completions URL.
+2. For each rollout, you create an `LLM` that points at that URL and run a normal `Conversation`.
+3. When the conversation ends, a reward function scores what the agent produced, for example the arguments of a final tool call.
+4. The trainer turns the recorded model calls and rewards into an update, syncs the new weights, and samples the next batch.
+
+The agent never sees the reward, and nothing in the agent loop is training-specific.
+
+## Point the Agent at the Trainer
+
+The only training-specific part is the `LLM` configuration. Set `base_url` and `api_key` to the
+endpoint your trainer gives the rollout. Ask for token ids, so the trainer can train on exactly the
+tokens the model sampled:
+
+```python
+from openhands.sdk import LLM, Agent, Conversation, Tool
+from openhands.tools.terminal import TerminalTool
+
+llm = LLM(
+    usage_id="agent",
+    model="Qwen/Qwen3.5-4B",
+    base_url=rollout_url,          # served by the trainer, one per rollout
+    api_key=rollout_api_key,
+    temperature=1.0,
+    litellm_extra_body=dict(
+        return_token_ids=True,
+        include_stop_str_in_output=False,
+    ),
+)
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=TerminalTool.name), Tool(name="localization_finish")],
+)
+conversation = Conversation(agent=agent, max_iteration_per_run=10, workspace=repo_dir, visualizer=None)
+try:
+    conversation.send_message(task_prompt)
+    conversation.run()
+finally:
+    conversation.close()
+```
+
+A [custom tool](/sdk/guides/custom-tools) such as `localization_finish` gives the agent a structured way
+to submit its answer, which keeps the reward function simple. `max_iteration_per_run` sets the turn budget.
+
+## Example: CodeScout
+
+[CodeScout](https://github.com/OpenHands/codescout) is OpenHands' RL recipe for code localization. Given a
+GitHub issue, an agent with only a terminal and a `LocalizationFinish` tool explores the repository and
+names the files, classes, and functions that need to change. The reward is the sum of file-, module-, and
+function-level F1. CodeScout models match or outperform base and post-trained LLMs 2–18× their size on
+SWE-Bench Verified, Pro, and Lite. See the [paper](https://arxiv.org/abs/2603.17829) and the
+[models and datasets](https://huggingface.co/collections/OpenHands/codescout).
+
+## Choose Where to Train
+
+<Tabs>
+  <Tab title="Your Own GPUs (SkyRL)">
+    CodeScout trains with [SkyRL](https://github.com/NovaSky-AI/SkyRL) on a single 8-GPU node. Follow the
+    [CodeScout quick start](https://github.com/OpenHands/codescout#-quick-start) to set up the environment
+    and launch the 4B recipe.
+  </Tab>
+  <Tab title="Managed GPUs (Snowflake Cortex Training)">
+    [Snowflake Cortex Training](CORTEX_TRAINING_OPENHANDS_GUIDE_URL) runs the same SkyRL recipe with managed
+    training and sampling GPUs. The SkyRL driver runs on a CPU machine, and each run gets its GPUs when it
+    starts and releases them when it ends. A 100-step run of the CodeScout recipe on Qwen3.5-4B tracked the
+    reference reward curve. See [Train an OpenHands agent on Cortex](CORTEX_TRAINING_OPENHANDS_GUIDE_URL) for setup
+    and the launch command.
+
+    > "CodeScout is our reinforcement-learning recipe for code localization: given a GitHub issue, an
+    > OpenHands agent explores the repository and pinpoints the files and functions that need to change.
+    > [...] Moving to Cortex Training turned out to need very little change. I pointed my agent at the
+    > SkyRL × Cortex Training integration and our CodeScout codebase, and we were up and running with no
+    > infrastructure to stand up and no rework of our training code."
+    >
+    > — Jeff [Last name], [Title], OpenHands
+  </Tab>
+</Tabs>
+
+## Tips for RL Rollouts
+
+- **Always close the conversation.** The terminal tool holds a tmux session and a pseudo-terminal. With
+  dozens of parallel rollouts, unclosed conversations exhaust the machine's pseudo-terminals and every
+  later rollout fails at startup. Close in a `finally` block, as above.
+- **Give each rollout its own workspace, and delete it afterwards.** Rollouts that share a directory
+  interfere with each other, and kept checkouts fill the disk over a long run.
+- **Keep the context strictly appending.** Leave out the [context condenser](/sdk/guides/context-condenser)
+  during training. A condensed history no longer extends the previous prompt, so the trainer cannot
+  reuse the tokens it already sampled.
+- **Score outside the agent.** Compute the reward after the conversation closes, from its messages or
+  final tool call. The agent loop stays identical between training and deployment.
