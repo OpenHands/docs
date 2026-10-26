@@ -11,7 +11,7 @@ should function. See [Skills Overview](/overview/skills) for more information.
 
 ## Setup Script
 You can add a `.openhands/setup.sh` file, which will run every time OpenHands begins working with your repository.
-This is an ideal location for installing dependencies, setting environment variables, and performing other setup tasks.
+This is an ideal location for installing dependencies and performing other setup tasks.
 
 For example:
 ```bash
@@ -21,6 +21,125 @@ sudo apt-get update
 sudo apt-get install -y lsof
 cd frontend && npm install ; cd ..
 ```
+
+<Warning>
+  The script runs in its own process, so environment changes made with `export`,
+  `source`, or tools like `nvm use` do **not** carry over to the agent's terminal
+  commands — only filesystem effects (installed packages, written files) persist.
+  To pass environment values to the agent, write them to a file such as
+  `.openhands/env.sh` and have the agent `source` it when needed. See
+  [OpenHands#18737](https://github.com/OpenHands/OpenHands/issues/18737) for the
+  planned fix.
+</Warning>
+
+## Writing a Robust Setup Script
+
+The example above works for simple cases, but it re-runs every install on every
+conversation. On hosted backends the sandbox home directory can be recreated
+between sessions, so a robust script should be **convergent** (safe to run many
+times) and **cached** (skip work that is already done). These patterns come from
+production multi-repo setups where full installs cost minutes per session.
+
+### Skip Installs That Already Ran
+
+Gate each install behind a probe for its artifacts, and record completion in a
+stamp file that is written **only after** all steps succeed. Clear the stamp when
+you start installing, so a run that dies partway forces a clean retry instead of
+leaving a false "done" behind:
+
+```bash .openhands/setup.sh
+#!/bin/bash
+set -euo pipefail
+
+STAMP="$HOME/.cache/myrepo-deps.ok"
+PROBE='python3 -m pip show ruff >/dev/null 2>&1'
+
+if [ ! -f "$STAMP" ] || ! eval "$PROBE"; then
+  rm -f "$STAMP"        # never let a failed run leave a "done" marker
+  poetry install
+  printf '%s' "$(sha256sum poetry.lock | cut -d' ' -f1)" > "$STAMP"
+fi
+```
+
+For stronger gating, store the hash of your lockfiles in the stamp and re-run
+installs when the hash changes:
+
+```bash
+FP="$(sha256sum poetry.lock package-lock.json | sha256sum | cut -d' ' -f1)"
+if [ "$(cat "$STAMP" 2>/dev/null)" != "$FP" ] || ! eval "$PROBE"; then
+  rm -f "$STAMP"
+  poetry install
+  printf '%s' "$FP" > "$STAMP"
+fi
+```
+
+<Tip>
+  Probe for actual package presence (for example `python3 -m pip show <pkg>`)
+  rather than command paths on `PATH`. Package installers do not always create
+  executable shims where you expect them.
+</Tip>
+
+### Cache Dependencies in the Workspace
+
+If the sandbox home directory can be recreated between sessions, keep your
+package caches in the workspace, which persists, and restore them into `$HOME`
+at the start of each run:
+
+```bash
+CACHE="$PWD/.setup-cache/home-cache"
+
+# Restore: merge, never overwrite — $HOME may already hold a newer superset.
+for d in pip npm; do
+  [ -d "$CACHE/$d" ] && cp -a "$CACHE/$d/." "$HOME/.cache/$d/" 2>/dev/null || true
+done
+
+# ... installs run here ...
+
+# Save atomically: build the new copy aside, then swap it in.
+for d in pip npm; do
+  src="$HOME/.cache/$d"; dst="$CACHE/$d"
+  [ -d "$src" ] || continue
+  rm -rf "$dst.tmp" && cp -a "$src" "$dst.tmp"
+  rm -rf "$dst.old" && mv "$dst" "$dst.old" 2>/dev/null || true
+  mv "$dst.tmp" "$dst" && rm -rf "$dst.old"
+done
+```
+
+The merge-and-swap approach keeps a complete cache at every moment: an
+interrupted save leaves the previous cache intact, and an interrupted restore
+never destroys data.
+
+See [OpenHands#18942](https://github.com/OpenHands/OpenHands/issues/18942) for a
+proposal to make cache persistence a built-in platform feature.
+
+### Lint the Script for Convergence
+
+Re-running a setup script only works if every construct in it is re-runnable.
+A small static lint catches the patterns that silently break convergence:
+unbounded appends (`>> ~/.bashrc` grows on every run), `mkdir` without `-p`,
+`ln -s` without `-f`, unguarded `git clone`, pipe-to-shell installs, and
+unquoted `rm -rf $VAR`. A standard-library Python script is enough:
+
+```python
+# .openhands/hooks/convergence_lint.py — exits 1 on any non-convergent pattern
+import re, sys
+
+ERRORS = [
+    (r"\bgit\s+clone\b(?![^|]*\|\|\s*true)", "unguarded `git clone` fails on re-run"),
+    (r"\bmkdir\s+(?!-p\b)",                  "`mkdir` without `-p` fails when the dir exists"),
+    (r"\bln\s+-s\b(?![^|;]*-[fn]\b)",        "`ln -s` without `-f`/`-n` fails when the link exists"),
+    (r"\b(curl|wget)\b[^|]*\|\s*(ba|z|k)?sh\b", "pipe-to-shell is non-convergent and unsafe"),
+    (r"\brm\s+-rf\b\s+(?![\"'])\$\{?\w+\}?", "quote `rm -rf \"$VAR\"` — an empty var is catastrophic"),
+]
+# `>>` is only legal if the same path was truncated (`>`) earlier in the file.
+```
+
+Wire it into your [stop hook](#repository-specific-stop-hooks) so a pull
+request cannot introduce a non-convergent setup script, and run it in CI as
+well so the check is visible in review. The lint must score zero findings on
+your current script — if it flags a truncating `printf > file` followed by
+`cat >> file`, that is convergent; teach the lint about the truncate-then-append
+idiom rather than deleting the guard.
 
 ## Hooks
 
