@@ -419,6 +419,68 @@ for usage_id, metrics in conversation.conversation_stats.usage_to_metrics.items(
     print(f"{usage_id}: ${metrics.accumulated_cost:.6f}")
 ```
 
+## Conversation Budgets
+
+Set `max_budget_per_run` when creating a conversation:
+
+```python
+conversation = Conversation(
+    agent=agent,
+    workspace=workspace,
+    max_budget_per_run=10.0,
+)
+```
+
+The Agent Server also accepts `max_budget_per_run` in
+`POST /api/conversations`. The value is a finite, positive USD amount;
+omitting it or sending `null` leaves the conversation unbounded.
+
+Despite the option's name, the existing SDK limiter compares the limit with
+**accumulated conversation cost** across all tracked LLMs, including the
+condenser. Starting another run does not reset that cost.
+
+The SDK persists the limit in `base_state.json`, alongside conversation state;
+the server's `meta.json` does not store it. Both standalone SDK resume and server
+restart restore the saved limit. A fork keeps the limit and resets cost by
+default; `reset_metrics=false` preserves cost.
+
+When reopening a local conversation, omitting `max_budget_per_run` or passing
+`None` keeps its saved limit. Passing a number replaces it. Set
+`conversation.max_budget_per_run = None` on the local conversation to clear and
+persist the limit.
+
+The limit is checked after each agent step. An LLM call or step can overshoot
+the budget. If the agent still has work to do, the run stops with
+`execution_status="error"` and a `ConversationErrorEvent` whose code is
+`MaxBudgetReached`. A step that finishes the task keeps `finished` status,
+including when it overshoots.
+
+### Displaying Budget Usage
+
+Read the limit from `max_budget_per_run` in the create response or
+`GET /api/conversations/{id}`. Sum the `accumulated_cost` values under
+`stats.usage_to_metrics` to get the spend compared with that limit:
+
+```typescript
+const limit = info.max_budget_per_run;
+const spent = Object.values(info.stats?.usage_to_metrics ?? {}).reduce(
+  (total, metrics) => total + (metrics.accumulated_cost ?? 0),
+  0,
+);
+const percentage = limit != null && limit > 0 ? (spent / limit) * 100 : null;
+```
+
+While the conversation runs, `ConversationStateUpdateEvent` messages with
+`key="stats"` carry updated metrics. Replace the cached stats with the event's
+`value` and recalculate the sum. A state update with
+`key="max_budget_per_run"` carries a changed limit. REST and `base_state.json`
+reflect completed steps; an in-flight call's cost is available only after usage
+is reported.
+
+Hide the percentage when the limit is absent or `null`. It can exceed 100%:
+keep the actual spend visible even if the progress bar is capped visually.
+The legacy per-LLM `max_budget_per_task` metric is not this conversation limit.
+
 ## Next Steps
 
 - **[Context Condenser](/sdk/guides/context-condenser)** - Learn about context management and how it uses separate LLMs
