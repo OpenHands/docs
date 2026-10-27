@@ -1,0 +1,254 @@
+---
+title: OpenHands Enterprise 0.90.1
+description: Release notes for OpenHands Enterprise version 0.90.1
+---
+
+# OpenHands Enterprise 0.90.1
+
+Released October 23, 2026.
+
+## Highlights
+
+- **Identity providers managed from the Super Admin dashboard** — Auth providers get their own edit page with a preset picker, branding, a self-registration control, an enabled toggle, help text, and matching of existing users by email. SAML now supports SP-initiated login with SP metadata, GitHub, GitLab, and Bitbucket login providers are seeded through Keycloak, and OAuth V2 login can be turned on from the Admin Console.
+- **Azure DevOps** — Repositories are listed and searched across every organization, pull request and work item events reach automations, Service Hook errors are shown instead of hidden, Microsoft Entra sign-in gets git parity, and sandboxes can clone Azure DevOps repositories.
+- **Keycloak 26.8 and security updates** — The bundled Keycloak moves from 26.3 to 26.8 to clear known vulnerabilities. The upgrade migrates the Keycloak database one way and the chart backs it up first; see the Upgrade Notes. The Enterprise Server, Agent Server, and Automation images also distrust the compromised eMudhra/emSign certificate authorities.
+- **Automation improvements** — Automations can carry descriptions, Azure DevOps is a built-in event source, runs are skipped when the daily sandbox limit is reached, sandboxes that fail to provision are retried and cleaned up, and organization members can save drafts and delete their own uploads.
+- **Budget and LLM fixes** — Your Budget shows the effective remaining budget, Slack alert settings persist, the bundled LiteLLM proxy no longer retries rate limits and handles zero-cost models correctly, and Azure AI Foundry can be configured with unsupported-parameter dropping.
+
+## Upgrade Notes
+
+- **Keycloak 26.3 to 26.8 is a one-way database migration** — On its first start, Keycloak 26.8 migrates its database to the 26.8 schema, and Keycloak 26.3 cannot run against it afterwards. Before the upgrade, a pre-upgrade Job copies the Keycloak database to `bitnami_keycloak_backup_26_3_0` on the same PostgreSQL server while Keycloak 26.3 is still running. The copy needs PostgreSQL 17 or older, a database user that can `CREATE DATABASE` (the bundled `postgres` user can), and must finish within 240 seconds by default (`keycloak.preUpgradeBackup.activeDeadlineSeconds`; raise it for a large database). If the copy fails, the upgrade stops before anything changes, and the reason is in the log of the `<release>-keycloak-backup` Job. If your installation cannot meet these requirements, back the database up yourself and turn off **Back Up Keycloak Database Before Upgrade** under **Upgrade Checks** in the Admin Console (`keycloak.preUpgradeBackup.enabled=false` for Helm). Installs rendered with `helm template`, such as ArgoCD, never run the Job and must back up by hand. The rollback steps are in the [chart README](https://github.com/OpenHands/OpenHands-Cloud/blob/openhands/0.90.1/charts/openhands/README.md#keycloak-263-to-268). The Job never drops a backup, and every later Keycloak version change adds another full copy, so drop old `bitnami_keycloak_backup_*` databases once you will not roll back.
+- **Email verification is no longer enforced by default** — Users whose identity provider does not assert a verified email address can now sign in. Set `REQUIRE_VERIFIED_EMAILS=true` on the Enterprise Server (the chart's `env` map) to keep blocking them until they verify.
+
+## Features
+
+#### Enterprise Server
+
+* feat(auth): add SAML SP-initiated login, ACS callback, and SP metadata routes by @tofarr in https://github.com/OpenHands/enterprise/pull/764
+* feat(secrets): list organization secrets in their own section (OHE-3396) by @hieptl in https://github.com/OpenHands/enterprise/pull/777
+* feat: QOL Auth forms: metadata / redirect URLs by @tofarr in https://github.com/OpenHands/enterprise/pull/781
+* feat: Add auth provider branding and self-registration control by @tofarr in https://github.com/OpenHands/enterprise/pull/783
+* feat(super-admin): switch a provider's Login IDP from the Auth Providers table (OHE-3584) by @hieptl in https://github.com/OpenHands/enterprise/pull/793
+* feat(super-admin): show pending invitations in the Users table (OHE-3582) by @hieptl in https://github.com/OpenHands/enterprise/pull/791
+* feat(auth): seed GitHub/GitLab/Bitbucket login IDPs routed through Keycloak by @tofarr in https://github.com/OpenHands/enterprise/pull/801
+* feat: list and search Azure DevOps repositories in every organization by @ak684 in https://github.com/OpenHands/enterprise/pull/799
+* feat(super-admin): show provider color swatch in auth providers table by @tofarr in https://github.com/OpenHands/enterprise/pull/832
+* feat(budgets): OHE-3507 show the effective remaining budget on Your Budget by @hieptl in https://github.com/OpenHands/enterprise/pull/696
+* feat(auth): add allow_match_by_email to auth_providers by @tofarr in https://github.com/OpenHands/enterprise/pull/830
+* feat: Add Docker Compose stack for running OHE locally (OHE-3376) by @tofarr in https://github.com/OpenHands/enterprise/pull/762
+* feat(app-server): paginate git branch search with a query by @henriquehirako in https://github.com/OpenHands/enterprise/pull/751
+* feat(quota): replace daily conversation limit with daily sandbox limit by @neubig in https://github.com/OpenHands/enterprise/pull/786
+* feat: drive Integrations git provider cards from auth_providers when OAuth v2 is on by @tofarr in https://github.com/OpenHands/enterprise/pull/833
+* feat: OHE-3678 : Superadmins can update user links (auth_provider_users) for an auth provider by @tofarr in https://github.com/OpenHands/enterprise/pull/927
+* feat(app-conversation): launch child conversations server-side for Cloud parents by @hieptl in https://github.com/OpenHands/enterprise/pull/433
+* feat: Gate email-verified middleware check behind REQUIRE_VERIFIED_EMAILS by @tofarr in https://github.com/OpenHands/enterprise/pull/931
+* feat: Add allow_match_by_email field to auth provider admin forms by @tofarr in https://github.com/OpenHands/enterprise/pull/932
+* feat: OHE-3654: optional OH_PERSISTENCE_DIR to keep Compose data across down by @tofarr in https://github.com/OpenHands/enterprise/pull/898
+* feat(azure-devops): show members when the org webhook was installed (FDE-194) by @ak684 in https://github.com/OpenHands/enterprise/pull/933
+* feat(azure-devops): send pull request events to automations (FDE-199) by @ak684 in https://github.com/OpenHands/enterprise/pull/945
+* feat: edit auth providers on their own page; create from a preset picker by @tofarr in https://github.com/OpenHands/enterprise/pull/953
+* feat(auth): OHE-3575 background jobs read OAuth v2 git tokens by @aivong-openhands in https://github.com/OpenHands/enterprise/pull/919
+* feat(auth): OHE-3575 map webhook senders to OAuth v2-linked users by @aivong-openhands in https://github.com/OpenHands/enterprise/pull/920
+* feat(auth): OHE-3575 start GitLab repo sync after OAuth v2 linking by @aivong-openhands in https://github.com/OpenHands/enterprise/pull/921
+* feat: restore admin user lifecycle API by @neubig in https://github.com/OpenHands/enterprise/pull/665
+* feat(super-admin): add help text for auth provider toggles by @tofarr in https://github.com/OpenHands/enterprise/pull/977
+* feat: add enabled flag to auth providers (OHE-3722) by @tofarr in https://github.com/OpenHands/enterprise/pull/978
+* feat: Make sandbox grouping strategy default configurable via env var (OHE-3733) by @tofarr in https://github.com/OpenHands/enterprise/pull/968
+
+#### Software Agent SDK
+
+* feat(acp): discover an ACP agent's default and available models (and restore Gemini model handling) by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5579
+* feat(agent-profiles): let a profile replace the agent's persona by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5449
+* feat(agent-profiles): tools is the only tool control, selected from one server catalog by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5151
+* feat: launch inline Agent Profiles and per-launch LLM overrides by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5409
+* feat(sdk): let Agent Profiles select public skills, read them locally and use the global critic key by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5981
+* feat(agent-server): accept additional skills when launching an agent by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/4960
+* feat(agent-server): list the skills a profile launch can load by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/6098
+* feat(agent-server): add start_child_conversation tool with a pluggable launcher by @hieptl in https://github.com/OpenHands/software-agent-sdk/pull/5126
+* feat(agent-server): add stop operation for a single BashCommand by @onatozmenn in https://github.com/OpenHands/software-agent-sdk/pull/5348
+* feat(agent-server): per-conversation runtime choice and runtime settings by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/5977
+* feat(agent-server): archive runtimes of long-inactive Docker conversations by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/5429
+* feat(agent-server): reclaim Docker runtime caches and disable core dumps by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/5263
+* feat(agent-server): shed gitignored workspace dirs of stopped runtimes above a disk budget by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/5407
+* feat(llm): make OpenRouter a verified provider by @juanmichelini in https://github.com/OpenHands/software-agent-sdk/pull/5274
+* feat(llm): add DigitalOcean Inference as a verified provider by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/5673
+* feat(llm): add minimax-m3.1-flash to verified models by @juanmichelini in https://github.com/OpenHands/software-agent-sdk/pull/6101
+* feat(sdk): support custom title generation prompts by @DevinVinson in https://github.com/OpenHands/software-agent-sdk/pull/4564
+* feat(security): emit SecurityAnalysisEvent with the analyzer's verdict per action batch by @smolpaws in https://github.com/OpenHands/software-agent-sdk/pull/5182
+* feat(workspace): clone Azure DevOps repositories by @ak684 in https://github.com/OpenHands/software-agent-sdk/pull/6147
+
+#### Automation
+
+* feat: add automation descriptions by @Rohithmatham12 in https://github.com/OpenHands/automation/pull/527
+* feat: add Azure DevOps as a built-in event source by @ak684 in https://github.com/OpenHands/automation/pull/626
+* feat: let PATCH change a preset automation's repositories by @ak684 in https://github.com/OpenHands/automation/pull/625
+* feat(capabilities): advertise the Git providers runs clone from by @ak684 in https://github.com/OpenHands/automation/pull/633
+* feat: skip runs when the daily sandbox limit is reached by @neubig in https://github.com/OpenHands/automation/pull/583
+* feat: add plugin-backed executable automations by @malhotra5 in https://github.com/OpenHands/automation/pull/580
+* feat: optionally run PostgreSQL migrations on startup by @jlav in https://github.com/OpenHands/automation/pull/530
+* feat: optionally create the PostgreSQL database if missing by @jlav in https://github.com/OpenHands/automation/pull/531
+* feat: publish the automation image for amd64 and arm64 by @jlav in https://github.com/OpenHands/automation/pull/635
+
+#### OpenHands Cloud (Helm Chart)
+
+* feat: configure Azure AI Foundry and unsupported parameter dropping by @ak684 in https://github.com/OpenHands/OpenHands-Cloud/pull/1337
+* feat(keycloak): back up the Keycloak database before upgrading by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1410
+* feat(replicated): add OAuth V2 login option by @tofarr in https://github.com/OpenHands/OpenHands-Cloud/pull/1446
+* feat(replicated): add SUPER_ADMIN_EMAILS config option by @tofarr in https://github.com/OpenHands/OpenHands-Cloud/pull/1466
+
+## Bug Fixes
+
+#### Enterprise Server
+
+* fix(usage): only offer Stop when the conversation's runtime is running (OHE-3504) by @hieptl in https://github.com/OpenHands/enterprise/pull/768
+* fix(skills): size the Enabled column so the skills table stops scrolling sideways (OHE-3395) by @hieptl in https://github.com/OpenHands/enterprise/pull/776
+* fix(frontend): title the browser tab "OpenHands" on self-hosted installs (OHE-3300) by @hieptl in https://github.com/OpenHands/enterprise/pull/770
+* fix(usage): keep the dashboard chart's y-axis labels off the date row (OHE-3212) by @hieptl in https://github.com/OpenHands/enterprise/pull/775
+* fix(budgets): stop repeating the email as the user's name in overrides (OHE-3209) by @hieptl in https://github.com/OpenHands/enterprise/pull/772
+* fix(super-admin): grant Super Admin from the Users page by @tofarr in https://github.com/OpenHands/enterprise/pull/731
+* fix(budgets): keep Save and Cancel on screen when editing a user override (OHE-3392) by @hieptl in https://github.com/OpenHands/enterprise/pull/774
+* fix(usage): default the conversation trigger so the Source column is never empty (OHE-3211) by @hieptl in https://github.com/OpenHands/enterprise/pull/769
+* fix(budgets): call a disabled per-user budget Unlimited (OHE-3214) by @hieptl in https://github.com/OpenHands/enterprise/pull/773
+* fix(skills): accept percent-encoded Azure DevOps marketplace sources by @ak684 in https://github.com/OpenHands/enterprise/pull/778
+* fix(skills): authenticate Azure DevOps marketplace clones for Entra users by @ak684 in https://github.com/OpenHands/enterprise/pull/782
+* fix(super-admin): hide Invite by email when the instance cannot send email (OHE-3581) by @hieptl in https://github.com/OpenHands/enterprise/pull/790
+* fix(super-admin): offer Suspend or Activate by the checked memberships' status (OHE-3583) by @hieptl in https://github.com/OpenHands/enterprise/pull/792
+* fix: scope Azure DevOps webhook management by organization by @ak684 in https://github.com/OpenHands/enterprise/pull/508
+* fix: exempt /canvas/assets from cache-control and rate-limit middleware by @tofarr in https://github.com/OpenHands/enterprise/pull/823
+* fix(skills): pin marketplace sources to their provider and clone previews shallow by @ak684 in https://github.com/OpenHands/enterprise/pull/787
+* fix: show Azure DevOps Service Hook errors and keep hooks on failed reinstall by @ak684 in https://github.com/OpenHands/enterprise/pull/797
+* fix(skills): load marketplace sources without a scheme and check them before saving by @ak684 in https://github.com/OpenHands/enterprise/pull/795
+* fix: stop OpenHands answering its own Azure DevOps work item replies by @ak684 in https://github.com/OpenHands/enterprise/pull/821
+* fix(auth): fetch real git-provider tokens for legacy Keycloak-federated login IDPs by @tofarr in https://github.com/OpenHands/enterprise/pull/822
+* fix(app-server): stop dropping items at git pagination page boundaries by @henriquehirako in https://github.com/OpenHands/enterprise/pull/733
+* fix: use new white logo in ToS and other modal dialogs by @tofarr in https://github.com/OpenHands/enterprise/pull/867
+* fix(gitlab): PLTF-3689 claim webhook rows and support hook repair by @aivong-openhands in https://github.com/OpenHands/enterprise/pull/692
+* fix: resolve Azure DevOps work item commenters by email by @ak684 in https://github.com/OpenHands/enterprise/pull/802
+* fix(budgets): remove the # icon in front of the Slack channel input by @henriquehirako in https://github.com/OpenHands/enterprise/pull/730
+* fix: list Azure DevOps repositories with one call per organization by @ak684 in https://github.com/OpenHands/enterprise/pull/847
+* fix(skills): preview the skills a conversation loads from repositories without a manifest by @ak684 in https://github.com/OpenHands/enterprise/pull/803
+* fix(bitbucket-dc): send access tokens as Bearer, not x-token-auth Basic by @ak684 in https://github.com/OpenHands/enterprise/pull/870
+* fix(super-admin): stop truncating "All organizations" in the dashboard org filter (OHE-3665) by @hieptl in https://github.com/OpenHands/enterprise/pull/891
+* fix(super-admin): turn the setup guide off from its close button (OHE-3658) by @hieptl in https://github.com/OpenHands/enterprise/pull/889
+* fix(settings): don't add a Default LLM profile when the install has no default LLM (OHE-3662) by @hieptl in https://github.com/OpenHands/enterprise/pull/896
+* fix(settings): show one error toast when a password change fails (OHE-3661) by @hieptl in https://github.com/OpenHands/enterprise/pull/893
+* fix(models): fill the Verified provider list when LiteLLM is off (OHE-3653) by @hieptl in https://github.com/OpenHands/enterprise/pull/892
+* fix(events): keep concurrent event saves from failing the webhook by @ak684 in https://github.com/OpenHands/enterprise/pull/878
+* fix(secrets): use the in-process lock when Redis isn't configured (OHE-3668) by @hieptl in https://github.com/OpenHands/enterprise/pull/894
+* fix(sandbox): pull the agent server image at startup (PLTF-3903) by @jlav in https://github.com/OpenHands/enterprise/pull/904
+* fix(oauth): OHE-3575 make OAuth v2 linking work and browser-bound by @aivong-openhands in https://github.com/OpenHands/enterprise/pull/824
+* fix(super-admin): keep the OAuth client secret when editing an auth provider (OHE-3676) by @tofarr in https://github.com/OpenHands/enterprise/pull/906
+* fix(budgets): accept only numbers in the budget amount inputs by @henriquehirako in https://github.com/OpenHands/enterprise/pull/765
+* fix(skills): show the marketplace name in the skills list by @ak684 in https://github.com/OpenHands/enterprise/pull/925
+* fix(llm-profiles): start a conversation on a picked LLM profile (OHE-3669) by @hieptl in https://github.com/OpenHands/enterprise/pull/909
+* fix(super-admin): respect hide_personal_workspaces in the Organizations table (OHE-3664) by @hieptl in https://github.com/OpenHands/enterprise/pull/907
+* fix(sandbox): bind the delete route's path parameter to sandbox_id (OHE-3687) by @hieptl in https://github.com/OpenHands/enterprise/pull/924
+* fix(super-admin): open Canvas setup steps on the guide's org (OHE-3681) by @hieptl in https://github.com/OpenHands/enterprise/pull/922
+* fix(frontend): make the "Invite as" role pickers select-only (OHE-3682) by @hieptl in https://github.com/OpenHands/enterprise/pull/923
+* fix(frontend): link Azure DevOps repositories to their _git page by @ak684 in https://github.com/OpenHands/enterprise/pull/928
+* fix(azure-devops): don't show 'Not installed' to members who can't read Service Hooks (FDE-192) by @ak684 in https://github.com/OpenHands/enterprise/pull/926
+* fix(auth): route SSO-first Git connections through the authenticated provider by @rajshah4 in https://github.com/OpenHands/enterprise/pull/838
+* fix: pin database sessions to UTC so timestamps persist as written by @ak684 in https://github.com/OpenHands/enterprise/pull/444
+* fix(budgets): persist Slack alert settings by @saurya in https://github.com/OpenHands/enterprise/pull/610
+* fix(app-conversation): allow starts in sandboxes on an older image by @jpshackelford in https://github.com/OpenHands/enterprise/pull/903
+* fix(mcp): build the hosted OAuth install client on the SDK's MCPOAuth by @ak684 in https://github.com/OpenHands/enterprise/pull/951
+* fix: Azure DevOps git parity for Microsoft Entra sign-in by @ak684 in https://github.com/OpenHands/enterprise/pull/942
+* fix(mcp): register hosted OAuth install clients as OpenHands by @ak684 in https://github.com/OpenHands/enterprise/pull/957
+* fix: Add SUPER_ADMIN_EMAILS escape hatch for super-admin role grants by @tofarr in https://github.com/OpenHands/enterprise/pull/930
+* fix(azure-devops): tell the agent its provider, host and organizations by @ak684 in https://github.com/OpenHands/enterprise/pull/958
+* fix: report failed repository clones and set a default git identity by @ak684 in https://github.com/OpenHands/enterprise/pull/959
+* fix(mcp): resolve secret references in the MCP connection test by @ak684 in https://github.com/OpenHands/enterprise/pull/967
+* fix(mcp): resolve secret references in the MCP tool-call route by @ak684 in https://github.com/OpenHands/enterprise/pull/972
+* fix(auth): report the configured GitLab host for IdP-sourced tokens by @ak684 in https://github.com/OpenHands/enterprise/pull/973
+* fix(app-conversation): title conversations with the model they run on by @ak684 in https://github.com/OpenHands/enterprise/pull/976
+* fix(security): distrust compromised eMudhra/emSign CAs (certifi/pip/uv) by @neubig in https://github.com/OpenHands/enterprise/pull/980
+* fix(auth): log user out to retry when IdP broker tokens are unusable by @neubig in https://github.com/OpenHands/enterprise/pull/840
+* fix(app-conversation): prefer sandboxes on the advertised image when grouping by @hieptl in https://github.com/OpenHands/enterprise/pull/966
+* fix(frontend): filter the first-install LLM provider picker as you type (OHE-3730) by @hieptl in https://github.com/OpenHands/enterprise/pull/983
+* fix(frontend): explain an empty Integrations page and how to add a provider (OHE-3731) by @hieptl in https://github.com/OpenHands/enterprise/pull/984
+* fix(integrations): load org and user skills for integration-started conversations by @ak684 in https://github.com/OpenHands/enterprise/pull/970
+* fix(sandbox): resolve an existing sandbox's spec with a default fallback by @hieptl in https://github.com/OpenHands/enterprise/pull/965
+
+#### Software Agent SDK
+
+* fix(agent-server): don't advertise a VS Code URL while VS Code is not running by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5907
+* fix(agent-server): URL-encode the VS Code URL's folder and token by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5859
+* fix(agent-server): keep the managed-key refresh hook after an LLM switch by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5904
+* fix(agent-server): bound profile pre-flight and reject exhausted quotas by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5768
+* fix(agent-server): keep sockets and /v1 closed until deferred init completes by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5661
+* fix(agent-server): support cipher key rotation and refuse writes under a lost key by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5758
+* fix(agent-server): re-vendor pip's urllib3 and msgpack to patched versions by @aivong-openhands in https://github.com/OpenHands/software-agent-sdk/pull/5725
+* fix(agent-server): keep resumed goal loops within max_iterations by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5832
+* fix(agent-server): release terminal run permits promptly by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5403
+* fix(agent-server): stop startup tmux cleanup killing live sibling sessions by @all-hands-bot in https://github.com/OpenHands/software-agent-sdk/pull/5589
+* fix(agent-server): keep tmux socket paths within the Unix socket limit by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5559
+* fix(container): refresh agent server security dependencies by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5582
+* fix(security): distrust compromised eMudhra/emSign CAs (certifi/pip/uv) by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/6162
+* fix(server): dedupe concurrent conversation creates and forks by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5362
+* fix(llm): keep provider credentials out of completion logs by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5657
+* fix(llm): don't send stop words to OpenAI models on Bedrock by @kimnamu in https://github.com/OpenHands/software-agent-sdk/pull/5291
+* fix(llm): keep verified OpenRouter models discoverable by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5703
+* fix(llm): resolve prompt_cache_key via real provider for proxied models by @juanmichelini in https://github.com/OpenHands/software-agent-sdk/pull/5332
+* fix(llm): send OpenRouter session_id for sticky routing and prompt-cache affinity by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/6165
+* fix(llm): stop dropping images when string serializer is forced by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5460
+* fix(llm): stop string-serializing vision-capable DeepSeek v4 models by @cbagwell in https://github.com/OpenHands/software-agent-sdk/pull/5467
+* fix(sdk): recognize Haiku 5.5 prompt caching without model metadata by @smolpaws in https://github.com/OpenHands/software-agent-sdk/pull/5587
+* fix(sdk): add ghu_/ghs_/gho_ GitHub token patterns to redact_api_key_literals by @all-hands-bot in https://github.com/OpenHands/software-agent-sdk/pull/6072
+* fix(sdk): skip sub-agents whose skill is missing instead of failing by @enyst in https://github.com/OpenHands/software-agent-sdk/pull/5754
+* fix(mcp): keep stored OAuth credentials when a conversation's token refresh fails by @ak684 in https://github.com/OpenHands/software-agent-sdk/pull/6138
+* fix(mcp): recover after HTTP session failure by @Shimada666 in https://github.com/OpenHands/software-agent-sdk/pull/4838
+* fix(mcp): register OAuth clients with a supported auth method and send Basic credentials once by @ak684 in https://github.com/OpenHands/software-agent-sdk/pull/6145
+* fix(marketplace): load skills from registered repositories without a manifest by @ak684 in https://github.com/OpenHands/software-agent-sdk/pull/6009
+* fix(git): keep Azure DevOps clone URLs without a .git suffix by @ak684 in https://github.com/OpenHands/software-agent-sdk/pull/5986
+* fix(terminal): isolate tmux sockets to prevent cross-conversation handle reuse by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5485
+* fix(terminal): notice a finished command within milliseconds instead of at the next 0.5 s poll by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5715
+* fix(terminal): preserve scripts across heredoc boundaries by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5342
+* fix(terminal): run agent terminals below the server's CPU priority by @VascoSch92 in https://github.com/OpenHands/software-agent-sdk/pull/6112
+* fix(tools): apply the sanitized environment to tmux terminal shells by @ak684 in https://github.com/OpenHands/software-agent-sdk/pull/6148
+* fix: use short tmux sockets for overlong paths by @jpshackelford in https://github.com/OpenHands/software-agent-sdk/pull/6038
+* fix(file_editor): prefer valid UTF-8 encoding by @Shimada666 in https://github.com/OpenHands/software-agent-sdk/pull/4784
+* fix(file-editor): preserve terminal newline semantics by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5670
+* fix(subagent): sub-agents inherit exactly the parent's MCP servers by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5747
+* fix(subagent): let scoped sub-agents keep conversation-local tools like task_tracker by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5520
+* fix(agent-profiles): keep delegated sub-agents within the profile's tools and MCP servers by @simonrosenberg in https://github.com/OpenHands/software-agent-sdk/pull/5358
+* fix(workspace): publish Docker ports on loopback by @neubig in https://github.com/OpenHands/software-agent-sdk/pull/5209
+* fix(logging): bound Rich exception traversal and keep the event server responsive by @IamK77 in https://github.com/OpenHands/software-agent-sdk/pull/5489
+
+#### Automation
+
+* fix(auth): accept the OAuth v2 openhands_auth session cookie by @tofarr in https://github.com/OpenHands/automation/pull/568
+* fix: let org members save drafts and delete their own uploads by @ak684 in https://github.com/OpenHands/automation/pull/618
+* fix: retry and clean up sandboxes that fail to provision by @ak684 in https://github.com/OpenHands/automation/pull/593
+* fix: normalize async Postgres URLs for alembic by @lkshrk in https://github.com/OpenHands/automation/pull/420
+* fix(container): create /data owned by the service user by @jlav in https://github.com/OpenHands/automation/pull/628
+* fix: commit the request session before the response is sent by @Jacob-Lasky in https://github.com/OpenHands/automation/pull/595
+* fix(local): remove a run's workspace when the watchdog terminalizes it by @lkshrk in https://github.com/OpenHands/automation/pull/423
+* fix(security): distrust compromised eMudhra/emSign CAs (certifi/pip/uv) by @neubig in https://github.com/OpenHands/automation/pull/642
+
+#### OpenHands Cloud (Helm Chart)
+
+* fix(keycloak): run Keycloak 26.8.0 from third-party-images by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1399
+* fix(keycloak): preserve SAML certificate JSON during provisioning by @rajshah4 in https://github.com/OpenHands/OpenHands-Cloud/pull/1422
+* fix(openhands): collect live budget state in support bundles by @ak684 in https://github.com/OpenHands/OpenHands-Cloud/pull/1226
+* fix(device-plugin): run generic-device-plugin from third-party-images by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1442
+* fix(openhands): pull bundled minio images from the ghcr mirror by @jlav in https://github.com/OpenHands/OpenHands-Cloud/pull/1467
+* fix(openhands): stop the bundled LiteLLM proxy from retrying rate limits by @ak684 in https://github.com/OpenHands/OpenHands-Cloud/pull/1473
+* fix(litellm): bump bundled proxy to 1.103.6 for zero-cost model budget fix by @aivong-openhands in https://github.com/OpenHands/OpenHands-Cloud/pull/1475
+
+## Component Versions
+
+| Component | Version |
+|-----------|---------|
+| enterprise-server | 1.79.0 |
+| agent-server | 1.58.1-python |
+| agent-canvas | 1.32.0 |
+| automation | 1.25.1 |
+| runtime-api | 0.11.1 |
+
+## Full Changelog
+
+- [Enterprise Server releases](https://github.com/OpenHands/enterprise/releases)
+- [Software Agent SDK releases](https://github.com/OpenHands/software-agent-sdk/releases)
+- [Runtime API releases](https://github.com/OpenHands/runtime-api/releases)
+- [Automation releases](https://github.com/OpenHands/automation/releases)
+- [OpenHands Cloud releases](https://github.com/OpenHands/OpenHands-Cloud/releases)
