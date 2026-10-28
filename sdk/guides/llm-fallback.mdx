@@ -45,13 +45,14 @@ primary_llm = LLM(
 1. The primary LLM handles the request as normal
 2. If the call fails with a **transient error**, the `FallbackStrategy` kicks in and tries each fallback LLM in order
 3. The first successful fallback response is returned to the caller
-4. If all fallbacks fail, the original primary error is raised
+4. If all fallbacks fail, the original primary error is raised, unless a fallback reports a budget denial
 5. Token usage and cost from fallback calls are **merged into the primary LLM's metrics**, so you get a unified view of total spend by model
 
 <Warning>
-Only transient errors trigger fallback.
-Non-transient errors (e.g., authentication failures, bad requests) are raised immediately without trying fallbacks.
-For a complete list of supported transient errors see the [source code](https://github.com/OpenHands/software-agent-sdk/blob/978dd7d1e3268331b7f8af514e7a7930f98eb8af/openhands-sdk/openhands/sdk/llm/fallback_strategy.py#L29)
+Transient rate limits, timeouts, and connection errors can trigger fallback after retries.
+Provider quota errors such as `insufficient_quota` and `usage_limit_reached` skip retries and can fall back immediately.
+
+Explicit LiteLLM budget denials (`budget_exceeded` or `Budget has been exceeded`) stop immediately, without retrying or trying another model. This also applies when a fallback reports the denial: its budget error is raised and later fallbacks are not attempted. Raise the applicable limit or wait for its reset before retrying.
 </Warning>
 
 ## Multiple Fallback Levels
@@ -69,7 +70,7 @@ llm = LLM(
 )
 ```
 
-If the primary fails, `fallback-1` is tried. If that also fails, `fallback-2` is tried. If all fail, the primary error is raised.
+For eligible failures, `fallback-1` is tried first, then `fallback-2`. If both fail, the primary error is raised. A budget denial stops the chain immediately.
 
 ## Custom Profile Store Directory
 
