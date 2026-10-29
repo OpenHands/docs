@@ -31,6 +31,8 @@ Boards work items or pull request comments as context for OpenHands workflows.
 ## Register a Microsoft Entra Application
 
 In the Azure portal, create a Microsoft Entra app registration for OpenHands.
+These steps set up sign-in through Keycloak. If you use OAuth V2 login, also
+follow [Use OAuth V2 Login](#use-oauth-v2-login).
 
 1. Go to **Microsoft Entra ID > App registrations**.
 2. Click **New registration**.
@@ -136,6 +138,90 @@ permissions. After sign-in, OpenHands stores the user's Azure DevOps token
 through the authentication provider so it can list repositories and run Git
 operations as that user.
 
+## Use OAuth V2 Login
+
+With **Enable OAuth V2 Login** turned on in the **Experimental** section of the
+Admin Console, OpenHands connects to Microsoft Entra directly instead of
+through Keycloak. You configure Azure DevOps as an auth provider in the Super
+Admin dashboard, which is turned on by **Enable Super Admin Dashboard** in the
+same section.
+
+### Configure the Auth Provider
+
+1. Go to `https://<your-openhands-domain>/super-admin/auth-providers`.
+2. Open the **Azure DevOps** provider if one is listed. Installations that
+   already had Azure DevOps Authentication configured when they were upgraded
+   get one automatically. Otherwise, click **Add Provider**, choose
+   **Azure DevOps**, and click **Create Provider**.
+3. Enter or confirm the **Client ID** and **Client Secret** from your Entra
+   app registration. The page asks for the Client Secret again whenever you
+   change other fields.
+4. In **Authorization URL** and **Token URL**, use your Directory (tenant) ID.
+   The **Azure DevOps** preset fills these in with a `YOUR_TENANT_ID`
+   placeholder:
+
+   ```text
+   https://login.microsoftonline.com/<your-tenant-id>/oauth2/v2.0/authorize
+   https://login.microsoftonline.com/<your-tenant-id>/oauth2/v2.0/token
+   ```
+
+5. Leave **Userinfo URL** empty. OpenHands reads the user's identity and email
+   from the ID token that Microsoft returns with the access token.
+6. Set **Scopes** to:
+
+   ```text
+   openid email profile offline_access 499b84ac-1321-427f-aa17-267ca6975798/vso.profile 499b84ac-1321-427f-aa17-267ca6975798/vso.code_write 499b84ac-1321-427f-aa17-267ca6975798/vso.project 499b84ac-1321-427f-aa17-267ca6975798/vso.work_write
+   ```
+
+7. To show a sign-in button for this provider on the login page, turn on
+   **Use as OpenHands Authentication Provider**. Leave it off if users only
+   connect Azure DevOps from **Settings** > **Integrations**.
+8. Turn on **Enabled** and click **Save Changes**.
+9. Copy the **Redirect URL** shown on the provider page. It has this form:
+
+   ```text
+   https://<your-openhands-domain>/oauth/<provider-id>/callback
+   ```
+
+10. In the Entra app registration, go to **Authentication** and add the
+    Redirect URL as another **Web** redirect URI. Keep the Keycloak redirect
+    URI if you still use Keycloak sign-in.
+
+### About the Scopes
+
+`499b84ac-1321-427f-aa17-267ca6975798` is the resource ID of Azure DevOps in
+Microsoft Entra. It is the same in every tenant. Each
+`499b84ac-1321-427f-aa17-267ca6975798/<scope>` entry requests one Azure DevOps
+permission:
+
+| Scope | Grants |
+| --- | --- |
+| `openid`, `email`, `profile` | The ID token with the user's identity and email. |
+| `offline_access` | A refresh token. Without it, OpenHands can't renew the Azure DevOps token when it expires, and users must reconnect. |
+| `vso.profile` | Read the user's profile and the organizations they belong to. |
+| `vso.code_write` | Read and write code, branches, and commits, and create and manage pull requests. |
+| `vso.project` | Read projects and teams. |
+| `vso.work_write` | Read, create, and update work items and queries. |
+
+Because OpenHands requests each permission by name, the app registration
+doesn't need an Azure DevOps API permission. Each user sees a Microsoft consent
+prompt the first time they connect. To skip the prompt, an administrator can
+add the same Azure DevOps delegated permissions to the app registration and
+grant admin consent for the tenant. If your tenant doesn't let users consent
+to apps, an administrator must do this.
+
+Don't replace these scopes with
+`499b84ac-1321-427f-aa17-267ca6975798/.default`. That scope only returns
+permissions already added to the app registration, so it fails with
+`AADSTS650057` unless the Azure DevOps API permission is configured.
+
+<Warning>
+  Microsoft doesn't guarantee that the `email` claim is correct. Keep the
+  Authorization URL and Token URL on your own tenant ID rather than `common`
+  or `organizations`. If you allow other tenants, turn off **Link existing
+  accounts by email** for this provider.
+</Warning>
+
 ## Use Azure DevOps Repositories
 
 After signing in, users can select Azure DevOps repositories from the OpenHands
@@ -211,4 +297,7 @@ To configure this pattern:
 | `@openhands` comments in an organization get no response | Confirm that organization shows **Installed** under **Azure DevOps webhooks** in **Settings** > **Integrations**, and that the commenter has an OpenHands account and write access to the repository. |
 | Consent fails or Azure DevOps API calls are denied | Confirm the Entra application has the required Azure DevOps delegated permission and that admin consent has been granted if your tenant requires it. |
 | Repository selection or Git operations fail | Confirm OpenHands can reach `dev.azure.com` and that the repository is referenced as `organization/project/repository`. |
+| OAuth V2: Microsoft shows `AADSTS650057` | The provider's **Scopes** include `499b84ac-1321-427f-aa17-267ca6975798/.default`. Use the named scopes from [Configure the Auth Provider](#configure-the-auth-provider), or add the Azure DevOps API permission to the app registration. |
+| OAuth V2: Microsoft says the redirect URI doesn't match | Add the **Redirect URL** from the provider page in **Auth Providers** to the Entra app registration's Web redirect URIs. |
+| OAuth V2: Azure DevOps stops working after the access token expires | Confirm the provider's **Scopes** include `offline_access`. Then reconnect Azure DevOps in **Settings** > **Integrations** so OpenHands receives a refresh token. |
 | Azure DevOps Service Hook deliveries do not trigger an automation | Confirm the custom webhook is registered, the Service Hook URL is correct, the event type matches the automation, and the automation is enabled. |
