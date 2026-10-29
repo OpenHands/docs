@@ -29,12 +29,16 @@ four phases:
 3. **Install the Slack App** into your workspace (one-time, by a Slack workspace admin).
 4. **Link each user's account** in OpenHands ↔ Slack (per-user, self-service).
 
+An optional fifth phase shares the Slack bot token with your organization, so agents can
+call the Slack API themselves.
+
 <Steps>
   <Step title="Verify prerequisites" />
   <Step title="Create the Slack App" />
   <Step title="Configure OpenHands Enterprise" />
   <Step title="Install the Slack App into your workspace" />
   <Step title="Have users link their Slack accounts" />
+  <Step title="Share the bot token with your organization (optional)" />
 </Steps>
 
 ## Prerequisites
@@ -302,6 +306,75 @@ this once. They have two options:
 Either path produces the same record in the `slack_users` table, mapping the Slack user
 ID to a Keycloak (OpenHands) user. Once linked, any conversation started from Slack runs
 as that OpenHands user — using their LLM keys, provider tokens, and organization.
+
+## Step 5: Share the bot token with your organization (optional)
+
+The `@openhands` integration does not need this step. OHE stores the bot token that
+Slack issues in Step 3 and uses it to reply in Slack. Do this step only if you also want
+agents to call the Slack Web API as the OpenHands bot — for example, to post a message
+from a conversation or an automation.
+
+To do this, store the bot token as an organization-shared secret. Conversations that
+members of the organization start then receive the token as an environment variable.
+Only Admins and Owners can create, edit, or delete the secret.
+
+<Warning>
+  Every member of the organization can use a shared secret in their conversations. Any
+  member can then act as the bot with the scopes from Step 1, which include `chat:write`
+  and the `*:history` scopes. Share the token only in an organization whose members
+  should have that access.
+</Warning>
+
+### Copy the bot token
+
+1. Open [https://api.slack.com/apps](https://api.slack.com/apps) and select the Slack App
+   from Step 1.
+2. Open `OAuth & Permissions`.
+3. In the `OAuth Tokens` section, copy the `Bot User OAuth Token`. It starts with `xoxb-`.
+
+### Add the organization secret
+
+1. Sign in at `https://app.<your-base-domain>` as an Admin or Owner of the organization.
+2. Select the organization that should receive the secret.
+3. Open `Settings > Secrets` and click `Add a new secret`.
+4. Fill in the form:
+   - **Name**: `SLACK_BOT_TOKEN`
+   - **Value**: the bot token
+   - **Description** (optional): for example, `Bot token for the OpenHands Slack App`
+5. Select `Share with organization`. Only Admins and Owners see this option.
+6. Click `Add secret`.
+
+The secret now appears under `Organization secrets`. All members can see its name and
+description. Nobody can read the value back, including the person who created it.
+
+<Tip>
+  `SLACK_BOT_TOKEN` is the name that the Slack entries in the
+  [OpenHands extensions catalog](https://github.com/OpenHands/extensions) expect,
+  including the Slack Channel Monitor automation. OHE itself does not read this secret,
+  so you can use a different name if your agents expect one.
+</Tip>
+
+### How conversations receive the token
+
+- The token is exported as the `SLACK_BOT_TOKEN` environment variable in conversations
+  that start after you save the secret. Conversations that are already running keep the
+  secrets they started with. See [Secrets Management](/openhands/usage/settings/secrets-settings).
+- A conversation started from Slack loads secrets from the organization it runs in. That
+  organization is the one that claimed the repository's Git organization, if the user is
+  a member of it. Otherwise, it is the user's current organization. Add the secret to
+  every organization where agents need it.
+- If a member has a personal secret with the same name, the personal secret keeps the
+  name. The shared secret is then available under a suffixed name, such as
+  `SLACK_BOT_TOKEN_2`.
+- An organization Agent Profile that lists its secrets gets only the shared secrets on its
+  list. Add `SLACK_BOT_TOKEN` to the profile if conversations use it.
+
+### Replace the token
+
+Editing a shared secret in `Settings > Secrets` changes only its name and description.
+To change the value, delete the secret and add it again. To replace the value without
+deleting the secret, use the
+[organization secret value-replacement API](https://github.com/OpenHands/enterprise/blob/main/docs/organization-secret-value-replacement.md).
 
 ## Verify the Integration
 
