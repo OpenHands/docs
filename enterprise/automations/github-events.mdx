@@ -1,0 +1,163 @@
+---
+title: GitHub Event Automations
+description: Trigger automations from GitHub events, such as pull requests, issues, and comments, using the built-in GitHub integration in OpenHands Enterprise.
+icon: github
+---
+
+Event-based automations run when something happens, such as a pull request being opened or an issue
+being commented on, instead of on a schedule. GitHub is a built-in event source in OpenHands
+Enterprise, so you do not register a webhook. After a one-time setup, create automations that use
+`github` as their event source.
+
+<Info>
+  For events from services other than GitHub, such as Linear, Stripe, or Slack, see
+  [Event-Based Automations](/openhands/usage/automations/event-automations).
+</Info>
+
+## Prerequisites
+
+GitHub event automations require some one-time setup before events will flow. If any step is missing, automations will appear to work (manual triggers succeed) but GitHub events will silently never arrive.
+
+### 1. Install the GitHub App
+
+The GitHub App you configured for OpenHands Enterprise must be installed on the GitHub organization that owns the repositories you want to monitor. Create and install the app by following the [GitHub integration guide](/enterprise/integrations/github). The app needs access to the repositories that will generate events.
+
+### 2. Create an OpenHands Team Organization
+
+If you're working with repositories owned by a GitHub organization (e.g., `myorg/my-repo`), you need an OpenHands **team organization** — not just a personal account. GitHub events for org repos are routed to team orgs, not personal orgs.
+
+If you don't already have one, create a team organization — see [What Are Organizations](/openhands/usage/cloud/organizations/overview#what-are-organizations) for details and how to get started.
+
+### 3. Claim Your GitHub Organization
+
+<Warning>
+**This is the most commonly missed step.** Without it, GitHub events have nowhere to be routed and will be silently dropped.
+</Warning>
+
+Your OpenHands team org must **claim** the GitHub organization to establish the link between GitHub webhooks and your OpenHands org. Claiming tells the event router: _"Events for repos in this GitHub org should go to this OpenHands team org."_
+
+To claim a GitHub org:
+
+1. Switch to your team org using the org switcher in the sidebar
+2. Go to **Organization Settings**
+3. In the **Git Conversation Routing** section, find your GitHub org
+4. Click **Claim**
+
+You must be an **Owner** of the OpenHands team org and have **admin access** to the GitHub org to complete the claim. See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations) for full details.
+
+<Tip>
+Each GitHub organization can only be claimed by one OpenHands team org. If another team has already claimed it, coordinate with them or contact support.
+</Tip>
+
+### 4. Create the Automation Under the Team Org
+
+Make sure you are switched to the **team org** (not your personal org) when creating the automation. The automation must live in the same org that claimed the GitHub organization — otherwise events won't match.
+
+### 5. (Optional) Add Service Accounts to the Team Org
+
+If you're using a service account (like a bot account) to create or own automations, that account must be a **member of the team org**. Invite them from the [Organization Members](/openhands/usage/cloud/organizations/managing-members) page.
+
+### Troubleshooting
+
+If your automation doesn't trigger on GitHub events:
+
+<AccordionGroup>
+  <Accordion title="GitHub App not installed on the org">
+    The GitHub App you configured for OpenHands Enterprise must be installed on the GitHub organization that owns your repositories. Follow the [GitHub integration guide](/enterprise/integrations/github) and verify the app is installed with access to the relevant repos. Without this, no webhook events are sent to OpenHands.
+  </Accordion>
+  <Accordion title="GitHub org not claimed">
+    The most common cause. Go to **Organization Settings → Git Conversation Routing** and check if your GitHub org shows as claimed. If not, click **Claim**. See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations).
+  </Accordion>
+  <Accordion title="Automation in personal org instead of team org">
+    GitHub events for org repos are routed to the **team org** that claimed the GitHub org. If you created the automation under your personal org, events will never reach it. Switch to the team org and recreate the automation.
+  </Accordion>
+  <Accordion title="Event type or filter mismatch">
+    Double-check that the event type (e.g., `pull_request.labeled`) and filter expression match the action you're testing. Use wildcards like `pull_request.*` to match all actions during debugging.
+  </Accordion>
+  <Accordion title="Automation is disabled">
+    Verify the automation is enabled. You can check via the automations list or by asking OpenHands to list your automations.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Create GitHub Event Automations
+
+Create automations that respond to GitHub events without any webhook setup.
+
+### Example: Auto-Review PRs with a Specific Label
+
+When a PR is labeled with `openhands`, automatically review it:
+
+```
+Create an event-based automation called "Auto Review PRs" that triggers
+when a pull request is labeled with "openhands" in any of my repos.
+
+It should review the PR for code quality and best practices, then post
+the review as a comment.
+```
+
+The agent will create an automation with:
+- **Trigger type**: `event`
+- **Source**: `github`
+- **Event**: `pull_request.labeled`
+- **Filter**: Matches PRs labeled `openhands`
+
+### Example: Respond to @openhands Mentions
+
+```
+Create an automation that responds when someone mentions @openhands
+in an issue comment. It should analyze the issue context and provide
+a helpful response.
+```
+
+### Available GitHub Events
+
+| Event | Common Actions | Use Case |
+|-------|---------------|----------|
+| `pull_request` | `opened`, `labeled`, `synchronize`, `ready_for_review` | PR automation |
+| `issues` | `opened`, `labeled`, `assigned` | Issue triage |
+| `issue_comment` | `created` | Mention responses |
+| `push` | — | Branch-based triggers |
+| `release` | `published` | Release workflows |
+
+Use wildcards like `pull_request.*` to match all actions for an event type.
+
+## Filtering Events
+
+Filters let you narrow which events trigger your automation. They use [JMESPath expressions](https://jmespath.org/) to match fields in the event payload—so you can trigger only on specific labels, users, branches, or other conditions.
+
+<Note>
+OpenHands extends standard JMESPath with custom functions including `icontains` (case-insensitive string match) and `glob` (wildcard path matching). It also supports `!` (negation), `&&` (AND), and `||` (OR) as boolean operators. These extensions are not part of the [JMESPath specification](https://jmespath.org/specification.html).
+</Note>
+
+**Common filter patterns:**
+
+```
+contains(pull_request.labels[].name, 'openhands')
+
+icontains(comment.body, '@openhands')
+
+glob(repository.full_name, 'myorg/*')
+
+ref == 'refs/heads/main'
+
+glob(repository.full_name, 'myorg/*') && contains(pull_request.labels[].name, 'bug')
+```
+
+- `contains(...)` — match a specific label
+- `icontains(...)` — case-insensitive mention in a comment body
+- `glob(...)` — match repos in your org with wildcards
+- `==` — exact match (e.g., push to main branch only)
+- `&&` — combine multiple conditions
+
+---
+
+---
+
+## Next Steps
+
+- [Event-Based Automations](/openhands/usage/automations/event-automations) - Trigger automations from custom webhooks
+- [Automations in OpenHands Enterprise](/enterprise/automations) - Sharing, run identity, and permissions
+- [GitHub Integration](/enterprise/integrations/github) - Create and configure the GitHub App
+- [Managing Automations](/openhands/usage/agent-canvas/managing-automations) - Update, disable, or delete automations
