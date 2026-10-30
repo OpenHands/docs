@@ -1,0 +1,586 @@
+---
+title: Decision Models
+description: Ask typed yes/no, choice and score questions, and get probabilities your code can branch on.
+---
+
+> Ready-to-run examples are available [here](#ready-to-run-examples)!
+
+A decision model answers typed questions about some state. It returns probabilities, not generated text. Use one when your code needs a decision it can branch on: routing a request, gating an agent, triaging an issue, or checking an agent's work.
+
+`DecisionModel` sits next to [`LLM`](/sdk/arch/llm). It reuses the same retries, exception mapping, [metrics](/sdk/guides/metrics) and secret handling, and each call produces an OpenTelemetry span.
+
+<Note>
+`DecisionModel` is available in OpenHands SDK `v1.60.0` and later.
+</Note>
+
+## Question Types
+
+| Question | Use it to | Answer |
+|---|---|---|
+| `Noul` | Ask a yes/no question | `NoulAnswer.probability`: the probability of yes |
+| `Choice` | Pick one option from a closed set | `ChoiceAnswer.choice`, plus `confidence` and `probabilities` per option |
+| `Score` | Rate against up to 10 ordered levels, lowest first | `ScoreAnswer.score`: the probability-weighted level, plus `confidence`, `probabilities` and `legend` |
+
+A `Noul` probability of 0.5 means the model is unsure. It does not mean "medium".
+
+`instructions` is optional. A `Noul` needs `instructions` or `criteria`, and a `Choice` option can map to `None` when its name says enough.
+
+## Basic Usage
+
+Create a `DecisionModel` with a [LiteLLM model string](/sdk/guides/llm-decision-model-providers), then pass `decide()` a state and a dict of named questions. The result has one typed answer per name.
+
+```python icon="python" wrap
+import os
+
+from openhands.sdk import DecisionModel
+from openhands.sdk.llm import Choice, Noul, Score
+
+
+decision_model = DecisionModel(
+    model="typesafe/jev-latest",
+    api_key=os.environ["JEV_API_KEY"],
+)
+
+result = decision_model.decide(
+    state={"ticket": "PDF export fails, but CSV works. Please refund this month."},
+    questions={
+        "team": Choice(
+            instructions="Which team should handle the main issue in `ticket`?",
+            criteria={
+                "billing": "Charges and payments",
+                "technical": "Broken product features",
+                "other": "Neither",
+            },
+        ),
+        "impact": Score(
+            instructions="How much does the bug in `ticket` affect the user?",
+            criteria=[
+                "Cosmetic only",
+                "Feature broken; workaround available",
+                "Work blocked; no workaround available",
+            ],
+        ),
+        "refund": Noul(instructions="Does `ticket` explicitly request a refund?"),
+    },
+)
+
+team = result.choice("team")
+print(team.choice, team.confidence)  # e.g. technical 0.97
+print(result.score("impact").score)  # e.g. 1.0, on the 0-2 scale
+print(result.noul("refund").probability)  # e.g. 0.98
+print(result.model, decision_model.metrics.accumulated_cost)  # running total
+```
+
+`result.noul()`, `result.choice()` and `result.score()` return typed answers. They raise `KeyError` for an unknown name, and `TypeError` if the question has a different type. `result.model` is the versioned model that answered, such as `jev-1.14.0`.
+
+`adecide()` is the async version. Use it with `asyncio.gather()` to decide about several states at once, one call per state.
+
+## Best Practices
+
+These follow TypeSafe's guide to [building with System One](https://docs.typesafe.ai/concepts/how-to-build-with-system-one.md).
+
+### Keep Control Flow in Code
+
+Ask the model only for narrow judgments, and make the decision in your own code. For example, combine a `Noul` and a `Score` into a route, rather than asking one question that names the route.
+
+### Send Structured State
+
+Pass a dict, not one long string, and point each question at a field with a backticked path, such as `` `issue.body` ``.
+
+### Ask Many Questions in One Call
+
+Questions about the same state run in parallel. Each extra question adds little latency and costs only its own tokens. So ask every question you might need in one call, including speculative ones that matter on only some code paths. For example, ask about severity even though it only matters if the issue turns out to be a bug.
+
+Make separate calls only when the state differs, or when a question depends on something that does not exist yet, such as an agent's reply.
+
+### Structure Options That Are Easy to Confuse
+
+Instructions, `Choice` option descriptions and `Score` levels accept a string, an object or a list. When two options are easy to confuse, describe each one with the same keys. That way the model can compare them directly. A `Noul` can also say what makes the answer true and what makes it false.
+
+```python icon="python" wrap
+from openhands.sdk.llm import Choice, Noul, NoulCriteria
+
+questions = {
+    "kind": Choice(
+        instructions="What does `issue` mainly ask for?",
+        criteria={
+            "bug": {
+                "what": "Documented or expected behavior that is broken.",
+                "not_for": "Asking for behavior the software never had.",
+                "examples": ["Crashes on startup", "Export writes an empty file"],
+            },
+            "feature": {
+                "what": "A new capability or a change to working behavior.",
+                "not_for": "Something that is supposed to work but fails.",
+                "examples": ["Support YAML config", "Add a --quiet flag"],
+            },
+            "other": "None of the above.",
+        },
+    ),
+    "asks_for_credentials": Noul(
+        instructions="Does `issue` ask someone to share a password or API key?",
+        criteria=NoulCriteria(
+            true="Asks the reader to send, paste or reveal a secret",
+            false="Mentions secrets without asking anyone to share one",
+        ),
+    ),
+}
+```
+
+### Route on Uncertainty
+
+Do not treat the top answer as certain. Set thresholds on `Noul` probabilities, gate on `confidence`, and send unsure cases to a person. Check your thresholds on representative data. TypeSafe's [confidence guide](https://docs.typesafe.ai/confidence.md) explains how.
+
+## Limits
+
+- Through LiteLLM, a call takes at most 128 questions, and a `Choice` takes at most 255 options. Going over raises `LLMBadRequestError` before anything is sent. To ask more questions, split them across calls that send the same state.
+- A `Score` takes at most 10 levels.
+- Image input and `Box` questions are not supported yet. They need a newer LiteLLM release than the SDK uses.
+
+## Metrics and Tracing
+
+`decision_model.metrics` keeps running totals of tokens, cost and latency, as it does for `LLM`. `result.metrics` is a snapshot of those totals when the call finished, not the cost of that call alone.
+
+When [observability](/sdk/guides/observability) is turned on, each attempt produces a `decision.<model>` span, nested under the current span. The span records the questions, answers, request and response model, token counts and cost. It never records the state, which may contain sensitive content. To group the decision spans for one task, wrap the task in an `@observe` span, as in the [agent gate example](#gate-an-agent-with-a-decision-model).
+
+## Providers
+
+By default, `model` is a LiteLLM model string, and LiteLLM handles routing, wire format and pricing. For the list of supported decision models, and for how to add a provider that LiteLLM does not support, see [Decision Model Providers](/sdk/guides/llm-decision-model-providers).
+
+## Ready-to-run Examples
+
+### Triage an Issue in One Call
+
+This example asks six `Noul`, `Choice` and `Score` questions about one issue in a single `decide()` call. Then it routes the issue in code, using thresholds and confidence gates.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/60_decision_model.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/60_decision_model.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/60_decision_model.py
+"""Ask a decision model typed questions with DecisionModel.
+
+An LLM writes text. A decision model answers typed questions about a ``state``
+and returns values your code can branch on:
+
+- ``Noul``: a yes/no question. The answer is the probability of yes.
+- ``Choice``: one option from a closed set, with a probability per option.
+- ``Score``: a position on ordered levels, with a probability per level.
+
+Choice and Score answers also carry a ``confidence`` from 0 to 1.
+
+This example triages one GitHub issue with TypeSafe's Jev model and follows the
+practices in https://docs.typesafe.ai/concepts/how-to-build-with-system-one.md:
+
+1. Keep control flow in code. Ask the model only for narrow judgments.
+2. Send structured state, and point questions at fields with backticked paths.
+   Options and levels can be structured too, which helps tell apart options
+   that are easy to confuse.
+3. Ask many atomic questions in one call, including speculative ones that only
+   matter on some code paths. Questions run in parallel against the same state,
+   so each extra question adds little latency and costs only its own tokens.
+   Through LiteLLM a call takes up to 128 questions, and a Choice up to 255
+   options. More raises LLMBadRequestError before anything is sent, so split
+   them across calls that send the same state.
+4. Combine the answers in code, and route on uncertainty instead of guessing.
+
+Set JEV_API_KEY to a TypeSafe API key. DECISION_MODEL defaults to
+typesafe/jev-latest; any LiteLLM decision model works.
+
+With Laminar or OTEL configured (see 27_observability_laminar.py), each
+decide() call emits a ``decision.<model>`` span with the questions, answers,
+tokens and cost. The state is not recorded on the span.
+"""
+
+import os
+
+from openhands.sdk import DecisionModel
+from openhands.sdk.llm import Choice, Noul, Score
+
+
+api_key = os.getenv("JEV_API_KEY")
+assert api_key, "Set JEV_API_KEY to a TypeSafe API key."
+
+decision_model = DecisionModel(
+    model=os.getenv("DECISION_MODEL", "typesafe/jev-latest"),
+    api_key=api_key,
+)
+
+# Send only what the questions need, as structured JSON.
+state = {
+    "issue": {
+        "title": "Agent fails when the workspace path contains a space",
+        "body": (
+            "Running the hello world example with workspace='/tmp/my project' "
+            "raises FileNotFoundError on the first terminal command. Paths "
+            "without spaces work.\n"
+            "Steps: 1) mkdir '/tmp/my project' 2) run 01_hello_world.py with "
+            "that workspace.\n"
+            "This blocks everyone on our team, please fix it ASAP!"
+        ),
+    },
+}
+
+# One request, many questions. Question names are only for your code: they are
+# not sent to the model, so each `instructions` must be a complete question.
+questions = {
+    # Bug reports and feature requests are easy to confuse, so each option
+    # says what it covers, what it does not, and gives examples. Using the same
+    # keys for every option lets the model compare them directly. A plain
+    # string is enough for an option that is not easily confused.
+    "kind": Choice(
+        instructions="What does `issue` mainly ask for?",
+        criteria={
+            "bug": {
+                "what": "Documented or expected behavior that is broken.",
+                "not_for": "Asking for behavior the software never had.",
+                "examples": ["Crashes on startup", "Export writes an empty file"],
+            },
+            "feature": {
+                "what": "A new capability or a change to working behavior.",
+                "not_for": "Something that is supposed to work but fails.",
+                "examples": ["Support YAML config", "Add a --quiet flag"],
+            },
+            "question": {
+                "what": "Help using the software; nothing is broken.",
+                "not_for": "Reports of failures or requests for changes.",
+                "examples": ["How do I set the model?", "Where are logs kept?"],
+            },
+            "other": "None of the above.",
+        },
+    ),
+    # Speculative: severity and repro steps only matter if this is a bug.
+    "severity": Score(
+        instructions="How badly does the problem in `issue` affect users?",
+        criteria=[
+            "Cosmetic; nothing is broken.",
+            "A feature is broken, but a workaround exists.",
+            "Work is blocked and there is no workaround.",
+        ],
+    ),
+    "has_repro_steps": Noul(
+        instructions="Does `issue.body` give steps to reproduce the problem?",
+    ),
+    "is_security": Noul(
+        instructions=(
+            "Does `issue` report a security vulnerability, such as leaked "
+            "secrets or unauthorized access?"
+        ),
+    ),
+    "well_scoped": Noul(
+        instructions=(
+            "Is `issue` specific enough that a developer could start work "
+            "without asking follow-up questions?"
+        ),
+    ),
+    "frustration": Score(
+        instructions="How frustrated does the author of `issue` sound?",
+        criteria=[
+            "Calm and matter-of-fact.",
+            "Annoyed but constructive.",
+            "Angry or threatening to leave.",
+        ],
+    ),
+}
+
+result = decision_model.decide(state=state, questions=questions)
+
+# Typed accessors raise if the name is missing or the answer is another type.
+kind = result.choice("kind")
+severity = result.score("severity")
+frustration = result.score("frustration")
+has_repro_steps = result.noul("has_repro_steps").probability
+is_security = result.noul("is_security").probability
+well_scoped = result.noul("well_scoped").probability
+
+print(f"kind:            {kind.choice}, confidence {kind.confidence:.2f}")
+print(f"                 {kind.probabilities}")
+# A Score can land between levels; level 0 is the first entry in `criteria`.
+print(f"severity:        {severity.score:.2f}, confidence {severity.confidence:.2f}")
+print(f"                 {severity.legend}")
+print(
+    f"frustration:     {frustration.score:.2f}, confidence {frustration.confidence:.2f}"
+)
+print(f"has_repro_steps: {has_repro_steps:.2f}")
+print(f"is_security:     {is_security:.2f}")
+print(f"well_scoped:     {well_scoped:.2f}")
+
+# A Noul near 0.5 means "unsure", not "medium". 0.7 and 0.3 are TypeSafe's
+# suggested starting thresholds; tune them on your own data.
+YES, NO = 0.7, 0.3
+
+# Code owns the decision. Speculative answers that do not apply are ignored.
+labels: list[str] = []
+if is_security >= YES:
+    route = "security team (private)"
+elif kind.confidence < 0.6:
+    route = "human triage: unclear what the issue is about"
+elif kind.choice == "bug":
+    labels.append("bug")
+    # Low confidence means the probability is spread across levels, so the
+    # score alone is not enough to act on.
+    if severity.score >= 1.5 and severity.confidence >= 0.5:
+        labels.append("priority:high")
+    if has_repro_steps <= NO:
+        labels.append("needs-repro")
+    route = "agent" if well_scoped >= YES and has_repro_steps >= YES else "backlog"
+elif kind.choice == "feature":
+    labels.append("enhancement")
+    route = "agent" if well_scoped >= YES else "needs-design"
+else:
+    route = "community support"
+
+if frustration.score >= 1.5:
+    labels.append("reply-soon")
+
+print(f"\nroute: {route}")
+print(f"labels: {labels}")
+
+# Log the versioned model that answered: an alias like jev-latest moves when a
+# new release ships. Pin that version if you tune thresholds against it.
+print(f"\nanswered by: {result.model}")
+usage = decision_model.metrics.accumulated_token_usage
+assert usage is not None
+print(f"tokens: {usage.prompt_tokens} in, {usage.completion_tokens} out")
+
+cost = decision_model.metrics.accumulated_cost
+print(f"EXAMPLE_COST: {cost}")
+```
+
+```bash Running the Example
+export JEV_API_KEY="your-typesafe-api-key"
+cd software-agent-sdk
+uv run python examples/01_standalone_sdk/60_decision_model.py
+```
+
+### Gate an Agent with a Decision Model
+
+This example triages a queue of issues concurrently with `adecide()`. It sends only the small, clear issues to an agent. Code checks whether any file changed, and a second decision call judges the agent's reply. That call is separate because the reply did not exist when the first call ran.
+
+<Note>
+This example is available on GitHub: [examples/01_standalone_sdk/61_decision_model_agent_gate.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/01_standalone_sdk/61_decision_model_agent_gate.py)
+</Note>
+
+```python icon="python" expandable examples/01_standalone_sdk/61_decision_model_agent_gate.py
+"""Use a decision model to choose which issues an agent works on.
+
+A decision model call is fast and costs a small fraction of a cent, so it fits
+in front of an LLM agent as a gate: triage every incoming issue, and spend
+agent time only on the ones that are ready for it.
+
+This example:
+
+1. Triages a queue of issues concurrently with ``adecide()``. Each issue gets
+   one request, and every question about that issue goes in that request.
+2. Picks issues in plain code: well scoped, small, and not a security report.
+3. Hands each picked issue to an agent.
+4. Checks the agent's work. Code checks what code can (did any file change?).
+   A second decision request judges the agent's reply. A second request is
+   right here because its state did not exist before the agent ran; questions
+   about the original state belong in the first request.
+
+Set JEV_API_KEY for the decision model and LLM_API_KEY for the agent.
+
+With Laminar or OTEL configured (see 27_observability_laminar.py), ``@observe``
+opens a ``triage_issue`` span per issue and the ``decision.<model>`` span nests
+under it. The agent's conversation is traced as its own session, as in 27.
+"""
+
+import asyncio
+import os
+import tempfile
+from pathlib import Path
+
+from openhands.sdk import LLM, Agent, Conversation, DecisionModel, Tool
+from openhands.sdk.conversation import get_agent_final_response
+from openhands.sdk.llm import Choice, Noul, Score
+from openhands.sdk.observability import observe
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+
+
+jev_api_key = os.getenv("JEV_API_KEY")
+assert jev_api_key, "Set JEV_API_KEY to a TypeSafe API key."
+
+decision_model = DecisionModel(
+    model=os.getenv("DECISION_MODEL", "typesafe/jev-latest"),
+    api_key=jev_api_key,
+)
+
+ISSUES = [
+    {
+        "number": 101,
+        "title": "Add a slugify helper",
+        "body": (
+            "Please add `slugify(text: str) -> str` to a new file `slug.py`. "
+            "It should lowercase the text, replace runs of whitespace with a "
+            "single hyphen, and drop every character that is not a letter, "
+            "digit or hyphen. Example: 'Hello, World!' -> 'hello-world'."
+        ),
+    },
+    {
+        "number": 102,
+        "title": "Things are slow",
+        "body": "The app feels slow sometimes. Can you make it faster?",
+    },
+    {
+        "number": 103,
+        "title": "API key shows up in debug logs",
+        "body": (
+            "With DEBUG=1 the full LLM API key is printed in the log line for "
+            "every request. Anyone with log access can read it."
+        ),
+    },
+    {
+        "number": 104,
+        "title": "Move storage to Postgres",
+        "body": (
+            "We should replace the file-based conversation store with "
+            "Postgres, including migrations for existing users."
+        ),
+    },
+]
+
+TRIAGE_QUESTIONS = {
+    "kind": Choice(
+        instructions="What does `issue` mainly ask for?",
+        criteria={
+            "bug": "Something is broken.",
+            "feature": "A new capability or a change in behavior.",
+            "other": "Neither a bug nor a feature request.",
+        },
+    ),
+    "well_scoped": Noul(
+        instructions=(
+            "Does `issue.body` say exactly what to change and what the result "
+            "should be, so a developer could start without follow-up questions?"
+        ),
+    ),
+    "size": Score(
+        instructions="How much code would it take to do what `issue` asks?",
+        criteria=[
+            "A few lines in one file.",
+            "Changes across several files or a new module.",
+            "A redesign or migration across the codebase.",
+        ],
+    ),
+    "is_security": Noul(
+        instructions=(
+            "Does `issue` report a security problem, such as exposed secrets "
+            "or unauthorized access?"
+        ),
+    ),
+}
+
+YES, NO = 0.7, 0.3
+
+
+# ignore_input keeps the issue text off the span, as DecisionModel does.
+@observe(name="triage_issue", ignore_input=True)
+async def triage(issue: dict) -> tuple[str, str]:
+    """Return (kind, route) for one issue."""
+    result = await decision_model.adecide(
+        state={"issue": issue}, questions=TRIAGE_QUESTIONS
+    )
+    kind = result.choice("kind").choice
+    size = result.score("size")
+    if result.noul("is_security").probability >= YES:
+        return kind, "security team"
+    if size.score >= 1.5:
+        return kind, "human planning"
+    if result.noul("well_scoped").probability < YES:
+        return kind, "needs more information"
+    # Agents get only small changes the model is sure about.
+    if size.score > 0.5 or size.confidence < 0.5:
+        return kind, "human planning"
+    return kind, "agent"
+
+
+async def triage_queue(issues: list[dict]) -> list[tuple[str, str]]:
+    # One request per issue, sent concurrently. Each request already asks
+    # every question about its issue, so no issue needs a second round trip.
+    return await asyncio.gather(*(triage(issue) for issue in issues))
+
+
+triaged = asyncio.run(triage_queue(ISSUES))
+for issue, (kind, route) in zip(ISSUES, triaged):
+    print(f"#{issue['number']} [{kind}] {issue['title']!r} -> {route}")
+
+llm = LLM(
+    model=os.getenv("LLM_MODEL", "gpt-5.5"),
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    usage_id="agent",
+)
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)],
+)
+
+for issue, (_, route) in zip(ISSUES, triaged):
+    if route != "agent":
+        continue
+
+    workspace = tempfile.mkdtemp()
+    conversation = Conversation(agent=agent, workspace=workspace)
+    conversation.send_message(
+        f"Resolve issue #{issue['number']}: {issue['title']}\n\n{issue['body']}\n\n"
+        "Finish with a short summary of what you changed, and say if you left "
+        "anything undone."
+    )
+    conversation.run()
+    reply = get_agent_final_response(conversation.state.events)
+
+    # Use code when you can: an agent that changed nothing did not do the work.
+    if not any(Path(workspace).iterdir()):
+        print(f"#{issue['number']}: no files changed; sending to a human")
+        continue
+
+    # Use the decision model for the judgment code cannot make.
+    review = decision_model.decide(
+        state={"issue": issue, "agent_reply": reply},
+        questions={
+            "claims_done": Noul(
+                instructions=(
+                    "Does `agent_reply` say that the change requested in "
+                    "`issue.body` was made?"
+                ),
+            ),
+            "left_work_undone": Noul(
+                instructions=(
+                    "Does `agent_reply` say that part of the request in "
+                    "`issue.body` was left undone or done differently?"
+                ),
+            ),
+        },
+    )
+    claims_done = review.noul("claims_done").probability
+    left_work_undone = review.noul("left_work_undone").probability
+    print(
+        f"#{issue['number']}: claims_done={claims_done:.2f} "
+        f"left_work_undone={left_work_undone:.2f}"
+    )
+    if claims_done >= YES and left_work_undone <= NO:
+        print(f"#{issue['number']}: ready for review")
+    else:
+        print(f"#{issue['number']}: sending to a human")
+
+decision_cost = decision_model.metrics.accumulated_cost
+agent_cost = llm.metrics.accumulated_cost
+print(f"decision model: ${decision_cost:.6f}  agent LLM: ${agent_cost:.4f}")
+print(f"EXAMPLE_COST: {decision_cost + agent_cost}")
+```
+
+```bash Running the Example
+export JEV_API_KEY="your-typesafe-api-key"
+export LLM_API_KEY="your-api-key"
+export LLM_MODEL="anthropic/claude-sonnet-4-5-20250929"
+cd software-agent-sdk
+uv run python examples/01_standalone_sdk/61_decision_model_agent_gate.py
+```
+
+## Next Steps
+
+- **[Decision Model Providers](/sdk/guides/llm-decision-model-providers)** - Supported models, and how to add your own
+- **[Observability & Tracing](/sdk/guides/observability)** - Send decision spans to Laminar or any OTLP backend
+- **[Metrics Tracking](/sdk/guides/metrics)** - Track tokens, cost and latency
