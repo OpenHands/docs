@@ -24,10 +24,15 @@ The SDK uses LiteLLM `>=1.104.3,<1.106`. With those releases, these decision mod
 | Perplexity | `perplexity/pplx-decider-v1-27b` | `PERPLEXITYAI_API_KEY` or `PERPLEXITY_API_KEY` |
 | Cloudflare Clef | `cloudflare/clef` or `cloudflare/clef-flash` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
 | Microsoft Foundry | `azure_ai/<deployment>` | `AZURE_AI_API_KEY` and `AZURE_AI_API_BASE` |
-| Strands Decider (self-hosted) | `strands_decider/<model>` | `STRANDS_DECIDER_API_BASE` |
+| Strands Decider (self-hosted) | `strands_decider/<model>` | `STRANDS_DECIDER_API_BASE`, plus AWS credentials when it is a Bedrock AgentCore runtime ARN |
 | vLLM (self-hosted) | `hosted_vllm/<model>` | `HOSTED_VLLM_API_BASE` |
 
-Pass `api_key` and `base_url` to `DecisionModel`, or set the environment variables above and LiteLLM picks them up.
+Pass `api_key` and `base_url` to `DecisionModel`, or set the environment variables above and LiteLLM picks them up. `DecisionModel` also forwards these settings to LiteLLM:
+
+- **`custom_llm_provider`** - The provider, when the model string has no provider prefix.
+- **`extra_headers`** - HTTP headers to send to the provider.
+- **`safety_identifier`** - A stable end-user identifier for abuse monitoring. OpenAI supports it.
+- **`aws_access_key_id`**, **`aws_secret_access_key`**, **`aws_session_token`**, **`aws_region_name`**, **`aws_profile_name`**, **`aws_role_name`** and **`aws_session_name`** - AWS credentials for Strands Decider on Bedrock AgentCore. The secret ones are stored as secrets, like `api_key`.
 
 Databricks, Fireworks AI, Laya, Bespoke Nimble, image input and `Box` questions need LiteLLM 1.106 or later. They become available when the SDK moves to that release. For the current list and provider details, see LiteLLM's [decisions documentation](https://docs.litellm.ai/docs/decisions).
 
@@ -54,18 +59,18 @@ class AcmeDecisionModel(DecisionModel):
 
 Each call to `send()` makes one provider request. It receives the SDK question objects, so `question.model_dump(exclude_none=True)` gives the same JSON that LiteLLM sends. It returns a `DecisionReply` with:
 
-- **`answers`** - One `NoulAnswer`, `ChoiceAnswer` or `ScoreAnswer` per question name. If any question has no answer, `decide()` raises `LLMResponseError`.
+- **`answers`** - One answer per question name, of the matching type: `NoulAnswer` for a `Noul`, `ChoiceAnswer` for a `Choice`, `ScoreAnswer` for a `Score`. If a question has no answer, an answer has the wrong type, or there is an answer to a question nobody asked, `decide()` raises `LLMResponseError` without retrying.
 - **`model`** - The versioned model that answered. It becomes `result.model` and the span's `gen_ai.response.model`.
 - **`usage`** and **`cost`** - Leave them as `None` if the provider does not report them.
 - **`raw_response`** - The provider's own payload, kept on the result for debugging.
 
 `decide()` calls `send()` once per attempt and handles the rest:
 
-- **Retries.** Raise `LLMRateLimitError`, `LLMTimeoutError` or `LLMServiceUnavailableError` for failures worth retrying. Any other exception is raised to the caller without a retry.
+- **Retries.** Raise `LLMRateLimitError`, `LLMTimeoutError` or `LLMServiceUnavailableError` for failures worth retrying. Any other exception is raised to the caller unchanged, without a retry.
 - **Metrics.** Tokens, cost and latency go into `result.metrics` and `decision_model.metrics`.
 - **Tracing.** Each attempt produces a `decision.<model>` span, as on the LiteLLM route.
 
-LiteLLM's 128-question limit does not apply to a custom `send()`.
+LiteLLM's limits of 128 questions per call and 255 options per `Choice` do not apply to a custom `send()`.
 
 ## Prefer Contributing to LiteLLM
 
@@ -99,7 +104,8 @@ up to you:
 2. Through your own code. Subclass ``DecisionModel`` and override ``send()``
    (and ``asend()`` if you call ``adecide()``). Each method makes one request
    and returns a ``DecisionReply`` built from SDK types. ``decide()`` still
-   adds retries, error mapping, metrics and the ``decision.<model>`` span.
+   adds retries, error mapping, metrics and the ``decision.<model>`` span, and
+   checks that every question got one answer of the right type.
 
 Use route 2 for a model only you can reach, such as one you host privately or
 an internal service. For a generally available model, contribute a provider to
@@ -134,6 +140,7 @@ from openhands.sdk.llm import (
 )
 from openhands.sdk.llm.exceptions import (
     LLMRateLimitError,
+    LLMResponseError,
     LLMServiceUnavailableError,
     LLMTimeoutError,
 )
@@ -217,7 +224,7 @@ def _answer(answer: dict) -> NoulAnswer | ChoiceAnswer | ScoreAnswer:
                 probabilities=answer["probabilities"],
                 legend=answer["legend"],
             )
-    raise ValueError(f"Unsupported answer type: {answer['type']!r}")
+    raise LLMResponseError(f"Unsupported answer type: {answer['type']!r}")
 
 
 api_key = os.getenv("JEV_API_KEY")

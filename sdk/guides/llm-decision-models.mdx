@@ -23,6 +23,8 @@ A decision model answers typed questions about some state. It returns probabilit
 
 A `Noul` probability of 0.5 means the model is unsure. It does not mean "medium".
 
+`instructions` is optional. A `Noul` needs `instructions` or `criteria`, and a `Choice` option can map to `None` when its name says enough.
+
 ## Basic Usage
 
 Create a `DecisionModel` with a [LiteLLM model string](/sdk/guides/llm-decision-model-providers), then pass `decide()` a state and a dict of named questions. The result has one typed answer per name.
@@ -66,7 +68,7 @@ team = result.choice("team")
 print(team.choice, team.confidence)  # e.g. technical 0.97
 print(result.score("impact").score)  # e.g. 1.0, on the 0-2 scale
 print(result.noul("refund").probability)  # e.g. 0.98
-print(result.model, result.metrics.accumulated_cost)
+print(result.model, decision_model.metrics.accumulated_cost)  # running total
 ```
 
 `result.noul()`, `result.choice()` and `result.score()` return typed answers. They raise `KeyError` for an unknown name, and `TypeError` if the question has a different type. `result.model` is the versioned model that answered, such as `jev-1.14.0`.
@@ -131,13 +133,13 @@ Do not treat the top answer as certain. Set thresholds on `Noul` probabilities, 
 
 ## Limits
 
-- Through LiteLLM, a call takes at most 128 questions. To ask more, split them across calls that send the same state.
+- Through LiteLLM, a call takes at most 128 questions, and a `Choice` takes at most 255 options. Going over raises `LLMBadRequestError` before anything is sent. To ask more questions, split them across calls that send the same state.
 - A `Score` takes at most 10 levels.
 - Image input and `Box` questions are not supported yet. They need a newer LiteLLM release than the SDK uses.
 
 ## Metrics and Tracing
 
-`result.metrics` is a snapshot of the model's metrics after the call, and `decision_model.metrics` keeps a running total. Both record tokens, cost and latency, as they do for `LLM`.
+`decision_model.metrics` keeps running totals of tokens, cost and latency, as it does for `LLM`. `result.metrics` is a snapshot of those totals when the call finished, not the cost of that call alone.
 
 When [observability](/sdk/guides/observability) is turned on, each attempt produces a `decision.<model>` span, nested under the current span. The span records the questions, answers, request and response model, token counts and cost. It never records the state, which may contain sensitive content. To group the decision spans for one task, wrap the task in an `@observe` span, as in the [agent gate example](#gate-an-agent-with-a-decision-model).
 
@@ -177,8 +179,9 @@ practices in https://docs.typesafe.ai/concepts/how-to-build-with-system-one.md:
 3. Ask many atomic questions in one call, including speculative ones that only
    matter on some code paths. Questions run in parallel against the same state,
    so each extra question adds little latency and costs only its own tokens.
-   LiteLLM accepts up to 128 questions per call; split more across calls that
-   send the same state.
+   Through LiteLLM a call takes up to 128 questions, and a Choice up to 255
+   options. More raises LLMBadRequestError before anything is sent, so split
+   them across calls that send the same state.
 4. Combine the answers in code, and route on uncertainty instead of guessing.
 
 Set JEV_API_KEY to a TypeSafe API key. DECISION_MODEL defaults to
