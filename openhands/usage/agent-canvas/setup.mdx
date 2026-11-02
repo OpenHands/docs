@@ -98,6 +98,7 @@ The `agent-canvas` launcher can run the Canvas client with Agent Server, Automat
 
     docker run -it --rm \
       -p 127.0.0.1:8000:8000 \
+      -e AGENT_CANVAS_ALLOW_LAN_SESSION_KEY=true \
       -v openhands-data:/home/openhands/.openhands \
       -v ~/projects:/projects \
       ghcr.io/openhands/agent-canvas:latest
@@ -110,12 +111,19 @@ The `agent-canvas` launcher can run the Canvas client with Agent Server, Automat
 
     docker run -it --rm `
       -p 127.0.0.1:8000:8000 `
+      -e AGENT_CANVAS_ALLOW_LAN_SESSION_KEY=true `
       -v openhands-data:/home/openhands/.openhands `
       -v "$($env:USERPROFILE)\projects:/projects" `
       ghcr.io/openhands/agent-canvas:latest
     ```
 
     The Docker image serves Agent Canvas at `http://localhost:8000/canvas`. The agent can access project files under the mounted `/projects` directory. The `127.0.0.1:` prefix publishes the port on your machine only, so other devices on your network cannot reach the agent server.
+
+    Docker listens on all interfaces inside the container so port publishing works. By default, that prevents Agent Canvas from embedding its session API key in the page, and the browser asks you to enter the key. The commands above explicitly opt in with `AGENT_CANVAS_ALLOW_LAN_SESSION_KEY=true` while keeping the published host port on localhost. On first connection, the UI receives the key automatically; you do not need a model-provider key to connect to the backend.
+
+    <Warning>
+      Anyone who can reach the frontend can obtain an embedded session key and access the backend. Keep this opt-in paired with `-p 127.0.0.1:8000:8000`. If you publish on a LAN or public interface, or expose the UI through a proxy or tunnel, omit `AGENT_CANVAS_ALLOW_LAN_SESSION_KEY` and enter the backend key manually. For internet-facing deployments, follow [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm).
+    </Warning>
 
     Docker creates `openhands-data` on first use and keeps it after the container exits, including with `--rm`. Reuse the same volume on subsequent runs.
 
@@ -226,12 +234,46 @@ agent-canvas --port 3000
 | Variable | Purpose |
 |----------|---------|
 | `LOCAL_BACKEND_API_KEY` | API key for the server. Required in `--public` mode; optional for local use because Agent Canvas can auto-generate and persist one. |
+| `AGENT_CANVAS_ALLOW_LAN_SESSION_KEY` | Docker quickstart opt-in to embed the session key in the frontend. Use `true` only with the host port restricted to localhost; omit it for LAN/public access. |
 | `OH_SECRET_KEY` | Secret used to protect stored settings and secrets. |
 | `OH_AGENT_SERVER_VERSION` | Pin a specific agent server version, such as `0.1.0`. |
 | `AUTOMATION_KV_SECRET` | Secret used to protect automation key-value storage. When it is not set, the launcher pins the first session key to `automation-kv-secret.txt` and reuses it, so rotating `SESSION_API_KEY` does not make existing automation KV data unreadable. The pin file must be a regular file with private permissions; otherwise the launcher fails closed. |
 | `LOG_LEVEL` | Log level for the agent server. Overrides the `WARNING` default; Uvicorn's `--log-level` follows it. |
 | `AUTOMATION_LOG_LEVEL` | Log level for the automation service. Overrides the `WARNING` default. |
 | `PORT` | Ingress port inside the Docker container. Map it with `-p <host>:<PORT>`. |
+
+## Session Keys And The API-Key Prompt
+
+Agent Canvas uses different credentials for connecting to a backend and accessing a model:
+
+| Key | What It Does | Where To Configure It |
+|-----|--------------|-----------------------|
+| Session/backend API key | Authenticates the browser to your Agent Canvas backend. It is generated locally or supplied by the backend operator. | Enter it at the initial API-key prompt or in the backend connection settings. |
+| Model-provider API key | Authenticates model requests to your chosen provider, such as Anthropic, OpenAI, or OpenHands Cloud. | Configure it during [First Time Setup](/openhands/usage/agent-canvas/first-time-setup) or in `Settings > LLM`. |
+
+A model-provider key will not unlock a local backend. `OH_SECRET_KEY` is a separate encryption secret for stored settings; do not enter it at the API-key prompt.
+
+### Recover When Docker Asks For A Key
+
+The prompt is expected when automatic session-key delivery is disabled. You can authenticate without recreating your settings volume:
+
+1. In another terminal, run `docker ps` and find the Agent Canvas container's ID or name.
+2. If you started it with `LOCAL_BACKEND_API_KEY`, use that value. Otherwise, retrieve the generated key with the following command, replacing `CONTAINER` with the ID or name. This works in macOS/Linux shells and PowerShell for the default Docker configuration:
+
+   ```bash
+   docker exec CONTAINER cat /home/openhands/.openhands/agent-canvas/api-key.txt
+   ```
+
+   Keep the printed key private. The generated key lives in the `openhands-data` volume and is reused when you restart with that volume. If you customized the state directory, use the `api-key.txt` path that the container logs when it first generates the key.
+3. Open `http://localhost:8000/canvas`, enter the backend key, and confirm the backend connects. Then configure your model separately in `Settings > LLM`.
+
+For automatic connection on your own machine, stop the container and rerun the localhost-only Docker command above with the opt-in and the same volume. If the browser retained an old key after you changed the backend key or switched volumes, update the key in the backend connection settings, or open a private browser window and enter the current key.
+
+### Configure Your Own Docker Backend Key
+
+To supply a key instead of using the generated one, set `LOCAL_BACKEND_API_KEY` in your host environment to a strong, unique secret, then add `-e LOCAL_BACKEND_API_KEY` to `docker run`. Docker passes the environment value into the container. Supply the same value on subsequent runs; an explicitly configured key takes precedence over the generated key file and does not replace that file.
+
+When automatic key delivery is disabled, users must enter this value in the UI. Do not enable automatic delivery to bypass authentication on a shared or public deployment.
 
 ## Stop Agent Canvas
 
