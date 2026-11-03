@@ -1,0 +1,268 @@
+---
+title: Configure the Docker Compose Stack
+sidebarTitle: Configuration
+description: Find the Docker Compose or web UI equivalent of each Replicated Admin Console setting
+icon: sliders
+---
+
+A [VM install](/enterprise/vm-install/admin-console-configuration) is configured in the Replicated
+Admin Console. The [Docker Compose](/enterprise/docker-compose) stack has no Admin Console. Its
+settings come from three places instead:
+
+- **The `.env` file** next to `docker-compose.yml`. It holds the hostname, database credentials,
+  and service secrets.
+- **The OpenHands web UI.** Super Admins configure login providers and instance settings there.
+  Users and organization admins configure LLMs and integrations there.
+- **A `docker-compose.override.yml` file**, for environment variables that the stack does not
+  expose in `.env`.
+
+This page maps each Admin Console setting to its Docker Compose equivalent.
+
+<Note>
+  This page describes the stack that ships with OpenHands Enterprise 1.84.0. The Compose stack is
+  experimental, and its settings can change between releases.
+</Note>
+
+## How the Stack Differs
+
+The Compose stack runs on one machine and leaves out several components of a VM install:
+
+- **One hostname.** The application, Agent Canvas (`/canvas`), the automation API, and sandboxes
+  (`/runtime/...`) share one address. There are no separate authentication, LLM proxy, runtime
+  API, or analytics hostnames.
+- **No Keycloak.** Users sign in with a password or with a login provider that a Super Admin adds
+  in `Super Admin` > `Auth Providers`.
+- **No LLM proxy.** There is no admin-managed model list. Each user adds an LLM provider and key in
+  `Settings`, and organization admins set a default LLM for the organization.
+- **Docker sandboxes.** The application starts each sandbox as a container on the Docker host. It
+  does not use Kubernetes pods.
+- **No analytics or plugin directory.** The Laminar analytics and Plugin Directory services are not
+  part of the stack.
+
+## Set Values in `.env`
+
+The stack reads only these variables from `.env`:
+
+| Variable | Purpose |
+|---|---|
+| `WEB_HOST`, `WEB_URL`, `AGENT_CANVAS_LOCK_TO_CLOUD` | The address that users open. Set all three when you do not use `localhost`. |
+| `APP_PORT` | The HTTP port. The default is `9043`. |
+| `COMPOSE_FILE` | Adds an HTTPS overlay. See [Run on a VM with HTTPS](/enterprise/docker-compose/https). |
+| `DB_USER`, `DB_PASS`, `DB_NAME`, `AUTOMATION_DB_NAME` | Database credentials and names. The default user and password are `openhands`. |
+| `AUTOMATION_SERVICE_KEY`, `AUTOMATION_WEBHOOK_SECRET`, `AUTOMATION_KV_SECRET` | Secrets shared by the application and the automation service. |
+| `OPENHANDS_LICENSE_KEY`, `LICENSE_SERVER_URL` | License reporting. |
+| `ENABLE_POSTHOG_ANALYTICS`, `POSTHOG_CLIENT_KEY` | Product telemetry. See [Telemetry](/enterprise/docker-compose#telemetry). |
+| `APP_IMAGE`, `AUTOMATION_IMAGE`, `AGENT_CANVAS_IMAGE` | Image overrides. |
+
+<Warning>
+  The defaults for the database password and the automation secrets are public. Change them before
+  other people can reach the stack.
+</Warning>
+
+## Set Other Variables with an Override File
+
+To set any other environment variable, create `docker-compose.override.yml` next to
+`docker-compose.yml`. Docker Compose merges it into the stack automatically. If you set
+`COMPOSE_FILE` in `.env`, add `docker-compose.override.yml` to that list.
+
+Set application variables on both the `app` and `worker` services. The worker copies the
+application's environment only inside `docker-compose.yml`, so an override on `app` alone does not
+reach it. A YAML anchor keeps the two lists the same:
+
+```yaml docker-compose.override.yml
+x-app-env: &app-env
+  LOG_LEVEL: DEBUG
+  SMTP_HOST: smtp.example.com
+
+services:
+  app:
+    environment: *app-env
+  worker:
+    environment: *app-env
+```
+
+Then restart the stack:
+
+```bash
+docker compose up --wait
+```
+
+<Note>
+  To turn on a web UI feature, set the `OH_WEB_CLIENT_FEATURE_FLAGS_<NAME>` form of its flag. The
+  stack already sets two variables in this form. Because of that, the web UI ignores the short
+  `ENABLE_<NAME>` form. The tables below list both names where the server also reads the short
+  form.
+</Note>
+
+## Settings Reference
+
+Each table follows the order of the Admin Console. **Not applicable** means that the component
+does not exist in the Compose stack. **Not available** means that the stack has no equivalent yet.
+
+### Domain Configuration
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Hostname Configuration Mode`, `Base Domain`, `Application Hostname` | `WEB_HOST`, `WEB_URL`, and `AGENT_CANVAS_LOCK_TO_CLOUD` in `.env`. |
+| `Authentication Hostname`, `LLM Proxy Hostname`, `Runtime API Hostname`, `Analytics Hostname` | Not applicable. |
+| `Runtime Base Hostname` | Not applicable. Sandboxes are served at `<WEB_URL>/runtime/<sandbox>/<port>`, so you do not need a wildcard certificate. |
+| `Additional Permitted CORS Origins` | Override `PERMITTED_CORS_ORIGINS` on `app` and `worker`. Keep the existing origin in the list. |
+
+### Certificate Configuration
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `TLS Certificate`, `TLS Private Key` | Use the `docker-compose.https-own-cert.yml` overlay with `certs/cert.pem` and `certs/key.pem`. Or use `docker-compose.https.yml` to get a Let's Encrypt certificate. See [Run on a VM with HTTPS](/enterprise/docker-compose/https). |
+| `Additional Trusted CA Certificates` | Not available. The certificate must come from a public certificate authority. |
+
+### LLM Configuration
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `LLM Provider`, provider API keys, and model lists | Web UI. Each user adds a provider, model, API key, and optional base URL in `Settings` > `Language Model (LLM)`. Organization admins set the organization's default LLM on the organization `Language Model (LLM)` page. A Super Admin also picks a starter LLM during first-run setup. |
+| Restricting users to the listed models | Not available. Users can choose any provider and model. |
+| Google Vertex AI service account file, Azure Entra ID service principal, AWS EC2 instance profile | Not available. Use provider API keys instead. |
+| `Allow users to configure their own LLM providers (BYOK)` | Always on. |
+| `Enable LLM Key Export (BYOR)`, `Drop Unsupported ... Parameters`, `LiteLLM Admin Password` | Not applicable. |
+
+### Default OpenHands Organization
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Enable Default OpenHands Organization` | The first-run setup creates your first organization. To add every user to one organization automatically, override `OPENHANDS_DEFAULT_ORG_ENABLED=true`. `OPENHANDS_DEFAULT_ORG_NAME` is optional. |
+| `Automatically Add Signed-In Users` | Override `OPENHANDS_DEFAULT_ORG_AUTO_ADD_USERS=true`. |
+| `Hide Personal Workspaces` | Override both `HIDE_PERSONAL_WORKSPACES=true` and `OH_WEB_CLIENT_FEATURE_FLAGS_HIDE_PERSONAL_WORKSPACES=true`. `Super Admin` > `Instance Settings` shows this value but cannot change it. |
+
+### Keycloak Administration and Authentication Security
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Keycloak Admin Password` | Not applicable. Manage users in `Super Admin` > `Users`. You can grant Super Admin, create sign-up links, and reset passwords there. |
+| `Prevent Duplicate Base Emails` | On by default. To turn it off, override `DUPLICATE_EMAIL_CHECK=false`. |
+
+### Login Providers and Integrations
+
+A Super Admin adds login providers in `Super Admin` > `Auth Providers` > `Add Provider`. Each
+preset fills in the provider's endpoints and scopes. Enter the client ID and client secret from your
+OAuth app, then turn on the provider. The edit page shows the redirect URL to register with the
+provider.
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| GitHub: `GitHub App Client ID`, `GitHub App Client Secret` | Web UI: the `GitHub` preset. |
+| GitHub: `GitHub App ID`, `GitHub App Slug`, `GitHub App Webhook Secret`, `GitHub App Private Key` | The GitHub resolver and webhooks need these. Override `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_WEBHOOK_SECRET`, and `GITHUB_APP_PRIVATE_KEY`. The application identifies the GitHub App by its client ID, so it does not read an app ID. |
+| GitLab: `GitLab OAuth Client ID`, `GitLab OAuth Client Secret` | Web UI: the `GitLab` preset. |
+| GitLab: `GitLab Host` | For self-managed GitLab, change the preset's URLs to your host and override `GITLAB_HOST`. The default host is `gitlab.com`. |
+| Bitbucket Data Center: `Client ID`, `Client Secret` | Web UI: the `Bitbucket Data Center` preset. |
+| Bitbucket Data Center: `Domain` | Change the preset's URLs to your host and override `BITBUCKET_DATA_CENTER_HOST`. |
+| Bitbucket Data Center: `Bot Token`, `Bot Username` | Override `BITBUCKET_DATA_CENTER_BOT_TOKEN` and `BITBUCKET_DATA_CENTER_BOT_USERNAME`. |
+| Azure DevOps: `Client ID`, `Client Secret`, `Microsoft Entra Tenant ID` | Web UI: the `Azure DevOps` preset. Replace `YOUR_TENANT_ID` in its URLs. Also override `AZURE_DEVOPS_TENANT_ID` and `AZURE_DEVOPS_WEBHOOK_SECRET`. |
+| Enterprise SSO (SAML): `Identity Provider Display Name`, `SAML Metadata URL` | Web UI: the `SAML` preset. The provider title is the button label. Google, Okta, and generic OAuth presets are also available. |
+| `Enable Jira Cloud Integration` | Override `ENABLE_JIRA=true`, `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_JIRA=true`, `JIRA_WEBHOOKS_ENABLED=true`, and `JIRA_ENABLE_OAUTH=false`. Then link the workspace in `Settings` > `Integrations`. |
+| Jira Data Center settings | Override `ENABLE_JIRA_DC=true`, `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_JIRA_DC=true`, `JIRA_DC_WEBHOOKS_ENABLED=true`, `JIRA_DC_SERVICE_ACCOUNT_EMAIL`, and `JIRA_DC_SERVICE_ACCOUNT_PAT`. Users link accounts with OAuth by default, which also needs `JIRA_DC_BASE_URL`, `JIRA_DC_CLIENT_ID`, and `JIRA_DC_CLIENT_SECRET`. To link accounts by email instead, set `JIRA_DC_ENABLE_OAUTH=false`. Then link the workspace in `Settings` > `Integrations`. |
+| Slack: `Slack Client ID`, `Slack Client Secret`, `Slack Signing Secret` | Override `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`, and `SLACK_WEBHOOKS_ENABLED=true`. Slack must be able to reach the stack over HTTPS. |
+
+### SMTP Email Delivery
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `SMTP Host`, `SMTP Port`, `SMTP From Email`, `Use SMTP SSL`, `Use SMTP STARTTLS`, `SMTP Username`, `SMTP Password` | Override `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM_EMAIL`, `SMTP_USE_SSL`, `SMTP_USE_TLS`, `SMTP_USERNAME`, and `SMTP_PASSWORD`. Without SMTP, share sign-up and password reset links from `Super Admin` > `Users`. |
+
+### Object Storage and Database
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Bundled object storage size` | Not applicable. The application stores files in the `app-filestore` Docker volume. |
+| `PostgreSQL Type`: Embedded | The stack includes a `db` service that runs PostgreSQL 16. |
+| `External PostgreSQL Host`, `External PostgreSQL Port` | Override `DB_HOST` and `DB_PORT` on `app` and `worker`. Override `AUTOMATION_DB_HOST` and `AUTOMATION_DB_PORT` on `automation-server`. |
+| `External PostgreSQL SSL Mode` | Override `DB_SSL_MODE` and `PGSSLMODE` on `app` and `worker`, and `AUTOMATION_DB_SSL_MODE` on `automation-server`. |
+| `External PostgreSQL Username`, `External PostgreSQL Password` | `DB_USER` and `DB_PASS` in `.env`. The automation service uses the same credentials. |
+| `OpenHands Database`, `Automations Database` | `DB_NAME` and `AUTOMATION_DB_NAME` in `.env`. |
+| `Keycloak Database`, `LiteLLM Database`, `Runtime API Database` | Not applicable. |
+| `Create Databases Automatically` | Always on. The application and the automation service create and migrate their databases on startup. |
+| `Automations Database User`, `Automations Database Password` | Override `AUTOMATION_DB_USER` and `AUTOMATION_DB_PASS` on `automation-server`. |
+
+### Sandbox Configuration
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Sandbox Isolation` | Not applicable. Sandboxes use the Docker host's default container runtime. |
+| `Sandbox Routing Mode` | Not applicable. Sandboxes always use path-based routing. |
+| `Idle Time (seconds)` | Override `OH_SANDBOX_LIFECYCLE_IDLE_SECONDS`. The default is `1200` (20 minutes). |
+| `Deletion Time (seconds)` | Override `OH_SANDBOX_LIFECYCLE_DELETE_AFTER_SECONDS`. The default is `864000` (10 days). |
+| `Storage Size`, `Ephemeral Storage Size`, `Memory Request`, `Memory Limit`, `CPU Request`, `CPU Limit` | Not available. Sandbox containers have no resource limits. |
+| `Warm Runtime Count`, `Runtime API Admin Password` | Not applicable. |
+| `Max Running Sandboxes per User` | Not available. Each user can run up to 5 sandboxes. When a user starts another one, OpenHands pauses that user's oldest sandbox. |
+| `Use a Custom Sandbox Image`, `Sandbox Image Repository`, `Sandbox Image Tag` | Override `AGENT_SERVER_IMAGE_REPOSITORY` and `AGENT_SERVER_IMAGE_TAG`. See [Custom Sandbox Images](/enterprise/custom-sandbox-images). |
+| `Registry Server`, `Registry Username`, `Registry Password or Credentials` | Run `docker login` on the Docker host. |
+| `Additional Host Path Mounts` | Override `SANDBOX_VOLUMES` with a comma-separated list of `host_path:container_path[:ro\|rw]`. |
+| `Enable /dev/kvm passthrough (QEMU/KVM)` | Override `SANDBOX_KVM_ENABLED=true`. The Docker host must expose `/dev/kvm`. |
+| `Run sandboxes on dedicated nodes` | Not applicable. |
+
+### Proxy Configuration
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Enable HTTP Proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL Verification` | Not available. |
+
+### Troubleshooting and Upgrade Checks
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Log Level` | Override `LOG_LEVEL`. The default is `INFO`. |
+| `Back Up Keycloak Database Before Upgrade`, `Pre-upgrade Budget Preflight`, `Post-upgrade Budget Reconciliation Gate` | Not applicable. See [Upgrade](/enterprise/docker-compose#upgrade). |
+
+### Experimental
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Enable Plugin Directory`, `Marketplace Source` | Not applicable. Users can add skill marketplaces in `Settings` > `Skills`. |
+| `Enable Super Admin Dashboard` | Always on. |
+| `Super Admin Emails` | The first user to sign up becomes a Super Admin. Grant the role to more users in `Super Admin` > `Users`. You can also override `SUPER_ADMIN_EMAILS` with a comma-separated list. |
+| `Enable OAuth V2 Login` | Always on. |
+
+### Analytics Configuration
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Enable Analytics`, `Laminar Project API Key`, `ClickHouse Diagnostic Log Retention` | Not applicable. |
+
+### Automations
+
+The automation service always runs. Set these variables on the `automation-server` service.
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Enable Automations` | Always on. |
+| `Conversation Archive Delay (seconds)` | Override `AUTOMATION_SANDBOX_CLEANUP_DELAY_SECONDS`. |
+| `Auto-disable After Permanent Failures` | Override `AUTOMATION_FAILURE_DISABLE_THRESHOLD`. When you do not set it, the service turns off an automation after 3 permanent failures. Set `0` to keep automations on. |
+| `Auto-disable After Consecutive Failures`, `Consecutive Failure Window (Hours)` | Override `AUTOMATION_CONSECUTIVE_FAILURE_DISABLE_THRESHOLD` and `AUTOMATION_CONSECUTIVE_FAILURE_DISABLE_WINDOW_HOURS`. |
+
+### Agent Canvas and Agent Features
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `Enable Agent Canvas` | Always on, at `/canvas`. |
+| `Enable Agent Profiles` | Off by default. Override `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_AGENT_PROFILES_PAGE=true`, `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_AGENT_CONTEXT_PAGE=true`, and `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_ORG_AGENT_PROFILES=true`. |
+| `Enable Model Routing` | Off by default. Override `ENABLE_MODEL_ROUTER=true` and `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_MODEL_ROUTER=true`. Then configure it on the organization `Model Router` page in `Settings`. |
+
+### Advanced Options
+
+| Admin Console setting | Docker Compose |
+|---|---|
+| `OpenHands Resolver Label` | Override `OH_RESOLVER_LABEL`. When you do not set it, an address that contains `local`, such as `localhost`, uses `openhands-exp`. Other addresses use `openhands`. |
+| `Enable Forwarding Client Headers Through LiteLLM to LLM Providers`, `Custom LLM Extra HTTP Headers (JSON)` | Not applicable. |
+| `Login Session Idle Timeout (seconds)`, `Login Session Max Duration (seconds)` | Not available. A login lasts up to 30 days. |
+| `Enable OEM User Creation Flow` | Override `USER_PROVISIONING_ENABLED=true`. |
+
+## Settings Only in the Web UI
+
+These settings have no Admin Console equivalent:
+
+- `Super Admin` > `Instance Settings`: company logo, company name, the setup guide, and
+  `Enable Service Accounts (beta)`.
+- `Super Admin` > `Auth Providers`: Google, Okta, generic OAuth, Bitbucket Cloud, and password
+  login. Each provider can allow or block new registrations, match existing users by email, and map
+  identity attributes.
+- `Super Admin` > `Users` and `Organizations`: disable users or organizations, and create sign-up
+  and password reset links.
