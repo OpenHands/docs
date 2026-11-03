@@ -9,11 +9,41 @@ import RunExampleCode from "/sdk/shared-snippets/how-to-run-example.mdx";
 
 ### Pausing Execution
 
-Pause the agent from another thread or after a delay using `conversation.pause()`, and
-Resume the paused conversation after performing operations by calling `conversation.run()` again.
+Request a pause from another thread using `conversation.pause()`. A pause is
+cooperative: it takes effect at the next step boundary, never in the middle of a
+step. Until then the conversation is `PAUSING`. At the boundary, the outcome
+depends on how the step ended:
 
-```python icon="python" focus={9, 15} wrap
+- The agent still has work to do: the conversation becomes `PAUSED` and emits a
+  `PauseEvent`. Call `conversation.run()` to resume.
+- The agent finished its answer: the conversation stays `FINISHED`. There is
+  nothing left to pause, and no `PauseEvent` is emitted. If a message was queued
+  during that step, the conversation becomes `PAUSED` instead so that resuming
+  picks the message up.
+- The step requires confirmation: the conversation stays
+  `WAITING_FOR_CONFIRMATION`. A pause does not approve pending actions.
+- The step failed: `ERROR` (or `STUCK`) is preserved.
+
+How long `PAUSING` lasts depends on the agent and the run mode:
+
+- With the synchronous `conversation.run()`, the state lock is held for the whole
+  step, so `pause()` blocks until the current step completes and the pause lands
+  almost immediately after it returns.
+- With `arun()`, `pause()` returns at once and the conversation is `PAUSING`
+  until the in-flight step completes.
+- For an ACP agent, one step is the entire remote prompt turn, which can run many
+  tool calls over minutes. Tool calls keep running during `PAUSING`; the next
+  queued prompt waits until you resume. To stop the turn itself, use
+  `conversation.interrupt()`, which cancels the in-flight `arun()`.
+
+Always wait for the running thread to finish and check the status before
+inspecting the workspace, approving actions, or resuming. For an ACP agent the
+`thread.join()` below can take as long as the current prompt turn.
+
+```python icon="python" wrap
+import threading
 import time
+
 thread = threading.Thread(target=conversation.run)
 thread.start()
 
@@ -22,6 +52,8 @@ time.sleep(5)
 
 print("Pausing the agent...")
 conversation.pause()
+thread.join()  # returns once the step boundary is reached
+print(f"Status after pause: {conversation.state.execution_status}")
 
 print("Waiting for 5 seconds...")
 time.sleep(5)
@@ -29,6 +61,26 @@ time.sleep(5)
 print("Resuming the execution...")
 conversation.run()
 ```
+
+### Pausing Through the Agent Server
+
+`POST /api/conversations/{id}/pause` requests the same cooperative pause. While a
+pause is pending, REST responses, WebSocket state updates, and webhooks keep
+reporting `running`; they report `paused` only once the step has actually
+stopped. The conversation webhook fired by `/pause` therefore still carries
+`running`; watch the event stream (`ConversationStateUpdateEvent` with
+`execution_status`) for the transition to `paused`. Searches and counts filtered
+by `running` include pending pauses, and a second `/run` while the original run
+is still active returns HTTP 409.
+
+If the Agent Server restarts while a conversation is pausing, that stale active
+state is recovered as `error`, exactly like an interrupted `running`
+conversation. The interrupted prompt is not replayed automatically.
+
+The Python SDK and TypeScript client already accept a `pausing` execution status
+in addition to `running`. Treat both as active work: neither means the agent has
+stopped modifying the workspace. Servers do not emit `pausing` yet; when they do,
+it will be announced in the release notes.
 
 ## Ready-to-run Example
 
