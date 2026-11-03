@@ -179,7 +179,7 @@ a change states something inaccurate, these are non-blocking: use `COMMENT` with
 - Enterprise docs cover self-hosted options only. Flag content that offers OpenHands Cloud as a
   deployment option.
 - The VM install is a last resort. Flag new content that suggests or links to it as a deployment
-  path. Existing VM install pages stay in the navigation, at the end of the Deployment section.
+  path. Existing VM install pages stay in the navigation.
 
 ### Tone: inspire confidence
 
@@ -205,11 +205,35 @@ a change states something inaccurate, these are non-blocking: use `COMMENT` with
 
 ### Navigation
 
-- The Enterprise tab is organized into Get Started, Deployment, Configuration, Integrations,
-  Features, and Administration. New pages must go in the matching section. Flag pages added as
-  long flat lists or in an unrelated section.
-- Group related pages into nested groups, which Mintlify collapses by default. When a group has an
-  overview page, set it as the group's `root` instead of listing it as a separate page.
+- The Enterprise tab has six top-level sections. New pages must go in the section that matches
+  what the reader is doing:
+  - **Get Started**: learning what OpenHands Enterprise is and how it's built.
+  - **Deployment**: sizing and installing OpenHands Enterprise.
+  - **Configuration**: platform settings that apply to any install method, such as SSO, LLM
+    gateways, sandbox images, the database, and observability.
+  - **Integrations**: connecting third-party tools, such as source control, project management,
+    and Slack.
+  - **Features**: what users do in OpenHands Enterprise, such as conversations, automations,
+    skills and plugins, and organizations.
+  - **Administration**: troubleshooting and release notes.
+- Flag new top-level sections, pages added as long flat lists, and pages in an unrelated section.
+  Mintlify always expands top-level sections, so each one lengthens the sidebar for every reader.
+- In Deployment, the Sizing Guide comes first, followed by one nested group per install method.
+  - Pages that apply to a single install method go in that method's group. For example, Admin
+    Console settings belong in VM Install, and enabling automations with Helm belongs in
+    Kubernetes. Pages that apply to every install method go outside those groups.
+  - Order pages in an install method's group in the order the reader works through them.
+    Prerequisites (cloud provider setup, Sysbox, DNS and TLS) come before the install guide, and
+    day-2 pages (resource limits, automations, upgrades) come after it.
+  - Mark an experimental install method with `"tag": "Experimental"` on its group. Flag a separate
+    Experimental section.
+- Group related pages into nested groups, which Mintlify collapses by default. In Integrations,
+  group tools by category (Source Control, Project Management). A tool without a category, such as
+  Slack, stays a single page.
+- Flag new groups that list their overview page as a separate entry. Set the overview page as the
+  group's `root` instead.
+- Add new release notes at the top of the Release Notes group, so the newest version comes first.
 - Keep sidebar labels short enough to fit on one line. When a page title is long, add a
   `sidebarTitle` to the frontmatter rather than shortening the page title (for example,
-  "Running Docker in the Agent Sandbox" uses `sidebarTitle: "Docker in the Sandbox"`).
+  "Running Docker in the Agent Sandbox" uses `sidebarTitle: "Docker in the Sandbox"`). A label can
+  rely on its group for context, such as "Sysbox" in Kubernetes or "AWS" in VM Install.
