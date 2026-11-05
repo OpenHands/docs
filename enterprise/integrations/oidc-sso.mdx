@@ -1,0 +1,264 @@
+---
+title: OIDC SSO
+description: Connect a compatible corporate OpenID Connect identity provider to OpenHands Enterprise through the managed Keycloak broker.
+icon: user-shield
+---
+
+Use OpenID Connect (OIDC) to let employees sign in through a corporate identity
+provider. Your provider authenticates the employee to the OpenHands-managed
+Keycloak broker; Keycloak then completes sign-in to OpenHands. These are separate
+connections. Keep the existing OpenHands-to-Keycloak client configuration in place.
+
+This guide covers the managed Helm and Replicated configuration. If your provider
+uses SAML, follow [SAML SSO](/enterprise/integrations/saml-sso) instead.
+
+## Prerequisites
+
+- An OpenHands Enterprise installation with managed OIDC support and working
+  application sign-in, model inference and conversation sandboxes.
+- Administrator access to register a web application in your identity provider.
+- Access to the Replicated Admin Console or your Helm deployment configuration.
+- HTTPS application and authentication hostnames, and network access to the
+  provider from browsers, Keycloak and the application provisioning process.
+- A saved copy of the existing deployment configuration and an administrator
+  who can recover it if sign-in fails.
+
+Check for `Identity Provider Protocol → OpenID Connect` in the Admin Console,
+or `enterpriseSSO.protocol` in your chart's values. Confirm the matching
+application version with your deployment administrator. Start with a small group
+of assigned users.
+
+<Note>
+  Do not replace an existing SAML broker with OIDC in place. The managed
+  integration rejects an existing broker with another protocol or owner, and
+  does not change an existing OIDC issuer or client ID. Plan a separate
+  installation or realm with OpenHands Support. This guide does not
+  cover migration of accounts, organization memberships or conversation ownership.
+  A new OIDC identity whose email already belongs to an existing OpenHands
+  account is rejected rather than automatically linked. Resolve existing-user
+  onboarding with OpenHands Support before rollout.
+</Note>
+
+## Check Provider Compatibility
+
+The provider must meet these requirements for this managed configuration:
+
+| Requirement | What to Check |
+| --- | --- |
+| Issuer | An exact HTTPS issuer, including any tenant or realm path |
+| Discovery | A document at `<issuer>/.well-known/openid-configuration`; its `issuer` must exactly match the configured value |
+| Endpoints | Discovery must provide `authorization_endpoint`, `token_endpoint`, `jwks_uri` and `userinfo_endpoint` on the same HTTPS origin as the issuer |
+| Application type | A confidential web client using Authorization Code |
+| Client authentication | Discovery must advertise `client_secret_basic` |
+| PKCE | Discovery must advertise `S256` |
+| Requested scopes | The provider must support `openid profile email` |
+| Identity claims | A stable `sub`, an `email`, and `email_verified` set to `true`; `given_name` and `family_name` supply profile names |
+
+The issuer and discovered endpoint URLs must not contain embedded credentials,
+query strings or fragments. The provisioning process does not follow discovery
+redirects. Providers whose discovery or endpoints do not meet these requirements
+are not supported by this configuration. Use
+[SAML SSO](/enterprise/integrations/saml-sso) if your provider supports it, or
+contact OpenHands Support. Do not disable these checks to make a provider fit.
+
+The broker reads the verified-email claim from the validated ID token, or from
+the subject-bound UserInfo response when that claim is absent from the ID token.
+An explicit false ID-token claim is not overridden by UserInfo. Configure claims
+at the provider; do not hardcode a true verification value to bypass a rejection.
+
+OIDC compatibility alone does not restrict access to your employees. Use your
+provider's supported application assignment and tenant or organization controls.
+A login hint or a matching email suffix alone is not an access policy.
+
+## Step 1: Register a Web Application
+
+1. Create a dedicated confidential web application in your provider's admin console.
+2. Enable the Authorization Code grant, client-secret Basic authentication and
+   S256 PKCE as required by the provider.
+3. Set the sign-in redirect URI to the broker endpoint below. Replace the
+   authentication hostname and confirm the realm selected by your installation:
+
+```text
+https://auth.openhands.example.com/realms/allhands/broker/enterprise_sso/endpoint
+```
+
+4. Configure the required scopes and claims from the compatibility table.
+   Keep the provider subject stable; do not substitute an email for the account ID.
+5. Assign only the users or groups permitted to use OpenHands. Retain the
+   organization's existing MFA requirements.
+6. Save the issuer, client ID and client secret securely.
+
+Find the Authentication Hostname and Keycloak Realm Name in your Replicated
+configuration. For Helm, your deployment administrator can confirm the external
+Keycloak hostname (`keycloak.ingress.hostname` for the bundled ingress) and the
+realm configured in the `keycloak-realm` Secret's `realm-name` key. Request the
+exact redirect URI from OpenHands Support if these values are unclear.
+
+`allhands` is the Replicated default realm; confirm the configured Helm realm.
+`enterprise_sso` is the managed broker alias.
+The redirect URI must match exactly. Do not enter the OpenHands application's
+own OAuth callback URL in the upstream provider.
+
+## Step 2: Configure OpenHands
+
+<Tabs>
+  <Tab title="Replicated">
+    Open your installation's
+    [Admin Console](/enterprise/vm-install/admin-console-configuration) and select
+    `Config`.
+
+    1. In `Enterprise SSO Authentication`, enable `Enable Enterprise SSO Authentication`.
+    2. Set `Identity Provider Protocol` to `OpenID Connect`.
+    3. Enter the application values:
+
+    | Field | Value |
+    | --- | --- |
+    | `OIDC Issuer URL` | Exact issuer returned by discovery |
+    | `OIDC Client ID` | Client ID from the dedicated web application |
+    | `OIDC Client Secret` | Client secret from that application |
+    | `Identity Provider Display Name` | Sign-in label, such as `Company SSO` |
+
+    4. Select `Save config`, review the pending changes and deploy the new sequence.
+    5. Wait for the application to return to `Ready` before testing sign-in.
+
+    Enter the client secret in its password field. The deployment manages the
+    Kubernetes Secret; you do not need to create it separately. SAML metadata
+    is not used for this connection.
+  </Tab>
+  <Tab title="Standalone Helm">
+    Create a Kubernetes Secret in the OpenHands release namespace using your
+    organization's secret-management workflow. Store the client secret under
+    `client-secret`, then merge this overlay into your existing values:
+
+    ```yaml
+    enterpriseSSO:
+      enabled: true
+      protocol: oidc
+      enforceOnly: false
+      displayName: "Company SSO"
+      idpMetadataUrl: ""
+      oidc:
+        issuerUrl: "https://idp.example.com/realms/company"
+        clientId: "YOUR_OIDC_CLIENT_ID"
+        existingSecret: "enterprise-oidc"
+        clientSecretKey: "client-secret"
+    ```
+
+    Replace the issuer and client ID with your application values, and
+    `existingSecret` with the Secret's name. `clientSecretKey` must match its key.
+    Keep `enforceOnly: false`: that enforcement option is SAML-only in this
+    managed configuration.
+
+    This example covers the bundled Keycloak and its managed realm provisioning.
+    Contact OpenHands Support for an external or split Keycloak deployment.
+
+    Preserve other values and secrets, review the rendered changes and deploy
+    the matching chart and application through your normal
+    [Helm procedure](/enterprise/k8s-install/installation).
+  </Tab>
+</Tabs>
+
+The managed broker is configured during application provisioning. Corporate
+OIDC sign-in is paused while provisioning updates its configuration. A failure
+after that pause can leave the broker disabled even if older application pods
+remain running. Schedule deployment changes for a suitable maintenance window,
+and confirm a fresh sign-in after the rollout. Keep persistent
+configuration in Helm or the Admin Console rather than editing the managed
+broker and login flows by hand.
+
+## Step 3: Verify Sign-In
+
+1. Open your OpenHands application in a private browser profile and select the
+   Enterprise SSO option or the configured display name.
+2. Sign in as an assigned employee and complete required MFA or onboarding.
+3. Confirm the expected account, email and profile name. Start a conversation
+   and confirm its sandbox works.
+4. Sign out and sign in again. Confirm the same account and history return.
+5. Repeat with a second assigned employee in a separate browser profile and
+   confirm each has the intended organization access.
+6. Confirm an unassigned test user is denied a fresh upstream sign-in.
+
+Start from OpenHands. Provider dashboard tile launch is not covered by this guide.
+App assignment does not by itself configure OpenHands organization membership or
+group-to-role synchronization. Manage those permissions separately.
+
+## Repository Connections and Access Removal
+
+OIDC sign-in does not grant repository access or select a user's Git identity.
+After signing in, users configure the required
+[repository integration](/enterprise/integrations/overview) separately. Confirm
+both provider authorization and access to the intended repositories.
+
+Enabling OIDC adds a sign-in option; it does not establish corporate-only login
+or disable other configured login methods. Review all available login routes
+with your administrator before relying on the IdP as the only entry path.
+
+Use the provider's access controls to deny a fresh upstream authentication,
+and allow for its assignment-change propagation time. Removing an assignment
+does not by itself end existing Keycloak/OpenHands sessions or revoke API keys
+and Git credentials. Complete your organization's access-removal process across those
+systems, and contact OpenHands Support for release-specific session and
+credential administration. OIDC sign-in alone does not provide SCIM provisioning.
+
+## Rotate the Client Secret
+
+Coordinate rotation with the provider and your deployment administrator. Keep
+the old secret active until a new upstream sign-in succeeds with the replacement.
+
+Provisioning temporarily pauses corporate sign-in; a failed update can leave it
+disabled. Schedule rotation with a recovery administrator available.
+
+With Helm, update the external Secret and have your deployment administrator
+roll out the `openhands` application Deployment using the procedure approved
+for your release. Updating that Secret alone, or
+applying unchanged values, does not restart application pods or apply the new
+secret to the broker. With Replicated, save and deploy the new secret through
+the Admin Console. Issuer or client ID changes require a separately planned
+realm or installation rather than secret rotation.
+
+## Troubleshooting
+
+### The Provider Rejects the Redirect URI
+
+Compare the exact authentication hostname, realm and
+`/broker/enterprise_sso/endpoint` path with the registered application. Check
+the user's effective assignment and tenant eligibility before resetting credentials.
+
+### Provisioning Fails
+
+Check the compatibility table, exact discovery issuer, endpoint origins, required
+discovery capabilities and Secret name/key. Confirm the application provisioning
+process can fetch discovery and Keycloak can reach the token, UserInfo and
+signing-key endpoints. Contact Support to confirm trust configuration for a
+private-CA issuer; do not disable TLS or token verification.
+
+Provide Support with your chart/application versions, sanitized provisioning
+errors and timestamps. Exclude client secrets, tokens and raw authentication responses.
+
+### Provisioning Reports an Ownership or Identity Conflict
+
+Do not overwrite a SAML broker, change an existing OIDC issuer/client identity,
+or run overlapping configuration changes to bypass the conflict. Contact
+OpenHands Support to review separate-realm and recovery options.
+
+### Provisioning Reports a Lock
+
+Pause further deployment attempts and contact OpenHands Support to identify and
+stop any active provisioning runs before recovering an abandoned lock. Do not
+delete the managed lock client while a provisioner may still be running; another
+run could then modify the same authentication configuration concurrently.
+
+### Email Verification Is Rejected
+
+Confirm `email_verified` is true in the validated ID token or, when
+absent there, in the matching UserInfo response. Missing or false verification
+prevents a new login session. Correct the provider's verified-email behavior
+rather than weakening verification.
+
+### An Existing Account Is Not Reused
+
+Repeat sign-in uses the same issuer and subject. A new identity with a conflicting
+email or username is rejected; the managed flow does not automatically merge
+accounts by email. Contact Support to review account-ownership and onboarding options. A rejected
+first login may leave a Keycloak record without an application session, so include
+those records in normal administrator review rather than retrying with another identity.
