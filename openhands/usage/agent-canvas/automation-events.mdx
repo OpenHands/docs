@@ -1,0 +1,294 @@
+---
+title: Event Sources
+description: Register custom webhook event sources in Agent Canvas under Automate → Events, connect an external service, and trigger automations from its events.
+---
+
+An **event source** is a webhook endpoint that lets an external service, such as a CI system, an incident tool, or your own app, start automations. You register the source once in **Automate** → **Events**. Agent Canvas gives you a webhook URL and a signing secret to configure in the external service. After that, any automation with an event trigger for that source runs when a matching event arrives.
+
+Use an event source when you want an automation to react to something as it happens. If you only need to check for changes now and then, a scheduled automation that polls the service is simpler and doesn't need a public URL.
+
+## How It Works
+
+Each webhook delivery goes through the same steps:
+
+```mermaid
+flowchart TD
+  A[External service sends signed JSON<br/>to the webhook URL] --> C{Signature valid?}
+  C -->|No| X[Rejected with 401]
+  C -->|Yes| D[Read the event key<br/>from the payload]
+  D --> E{Matches an<br/>automation trigger?}
+  E -->|No| Y[Accepted, no runs]
+  E -->|Yes| F[Start a run with<br/>the payload]
+```
+
+1. The external service sends a JSON payload to the source's webhook URL and signs it with the shared secret.
+2. The automation service checks the signature. Unsigned or wrongly signed requests are rejected.
+3. The **event key expression** reads an event name, such as `build.failed`, from the payload.
+4. Every enabled automation with an event trigger for this source is checked against that event name and its optional filter.
+5. Each matching automation starts a run. The full payload is added to the agent's prompt, so the agent can act on its contents.
+
+The source only receives and verifies events. Which events do something is decided by the automations that listen to the source.
+
+## Before You Start
+
+- **The webhook URL must be publicly reachable.** External services deliver events over the internet. A backend on `localhost` or a private network can't receive them until you expose it. See [Make a Local Backend Reachable](#make-a-local-backend-reachable).
+- **Your backend must support the Events page.** **Events** appears under **Automate** only when the backend's automation service declares it. If the automation service doesn't support custom webhooks, the page shows `Custom webhooks are not supported by this automation backend.`
+- **You need permission to manage automations to add a source.** Anyone who can view automations can see the list of sources and copy their URLs. Only users who can manage automations see **Add event source**.
+
+<Note>
+  GitHub, Jira Data Center, and Bitbucket Data Center are built-in sources on OpenHands Enterprise and don't need to be registered here. See [GitHub Event Automations](/enterprise/automations/github-events). The IDs `github`, `jira_dc`, and `bitbucket_data_center` are reserved for those integrations.
+</Note>
+
+## Key Terms
+
+| Term | What it is | Example |
+|------|------------|---------|
+| **Source ID** | A unique, permanent ID for the source. It ends the webhook URL and is what automations name as their event source. | `incident-alerts` |
+| **Webhook URL** | The address the external service sends events to. | `https://example.com/api/automation/v1/events/<org-id>/incident-alerts` |
+| **Signing secret** | A secret shared by OpenHands and the external service. The service uses it to sign each request, and OpenHands uses it to check the signature. | `whsec_…` |
+| **Event key** | The event name read from each payload. Automation triggers match against it. | `build.failed` |
+
+## Register an Event Source
+
+![Add event source form in Agent Canvas with Webhook name, Webhook source ID, Event key expression, Signature header, and Signing secret fields](/openhands/static/img/agent-canvas-automation-add-event-source.png)
+
+<Steps>
+  <Step title="Open the Events page">
+    In Agent Canvas, open **Automate** and select **Events** in the left navigation.
+  </Step>
+  <Step title="Open the form">
+    Click **Add event source**. The button changes to **Cancel**, which closes the form without saving.
+  </Step>
+  <Step title="Fill in the fields">
+    Enter a name and a source ID. Keep the defaults for the other fields unless the external service's documentation says otherwise. See [Form Fields](#form-fields) for details.
+  </Step>
+  <Step title="Add the source">
+    Click **Add event source** at the bottom of the form. The new source appears at the top of the list with its webhook URL.
+  </Step>
+  <Step title="Save the signing secret">
+    If you left **Signing secret** blank, OpenHands generates a secret and shows it in a **Your generated signing secret** panel. Click **Copy to clipboard** and store the secret somewhere safe, then click **Done**.
+  </Step>
+</Steps>
+
+<Warning>
+  A generated signing secret is shown only once. It is not shown again in the list, and reloading or switching backends clears it from the page. If you lose it, rotate the secret with the API. See [Manage Existing Sources](#manage-existing-sources).
+</Warning>
+
+If you pasted your own secret, the page confirms `Event source created. Your supplied secret was not displayed or stored in this page.` The secret is saved on the automation service, not in your browser.
+
+### Form Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| **Webhook name** | Yes | — | A label shown in the list, such as `PagerDuty incidents`. Up to 500 characters in the form. The automation service accepts up to 255. |
+| **Webhook source ID** | Yes | — | Lowercase letters, numbers, and hyphens, up to 50 characters. It must start and end with a letter or number. It must be unique in your organization and can't be changed later. |
+| **Event key expression** | Yes | `type` | A [JMESPath](https://jmespath.org/) expression that reads the event name from each payload. See [Choose an Event Key Expression](#choose-an-event-key-expression). |
+| **Signature header** | Yes | `X-Signature-256` | The HTTP header that carries the request signature. Use the header name the external service sends. |
+| **Signing secret** | No | Generated | Leave blank to have OpenHands generate a secret. If the external service gives you a secret, paste it here. It must be 8 to 255 characters. |
+
+## Connect the External Service
+
+In the external service's webhook settings:
+
+1. Set the URL to the source's webhook URL. Click **Copy webhook URL** on the source in the list.
+   - On a local backend, the URL starts with `http://localhost`. Keep the path and replace the start with your public address. See [Make a Local Backend Reachable](#make-a-local-backend-reachable).
+2. Set the content type to JSON. The request body must be a JSON object.
+3. Enter the signing secret.
+4. Select the events you want the service to send.
+
+### Signature Requirements
+
+OpenHands checks each request with an **HMAC-SHA256** signature of the raw request body, written as lowercase hex. The header value can be the bare hex digest or the same digest with a `sha256=` prefix:
+
+```text
+X-Signature-256: sha256=<hex HMAC-SHA256 of the raw request body>
+```
+
+Services that sign this way, such as Linear and services that follow GitHub's format, work directly. Services that sign something other than the raw body, or use a different format, can't be verified and every delivery is rejected with `401`. This includes:
+
+- **Stripe** — signs a timestamp with the body and sends `t=…,v1=…`.
+- **Slack** — signs `v0:<timestamp>:<body>` and sends `v0=…`.
+- **Twilio** — signs the request URL and parameters with HMAC-SHA1.
+- **Standard Webhooks** — signs the message ID, timestamp, and body, and sends base64.
+
+To connect one of these services, put a small relay in between. The relay checks the service's own signature, then forwards the body to OpenHands signed with HMAC-SHA256.
+
+## Trigger an Automation from the Source
+
+A registered source does nothing on its own. Create an automation with an event trigger that listens to it:
+
+1. Open the automation [setup assistant](/openhands/usage/agent-canvas/managing-automations#create-an-automation-with-the-setup-assistant).
+2. Choose the event trigger and set **Event source** to your source ID, such as `incident-alerts`.
+3. Set **Event key** to the event names that should start a run.
+4. Optionally, add an **Event filter** to narrow the events further.
+
+You can also describe the automation to the setup assistant, for example: "When `incident-alerts` sends an `incident.triggered` event with high urgency, summarize the incident and suggest a first response." The assistant fills in the trigger for you.
+
+### Event Key Patterns
+
+The event key in the trigger is compared to the event key read from each payload:
+
+| Pattern | Matches |
+|---------|---------|
+| `build.failed` | Only `build.failed` |
+| `build.*` | `build.failed`, `build.passed`, and any other `build.` event |
+| `*` | Every event from the source |
+
+An automation can list more than one pattern. It runs if any pattern matches.
+
+### Event Filters
+
+A filter is a JMESPath expression checked against the payload. The automation runs only when it returns a true value. For example:
+
+```text
+build.branch == 'main'
+icontains(incident.title, 'database')
+contains(labels, 'urgent') && build.branch == 'main'
+```
+
+See [Filtering Events](/openhands/usage/automations/event-automations#filtering-events) for the available functions.
+
+### What the Agent Receives
+
+When an event starts a run, the payload is added to the start of the agent's prompt under an **Event Payload** heading, followed by your prompt under **Task**. Write the prompt with that in mind, for example: "Read the failing build in the event payload and open an issue with the error output."
+
+Script automations receive the same data as JSON in the `AUTOMATION_EVENT_PAYLOAD` environment variable, under the `event` key.
+
+## Choose an Event Key Expression
+
+The event key expression tells OpenHands where to find the event name in each payload. The default, `type`, works for services that send a top-level `type` field. Look at a sample payload from the service and point the expression at the field that names the event.
+
+| Payload | Expression | Event key |
+|---------|------------|-----------|
+| `{"type": "build.failed"}` | `type` | `build.failed` |
+| `{"event": {"type": "incident.triggered"}}` | `event.type` | `incident.triggered` |
+| `{"event_name": "order"}` or `{"type": "order"}` | `type \|\| event_name` | `order` |
+| `{"category": "issue", "action": "opened"}` | `join('.', [category, action])` | `issue.opened` |
+
+The expression must return a string. Numbers and booleans are converted to strings. If the expression returns nothing for a payload, that delivery is rejected with `400`, and the error lists the payload's top-level keys to help you fix the expression.
+
+## Send a Test Event
+
+You can check a source before connecting the real service by sending a signed request yourself. Replace the URL and secret with your own:
+
+```bash
+WEBHOOK_URL="https://your-public-host/api/automation/v1/events/<org-id>/incident-alerts"
+SECRET="your-signing-secret"
+BODY='{"type":"incident.triggered","incident":{"title":"Database latency","urgency":"high"}}'
+
+SIGNATURE=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')
+
+curl -X POST "$WEBHOOK_URL" \
+  -H "Content-Type: application/json" \
+  -H "X-Signature-256: sha256=$SIGNATURE" \
+  -d "$BODY"
+```
+
+If you changed **Signature header**, use that header name. Sign the exact bytes you send: any change to the body, even whitespace, makes the signature invalid.
+
+A successful response looks like this:
+
+```json
+{"received": true, "matched": 1, "runs_created": ["<run-id>"]}
+```
+
+`matched` is the number of automations whose trigger matched the event. A response with `"matched": 0` means the source works, but no enabled automation listens for that event key. Each run in `runs_created` appears in the automation's run history.
+
+<Note>
+  A test event is a real event. If it matches an automation, that automation runs.
+</Note>
+
+## Make a Local Backend Reachable
+
+On a local or private backend, the webhook URL starts with that backend's own address, such as `http://localhost:8000`. External services can't reach it. To receive events:
+
+1. Expose the Canvas ingress (port `8000` by default) with a public URL, such as an [ngrok](https://ngrok.com/) tunnel. See [VM / Self-Hosted Installation](/openhands/usage/agent-canvas/backend-setup/vm#option-b-ngrok-without-oauth).
+2. In the external service, use the public address with the same path. For example, `http://localhost:8000/api/automation/v1/events/<org-id>/incident-alerts` becomes `https://your-domain.ngrok-free.app/api/automation/v1/events/<org-id>/incident-alerts`.
+
+<Warning>
+  Exposing the ingress puts the whole backend on the internet. Use a strong `LOCAL_BACKEND_API_KEY` and keep it private.
+</Warning>
+
+If you can't expose the backend, use a scheduled automation that polls the service's API instead.
+
+## Manage Existing Sources
+
+The Events page lists sources newest first, 50 at a time. Click **Load more event sources** to see more. Each source shows its name, source ID, status (**Active** or **Inactive**), and webhook URL.
+
+The page doesn't edit, disable, or delete sources yet. Use the automation API for these tasks. You'll need the source's `id`, which you get from the list endpoint.
+
+<Tabs>
+  <Tab title="Local Agent Canvas">
+    Use your Canvas ingress URL and the backend API key from **Manage Backends**:
+
+    ```bash
+    export OPENHANDS_HOST="http://localhost:8000"
+    export AUTH_HEADER="X-Session-API-Key: your-backend-api-key"
+    ```
+  </Tab>
+  <Tab title="OpenHands Enterprise">
+    Use your instance URL and an API key from **Settings → API Keys**:
+
+    ```bash
+    export OPENHANDS_HOST="https://your-openhands-enterprise-host"
+    export AUTH_HEADER="Authorization: Bearer your-openhands-api-key"
+    ```
+  </Tab>
+</Tabs>
+
+```bash
+# List sources and their IDs
+curl "$OPENHANDS_HOST/api/automation/v1/webhooks" -H "$AUTH_HEADER"
+
+# Disable a source (deliveries are rejected until you re-enable it)
+curl -X PATCH "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>" \
+  -H "$AUTH_HEADER" -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+
+# Change the name, event key expression, or signature header
+curl -X PATCH "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>" \
+  -H "$AUTH_HEADER" -H "Content-Type: application/json" \
+  -d '{"event_key_expr": "event.type"}'
+
+# Generate a new signing secret (the old one stops working immediately)
+curl -X POST "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>/rotate-secret" -H "$AUTH_HEADER"
+
+# Delete a source
+curl -X DELETE "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>" -H "$AUTH_HEADER"
+```
+
+- The source ID can't be changed. To use a new ID, add a new source and update the automations that use it.
+- After rotating the secret, update it in the external service right away. Deliveries signed with the old secret fail.
+- Deleting or disabling a source doesn't change automations that listen to it, but they stop receiving events.
+
+## Troubleshooting
+
+### Messages on the Events Page
+
+| Message | Cause | What to do |
+|---------|-------|------------|
+| `That source identifier is already registered.` | Another source in your organization uses this source ID. | Pick a different ID, or use the existing source. |
+| `Could not create the event source. Check the fields and try again.` | The automation service rejected the request. | Check the fields against [Form Fields](#form-fields). A reserved ID such as `github` shows the service's own error message instead. |
+| `Could not load event sources.` | The request failed, or you don't have permission to view automations. | If a **Retry** button appears, click it. Without one, ask an admin to check your role. If it keeps failing, check the backend's health. |
+| `Custom webhooks are not supported by this automation backend.` | The automation service doesn't provide the webhooks API. | Update the backend's automation service. |
+
+### Delivery Responses
+
+The external service sees these responses. Most services show them in their webhook delivery log.
+
+| Response | Cause | What to do |
+|----------|-------|------------|
+| `401 Missing signature header: <header>` | The request has no header with the configured name. | Set **Signature header** to the header the service actually sends. |
+| `401 Invalid signature` | The secret doesn't match, or the service signs in a format OpenHands doesn't support. | Check the secret, and see [Signature Requirements](#signature-requirements). |
+| `404 Unknown webhook source: <id>` | The source ID or organization in the URL is wrong, or the source is disabled. | Copy the URL again from the Events page, and check that the source is **Active**. |
+| `400 Invalid JSON` | The body is not valid JSON. | Set the service's content type to JSON. |
+| `400 Failed to parse event` | The event key expression returned nothing for this payload. | Fix the expression. See [Choose an Event Key Expression](#choose-an-event-key-expression). |
+| `200` with `"matched": 0` | The event arrived, but no enabled automation matched it. | Check the automation's event source, event key pattern, and filter, and that the automation is turned on. |
+
+If the service shows a timeout or connection error instead, it can't reach the webhook URL. See [Make a Local Backend Reachable](#make-a-local-backend-reachable).
+
+## Related Guides
+
+- [Managing Automations](/openhands/usage/agent-canvas/managing-automations)
+- [Event-Based Automations](/openhands/usage/automations/event-automations) — register sources with the API and a Linear walkthrough
+- [GitHub Event Automations](/enterprise/automations/github-events)
