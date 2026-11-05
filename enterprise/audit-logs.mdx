@@ -1,0 +1,181 @@
+---
+title: Audit Logs
+description: Find sign-ins and administrative actions in the OpenHands Enterprise logs and send them to your SIEM.
+icon: clipboard-list
+---
+
+OpenHands Enterprise (OHE) does not have a dedicated audit log or an audit log screen. Instead, the
+OpenHands service writes a structured log event for each sign-in and for most administrative actions.
+To build an audit trail, send these logs to your SIEM or observability platform and keep the events
+listed on this page.
+
+## Where the Events Are
+
+Two services in the `openhands` namespace write the events:
+
+| Service | Pod | Container | Contains |
+|---|---|---|---|
+| OpenHands | `openhands-<id>` | `openhands` | Sign-ins and administrative actions, one JSON object per line. |
+| Keycloak | `keycloak-0` | `keycloak` | Failed sign-in attempts. |
+
+An OpenHands event looks like this:
+
+```json
+{"message": "super_admins:grant", "severity": "INFO", "module": "super_admins", "funcName": "grant_super_admin", "lineno": 211, "caller_user_id": "6f1c2a9e-…", "target_user_id": "0a9b8c7d-…", "ts": "2026-11-03T14:16:33.280009+00:00"}
+```
+
+Every event has these fields:
+
+- `message`: the event name. Filter on this field.
+- `severity`: the log level.
+- `ts`: the time of the event, in UTC.
+- `module`, `funcName`, and `lineno`: where in the OpenHands code the event was written.
+
+The other fields depend on the event and are listed in the [Event Reference](#event-reference).
+`caller_user_id` is the user who performed the action, and `target_user_id` is the user the action
+was performed on. User fields hold OpenHands user IDs, not email addresses. See
+[Match User IDs to Email Addresses](#match-user-ids-to-email-addresses).
+
+## Collect the Events
+
+<Tabs>
+  <Tab title="VM Install">
+    Follow [Log Collection](/enterprise/vm-install/log-collection) to install your log agent on each
+    VM. To collect only the services that write audit events, tail these files:
+
+    ```
+    /var/log/containers/openhands-*_openhands_openhands-*.log
+    /var/log/containers/keycloak-0_openhands_keycloak-*.log
+    ```
+  </Tab>
+  <Tab title="Kubernetes Install">
+    Use your cluster's existing log pipeline. Collect the `openhands` and `keycloak` containers in
+    the namespace where OHE is installed, which is `openhands` by default.
+  </Tab>
+</Tabs>
+
+Then configure your log platform:
+
+1. Parse each OpenHands log line as JSON.
+2. Keep the lines whose `message` field matches an event in the [Event Reference](#event-reference).
+   This regular expression matches all of them:
+
+   ```
+   ^(user_logged_in|idp:|admin:|admin_users:|super_admins:|provision_user:|org:service_accounts:|default_org_bootstrap:member_added|Creating (batch )?organization invitations?|Organization invitation)
+   ```
+
+3. Keep the Keycloak lines that contain `type="LOGIN_ERROR"`.
+4. Set the retention period in your log platform. The VM keeps only about 50 MB of recent output per
+   service, so the log agent must run continuously.
+
+To check that events are being written, list the recent ones from the OpenHands service:
+
+```bash
+kubectl -n openhands logs deploy/openhands --since=24h \
+  | grep -E '"message": "(user_logged_in|admin:|super_admins:)'
+```
+
+On a VM install, run `kubectl` from the shell described in
+[Troubleshooting](/enterprise/troubleshooting).
+
+## Event Reference
+
+### Sign-In
+
+| Event | When | Fields |
+|---|---|---|
+| `user_logged_in` | A user signs in. | `user_id`, `idp`, `idp_type` |
+| `idp:user_logged_in` | A user signs in with the built-in email and password sign-in. | `user_id`, `is_new_user` |
+| `idp:password_set` | A user sets a password for the built-in sign-in. | `user_id` |
+
+Keycloak writes failed sign-in attempts at the `WARN` level:
+
+```
+WARN  [org.keycloak.events] … type="LOGIN_ERROR", realmId="…", realmName="…", clientId="…", userId="…", ipAddress="…", error="invalid_user_credentials", …, username="…"
+```
+
+### Users and Super Admins
+
+These events record actions taken from the Super Admin dashboard or the admin API.
+
+| Event | When | Fields |
+|---|---|---|
+| `super_admins:grant` | A user is made a super admin. | `caller_user_id`, `target_user_id` |
+| `super_admins:revoke` | A user's super admin access is removed. | `caller_user_id`, `target_user_id` |
+| `admin_users:lifecycle` | A user is disabled or enabled. `operation` is `disable_user` or `enable_user`. | `caller_user_id`, `target_user_id`, `operation` |
+| `admin:users:status` | A user's account status changes. | `caller_user_id`, `target_user_id`, `status` |
+| `admin:users:delete` | A user is deleted. | `caller_user_id`, `target_user_id` |
+| `admin:users:groups` | A user's organization memberships change. `action` is `add`, `remove`, `set_role`, `suspend`, or `resume`. | `caller_user_id`, `target_user_id`, `action`, `org_ids` |
+| `idp:signup_link_created` | A super admin creates a sign-up link. | `caller_user_id`, `email`, `org_id`, `role` |
+| `provision_user:created` | A user is created through the provisioning API. | `caller_user_id`, `kc_user_id`, `openhands_user_id`, `target_org_id`, `provisioned_role` |
+| `provision_user:added_to_org` | An existing user is added to an organization through the provisioning API. | Same as `provision_user:created` |
+| `provision_user:reprovisioned` | A user is provisioned again through the provisioning API. | Same as `provision_user:created` |
+
+### Organizations and Invitations
+
+| Event | When | Fields |
+|---|---|---|
+| `Creating organization invitation` | A user is invited to an organization. | `org_id`, `email`, `role_name`, `inviter_id` |
+| `Creating batch organization invitations` | Several users are invited at once. | `org_id`, `email_count`, `role_name`, `inviter_id` |
+| `Organization invitation accepted` | A user accepts an invitation. | `invitation_id`, `user_id`, `org_id`, `role_id` |
+| `Organization invitation accepted via email match at login` | A user joins an organization when they sign in with an invited email address. | `invitation_id`, `user_id`, `org_id` |
+| `Organization invitation revoked` | An invitation is revoked. | `invitation_id`, `org_id` |
+| `idp:signup_link_added_to_org` | A user joins an organization through a sign-up link. | `user_id`, `org_id` |
+| `idp:signup_link_granted_super_admin` | A user becomes a super admin through a sign-up link. | `user_id` |
+| `default_org_bootstrap:member_added` | A user is added to the default organization. | `user_id`, `org_id`, `role` |
+| `admin:organizations:status` | A super admin changes an organization's status. | `caller_user_id`, `org_id`, `status` |
+| `admin:organizations:delete` | A super admin deletes an organization. | `caller_user_id`, `org_id` |
+
+### Service Accounts and Instance Settings
+
+| Event | When | Fields |
+|---|---|---|
+| `org:service_accounts:<operation>` | A service account changes. `<operation>` is `create`, `update`, `disable`, `enable`, `delete`, `secret_put`, or `secret_delete`. | `caller_user_id`, `org_id`, `service_account_id` |
+| `admin:instance_settings:update` | A super admin changes instance settings. | `caller_user_id`, `fields` |
+| `admin:setup_state:update` | A super admin changes the first-install setup state. | `caller_user_id`, `fields` |
+
+## Match User IDs to Email Addresses
+
+A super admin can list every user with their ID and email address. Use an API key that belongs to a
+super admin:
+
+```bash
+curl -s "https://app.<your-base-domain>/api/admin/directory/users" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Each entry in `users` has a `user_id` and an `email`. Export this list on a schedule and use it as a
+lookup table in your log platform. With the default sign-in flow, the OpenHands user ID is the same as
+the `userId` in Keycloak events.
+
+## Limitations
+
+- **Organization role changes and removals made by organization owners and admins do not name the
+  user who made them.** These changes are made on the organization's members page. The HTTP access log
+  records a `PATCH` or `DELETE` request to `/api/organizations/<org-id>/members/<user-id>` with its
+  status code, but not the user who sent it. A removal also writes
+  `Successfully removed user from LiteLLM team` with the `user_id` and `org_id` of the removed member.
+  The same changes made from the Super Admin dashboard write `admin:users:groups`.
+- **Sign-outs are not recorded.**
+- **Keycloak does not log successful sign-ins or changes made in the Keycloak admin console.** Turning
+  on events in the Keycloak admin console does not last. OpenHands applies its own Keycloak realm
+  settings each time the OpenHands service starts, and those settings turn events off.
+- **No sign-in event is written when OAuth V2 Login is on.** If you turned on `Enable OAuth V2 Login`
+  in the Admin Console's Experimental options, `user_logged_in` is not written.
+- **Some changes are not recorded.** These include API keys, organization secrets, MCP servers, git
+  provider connections, and an organization's LLM and app settings.
+- **OpenHands events do not include the client IP address.** The HTTP access log shows an internal
+  cluster address instead of the user's address.
+- **Event names can change between releases.** They are log messages, not a versioned interface.
+  Check the release notes when you upgrade.
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="Log Collection" icon="file-lines" href="/enterprise/vm-install/log-collection">
+    Send logs from a VM installation to your observability platform.
+  </Card>
+  <Card title="Roles and Permissions" icon="user-shield" href="/openhands/usage/cloud/organizations/roles-permissions">
+    See which roles can manage members and settings.
+  </Card>
+</CardGroup>
