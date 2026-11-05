@@ -309,9 +309,11 @@ Released <Month Day, Year>.
 
 ### 7. Update navigation
 
-Add the new release page to `docs.json` under the Enterprise tab in a "Release Notes" group.
+Add the new release page to `docs.json` in the "Release Notes" group, which is nested in the
+Administration section of the Enterprise tab.
 
-**First time setup:** If there's no "Release Notes" group yet in the Enterprise tab, create one:
+**First time setup:** If there's no "Release Notes" group yet, create one at the end of the
+Administration section:
 
 ```json
 {
@@ -335,9 +337,6 @@ so the most recent release appears first in the navigation:
   ]
 }
 ```
-
-The "Release Notes" group should appear after the other Enterprise documentation groups (like
-"OpenHands Enterprise" and "Integrations") in the Enterprise tab navigation.
 
 ### 8. Commit
 

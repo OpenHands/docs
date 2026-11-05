@@ -142,6 +142,21 @@ Match the event to the severity of your findings:
 - Check that internal links use absolute doc paths (e.g., `/overview/quickstart`)
 - Verify code blocks with file references use the correct sync format (see `sdk-guidelines.md`)
 
+### Make the reader the actor
+
+Write task-oriented sentences around what the reader does, not what a tool or product does. Put
+the reader's action or goal first, usually as an imperative ("Use X to…", "Give X…", "Run X…").
+Flag sentences where a tool or product is the subject and the reader is left out, especially in
+intros and step descriptions.
+
+| Avoid | Prefer |
+|-------|--------|
+| ngrok gives the Docker Compose stack a public HTTPS URL. | Use ngrok to give the Docker Compose stack a public HTTPS URL. |
+| The Docker Compose stack runs OpenHands Enterprise on a single machine. | Use Docker Compose to run OpenHands Enterprise on a single machine. |
+
+Describing what a component is, for example on an architecture page, is fine with the component as
+the subject. This rule applies when the sentence is about a task the reader performs.
+
 ### SDK guide file naming convention
 
 SDK guide files under `sdk/guides/` **must** use a category prefix:
@@ -151,3 +166,74 @@ SDK guide files under `sdk/guides/` **must** use a category prefix:
 - `convo-` for Conversation-related guides (e.g., `convo-async.mdx`, `convo-persistence.mdx`)
 
 Flag any new SDK guide that does not follow this naming convention.
+
+## Enterprise
+
+Apply these checks to changes under `enterprise/` and to the Enterprise tab in `docs.json`. Unless
+a change states something inaccurate, these are non-blocking: use `COMMENT` with a suggested rewrite.
+
+### Deployment positioning
+
+- Recommend **Docker Compose for trials and proofs of concept** and **Kubernetes (Helm) for
+  production**. Flag content that presents them differently.
+- Enterprise docs cover self-hosted options only. Flag content that offers OpenHands Cloud as a
+  deployment option.
+- The VM install is a last resort. Flag new content that suggests or links to it as a deployment
+  path. Existing VM install pages stay in the navigation.
+
+### Tone: inspire confidence
+
+- State a limitation once, in plain inline text. Flag caveats that repeat across sections or pages
+  (for example, a "use Kubernetes for production" reminder in the intro, a callout, and a closing
+  "Next steps" section on the same page).
+- Flag excessive `<Note>`, `<Warning>`, and `<Info>` blocks. Most information belongs in the body
+  text. Reserve callouts for something the reader would otherwise get wrong.
+
+### Keep instructions simple
+
+- Prefer the shortest path that works. For the Docker Compose install, that is
+  `git clone https://github.com/OpenHands/enterprise.git`, `cd enterprise`, and
+  `docker compose up --wait`. Flag version lookups, file downloads, or extra flags that add steps
+  without adding value.
+- Point readers at the product's own flows instead of describing every click. For example, "Open
+  `http://localhost:9043` and follow the onboarding flow to create your first user and configure
+  your LLM provider" beats deep links to sign-up URLs or instructions to open Settings.
+- Keep prerequisite lists short: name the tool or credential (Git, Docker and Docker Compose, an LLM
+  API key) without explaining it.
+- Verify Docker Compose and Helm claims (ports, variables, commands) against
+  [`OpenHands/enterprise`](https://github.com/OpenHands/enterprise).
+
+### Navigation
+
+- The Enterprise tab has six top-level sections. New pages must go in the section that matches
+  what the reader is doing:
+  - **Get Started**: learning what OpenHands Enterprise is and how it's built.
+  - **Deployment**: sizing and installing OpenHands Enterprise.
+  - **Configuration**: platform settings that apply to any install method, such as SSO, LLM
+    gateways, sandbox images, the database, and observability.
+  - **Integrations**: connecting third-party tools, such as source control, project management,
+    and Slack.
+  - **Features**: what users do in OpenHands Enterprise, such as conversations, automations,
+    skills and plugins, and organizations.
+  - **Administration**: troubleshooting and release notes.
+- Flag new top-level sections, pages added as long flat lists, and pages in an unrelated section.
+  Mintlify always expands top-level sections, so each one lengthens the sidebar for every reader.
+- In Deployment, the Sizing Guide comes first, followed by one nested group per install method.
+  - Pages that apply to a single install method go in that method's group. For example, Admin
+    Console settings belong in VM Install, and enabling automations with Helm belongs in
+    Kubernetes. Pages that apply to every install method go outside those groups.
+  - Order pages in an install method's group in the order the reader works through them.
+    Prerequisites (cloud provider setup, Sysbox, DNS and TLS) come before the install guide, and
+    day-2 pages (resource limits, automations, upgrades) come after it.
+  - Mark an experimental install method with `"tag": "Experimental"` on its group. Flag a separate
+    Experimental section.
+- Group related pages into nested groups, which Mintlify collapses by default. In Integrations,
+  group tools by category (Source Control, Project Management). A tool without a category, such as
+  Slack, stays a single page.
+- Flag new groups that list their overview page as a separate entry. Set the overview page as the
+  group's `root` instead.
+- Add new release notes at the top of the Release Notes group, so the newest version comes first.
+- Keep sidebar labels short enough to fit on one line. When a page title is long, add a
+  `sidebarTitle` to the frontmatter rather than shortening the page title (for example,
+  "Running Docker in the Agent Sandbox" uses `sidebarTitle: "Docker in the Sandbox"`). A label can
+  rely on its group for context, such as "Sysbox" in Kubernetes or "AWS" in VM Install.
