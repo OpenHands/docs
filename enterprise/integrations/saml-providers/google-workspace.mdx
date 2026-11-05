@@ -1,0 +1,224 @@
+---
+title: Google Workspace
+description: Configure Google Workspace SAML sign-in for OpenHands Enterprise with Helm or Replicated.
+icon: google
+---
+
+Connect a Google Workspace custom SAML app to OpenHands Enterprise so employees
+can sign in with their managed Google accounts. Google authenticates users through
+the installation's managed Keycloak broker, which completes OpenHands sign-in
+using OIDC. You do not need to create a Google OAuth client.
+
+## Prerequisites
+
+- An OpenHands Enterprise installation with managed Keycloak and working
+  application sign-in, model inference, and a conversation sandbox.
+- Google Workspace super-administrator access to create a custom SAML app and
+  control its user access.
+- HTTPS application and Authentication hostnames with trusted certificates.
+- Two dedicated Google Workspace test accounts with different primary emails,
+  unused by existing OpenHands accounts. Complete their first-login requirements
+  and required 2-Step Verification enrollment before testing SAML.
+- An organization-controlled HTTPS endpoint for Google's downloaded metadata,
+  reachable by the OpenHands provisioning process without interactive sign-in.
+- Administrator access to recover the installation and its previous configuration.
+
+Use a test installation first. Replace `app.openhands.example.com` and
+`auth.openhands.example.com` below with your installation's hostnames. The
+examples use the default realm `allhands` and broker alias `enterprise_sso`.
+Confirm a custom realm with OpenHands Support before changing the URLs.
+Do not replace an existing identity provider without an account-migration plan.
+
+## Step 1: Create the Google SAML App
+
+1. Sign in to the [Google Admin console](https://admin.google.com/) as a super administrator.
+2. Open `Apps → Web and mobile apps`.
+3. Select `Add app → Add custom SAML app` and name it `OpenHands`.
+4. On the Google identity provider details screen, download the IdP metadata.
+5. Continue to the service provider details and enter the following values:
+
+| Google field | Value |
+| --- | --- |
+| ACS URL | `https://auth.openhands.example.com/realms/allhands/broker/enterprise_sso/endpoint` |
+| Entity ID | `https://auth.openhands.example.com/realms/allhands` |
+| Start URL | Leave empty; employees start from OpenHands |
+| Name ID format | `EMAIL` |
+| Name ID | `Basic Information → Primary email` |
+
+Google signs the assertion by default. The `Signed response` option additionally
+signs the response. Keep assertion signing enabled and retain the active Google
+signing certificate in the metadata. See
+[Google's custom SAML app instructions](https://knowledge.workspace.google.com/admin/apps/set-up-your-own-custom-saml-app).
+
+On the attribute mapping screen, add these mappings. App attribute names are
+case-sensitive:
+
+| Google Directory attribute | App attribute |
+| --- | --- |
+| `Basic Information → Primary email` | `email` |
+| `Basic Information → First name` | `firstName` |
+| `Basic Information → Last name` | `lastName` |
+
+Finish creating the app and keep user access off until OpenHands is configured.
+Download the metadata again after saving and use that final file in the next step.
+
+<Note>
+  This setup identifies users by their primary email. Plan employee renames
+  before changing that value, and do not reassign an email address while it is
+  linked to another person's OpenHands identity: the new holder could gain
+  access to the previous person's account. A changed primary email can also
+  appear as a new user. If employees already use OpenHands with the same email,
+  for example through GitHub sign-in, confirm with OpenHands Support how their
+  first Google sign-in will link or conflict before rollout. Resolve existing-email
+  collisions through account recovery; preserve ownership verification rather
+  than unlinking or merging accounts to bypass it.
+</Note>
+
+## Step 2: Host the Google Metadata
+
+Google provides a metadata download; OpenHands requires a metadata **URL**.
+Host the downloaded XML unchanged at a stable HTTPS endpoint controlled by your
+organization, for example:
+
+```text
+https://sso-config.example.com/openhands/google-workspace.xml
+```
+
+Use an approved hosting service with a TLS certificate trusted by the OpenHands
+cluster. The endpoint must return SAML XML without a browser session, cookies,
+or a temporary signed URL. Restrict writes to identity administrators and limit
+read access to the cluster where your hosting service supports it. Follow your
+organization's hosting policies.
+
+Before configuring OpenHands:
+
+- Compare the hosted file's SHA-256 hash with the final Google download.
+- Verify the IdP entity ID, SSO endpoint and signing certificate belong to your
+  Workspace tenant. Confirm the certificate fingerprint against Google Admin.
+- Confirm the URL is reachable from the provisioning process.
+- Record the signing certificate's expiry and assign an owner for renewal.
+
+Metadata contains the public signing certificate, not a private key. Anyone who
+can alter the metadata can change the identity provider OpenHands trusts.
+Protect the file and its URL. Plan certificate renewal with OpenHands Support;
+do not assume automatic background metadata refresh.
+
+## Step 3: Configure OpenHands
+
+Choose the procedure for your deployment. See the shared
+[SAML SSO guide](/enterprise/integrations/saml-sso#step-2-enable-saml-sso)
+for the managed provider configuration.
+
+<Tabs>
+  <Tab title="Replicated">
+    Open the [Admin Console](/enterprise/vm-install/admin-console-configuration)
+    and select `Config → Enterprise SSO (SAML) Authentication`.
+
+    1. Enable `Enable Enterprise SSO Authentication`.
+    2. Set `SAML Metadata URL` to your verified HTTPS metadata URL.
+    3. Set `Identity Provider Display Name` to `Google Workspace`.
+    4. Save the configuration.
+    5. In Version history, review the generated changes and preflight results.
+       Confirm the version contains only the intended changes and no unintended
+       license or upstream update, then deploy it.
+    6. Wait for the application to return to `Ready` before testing sign-in.
+  </Tab>
+  <Tab title="Standalone Helm">
+    For a direct installation of the `openhands` chart, merge these top-level
+    values into your existing values file:
+
+    ```yaml
+    enterpriseSSO:
+      enabled: true
+      displayName: "Google Workspace"
+      idpMetadataUrl: "https://sso-config.example.com/openhands/google-workspace.xml"
+    ```
+
+    Replace the metadata URL with your verified endpoint. Preserve all existing
+    deployment values and secrets; this example is an overlay, not a replacement
+    values file. An umbrella chart may require its documented dependency prefix.
+
+    Review the rendered changes and redeploy the existing release using your
+    normal [Helm deployment procedure](/enterprise/k8s-install/installation).
+    Retain the previous values and release revision for recovery. Wait for the
+    rollout to complete before testing sign-in.
+  </Tab>
+</Tabs>
+
+Confirm provisioning completed before assigning users. Application readiness
+alone does not prove SSO is configured; complete the sign-in check below. Keep
+persistent settings in the Admin Console or Helm values, because deployment can
+overwrite manual changes to the managed provider.
+
+## Step 4: Assign Test Users
+
+In the Google app's user-access settings, enable it only for the organizational
+unit or access group intended to use OpenHands. Keep the app off at the root
+while evaluating the integration. Confirm each user's effective access,
+including inherited OU settings. For access groups, follow
+[Google's instructions](https://knowledge.workspace.google.com/admin/users/advanced/customize-service-access-using-access-groups).
+
+Start with one assigned account and one unassigned account. Confirm the
+unassigned account cannot sign in through the Google app before enabling its
+access. Service-access changes can take up to 24 hours, although they usually
+apply sooner. Do not enable the app for everyone to resolve an assignment error.
+
+Google assignment controls this sign-in path. It does not disable other
+OpenHands login methods or configure organization membership, roles, SCIM or
+group-to-role synchronization. Review your installation's
+[organization settings](/openhands/usage/cloud/organizations/overview) separately.
+
+## Step 5: Verify Employee Sign-In
+
+1. Open `https://app.openhands.example.com` in a fresh browser profile.
+2. Choose the Enterprise SSO option and confirm it opens Google Workspace sign-in.
+3. Sign in as the assigned employee and complete required security and terms steps.
+4. Confirm the expected email, name, OpenHands account, workspace and role.
+5. Start a conversation and verify its sandbox completes a small task.
+6. Sign out and sign in again. Confirm the same account, workspace and history.
+7. Repeat with the second assigned test user in a separate browser profile.
+   Confirm each can access their own private conversations and files without
+   seeing the other's data. Verify organization membership and roles against
+   your intended policy.
+
+Employees should bookmark the OpenHands application URL. Google app-launcher
+and `Test SAML login` are separate IdP-initiated flows; verify them before offering
+those entry points to employees.
+
+### Connect a Repository Account
+
+Google SAML sign-in does not grant GitHub repository access. Follow the
+[Enterprise GitHub guide](/enterprise/integrations/github) for administrator app
+installation and employee authorization. Confirm the employee can access the
+intended repository and that connecting GitHub preserves their OpenHands account.
+
+## Remove Access and Recover
+
+Remove the employee's Google app assignment and verify a fresh Google SAML
+sign-in is denied. **Assignment removal alone does not revoke an existing
+OpenHands session or API credentials.** As part of offboarding, have the relevant
+administrators disable the OpenHands identity, terminate its sessions, revoke API
+credentials and remove repository authorizations as appropriate. Use the
+procedures supported by your release and verify previously valid access fails.
+Contact OpenHands Support for release-specific session and credential revocation.
+
+For configuration recovery, retain administrator access and the previous
+Replicated configuration or Helm values. Disable managed SSO through the supported
+configuration path and verify in Keycloak that `enterprise_sso` is disabled or
+absent before retiring metadata hosting or restoring an earlier release. Confirm
+that any rollback release handles provider disable correctly with OpenHands
+Support. Reverting SSO settings does not undo created accounts, organization
+membership or repository authorizations.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Google says the account does not meet the 2-Step Verification policy | Have the Workspace administrator check enrollment and the effective OU/group policy. Complete approved onboarding or recovery before retrying; see [Google account security](https://knowledge.workspace.google.com/admin/security/manage-a-users-security-settings). |
+| `app_not_enabled_for_user` | Confirm the selected Google identity and effective app assignment; allow for propagation. |
+| NameID-policy error | Confirm `EMAIL`, Primary email, and the imported `emailAddress` NameID policy. |
+| OpenHands shows only built-in login | Confirm the release includes the provisioning fixes, then inspect metadata retrieval, certificate import and rollout completion. |
+| Metadata fetch fails | Check trusted HTTPS, cluster reachability, XML response and absence of browser-session requirements. |
+| Signature or audience error | Compare the certificate, issuer, ACS, Entity ID and Authentication hostname. Keep signature and TLS validation enabled. |
+| Email or names are missing | Check the exact case-sensitive app mappings and the release's profile import mappers. `IMPORT` does not synchronize later profile changes. |
+| Removed user remains signed in | Revoke existing application sessions and credentials separately; Google assignment removal is insufficient. |
