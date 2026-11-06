@@ -109,11 +109,79 @@ The rest of the lifecycle, including events, runs, pauses, and secrets, continue
 If you attach to an existing conversation by `conversation_id`, use `ACPAgent` for ACP-backed conversations. Attaching with a regular `Agent` to an ACP conversation ID is rejected explicitly to avoid mixing the standard and ACP conversation contracts.
 </Warning>
 
+## Host-controlled ACP permissions
+
+Native conversation confirmation policies do not intercept ACP permission
+requests. Configure ACP permission handling explicitly:
+
+```python
+from openhands.sdk.agent import ACPAgent
+from openhands.sdk.agent.acp_permissions import ACPPermissionRequest
+
+async def permission_decision(request: ACPPermissionRequest) -> str | None:
+    # Resolve through your authenticated host UI or a reviewed local policy.
+    # This example denies by selecting the agent's offered rejection option.
+    return next(
+        (option.option_id for option in request.options
+         if option.kind == "reject_once"),
+        None,
+    )
+
+agent = ACPAgent(
+    acp_command=["/opt/pinned/codex-acp"],
+    acp_permission_mode="callback",
+    acp_permission_handler=permission_decision,
+    acp_permission_timeout=60,
+)
+```
+
+`deny` mode cancels every request. In `callback` mode, a missing handler,
+unavailable/invalid decision, handler exception or timeout cancels the request.
+Only an offered option ID is accepted; returning `None` cancels. Handler task
+cancellation propagates without selecting an option. Callbacks receive
+agent-supplied, untrusted data and run on the ACP portal: never acquire the
+conversation state lock there or block that event loop.
+
+For backward compatibility, the default remains `legacy-auto-approve`, with an
+explicit startup warning. It preserves old behavior and is unsuitable for a
+host requiring permission decisions. Controlled modes do not automatically
+select provider bypass/full-access modes, and reject those explicit known
+bypass modes. Native agent configuration and OS isolation still matter; ACP
+permission handling does not sandbox code or stop background descendants.
+
+The handler is a runtime-only async callable, excluded from serialization and
+JSON schema. Serialized callback mode reloads without a handler and fails closed.
+Trusted Python hosts can pass the handler to
+`ACPAgentSettings.create_agent(acp_permission_handler=...)`; permission mode and
+timeout survive the settings factory and persistence path. Defaults for old
+settings retain legacy behavior; no incompatible persisted schema change is made.
+
+A trusted Python host can reinstall the callback after loading with
+`agent.set_acp_permission_handler(handler)`. It affects future requests and
+does not serialize the callable.
+
+Agent Server installs a conversation-owned broker for callback mode. Authorized
+clients list `GET /api/conversations/{conversation_id}/acp/permissions` and answer
+`POST /api/conversations/{conversation_id}/acp/permissions/{request_id}` with
+`{"option_id": "<offered host option UUID>"}` or `{"option_id": null}` to cancel.
+The existing session API key authenticates both routes. IDs are opaque, scoped
+to one conversation and one pending request, and invalid after expiry or use.
+Unknown choices return 422; stale or cross-conversation requests return 404.
+The server masks registered secrets, bounds displayed details, and refuses an
+allow option if details were truncated. Pause and close cancel pending requests.
+Restart does not replay a previous approval: the broker is rebuilt and resumed
+requests receive fresh IDs. REST cannot supply a Python callback.
+
+The TypeScript `ConversationClient` exposes `listACPPermissions` and
+`respondToACPPermission`. A matching Canvas release can show pending requests
+and require an explicit choice. Deploy these layers together; older clients
+cannot display these requests. Callback mode never falls back to approval.
+
 ## How It Works
 
 - **Subprocess delegation**: `ACPAgent` spawns the ACP server and communicates via JSON-RPC over stdin/stdout
 - **Server-managed execution**: The ACP server handles its own LLM calls, tools, and context — your code just sends messages
-- **Auto-approval**: Permission requests from the server are automatically granted, so ensure you trust the ACP server you're running
+- **Permission decisions**: Explicit ACP permission mode controls requests; the legacy default retains automatic approval for compatibility.
 - **Metrics collection**: Token usage and costs from the server are captured into the agent's `LLM.metrics`
 
 ## Configuration
