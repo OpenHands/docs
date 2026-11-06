@@ -419,6 +419,147 @@ for usage_id, metrics in conversation.conversation_stats.usage_to_metrics.items(
     print(f"{usage_id}: ${metrics.accumulated_cost:.6f}")
 ```
 
+## Limit Cost Per Run
+
+<Note>
+  This API is proposed in [SDK PR #5603](https://github.com/OpenHands/software-agent-sdk/pull/5603)
+  and is not yet released. Use an SDK and Agent Server containing that change;
+  an older server does not provide this enforcement.
+</Note>
+
+Set `max_budget_per_run` to a strictly positive amount in USD to limit one
+conversation run. Omit it or use `None` (`null` in REST) for no limit.
+This applies to regular SDK agents. ACP agents bypass the SDK's LLM call path,
+so Python raises `CostBudgetUnsupportedError` and Agent Server rejects a
+budgeted ACP conversation with HTTP `422`.
+
+### Configure The Limit
+
+These snippets use an already configured `agent` and workspace; see
+[Getting Started](/sdk/getting-started) for agent setup.
+
+<Tabs>
+  <Tab title="Python Factory">
+    ```python
+    from openhands.sdk import Conversation
+
+    conversation = Conversation(
+        agent=agent,
+        workspace=workspace,
+        max_budget_per_run=2.0,
+    )
+    ```
+
+    The same option is accepted by `LocalConversation` directly.
+  </Tab>
+  <Tab title="Python Remote">
+    ```python
+    from openhands.sdk import Conversation, Workspace
+
+    remote_workspace = Workspace(
+        host="http://127.0.0.1:8000",
+        working_dir="workspace/project",
+    )
+    conversation = Conversation(
+        agent=agent,
+        workspace=remote_workspace,
+        max_budget_per_run=2.0,
+    )
+    ```
+
+    This creates the conversation on Agent Server with the same limit. Include
+    your server authentication as shown in [Local Agent Server](/sdk/guides/agent-server/local-server).
+  </Tab>
+  <Tab title="REST">
+    Add this field to the existing JSON body for `POST /api/conversations`,
+    alongside its agent and workspace configuration:
+
+    ```json
+    {
+      "max_budget_per_run": 2.0
+    }
+    ```
+
+    `GET /api/conversations/{conversation_id}` returns the stored
+    `max_budget_per_run` in `ConversationInfo`.
+  </Tab>
+  <Tab title="TypeScript Client">
+    ```typescript
+    import { RemoteConversation } from "@openhands/typescript-client";
+
+    const conversation = new RemoteConversation(agent, workspace, {
+      maxBudgetPerRun: 2.0,
+    });
+    await conversation.start();
+    ```
+
+    `start({ maxBudgetPerRun: 2.0 })` can override the constructor option when
+    creating a conversation. Manual REST request bodies use the snake-case
+    `max_budget_per_run` field instead.
+  </Tab>
+</Tabs>
+
+### Runs, Persistence, And Delegation
+
+Each new top-level `run()` or `arun()` starts a fresh allowance, including a
+follow-up run or execution after pause/resume. For example, a conversation with
+a 2 USD limit can spend up to that allowance again on its next run; it is not a
+2 USD lifetime conversation cap. `accumulated_cost` continues to track recorded
+cost across runs.
+
+Agent Server persists the configured limit with the conversation and restores
+it after a restart. Reattaching does not change the stored limit. When restoring
+a directly created local conversation from disk, pass `max_budget_per_run`
+again. A fork copies the configured limit but gets its own independent allowance.
+
+Delegated agents share the parent's reservation ledger, including concurrent
+calls. A delegate cannot enlarge the parent's allowance by specifying a larger
+limit; a smaller child limit is also enforced against that shared total.
+
+### Conservative Pre-Call Reservations
+
+Before sending each LLM attempt, the SDK reserves a conservative cost bound.
+The bound uses the provider's published full input limit (or authoritative
+runtime metadata), the output limit on the actual outgoing request, and the
+highest published input/output pricing tiers, including cache, reasoning, and
+regional uplifts. Supplying both `input_cost_per_token` and
+`output_cost_per_token` explicitly overrides the published rates; ensure those
+rates cover the configured provider's charges. Routes with unknown regional
+endpoint pricing require those paired custom rates.
+
+The SDK manages retries and reserves each attempt separately. A successful call
+with known positive recorded cost releases its unused reservation, except on
+routes whose recorded cost may omit the catalog endpoint premium. Those routes
+retain at least the full reservation after success unless explicit paired custom
+token prices override catalog rates. Failed, cancelled, or unknown-cost attempts
+retain their bound because provider work may already have incurred a charge.
+
+The guard refuses a call when it cannot establish a bound: unknown prices or
+token limits; opaque route, client, or request-body overrides; non-text/audio or
+web-search charges; multiple completions; and global LiteLLM retry, fallback,
+or parameter-dropping settings that can bypass enforcement. SDK-managed
+fallback calls remain subject to the same guard.
+Prepared requests containing server-native or other non-function tools are
+refused. Ordinary SDK function tools remain supported; legacy `functions`
+overrides and opaque `cached_content` references are unsupported. Ordinary
+GPT/o, Claude, and Gemini text/function calls are not refused merely because
+their resolved model metadata includes optional search prices. Intrinsic or
+unresolved fee-bearing routes remain unsupported.
+
+<Warning>
+  Even a short, inexpensive prompt can be refused when the full next-call bound
+  exceeds the remaining allowance. Recorded cost may still be below the limit.
+  A smaller context-management `max_input_tokens` hint does not lower that
+  provider input bound. Budget ledger usage is conservative accounting, not an
+  invoice or the lifetime cost reported by conversation metrics.
+</Warning>
+
+If the next attempt cannot be admitted, the run stops with a
+`ConversationErrorEvent` whose code is `MaxBudgetReached`. Agent Server does not
+expose current-run budget-usage snapshots in its REST/WebSocket metrics in this
+change. It does not populate the legacy `max_budget_per_task` metric or enable
+Agent Canvas's existing budget bar.
+
 ## Next Steps
 
 - **[Context Condenser](/sdk/guides/context-condenser)** - Learn about context management and how it uses separate LLMs
