@@ -47,6 +47,8 @@ If you have not created a token yet, the **Create a token** link next to the fie
 
 The desktop app encrypts the token with your operating system's keychain, so you stay signed in after restarting the app. If no keychain is available, Agent Canvas warns that the connection lasts only until you quit.
 
+The web build keeps sign-ins across restarts too, as described in [Reconnecting After a Restart](#reconnecting-after-a-restart).
+
 ## 3. Create an Agent
 
 A DigitalOcean **agent** is a saved setup for OpenHands sessions. Each **session** you launch from it is a separate sandbox with its own disk and conversations.
@@ -57,7 +59,7 @@ After you sign in, the DigitalOcean panel lists your team's **OpenHands agents**
 
 1. In the **OpenHands agents** list, select **New Agent**.
 2. Enter an **Agent name**: up to 64 letters, numbers, `-`, `.`, or `_`, starting and ending with a letter or number.
-3. Choose a **Sandbox size**, or keep **Default (DigitalOcean picks)**. Each option shows its vCPUs, memory, and monthly price.
+3. Choose a **Sandbox size**. Each option shows its vCPUs, memory, and monthly price. The smallest size is preselected; **Default (DigitalOcean picks)** is still available as an explicit option. If the size catalog fails to load, you must choose a size.
 4. Select **Create and launch**.
 
 <Note>
@@ -130,7 +132,7 @@ When you remove a DigitalOcean backend in **Manage Backends**, Agent Canvas asks
 The desktop app keeps the backend entry when you quit, but the connection to the sandbox closes. When you reopen the app, Agent Canvas reconnects to the selected DigitalOcean backend automatically. A DigitalOcean backend can show as disconnected in **Manage Backends** while it is not selected. Select it to reconnect.
 
 <Note>
-  In the web build or Docker, the token is not kept across restarts, even with a persistent settings volume. To stay signed in, load `MARS_TOKEN` from an env file each time you start the server or container. See [Store Your Token in an Env File](#store-your-token-in-an-env-file).
+  In the web build or Docker, the token is kept across restarts on the machine that runs Canvas. The web build saves sign-ins in this order: the macOS Keychain or Secret Service (`secret-tool`), then a file encrypted with `OH_SECRET_KEY`, then memory only with a "not saved" warning. The panel shows where the sign-in is kept, along with the team and email. The `/mars` cookie is derived from the session key, so rotating the session key signs the browser out. To stay signed in without a store, load `MARS_TOKEN` from an env file each time you start the server or container. See [Store Your Token in an Env File](#store-your-token-in-an-env-file).
 </Note>
 
 ## Costs
@@ -165,8 +167,10 @@ The DigitalOcean option appears in the browser version of Agent Canvas only when
 | `MARS_TOKEN` | Optional. A personal access token to sign in with when the server starts. |
 | `MARS_WEB_KEY` | Optional. Authentication key for the DigitalOcean bridge. Falls back to the server's session API key if omitted. |
 | `LOCAL_BACKEND_API_KEY` | Optional. Sets the Docker stack's session API key, which the bridge uses when `MARS_WEB_KEY` is not set. If omitted, the image generates a key and saves it in the settings volume. This is not your DigitalOcean token. |
+| `OH_SECRET_KEY` | Optional. Encrypts the saved sign-in file when no OS keychain or Secret Service is available. |
+| `OH_CANVAS_SECRET_STORE` | Optional. Forces a specific secret store for the saved sign-in instead of automatic selection. |
 
-The web build, including Docker, uses personal access tokens and does not offer OAuth sign-in. Tokens entered in the UI stay in server memory, not in the settings volume. After each container or server restart, enter the token again unless you supply `MARS_TOKEN` at startup.
+The web build, including Docker, uses personal access tokens and does not offer OAuth sign-in. The web build saves sign-ins on the machine that runs Canvas, as described in [Reconnecting After a Restart](#reconnecting-after-a-restart). Tokens entered in the UI are kept across restarts when a store is available; without one, they stay in server memory only, and you must enter the token again after each restart unless you supply `MARS_TOKEN` at startup.
 
 For Docker, explicitly set `MARS_WEB=1`. Images that require opt-in leave the integration disabled without it. Because Docker binds to a non-loopback address inside the container, the bridge requires an authentication key and refuses to start without one. The official image always supplies one: if you set neither `LOCAL_BACKEND_API_KEY` nor `MARS_WEB_KEY`, it generates a session key on first start, as described in [Environment Variables](/openhands/usage/agent-canvas/setup#environment-variables). The Docker example below sets `LOCAL_BACKEND_API_KEY` so you know the key's value and the bridge and local backend share it.
 
@@ -250,7 +254,9 @@ Then open Agent Canvas in your browser and go to **Manage Backends** → **Add B
 
 ### Persist Sign-In Across Restarts
 
-The bridge does not save your DigitalOcean token to disk. A token you enter in the UI lasts only until the server or container stops. To stay signed in, load your env file every time you start Agent Canvas, as shown in [Store Your Token in an Env File](#store-your-token-in-an-env-file). For Docker, that includes each time you recreate the container.
+The web build saves sign-ins on the machine that runs Canvas. It uses the macOS Keychain or Secret Service (`secret-tool`) when available, then falls back to a file encrypted with `OH_SECRET_KEY`, then to memory only with a "not saved" warning. The panel shows where the sign-in is kept. The `/mars` cookie is derived from the session key, so rotating the session key signs the browser out.
+
+To guarantee persistence, load your env file every time you start Agent Canvas, as shown in [Store Your Token in an Env File](#store-your-token-in-an-env-file). For Docker, that includes each time you recreate the container.
 
 When the token expires or you revoke it, replace `MARS_TOKEN` in the env file and restart Agent Canvas.
 
@@ -261,7 +267,7 @@ When the token expires or you revoke it, replace `MARS_TOKEN` in the env file an
 | **No Providers tab in Add Backend** | Use the desktop app, or set `MARS_WEB=1` on the server that hosts the web build. |
 | **Docker logs report a missing bridge authentication key** | Set `LOCAL_BACKEND_API_KEY` or `MARS_WEB_KEY` along with `MARS_WEB=1`, then recreate the container. |
 | **Linux: unable to open database file** | Use the named settings volume in the Docker example instead of binding `~/.openhands`. |
-| **Asked for a DigitalOcean token after restarting Docker** | This is expected because UI-entered tokens are held in memory only. Enter the token again, or [load `MARS_TOKEN` from an env file](#store-your-token-in-an-env-file) at startup. OAuth is not available in the web build. |
+| **Asked for a DigitalOcean token after restarting Docker** | The web build saves sign-ins when a store is available. If you are asked again, no store was found: set `OH_SECRET_KEY` so the sign-in is saved to an encrypted file, or [load `MARS_TOKEN` from an env file](#store-your-token-in-an-env-file) at startup. OAuth is not available in the web build. |
 | **Could not connect to DigitalOcean.** | Copy the token again and check that it has not expired. If you load it from an env file, check that the value has no extra spaces and that the file is loaded before Agent Canvas starts. |
 | **DigitalOcean refused the connection.** | Create a new token with **Full Access**, and confirm your team can use Managed Agents. |
 | **This DigitalOcean sign-in has expired.** | Create a new token and sign in again. |
