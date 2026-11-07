@@ -1,11 +1,8 @@
 ---
 name: docs-writing
 description: >-
-  Writing rules for pages on the OpenHands docs site. Use when writing, editing, or reviewing
-  prose in .mdx pages: make the reader the actor, lead with a clear recommendation, stay
-  matter-of-fact, state limitations once, keep instructions short, treat configurable values as
-  examples, link instead of duplicating, write plain complete sentences without em-dashes, keep
-  sidebar labels to one line, and position OpenHands Enterprise deployment options correctly.
+  Writing rules for pages on the OpenHands docs site. Use when writing, editing, or reviewing prose
+  in .mdx pages.
 triggers:
   - /docs-writing
 ---
@@ -13,8 +10,7 @@ triggers:
 # Writing OpenHands Docs
 
 Follow these rules when you write or edit pages on this site. The goal is a page the reader can act
-on, with clear recommendations and no internal notes, background, or tour of how the technology
-works. Keep pages as terse and plain as these rules are.
+on.
 
 For formatting conventions such as header case, lists, code blocks, and links, follow
 `openhands/DOC_STYLE_GUIDE.md`.
@@ -33,34 +29,33 @@ descriptions.
 
 Describing what a component is, for example on an architecture page, is fine with the component as
 the subject. This rule applies when the sentence is about a task the reader performs.
+Recommendations such as "We recommend using S3" are fine too.
 
 ## Lead with a recommendation
 
-- When there are several ways to do something, recommend one ("We recommend X"). Don't present a
-  list of every possibility and leave the reader to choose.
+- When there are several ways to do something and one is better, recommend it ("We recommend X").
+  Use `<Tabs>` when the reader's setup decides the choice, such as their OS or cloud provider.
 - Lead with the recommendation and name the things involved.
-  - Avoid: "OpenHands Enterprise runs two very different workloads, so…"
+  - Avoid: "OpenHands Enterprise runs two very different workloads: the application services and
+    the agent sandboxes. To keep them apart, you can use separate node pools."
   - Prefer: "We recommend using two separate node pools: a general pool for the OpenHands
     application services and cluster add-ons, and a Sysbox pool for the agent sandboxes."
-- Tell the reader what to set. Don't justify it by explaining why the default is wrong.
-  - Avoid: "The default storage class (standard-rwo) is GKE-only. Set STORAGE_CLASS or sandboxes
-    won't start."
-  - Prefer: "Set `runtime-api.env.STORAGE_CLASS` to your `gp3` class."
-- Give a recommendation rather than an explanation of the default.
-  - Avoid: "The bundled MinIO is ephemeral; for production back it with an S3 bucket:"
-  - Prefer: "For production, we recommend using S3:"
 
-## Stay matter-of-fact
+## State requirements without justifying them
 
-- State what to do and stop. Don't over-explain.
-- Don't explain how the underlying platform works, such as Kubernetes, Docker, or containerd. Drop
-  asides like "(request = limit, so it's guaranteed)".
-- Do name our own components that readers may need to configure. For example, the Docker Compose
-  docs name Caddy because it serves HTTPS and readers customize it.
-- If something is required, state the requirement. Leave out warnings about what breaks otherwise,
-  such as "or it will never start".
+State the requirement or the setting and stop. Don't add what breaks without it, and don't explain
+why the default is wrong. The reader already knows that a pod without enough memory gets OOMKilled.
 
-## Inspire confidence
+| Avoid | Prefer |
+|-------|--------|
+| Provision at least 3 GB of memory for X, or its pods will get OOMKilled. | X requires at least 3 GB of memory. |
+| The default storage class (standard-rwo) is GKE-only. Set STORAGE_CLASS or sandboxes won't start. | Set `runtime-api.env.STORAGE_CLASS` to your `gp3` class. |
+| The bundled MinIO is ephemeral; for production back it with an S3 bucket: | For production, we recommend using S3: |
+
+Leave out background, rationale, and internal implementation details. Describe what the reader
+needs to do.
+
+## Limit caveats and callouts
 
 - State a limitation once, in plain inline text. Don't repeat a caveat across sections or pages.
   For example, don't put a "use Kubernetes for production" reminder in the intro, a callout, and a
@@ -72,17 +67,17 @@ the subject. This rule applies when the sentence is about a task the reader perf
 
 - Prefer the shortest path that works. For the Docker Compose install, that is
   `git clone https://github.com/OpenHands/enterprise.git`, `cd enterprise`, and
-  `docker compose up --wait`. Leave out version lookups, placeholder variables, file downloads, and
-  extra flags that add steps without adding value.
-- Point readers at the product's own flows instead of describing every click. For example, "Open
-  `http://localhost:9043` and follow the onboarding flow to create your first user and configure
-  your LLM provider" beats deep links to sign-up URLs or instructions to open Settings.
-- Link to the entry point. When the app redirects to the right place, give the base URL instead of
-  an internal route.
+  `docker compose up --wait`. Leave out version lookups, file downloads, extra flags, and
+  placeholder variables for values the reader doesn't need to choose, such as `VERSION=<latest>`.
+- Point readers at the product's own flows and entry points instead of describing every click or
+  linking to internal routes. For example, "Open `http://localhost:9043` and follow the onboarding
+  flow to create your first user and configure your LLM provider" beats deep links to sign-up URLs
+  or instructions to open Settings.
 - Keep prerequisite lists short. Name the tool or credential (Git, Docker and Docker Compose, an LLM
   API key) without explaining it or adding sizing asides.
-- Don't narrate what happens next. Cut sentences like "After you sign in, OpenHands opens Agent
-  Canvas at…". Keep progress notes to one line, such as "On the first start, the application pulls
+- Don't narrate what the product does next, such as "After you sign in, OpenHands opens Agent Canvas
+  at…". A short check that tells the reader a step worked, such as "You should see the dashboard",
+  is fine. Keep progress notes to one line, such as "On the first start, the application pulls
   images, which can take several minutes."
 
 ## Treat configurable values as examples
@@ -91,19 +86,21 @@ the subject. This rule applies when the sentence is about a task the reader perf
   reader's chosen settings, and link to the page that documents the setting. For example: "Set
   per-sandbox CPU and memory on the Resource Limits page, then size nodes around the values you
   choose there."
-- Don't hardcode version ranges that will fall out of support. Say "a currently supported version"
-  and link to the upstream project's supported-version list. Never recommend an unsupported
-  version.
+- State the minimum versions OpenHands requires. Don't copy an upstream project's support window,
+  because it falls out of date. Say "a currently supported version" and link to the upstream
+  project's list instead.
 
 ## Leave out
 
 - Don't list everything. Write "the application services" instead of naming every service, and
-  keep at most one example where a list of examples would do.
-- Cut extended background, rationale, and internal implementation details.
+  give one example instead of a list of examples.
+- Don't explain how the underlying platform works, such as Kubernetes, Docker, or containerd. Drop
+  asides like "(request = limit, so it's guaranteed)". Our own components that readers may need to
+  configure still get named. For example, the Docker Compose docs name Caddy because it serves HTTPS
+  and readers customize it.
 - In install and configuration guides, state infrastructure requirements in general terms, such as
-  node pools, IAM permissions, Helm values, and `kubectl` or `helm` commands. Don't include
-  Terraform or point at internal source code. Cloning a public repository is fine when it's the
-  install method itself.
+  node pools, IAM permissions, and Helm values. Don't include Terraform or point at internal source
+  code. Cloning a public repository is fine when it's the install method itself.
 
 ## Organize pages
 
@@ -120,9 +117,19 @@ the subject. This rule applies when the sentence is about a task the reader perf
 
 ## Write plain sentences
 
-- Write complete sentences. Avoid fragments and clever structure.
-  - Avoid: "Standard EKS nodes on the Amazon Linux 2023 AMI; on-demand or Spot."
-  - Prefer: "Use standard EKS nodes on the Amazon Linux 2023 AMI, with on-demand or Spot capacity."
+These are docs. Don't write them like a blog post or a story, and don't try to make sentences punchy
+or memorable. Use simple, complete sentences with one idea each: a subject, a verb, and what the
+reader needs to know.
+
+- Avoid these patterns:
+  - Fragments: "Standard EKS nodes on the Amazon Linux 2023 AMI; on-demand or Spot." Write "Use
+    standard EKS nodes on the Amazon Linux 2023 AMI, with on-demand or Spot capacity."
+  - Dramatic contrasts and reveals, such as "It's a gateway, not a proxy." or "The result: zero
+    downtime."
+  - Rhetorical questions, such as "Need more capacity? Add a node pool."
+  - Long sentences that chain several clauses together. Split them into shorter sentences.
+- Headings, table cells, and list items that name a thing, such as a prerequisites list, can be
+  short phrases.
 - Don't use em-dashes. Use a comma, period, parentheses, or a colon instead. For bold-lead list
   items, write `**Term**: description`.
 
