@@ -165,10 +165,14 @@ allow that model. The example below shows both profiles.
 ### Prerequisites
 
 - A working [Docker Compose installation](/enterprise/docker-compose).
-- An AWS access key and matching secret with `bedrock:InvokeModel` and
+- A long-term IAM user access key and matching secret with `bedrock:InvokeModel` and
   `bedrock:InvokeModelWithResponseStream` permissions for every model you add.
 - Tool-capable Bedrock models available to your account in the selected Region.
 - HTTPS access to the Bedrock Runtime endpoint from app, worker, and agent containers.
+
+This procedure does not configure `AWS_SESSION_TOKEN`. Temporary credentials
+from STS or IAM Identity Center (SSO) require that token and are not covered
+by this example, including their initial use and refresh.
 
 For a cross-Region inference profile, permit the profile and all destination
 models in your IAM policy. Organization service control policies must also
@@ -259,8 +263,13 @@ docker compose -f docker-compose.yml -f compose.bedrock.yaml \
 
 If your installation uses a project name, environment-file options, or other
 Compose files, retain those options and append `-f compose.bedrock.yaml` last
-in both commands. Use the same file list for subsequent updates. Avoid sharing
-the output of `docker compose config` without `--quiet`: it contains credentials.
+in both commands. Keep that complete file list for every upgrade, restart, stop,
+or reset, including commands from the main Compose installation guide. Omitting
+the override when recreating services removes the Bedrock configuration.
+After pulling an upgrade, compare each service's default `OH_AGENT_SERVER_ENV`
+with the override and retain any newly required entries before recreating services.
+Avoid sharing the output of `docker compose config` without `--quiet`: it
+contains credentials.
 
 ### 4. Add a Profile for Each Model
 
@@ -289,8 +298,10 @@ To add another model later, confirm its availability and IAM permissions,
 create another profile with its `bedrock/<model-or-inference-profile-id>`,
 and select it when starting a new conversation. Repeat the verification task
 for each model. Changing credentials or the deployment's Region requires
-updating the shared configuration and recreating app, worker, and the relevant
-agent sandboxes; adding a profile with the existing configuration does not.
+updating the shared configuration and recreating app and worker. Stop and remove
+all agent sandbox containers created with the previous configuration, preserving
+needed workspace files first; create new sandboxes rather than resuming the old
+containers. Adding a profile with the existing configuration does not require this.
 
 ### 5. Verify a Fresh Agent
 
@@ -309,10 +320,23 @@ Confirm the terminal tool actually writes and reads the file and the final reply
 includes the marker. A generated title or a short model response alone does not
 verify the agent connection.
 
-To revert, select your previous profile and verify its matching credential,
-remove the Bedrock override from your Compose file list, and recreate app and
-worker using the original options. Remove unused Bedrock entries from the private
-`.env` file and verify a fresh sandbox with the original provider.
+### Revert the Configuration
+
+1. Select your previous profile and verify its matching provider credential.
+2. Remove the Bedrock override from your Compose file list and recreate app and
+   worker using the original options, so newly created sandboxes no longer
+   receive the Bedrock credentials.
+3. Preserve needed workspace files, then stop and remove all agent sandbox
+   containers created while the Bedrock override was active. Include stopped
+   containers; resuming one retains its original credentials. Remove only the
+   affected sandbox containers, keeping unrelated workloads intact.
+4. Remove unused Bedrock entries from the private `.env` file. Removing local
+   configuration or containers does not revoke the AWS access key. If you are
+   retiring a dedicated key, deactivate it in IAM and delete it after confirming
+   it is no longer needed. Check other consumers before changing a shared key.
+   When rotating credentials, retire the old key after its consumers have moved
+   to the replacement.
+5. Start a fresh sandbox and verify an agent task with the original provider.
 
 </Tab>
 </Tabs>
