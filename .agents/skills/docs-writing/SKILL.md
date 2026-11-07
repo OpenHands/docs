@@ -125,9 +125,6 @@ the subject. This rule applies when the sentence is about a task the reader perf
   - Prefer: "Use standard EKS nodes on the Amazon Linux 2023 AMI, with on-demand or Spot capacity."
 - Don't use em-dashes. Use a comma, period, parentheses, or a colon instead. For bold-lead list
   items, write `**Term**: description`.
-- When you model a page on another project's docs, borrow the structure and use our own words. A
-  table column copied verbatim, such as "Responsibility", reads as copied when "Runs on" says the
-  same thing.
 
 ## Keep sidebar labels short
 
