@@ -156,12 +156,18 @@ installation. The annotation should contain the IAM role ARN from your values.
 </Tab>
 <Tab title="Docker Compose">
 
+Configure AWS credentials and the Region **once for the deployment** (steps 1–3).
+Then create one OpenHands profile per model (step 4). Haiku and Sonnet can share
+the same credentials and Region: adding a model does not require another Compose
+override or an app/worker restart when the existing IAM permissions already
+allow that model. The example below shows both profiles.
+
 ### Prerequisites
 
 - A working [Docker Compose installation](/enterprise/docker-compose).
 - An AWS access key and matching secret with `bedrock:InvokeModel` and
-  `bedrock:InvokeModelWithResponseStream` permissions for the selected model.
-- A tool-capable Bedrock model available to your account in the selected Region.
+  `bedrock:InvokeModelWithResponseStream` permissions for every model you add.
+- Tool-capable Bedrock models available to your account in the selected Region.
 - HTTPS access to the Bedrock Runtime endpoint from app, worker, and agent containers.
 
 For a cross-Region inference profile, permit the profile and all destination
@@ -169,9 +175,10 @@ models in your IAM policy. Organization service control policies must also
 allow its destination Regions. See
 [AWS cross-Region inference permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
-This example uses static AWS credentials and the US Claude Haiku 4.5 inference
-profile in `us-west-2`. It was validated with Enterprise 1.87.0 and the released
-agent-server 1.60.1 image using an agent terminal task. Instance profiles,
+This example uses static AWS credentials in `us-west-2`. The Haiku 4.5 route
+was validated with Enterprise 1.87.0 and the released agent-server 1.60.1 image
+using an agent terminal task. Sonnet 4.5 is an additional configuration example;
+it was not exercised in that Compose test. Instance profiles,
 assume-role authentication, and temporary-credential refresh were not validated
 for this Compose procedure.
 
@@ -255,22 +262,35 @@ Compose files, retain those options and append `-f compose.bedrock.yaml` last
 in both commands. Use the same file list for subsequent updates. Avoid sharing
 the output of `docker compose config` without `--quiet`: it contains credentials.
 
-### 4. Configure the Direct Bedrock Profile
+### 4. Add a Profile for Each Model
 
-In your organization's `Settings` → `LLM`, create an Advanced profile:
+In your organization's `Settings` → `LLM`, create an Advanced profile for each
+model you want to make available. For example, create these two profiles:
 
-| Field | Value |
+| Profile Name | Model |
 | --- | --- |
-| Profile Name | `Bedrock-Haiku-4-5` |
-| Model | `bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0` |
-| Base URL | Leave empty |
-| API Key | Leave empty; AWS credentials come from the environment |
+| `Bedrock-Haiku-4-5` | `bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| `Bedrock-Sonnet-4-5` | `bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0` |
+
+For **both** profiles, leave Base URL and API Key empty. Each uses the shared
+AWS credentials and Region configured above. Enter one model per profile;
+do not paste multiple model IDs into a single profile's Model field.
+Check AWS's [Haiku 4.5](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-haiku-4-5.html)
+and [Sonnet 4.5](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-4-5.html)
+model pages for availability and inference profile IDs.
 
 Use the full inference profile ID, including `us.`, after `bedrock/`. For a
 different model, use its model or inference profile ID and matching Region.
 Save the profile and check that Base URL is empty, especially when switching
 from another provider. An inherited Anthropic or gateway URL can cause requests
 to go to the wrong endpoint.
+
+To add another model later, confirm its availability and IAM permissions,
+create another profile with its `bedrock/<model-or-inference-profile-id>`,
+and select it when starting a new conversation. Repeat the verification task
+for each model. Changing credentials or the deployment's Region requires
+updating the shared configuration and recreating app, worker, and the relevant
+agent sandboxes; adding a profile with the existing configuration does not.
 
 ### 5. Verify a Fresh Agent
 
