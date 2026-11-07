@@ -1,16 +1,17 @@
 ---
 title: AWS Bedrock LLM Gateway
 sidebarTitle: "AWS Bedrock"
-description: Connect Amazon Bedrock models through the OpenHands Enterprise LLM gateway.
+description: Connect Amazon Bedrock models to OpenHands Enterprise with Replicated, Helm, or Docker Compose.
 icon: cloud
 ---
 
-OpenHands Enterprise can use Amazon Bedrock through its bundled LiteLLM
-gateway. Configure the gateway according to how you installed OpenHands.
+Replicated and Helm installations can use Amazon Bedrock through the bundled
+LiteLLM gateway. The Docker Compose instructions below configure a direct
+Bedrock connection from the application and agent containers.
 The Helm IRSA example assigns the Bedrock role to the **LiteLLM ServiceAccount**.
 Replicated uses the credential behavior described in its tab below.
 
-## Configure the Gateway
+## Configure the Connection
 
 <Tabs>
 <Tab title="Replicated">
@@ -153,9 +154,153 @@ Adjust the namespace, release name, and Deployment name if they differ in your
 installation. The annotation should contain the IAM role ARN from your values.
 
 </Tab>
+<Tab title="Docker Compose">
+
+### Prerequisites
+
+- A working [Docker Compose installation](/enterprise/docker-compose).
+- An AWS access key and matching secret with `bedrock:InvokeModel` and
+  `bedrock:InvokeModelWithResponseStream` permissions for the selected model.
+- A tool-capable Bedrock model available to your account in the selected Region.
+- HTTPS access to the Bedrock Runtime endpoint from app, worker, and agent containers.
+
+For a cross-Region inference profile, permit the profile and all destination
+models in your IAM policy. Organization service control policies must also
+allow its destination Regions. See
+[AWS cross-Region inference permissions](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+This example uses static AWS credentials and the US Claude Haiku 4.5 inference
+profile in `us-west-2`. It was validated with Enterprise 1.87.0 and the released
+agent-server 1.60.1 image using an agent terminal task. Instance profiles,
+assume-role authentication, and temporary-credential refresh were not validated
+for this Compose procedure.
+
+### 1. Store the AWS Credentials
+
+In your Enterprise checkout, add these variables to the private `.env` file
+used by your existing Compose commands. Replace the placeholders with your
+credentials. Keep the file out of source control and restrict its permissions
+with `chmod 600 .env`.
+
+```dotenv
+BEDROCK_AWS_ACCESS_KEY_ID=<aws-access-key-id>
+BEDROCK_AWS_SECRET_ACCESS_KEY=<aws-secret-access-key>
+BEDROCK_AWS_REGION=us-west-2
+```
+
+### 2. Pass Credentials to the Application and Agents
+
+Create `compose.bedrock.yaml` alongside `docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    environment:
+      AWS_ACCESS_KEY_ID: ${BEDROCK_AWS_ACCESS_KEY_ID:?Set the Bedrock access key}
+      AWS_SECRET_ACCESS_KEY: ${BEDROCK_AWS_SECRET_ACCESS_KEY:?Set the Bedrock secret}
+      AWS_REGION_NAME: ${BEDROCK_AWS_REGION:?Set the Bedrock Region}
+      AWS_REGION: ${BEDROCK_AWS_REGION}
+      AWS_DEFAULT_REGION: ${BEDROCK_AWS_REGION}
+      OH_AGENT_SERVER_ENV: >-
+        {"AGENT_SERVER_PORT":"8000",
+         "AWS_ACCESS_KEY_ID":"${BEDROCK_AWS_ACCESS_KEY_ID}",
+         "AWS_SECRET_ACCESS_KEY":"${BEDROCK_AWS_SECRET_ACCESS_KEY}",
+         "AWS_REGION_NAME":"${BEDROCK_AWS_REGION}",
+         "AWS_REGION":"${BEDROCK_AWS_REGION}",
+         "AWS_DEFAULT_REGION":"${BEDROCK_AWS_REGION}"}
+  worker:
+    environment:
+      AWS_ACCESS_KEY_ID: ${BEDROCK_AWS_ACCESS_KEY_ID:?Set the Bedrock access key}
+      AWS_SECRET_ACCESS_KEY: ${BEDROCK_AWS_SECRET_ACCESS_KEY:?Set the Bedrock secret}
+      AWS_REGION_NAME: ${BEDROCK_AWS_REGION:?Set the Bedrock Region}
+      AWS_REGION: ${BEDROCK_AWS_REGION}
+      AWS_DEFAULT_REGION: ${BEDROCK_AWS_REGION}
+      OH_AGENT_SERVER_ENV: >-
+        {"AGENT_SERVER_PORT":"8000",
+         "AWS_ACCESS_KEY_ID":"${BEDROCK_AWS_ACCESS_KEY_ID}",
+         "AWS_SECRET_ACCESS_KEY":"${BEDROCK_AWS_SECRET_ACCESS_KEY}",
+         "AWS_REGION_NAME":"${BEDROCK_AWS_REGION}",
+         "AWS_REGION":"${BEDROCK_AWS_REGION}",
+         "AWS_DEFAULT_REGION":"${BEDROCK_AWS_REGION}"}
+```
+
+The example retains the default `AGENT_SERVER_PORT` setting. If either service
+already has other `OH_AGENT_SERVER_ENV` entries, merge them into that service's
+JSON object before applying this override. Compose replaces this entire string;
+it does not merge the JSON entries.
+
+A host `.env` entry alone does not pass credentials into containers. The
+`environment` entries supply app and worker, and `OH_AGENT_SERVER_ENV` supplies
+new agent containers. Ordinary `AWS_*` variables are not automatically forwarded
+to agents in the tested release.
+
+<Note>
+This direct connection makes the AWS credentials available inside agent
+sandboxes. Use credentials scoped to the required Bedrock models and restrict
+access to the deployment accordingly.
+</Note>
+
+### 3. Apply the Configuration
+
+From the same checkout, validate and recreate app and worker:
+
+```bash
+docker compose -f docker-compose.yml -f compose.bedrock.yaml config --quiet
+docker compose -f docker-compose.yml -f compose.bedrock.yaml \
+  up -d --no-deps --wait app worker
+```
+
+If your installation uses a project name, environment-file options, or other
+Compose files, retain those options and append `-f compose.bedrock.yaml` last
+in both commands. Use the same file list for subsequent updates. Avoid sharing
+the output of `docker compose config` without `--quiet`: it contains credentials.
+
+### 4. Configure the Direct Bedrock Profile
+
+In your organization's `Settings` → `LLM`, create an Advanced profile:
+
+| Field | Value |
+| --- | --- |
+| Profile Name | `Bedrock-Haiku-4-5` |
+| Model | `bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| Base URL | Leave empty |
+| API Key | Leave empty; AWS credentials come from the environment |
+
+Use the full inference profile ID, including `us.`, after `bedrock/`. For a
+different model, use its model or inference profile ID and matching Region.
+Save the profile and check that Base URL is empty, especially when switching
+from another provider. An inherited Anthropic or gateway URL can cause requests
+to go to the wrong endpoint.
+
+### 5. Verify a Fresh Agent
+
+Select the Bedrock profile. Stop your existing test sandboxes through OpenHands
+and start a new conversation so it launches an agent with the updated
+environment. A new conversation alone can reuse an existing sandbox.
+
+Ask the agent:
+
+```text
+Use the terminal to write BEDROCK_COMPOSE_OK into bedrock-check.txt in the
+workspace, read the file back, and report the output.
+```
+
+Confirm the terminal tool actually writes and reads the file and the final reply
+includes the marker. A generated title or a short model response alone does not
+verify the agent connection.
+
+To revert, select your previous profile and verify its matching credential,
+remove the Bedrock override from your Compose file list, and recreate app and
+worker using the original options. Remove unused Bedrock entries from the private
+`.env` file and verify a fresh sandbox with the original provider.
+
+</Tab>
 </Tabs>
 
-## Select the Model in OpenHands
+## Select a Gateway Model in OpenHands
+
+For Docker Compose, use the direct profile in its tab above. The following
+gateway aliases and Kubernetes service URL apply to Replicated and Helm.
 
 For a Replicated installation, select the Bedrock model configured in the
 Admin Console. For a Helm installation, create a profile in `Settings` → `LLM`
@@ -183,15 +328,28 @@ For the second Helm route, create another profile with Model
 ## Troubleshooting
 
 <AccordionGroup>
+<Accordion title="Compose agent cannot find AWS credentials">
+Set credentials on both app and worker and in each service's
+`OH_AGENT_SERVER_ENV` JSON. Preserve existing entries, recreate the two services,
+and launch a fresh sandbox. A host AWS CLI login or a successful application
+request does not establish that agent containers have credentials.
+</Accordion>
+<Accordion title="Direct Bedrock requests return 404 or reach another provider">
+Edit the saved profile, clear Base URL, and save it again. Leave the profile API
+Key empty and start a fresh conversation. Direct Bedrock uses AWS authentication
+and endpoint selection rather than an Anthropic or OpenAI-compatible base URL.
+</Accordion>
 <Accordion title="Bedrock AccessDeniedException">
-Check the IAM role annotation on the LiteLLM ServiceAccount, the role trust
+For Docker Compose, check the IAM permissions of the supplied credential pair.
+For Helm, check the IAM role annotation on the LiteLLM ServiceAccount, the role trust
 policy's exact namespace and ServiceAccount subject, and the role's model
 invocation policy. For a cross-Region inference profile, include its source
 profile ARN and all destination model ARNs; check organization service control
 policies for denied Regions.
 </Accordion>
 <Accordion title="Model or inference profile not found">
-Check the exact model or profile ID and `aws_region_name`. A model available in
+Check the exact model or profile ID and configured Region (`AWS_REGION_NAME`
+for direct Compose, `aws_region_name` for the gateway). A model available in
 one Region may require an inference profile in another.
 </Accordion>
 <Accordion title="The profile cannot reach the gateway">
