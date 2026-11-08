@@ -57,11 +57,12 @@ Before you start, confirm:
 <Note>
   Replace `<your-base-domain>` throughout this guide with the same domain you used during
   installation (the value behind `KOTS_HOSTNAME` or the `ingress.host` Helm value).
-  For Docker Compose, first follow [Serve with ngrok](/enterprise/docker-compose/ngrok).
-  Use your assigned hostname exactly: replace the entire `app.<your-base-domain>`
+  For a local Docker Compose evaluation, use the ngrok setup described in the
+  Docker Compose tab below when your installation has no public HTTPS URL.
+  If using ngrok, use your assigned hostname exactly: replace the entire `app.<your-base-domain>`
   in every URL below with your ngrok hostname, such as `example-name.ngrok-free.app`.
   Use the manifest in Option B so you can set all four callback URLs to that origin.
-  Keep Docker and ngrok running, and keep the laptop awake during the test.
+  For laptop tests, keep Docker and ngrok running and the laptop awake.
 </Note>
 
 ## Step 1: Create the Slack App
@@ -189,10 +190,16 @@ Pick the path that matches how OHE is deployed.
 
 <Tabs>
   <Tab title="Docker Compose">
-    For a laptop setup, follow [Serve with ngrok](/enterprise/docker-compose/ngrok)
-    to expose the stack over HTTPS. Slack sends HTTP events to this public URL;
-    it cannot reach your laptop's `localhost` address. Use the same ngrok hostname
-    for the stack and all four Slack callback URLs, and keep the tunnel running.
+    Use ngrok when evaluating OpenHands on a laptop or local machine that Slack
+    cannot reach directly. Slack sends HTTP events to your installation and cannot
+    reach its `localhost` address. Follow [Serve with ngrok](/enterprise/docker-compose/ngrok)
+    to give the stack a public HTTPS URL without configuring router port forwarding
+    or your own DNS. The tunnel must stay running for Slack to deliver events.
+
+    If your installation already has a publicly reachable HTTPS URL with a trusted
+    certificate, use that URL and skip ngrok. In either case, use the same public
+    hostname for the stack and all four Slack callback URLs. The example below uses
+    an ngrok hostname; replace it with your installation's hostname.
 
     In the `enterprise` checkout from the [Compose installation](/enterprise/docker-compose),
     add the following to your existing `.env`. Replace the hostname and credentials
@@ -528,6 +535,35 @@ canvases. There is also no summarization or condensation today — once the
     4. Existing user account links remain valid — no need to re-run Step 4.
   </Accordion>
 </AccordionGroup>
+
+## Tips
+
+### Optional: Reduce Reply Delivery Delay
+
+Agent events are buffered before OpenHands receives them. The agent-server SDK's
+standard flush delay is 30 seconds for a partial batch. For a more responsive Slack
+demo, you can shorten this to 0.25 seconds. This changes event delivery timing;
+it does not reduce model inference time or Slack's initial HTTP acknowledgement time.
+
+For the Docker Compose configuration above, add this entry to the
+`x-slack-environment` mapping in `compose.slack.yaml` so both `app` and `worker`
+pass it to new agent sandboxes:
+
+```yaml
+OH_AGENT_SERVER_ENV: '{"AGENT_SERVER_PORT":"8000","OH_WEBHOOKS_0_FLUSH_DELAY":"0.25"}'
+```
+
+If you already customize `OH_AGENT_SERVER_ENV`, merge the flush-delay key into your
+existing JSON and preserve the other values. The delay must be greater than zero.
+Apply the configuration with:
+
+```bash
+docker compose -f docker-compose.yml -f compose.slack.yaml up --wait
+```
+
+Use a newly started sandbox to test the change. Existing sandboxes retain their old
+environment, and a new conversation can reuse an existing sandbox. Stop your disposable
+test sandbox through OpenHands before starting another test conversation.
 
 ## Reference
 
