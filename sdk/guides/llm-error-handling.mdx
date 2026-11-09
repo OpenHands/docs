@@ -204,6 +204,38 @@ human-readable message omits the machine code. This handling is part of the
 Earlier releases can treat these responses as temporary rate limits.
 </Note>
 
+## Timeouts and retries
+
+`LLM.timeout` is the per-attempt deadline, in seconds, for both the SDK and
+LiteLLM transport. It defaults to 300 seconds. When an attempt reaches that
+deadline without producing output, the SDK stops after at most
+`hard_timeout_max_attempts` attempts (2 by default), even if `num_retries` is
+higher. This applies to synchronous and asynchronous Chat and Responses calls.
+The SDK exposes the limit per model profile in its settings schema; you can
+also set it directly on `LLM`:
+
+```python icon="python" wrap
+from openhands.sdk import LLM
+
+llm = LLM(
+    model="openai/gpt-4o-mini",
+    timeout=120,
+    num_retries=5,
+    hard_timeout_max_attempts=2,
+)
+```
+
+After the limit, the SDK raises `LLMHardTimeoutError`, a subtype of
+`LLMTimeoutError`. Its message suggests asking for a shorter or chunked
+response, or increasing the profile's timeout or attempt limit. A provider
+timeout before the configured deadline, or a timeout after output has begun
+streaming, continues to use the ordinary retry policy. For asynchronous
+streams, `stream_idle_timeout` separately limits the time between chunks.
+
+Set `timeout=None` to disable the per-attempt hard deadline. The SDK cannot
+interrupt a synchronous transport call; it counts that call's timeout when
+LiteLLM raises it.
+
 ## Exception reference
 
 All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
@@ -214,6 +246,7 @@ All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
 |  | `LLMAuthenticationError` | Invalid or missing credentials (401/403 patterns). |
 |  | `LLMRateLimitError` | Temporary provider rate limit or exhausted quota/budget. |
 |  | `LLMTimeoutError` | SDK or lower-level timeout while waiting for the provider. |
+|  | `LLMHardTimeoutError` | Configured per-attempt deadline reached without output; subtype of `LLMTimeoutError`. |
 |  | `LLMServiceUnavailableError` | Temporary connectivity or service outage (e.g., 5xx responses, connection issues). |
 |  | `LLMBadRequestError` | Client-side request issues (invalid parameters, malformed input). |
 | **Response parsing / validation** | `LLMMalformedActionError` | Model returned a malformed action. |
@@ -230,5 +263,3 @@ All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
     All of the above (except the explicit cancellation types) inherit from `LLMError`, so you can implement a catch‑all
     for unexpected SDK LLM errors while still keeping fine‑grained handlers for the most common cases.
 </Tip>
-
-
