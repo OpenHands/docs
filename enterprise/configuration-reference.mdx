@@ -1,0 +1,356 @@
+---
+title: Configuration Reference
+description: Environment variables and Helm values for OpenHands Enterprise
+icon: sliders
+---
+
+Use this page to look up a setting for the [Docker Compose](/enterprise/docker-compose) stack or
+the [Helm chart](/enterprise/k8s-install/installation). Each row lists the environment variable,
+the equivalent Helm value, and any default. When the two deployments use different defaults, the
+row lists both.
+
+## Set a Value
+
+<Tabs>
+  <Tab title="Docker Compose">
+    Set variables marked <Badge size="sm" color="blue">.env</Badge> in a `.env` file next to `docker-compose.yml`:
+
+    ```bash .env
+    WEB_HOST=openhands.example.com
+    WEB_URL=https://openhands.example.com
+    AGENT_CANVAS_LOCK_TO_CLOUD=https://openhands.example.com
+    ```
+
+    Set any other variable on the `app` and `worker` services in `docker-compose.override.yml`:
+
+    ```yaml docker-compose.override.yml
+    x-openhands-env: &openhands-env
+      GITLAB_HOST: gitlab.example.com
+
+    services:
+      app:
+        environment: *openhands-env
+      worker:
+        environment: *openhands-env
+    ```
+
+    Docker Compose reads `docker-compose.override.yml` automatically. If your `.env` file sets
+    `COMPOSE_FILE`, add `docker-compose.override.yml` to the end of its list. Run
+    `docker compose up --wait` to apply your changes.
+
+    The stack uses placeholder passwords and keys by default. Set your own values before you share
+    the stack with your team.
+  </Tab>
+  <Tab title="Helm">
+    Set values in your `values.yaml` and apply them with `helm upgrade`. Credentials come from
+    Kubernetes Secrets in the release namespace, and the table lists the Secret and key for each one.
+
+    To set an environment variable that has no dedicated value, add it under `env`:
+
+    ```yaml values.yaml
+    env:
+      LOG_LEVEL: DEBUG
+    ```
+  </Tab>
+</Tabs>
+
+## General
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `WEB_HOST` <Badge size="sm" color="blue">.env</Badge> | `ingress.host` | Compose: `localhost` | Hostname that users open OpenHands on, such as `openhands.example.com`. |
+| `WEB_URL` <Badge size="sm" color="blue">.env</Badge> | Set from `ingress.host` | Compose: `http://localhost:9043` | Full URL that users open, including the scheme and any port. |
+| `APP_PORT` <Badge size="sm" color="blue">.env</Badge> | N/A | `9043` | Port on the host that serves the stack. |
+| `AGENT_CANVAS_LOCK_TO_CLOUD` <Badge size="sm" color="blue">.env</Badge> | `agent-canvas.staticServer.lockToCloud` | Compose: `http://localhost:9043` | URL that Agent Canvas connects to. Set it to the same value as `WEB_URL`. |
+| `PERMITTED_CORS_ORIGINS` | `env.PERMITTED_CORS_ORIGINS` | Compose: `http://localhost:9043`<br />Helm: `https://<WEB_HOST>` | Comma-separated origins that can call the API from a browser. |
+| `COMPOSE_FILE` <Badge size="sm" color="blue">.env</Badge> | N/A | | Compose files to load, separated by colons. Use it to add the [HTTPS overlay](/enterprise/docker-compose/https). |
+| `LOG_LEVEL` | `env.LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
+
+## License
+
+To keep the license in a Secret that you manage on Helm, set `license.existingSecret` to a Secret
+with a `license-key` or `offline-license` key.
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `OPENHANDS_LICENSE_KEY` <Badge size="sm" color="blue">.env</Badge> | `license.key` | | License key from Customer Center. |
+| `OPENHANDS_OFFLINE_LICENSE` | `license.offlineLicense` | | Contents of an offline license file from Customer Center, for installs that can't reach Customer Center. When set, OpenHands ignores the license key. On Helm, pass the file with `--set-file license.offlineLicense=<path>`. |
+| `LICENSE_SERVER_URL` <Badge size="sm" color="blue">.env</Badge> | `env.LICENSE_SERVER_URL` | `https://customercenter.openhands.dev` | Customer Center URL. |
+
+## Database and Cache
+
+Docker Compose runs PostgreSQL and Redis as services in the stack. The Helm chart runs a bundled
+PostgreSQL by default. For production, we recommend your own PostgreSQL: set
+`postgresql.enabled: false`, `externalDatabase.enabled: true`, and the `externalDatabase` values
+below. See [External PostgreSQL](/enterprise/external-postgres).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `DB_HOST` | `externalDatabase.host` | Compose: `db`<br />Helm: bundled PostgreSQL | PostgreSQL hostname. |
+| `DB_PORT` | `externalDatabase.port` | `5432` | PostgreSQL port. |
+| `DB_NAME` <Badge size="sm" color="blue">.env</Badge> | `externalDatabase.database`<br />`postgresql.auth.database` (bundled) | Compose: `openhands` | Application database. |
+| `DB_USER` <Badge size="sm" color="blue">.env</Badge> | `externalDatabase.username`<br />`postgresql.auth.username` (bundled) | Compose: `openhands`<br />Helm: `postgres` | Database user. |
+| `DB_PASS` <Badge size="sm" color="blue">.env</Badge> | Secret `postgres-password`, key `password` | Compose: placeholder | Database password. |
+| `DB_SSL_MODE` | `externalDatabase.sslMode` | Helm: `prefer` | PostgreSQL SSL mode, such as `require` or `verify-full`. |
+| `RUN_MIGRATIONS_ON_STARTUP` | `databaseMigrations.migrate` | `true` | Migrate the database schema when the application starts. |
+| `REDIS_HOST` | `redis.enabled`<br />`valkey.enabled` | Compose: `redis`<br />Helm: bundled Redis | Redis hostname. The Helm chart runs Redis or Valkey, and Redis takes precedence when both are enabled. |
+| `REDIS_PASSWORD` | Secret `redis`, key `redis-password` | Compose: none | Redis password. |
+
+## Conversation Storage
+
+Docker Compose stores conversation files locally. For Helm, use an S3-compatible store or Google
+Cloud Storage. Google Cloud Storage uses the workload's service account. For Amazon S3 on EKS, see
+[object storage](/enterprise/k8s-install/eks#object-storage).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `FILE_STORE` | `filestore.type` | Compose: local files<br />Helm: `gcs` | Storage backend: `s3` or `google_cloud`. The Helm value also accepts `gcs`. |
+| `FILE_STORE_PATH`<br />`AWS_S3_BUCKET` | `filestore.bucket` | Helm: `openhands-sessions` | Bucket for conversation files. For S3, set both variables to the bucket name. |
+| `AWS_S3_ENDPOINT` | `filestore.endpoint` | | Endpoint of an S3-compatible store other than Amazon S3. Leave it empty for Amazon S3. |
+| `AWS_S3_SECURE` | Set from the `filestore.endpoint` scheme | `true` | Connect to the endpoint over HTTPS. |
+| `AWS_ACCESS_KEY_ID` | `filestore.existingSecret`, key `AWS_ACCESS_KEY_ID` | | Access key ID. Leave it unset to use the workload's AWS identity. |
+| `AWS_SECRET_ACCESS_KEY` | `filestore.existingSecret`, key `AWS_SECRET_ACCESS_KEY` | | Secret access key. |
+
+## Authentication
+
+Docker Compose signs users in with an email address and password. The Helm chart uses Keycloak,
+which signs users in through your Git provider or SAML identity provider.
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `JWT_SECRET` | Secret `jwt-secret`, key `jwt-secret` | Compose: generated on first start | Key that signs session tokens and encrypts stored secrets. |
+| `DUPLICATE_EMAIL_CHECK` | `duplicateEmailCheck` | `true` | Reject a sign-in when another account has the same email address after its plus-address suffix is removed, such as `name+test@example.com`. |
+| `REQUIRE_VERIFIED_EMAILS` | `env.REQUIRE_VERIFIED_EMAILS` | `false` | Reject a sign-in when the identity provider has not verified the user's email address. |
+| `USER_PROVISIONING_ENABLED` | `userProvisioning.enabled` | `false` | Turn on the admin API that creates users without their input. |
+| `OPEN_ORG_CREATION_ENABLED` | `openOrgCreation.enabled` | `false` | Let any signed-in user create an organization. |
+
+### Keycloak
+
+Docker Compose doesn't use Keycloak.
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `KEYCLOAK_SERVER_URL` | `keycloak.url` | `http://keycloak` | URL that the application uses to reach Keycloak. |
+| `AUTH_WEB_HOST` | `keycloak.ingress.hostname` | `auth.<ingress.host>` | Public hostname of Keycloak. |
+| `KEYCLOAK_REALM_NAME` | Secret `keycloak-realm`, key `realm-name` | | Keycloak realm for OpenHands. |
+| `KEYCLOAK_CLIENT_ID` | Secret `keycloak-realm`, key `client-id` | | Keycloak client that OpenHands uses. |
+| `KEYCLOAK_CLIENT_SECRET` | Secret `keycloak-realm`, key `client-secret` | | Secret of the Keycloak client. |
+| `KEYCLOAK_SMTP_PASSWORD` | Secret `keycloak-realm`, key `smtp-password` | | Password that Keycloak uses for your SMTP server. |
+| `KEYCLOAK_ADMIN_PASSWORD` | Secret `keycloak-admin`, key `admin-password` | | Password of the Keycloak admin account. |
+
+### SAML SSO
+
+See [SAML SSO](/enterprise/integrations/saml-sso).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `ENABLE_ENTERPRISE_SSO` | `enterpriseSSO.enabled` | `false` | Show the SAML sign-in option. |
+| N/A | `enterpriseSSO.displayName` | `Company SSO` | Label of the SAML sign-in button. |
+| N/A | `enterpriseSSO.idpMetadataUrl` | | HTTPS URL of your identity provider's SAML metadata. |
+
+## LLM
+
+Docker Compose lets each user add their own LLM provider key in **Settings**. The Helm chart routes
+LLM requests through a LiteLLM proxy. To run the bundled proxy, set `litellm-helm.enabled: true` and
+store your provider keys in the `litellm-env-secrets` Secret. See
+[LLM Gateways](/enterprise/integrations/external-llm-gateways) for provider examples.
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `ENABLE_LEGACY_LITELLM` | `env.ENABLE_LEGACY_LITELLM` | Compose: `false`<br />Helm: `true` | Route LLM requests through a LiteLLM proxy, which manages each user's key and budget. |
+| `LITE_LLM_API_URL` | `litellm.url` | Helm: bundled proxy when `litellm-helm.enabled` is `true` | URL of the LiteLLM proxy. |
+| `LITE_LLM_API_KEY` | Secret `lite-llm-api-key`, key `lite-llm-api-key` | | Master key of the LiteLLM proxy. |
+| `LITE_LLM_TEAM_ID` | `litellm.teamId` | Helm: `openhands` | LiteLLM team for OpenHands users. OpenHands creates the team if it doesn't exist. |
+| `LITELLM_DEFAULT_MODEL` | `env.LITELLM_DEFAULT_MODEL` | | Default model for new users, such as `litellm_proxy/claude-sonnet-4-5`. |
+
+## Sandboxes
+
+Docker Compose runs sandboxes as containers on the host's Docker engine. The Helm chart runs them
+through the Runtime API. For Runtime API settings, see
+[Resource Limits](/enterprise/k8s-install/resource-limits).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `OH_SANDBOX_MAX_NUM_SANDBOXES` | `env.OH_SANDBOX_MAX_NUM_SANDBOXES` | Compose: `5`<br />Helm: `10` | Maximum number of sandboxes that each user can run at once. When a user starts another sandbox, OpenHands pauses their oldest running one. |
+| `OH_AGENT_SERVER_ENV` | `global.agentServerEnv` | Compose: `{"AGENT_SERVER_PORT": "8000"}` | Environment variables for every sandbox, as a JSON object. On Helm, set a map instead. On Docker Compose, keep `AGENT_SERVER_PORT` set to `8000`. |
+| `SANDBOX_REMOTE_RUNTIME_API_URL` | `sandbox.apiHostname` | | URL of the Runtime API, such as `https://runtime-api.openhands.example.com`. Helm only. |
+| `SANDBOX_API_KEY` | Secret `sandbox-api-key`, key `sandbox-api-key` | | Key that the application uses to call the Runtime API. It must match the Runtime API's `default-api-key` Secret. Helm only. |
+
+## Images
+
+Each release pins these images. Override them only to run a different version or a
+[custom sandbox image](/enterprise/custom-sandbox-images/index).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `APP_IMAGE` <Badge size="sm" color="blue">.env</Badge> | `image.repository`<br />`image.tag` | Release image | Image for the application and worker. |
+| `AUTOMATION_IMAGE` <Badge size="sm" color="blue">.env</Badge> | `automation.image.repository`<br />`automation.image.tag` | Release image | Image for the automation service. |
+| `AGENT_CANVAS_IMAGE` <Badge size="sm" color="blue">.env</Badge> | `agent-canvas.image.repository`<br />`agent-canvas.image.tag` | Release image | Image for Agent Canvas. |
+| `AGENT_SERVER_IMAGE_REPOSITORY` | `global.agentServerImage.repository` | `ghcr.io/openhands/agent-server` | Repository of the sandbox image. |
+| `AGENT_SERVER_IMAGE_TAG` | `global.agentServerImage.tag` | Release tag | Tag of the sandbox image. |
+
+## Automations
+
+On Helm, the automation service also needs a database and storage. See
+[Enable Automations with Helm](/enterprise/k8s-install/automations).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `AUTOMATION_SERVICE_KEY` <Badge size="sm" color="blue">.env</Badge> | `automationServiceKey.enabled`<br />Secret `automation-service-key`, key `automation-service-key` | Compose: placeholder | Key that the application uses to call the automation service. |
+| `AUTOMATION_WEBHOOK_SECRET` <Badge size="sm" color="blue">.env</Badge> | `automationWebhookSecret.enabled`<br />Secret `automation-webhook-secret`, key `webhook-secret` | Compose: placeholder | Secret that verifies the signatures of automation webhooks. |
+| `AUTOMATION_KV_SECRET` <Badge size="sm" color="blue">.env</Badge> | `automation.kvSecretFromSecret`<br />Secret `automation-kv-secret`, key `kv-secret` | Compose: placeholder | Key that signs automation KV tokens and encrypts the state that automations store. |
+| `AUTOMATION_DB_NAME` <Badge size="sm" color="blue">.env</Badge> | `automation.database.name` | `automations` | Database for the automation service. |
+| `AUTOMATION_SERVICE_URL` | `automationService.url` | Compose: `http://automation-server:8000/api/automation` | URL that the application uses to reach the automation service, including `/api/automation`. |
+| `AUTOMATION_EVENT_FORWARDING_ENABLED` | `automationService.eventForwardingEnabled` | Compose: `true`<br />Helm: `false` | Forward GitHub, Azure DevOps, Jira Data Center, and Bitbucket Data Center events to [automations](/enterprise/automations/data-center-events). |
+
+## Source Control
+
+These settings apply to every Git provider.
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `OH_RESOLVER_LABEL` | `integrations.resolverLabel` | `openhands` | Issue label that starts OpenHands. Users can also mention the label with `@`, such as `@openhands`. |
+
+### GitHub
+
+For Helm, set `github.enabled: true` and create a `github-app` Secret with these keys and an
+`app-id` key. See [GitHub](/enterprise/integrations/github).
+
+| Environment variable | Helm value | Description |
+| --- | --- | --- |
+| `GITHUB_APP_CLIENT_ID` | Secret `github-app`, key `client-id` | Client ID of the GitHub App. |
+| `GITHUB_APP_CLIENT_SECRET` | Secret `github-app`, key `client-secret` | Client secret of the GitHub App. |
+| `GITHUB_APP_PRIVATE_KEY` | Secret `github-app`, key `private-key` | Private key of the GitHub App, in PEM format. |
+| `GITHUB_APP_WEBHOOK_SECRET` | Secret `github-app`, key `webhook-secret` | Webhook secret of the GitHub App. |
+| `GITHUB_APP_SLUG` | Secret `github-app`, key `app-slug` | Slug of the GitHub App, as it appears in the app's URL. |
+
+### GitLab
+
+For Helm, set `gitlab.enabled: true` and create a `gitlab-app` Secret. See
+[GitLab](/enterprise/integrations/gitlab).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `GITLAB_APP_CLIENT_ID` | Secret `gitlab-app`, key `client-id` | | Client ID of the GitLab application. |
+| `GITLAB_APP_CLIENT_SECRET` | Secret `gitlab-app`, key `client-secret` | | Client secret of the GitLab application. |
+| `GITLAB_HOST` | `gitlab.host` | `gitlab.com` | Hostname of your GitLab instance, without `https://`. |
+
+### Bitbucket Cloud
+
+For Helm, set `bitbucket.enabled: true` and create a `bitbucket-app` Secret. To use a different
+Secret name, set `bitbucket.auth.existingSecret`.
+
+| Environment variable | Helm value | Description |
+| --- | --- | --- |
+| `BITBUCKET_APP_CLIENT_ID` | Secret `bitbucket-app`, key `client-id` | Key of the Bitbucket OAuth consumer. |
+| `BITBUCKET_APP_CLIENT_SECRET` | Secret `bitbucket-app`, key `client-secret` | Secret of the Bitbucket OAuth consumer. |
+
+### Bitbucket Data Center
+
+For Helm, set `bitbucketDataCenter.enabled: true` and create a `bitbucket-data-center-app`
+Secret. See [Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center).
+
+| Environment variable | Helm value | Description |
+| --- | --- | --- |
+| `BITBUCKET_DATA_CENTER_HOST` | `bitbucketDataCenter.host` | Hostname of your Bitbucket Data Center instance, without `https://`. |
+| `BITBUCKET_DATA_CENTER_CLIENT_ID` | Secret `bitbucket-data-center-app`, key `client-id` | Client ID of the application link. |
+| `BITBUCKET_DATA_CENTER_CLIENT_SECRET` | Secret `bitbucket-data-center-app`, key `client-secret` | Client secret of the application link. |
+| `BITBUCKET_DATA_CENTER_BOT_TOKEN` | Secret `bitbucket-data-center-app`, key `bot-token` | HTTP access token of a bot account. When set, OpenHands posts comments as the bot. |
+| `BITBUCKET_DATA_CENTER_BOT_USERNAME` | `bitbucketDataCenter.botUsername` | Username of the bot account. OpenHands ignores events from this account. |
+
+### Azure DevOps
+
+For Helm, set `azureDevOps.enabled: true` and create an `azure-devops-app` Secret. To use a
+different Secret name, set `azureDevOps.auth.existingSecret`. See
+[Azure DevOps](/enterprise/integrations/azure-devops).
+
+| Environment variable | Helm value | Description |
+| --- | --- | --- |
+| `AZURE_DEVOPS_TENANT_ID` | `azureDevOps.tenantId` | Microsoft Entra tenant ID. |
+| `AZURE_DEVOPS_CLIENT_ID` | Secret `azure-devops-app`, key `client-id` | Application (client) ID of the Microsoft Entra app registration. |
+| `AZURE_DEVOPS_CLIENT_SECRET` | Secret `azure-devops-app`, key `client-secret` | Client secret of the Microsoft Entra app registration. |
+| `AZURE_DEVOPS_WEBHOOK_SECRET` | Secret `azure-devops-app`, key `webhook-secret` | Secret that verifies Azure DevOps service hook requests. Required for webhooks. |
+
+## Jira
+
+### Jira Cloud
+
+See [Jira Cloud](/enterprise/integrations/jira-cloud).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `ENABLE_JIRA` | `jira.enabled` | `false` | Turn on the Jira Cloud integration. |
+| `JIRA_ENABLE_OAUTH` | `jira.linkMethod` | `1` (`oauth`) | How users link their Jira accounts. Set `1` (`oauth`) to use an Atlassian OAuth app, or `0` (`email_match`) to match users by email address. |
+| `JIRA_WEBHOOKS_ENABLED` | Set to `1` when `jira.linkMethod` is `email_match` | `0` | Accept webhooks from Jira Cloud. |
+| `JIRA_CLIENT_ID` | Secret `jira-app`, key `client-id` | | Client ID of the Atlassian OAuth app. OAuth only. |
+| `JIRA_CLIENT_SECRET` | Secret `jira-app`, key `client-secret` | | Client secret of the Atlassian OAuth app. OAuth only. |
+
+### Jira Data Center
+
+For Helm, set `jiraDc.enabled: true` and create a `jira-dc-app` Secret. See
+[Jira Data Center](/enterprise/integrations/jira-data-center).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `ENABLE_JIRA_DC` | `jiraDc.enabled` | `false` | Turn on the Jira Data Center integration. |
+| `JIRA_DC_WEBHOOKS_ENABLED` | Set to `1` when `jiraDc.enabled` is `true` | `0` | Accept webhooks from Jira Data Center. |
+| `JIRA_DC_ENABLE_OAUTH` | `jiraDc.linkMethod` | `1` (`oauth`) | How users link their Jira accounts. Set `1` (`oauth`) to use a Jira OAuth app, or `0` (`email_match`) to match users by email address. |
+| `JIRA_DC_BASE_URL` | Secret `jira-dc-app`, key `base-url` | | URL of your Jira Data Center instance. OAuth only. |
+| `JIRA_DC_CLIENT_ID` | Secret `jira-dc-app`, key `client-id` | | Client ID of the Jira OAuth app. OAuth only. |
+| `JIRA_DC_CLIENT_SECRET` | Secret `jira-dc-app`, key `client-secret` | | Client secret of the Jira OAuth app. OAuth only. |
+| `JIRA_DC_SERVICE_ACCOUNT_EMAIL` | Secret `jira-dc-app`, key `service-account-email` | | Email address of the Jira service account. |
+| `JIRA_DC_SERVICE_ACCOUNT_PAT` | Secret `jira-dc-app`, key `service-account-pat` | | Personal access token of the Jira service account. |
+
+## Slack
+
+For Helm, set `slack.enabled: true` and create a `slack-auth` Secret. See
+[Slack](/enterprise/integrations/slack).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `SLACK_CLIENT_ID` | `slack.clientId` | | Client ID of the Slack app. |
+| `SLACK_CLIENT_SECRET` | Secret `slack-auth`, key `client-secret` | | Client secret of the Slack app. |
+| `SLACK_SIGNING_SECRET` | Secret `slack-auth`, key `signing-secret` | | Signing secret that verifies requests from Slack. |
+| `SLACK_WEBHOOKS_ENABLED` | Set to `true` when `slack.enabled` is `true` | `false` | Accept requests from Slack. |
+
+## Email
+
+OpenHands sends email, such as organization invitations, through your SMTP server. For Helm, set
+`smtp.enabled: true`.
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `SMTP_HOST` | `smtp.host` | | Hostname of your SMTP server. |
+| `SMTP_PORT` | `smtp.port` | `587` | Port of your SMTP server. |
+| `SMTP_FROM_EMAIL` | `smtp.fromEmail` | `OpenHands <no-reply@openhands.dev>` | Address that OpenHands sends email from. |
+| `SMTP_USE_TLS` | `smtp.useTls` | `true` | Upgrade the connection with STARTTLS. |
+| `SMTP_USE_SSL` | `smtp.useSsl` | `false` | Connect over implicit TLS, usually on port 465. When set, OpenHands ignores `SMTP_USE_TLS`. |
+| `SMTP_USERNAME` | Secret `smtp-credentials`, key `smtp-username` | | SMTP username. Leave it unset for a server that doesn't require authentication. |
+| `SMTP_PASSWORD` | Secret `smtp-credentials`, key `smtp-password` | | SMTP password. |
+
+## Web Search
+
+| Environment variable | Helm value | Description |
+| --- | --- | --- |
+| `TAVILY_API_KEY` | `tavily.enabled`<br />Secret `tavily-api-key`, key `tavily-api-key` | Tavily API key. When set, agents can search the web through Tavily without access to the key. |
+
+## Telemetry
+
+See [Telemetry](/enterprise/docker-compose#telemetry).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `ENABLE_POSTHOG_ANALYTICS` <Badge size="sm" color="blue">.env</Badge> | `env.ENABLE_POSTHOG_ANALYTICS` | Compose: `true`<br />Helm: `false` | Send product analytics events to OpenHands. |
+| `POSTHOG_CLIENT_KEY` <Badge size="sm" color="blue">.env</Badge> | `appConfig.POSTHOG_CLIENT_KEY` | Compose: OpenHands project key | PostHog project key. To send nothing, set `ENABLE_POSTHOG_ANALYTICS` to `false` and set this to an empty value. |
+
+## Observability
+
+For Helm, set `laminar.enabled: true` to set these variables from the `laminar` values. See
+[Analytics](/enterprise/analytics).
+
+| Environment variable | Helm value | Default | Description |
+| --- | --- | --- | --- |
+| `LMNR_PROJECT_API_KEY` | `laminar.apiKeyFromSecret` | | Laminar project API key. We recommend an ingest-only key. |
+| `LMNR_BASE_URL` | `laminar.baseUrlFromSecret` | | URL of the Laminar app server. |
+| `LMNR_FORCE_HTTP` | `laminar.forceHttp` | Helm: `true` | Connect to Laminar over HTTP. |
+| `LMNR_HTTP_PORT` | `laminar.httpPort` | | HTTP port of the Laminar app server. |
