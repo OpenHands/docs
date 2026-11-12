@@ -142,6 +142,12 @@ Match the event to the severity of your findings:
 - Check that internal links use absolute doc paths (e.g., `/overview/quickstart`)
 - Verify code blocks with file references use the correct sync format (see `sdk-guidelines.md`)
 
+### Writing style
+
+Check changed prose against the writing rules in `.agents/skills/docs-writing/SKILL.md`. Unless a
+change states something inaccurate, writing-rule findings are non-blocking: use `COMMENT` with a
+suggested rewrite.
+
 ### SDK guide file naming convention
 
 SDK guide files under `sdk/guides/` **must** use a category prefix:
@@ -151,3 +157,43 @@ SDK guide files under `sdk/guides/` **must** use a category prefix:
 - `convo-` for Conversation-related guides (e.g., `convo-async.mdx`, `convo-persistence.mdx`)
 
 Flag any new SDK guide that does not follow this naming convention.
+
+## Enterprise
+
+Apply these checks to changes under `enterprise/` and to the Enterprise tab in `docs.json`. Unless
+a change states something inaccurate, these are non-blocking: use `COMMENT` with a suggested rewrite.
+
+Verify Docker Compose and Helm claims (ports, variables, commands) against
+[`OpenHands/enterprise`](https://github.com/OpenHands/enterprise). Deployment positioning and
+writing style are covered in `.agents/skills/docs-writing/SKILL.md`.
+
+### Navigation
+
+- The Enterprise tab has six top-level sections. New pages must go in the section that matches
+  what the reader is doing:
+  - **Get Started**: learning what OpenHands Enterprise is and how it's built.
+  - **Deployment**: sizing and installing OpenHands Enterprise.
+  - **Configuration**: platform settings that apply to any install method, such as SSO, LLM
+    gateways, sandbox images, the database, and observability.
+  - **Integrations**: connecting third-party tools, such as source control, project management,
+    and Slack.
+  - **Features**: what users do in OpenHands Enterprise, such as conversations, automations,
+    skills and plugins, and organizations.
+  - **Administration**: troubleshooting and release notes.
+- Flag new top-level sections, pages added as long flat lists, and pages in an unrelated section.
+  Mintlify always expands top-level sections, so each one lengthens the sidebar for every reader.
+- In Deployment, the Sizing Guide comes first, followed by one nested group per install method.
+  - Pages that apply to a single install method go in that method's group. For example, Admin
+    Console settings belong in VM Install, and enabling automations with Helm belongs in
+    Kubernetes. Pages that apply to every install method go outside those groups.
+  - Order pages in an install method's group in the order the reader works through them.
+    Prerequisites (cloud provider setup, Sysbox, DNS and TLS) come before the install guide, and
+    day-2 pages (resource limits, automations, upgrades) come after it.
+  - Mark an experimental install method with `"tag": "Experimental"` on its group. Flag a separate
+    Experimental section.
+- Group related pages into nested groups, which Mintlify collapses by default. In Integrations,
+  group tools by category (Source Control, Project Management). A tool without a category, such as
+  Slack, stays a single page.
+- Flag new groups that list their overview page as a separate entry. Set the overview page as the
+  group's `root` instead.
+- Add new release notes at the top of the Release Notes group, so the newest version comes first.
