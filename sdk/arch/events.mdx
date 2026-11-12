@@ -216,6 +216,38 @@ Two distinct error events exist in the SDK, with different purpose and visibilit
   - Effect: Run loop transitions to ERROR and run() raises ConversationRunError; surface top-level error to client applications
   - Code: https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/event/conversation_error.py
 
+## Recordings and Restart Recovery
+
+Use `AgentErrorEvent.recovery_reason == "server_restart"` to identify an outcome synthesized when the agent-server reloads a `RUNNING` conversation with an interrupted tool call. Its classification remains `kind="internal"`, `retryable=False`, and `user_action="none"`. The recovery reason is a closed string value containing no tool arguments, prompts, outputs, or source identities.
+
+Older events and errors from other paths load with `recovery_reason=None`. Treat that value as unspecified provenance. The field is included when present in existing REST event responses and WebSocket event messages. Match the field value rather than the error's English text.
+
+For a raw recording, call `get_observation_dispositions()` with the complete event sequence in append order:
+
+```python
+from openhands.sdk.context.view import get_observation_dispositions
+
+dispositions = get_observation_dispositions(raw_events)
+for disposition in dispositions:
+    print(disposition.tool_call_id)
+    print(disposition.canonical_event_id)
+    print(disposition.out_of_view_event_ids)
+```
+
+The function returns a tuple of frozen `ObservationDisposition` records, ordered by each tool call's first outcome. Each record contains:
+
+| Field | Meaning |
+|-------|---------|
+| `tool_call_id` | Tool call whose outcomes are being selected |
+| `canonical_event_id` | ID of the first `ObservationBaseEvent` for this tool call |
+| `out_of_view_event_ids` | Tuple of IDs of all later outcomes, in append order |
+
+This is the same first-outcome rule used by the LLM view's observation uniqueness property. It covers tool observations, user rejections, and agent errors. A tool call with a single outcome has an empty `out_of_view_event_ids`; one with no outcome has no record. Selection uses input order, regardless of timestamps, error wording, or recovery metadata.
+
+If a restart recovery error precedes the original tool's late completion, the recovery error is canonical and the late completion appears in `out_of_view_event_ids`. Preserve both original events in your recording. Calling the function changes no events, persisted files, or live view.
+
+The disposition describes outcome uniqueness within the supplied sequence. It does not apply branch selection, condensation, or other LLM view filters. Select a branch's events first when inspecting a branched conversation; use `View.from_events()` when you need the final LLM view.
+
 ## See Also
 
 - **[Agent Architecture](/sdk/arch/agent)** - How agents read and write events
