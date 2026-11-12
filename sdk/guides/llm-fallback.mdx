@@ -46,7 +46,6 @@ primary_llm = LLM(
 2. If the call fails with a **transient error**, the `FallbackStrategy` kicks in and tries each fallback LLM in order
 3. The first successful fallback response is returned to the caller
 4. If all fallbacks fail, the original primary error is raised
-5. Token usage and cost from fallback calls are **merged into the primary LLM's metrics**, so you get a unified view of total spend by model
 
 <Warning>
 Only transient errors trigger fallback.
@@ -84,18 +83,18 @@ FallbackStrategy(
 
 ## Metrics
 
-Fallback costs are automatically merged into the primary LLM's metrics. After a conversation, you can inspect exactly which models were used:
+Use `conversation.conversation_stats` to inspect usage by role. A fallback keeps the caller's `usage_id` and usage session, so a condenser fallback still counts under `condenser`, even when its saved profile has another `usage_id`. Token usage and cost are recorded once in that session.
 
 ```python icon="python" wrap
 # After running a conversation
-metrics = llm.metrics
+metrics = conversation.conversation_stats.get_metrics_for_usage(primary_llm.usage_id)
 print(f"Total cost (including fallbacks): ${metrics.accumulated_cost:.6f}")
 
 for usage in metrics.token_usages:
     print(f"  model={usage.model}  prompt={usage.prompt_tokens}  completion={usage.completion_tokens}")
 ```
 
-Individual `token_usage` records carry the fallback model name, so you can distinguish which LLM produced each usage record.
+Individual cost and token usage records identify the model that served the request. For standalone LLM calls, inspect `primary_llm.metrics`.
 
 ## Use Cases
 
@@ -116,7 +115,7 @@ This example is available on GitHub: [examples/01_standalone_sdk/39_llm_fallback
 When the primary LLM fails with a transient error (rate limit, timeout, etc.),
 FallbackStrategy automatically tries alternate LLMs in order.  Fallback is
 per-call: each new request starts with the primary model.  Token usage and
-cost from fallback calls are merged into the primary LLM's metrics.
+cost from fallback calls are recorded in the caller's usage session.
 
 This example:
   1. Saves two fallback LLM profiles to a temporary store.
