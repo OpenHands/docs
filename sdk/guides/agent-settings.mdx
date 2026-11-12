@@ -92,13 +92,82 @@ restored = OpenHandsAgentSettings.from_persisted(persisted, context={"cipher": c
 
 ## Create an Agent from Settings
 
-Once validated, create a working agent directly from the settings object.
+`create_agent()` returns an `AgentBase`. The reserved `CodeActAgent` selector,
+also used when `agent` is omitted, constructs the stock `Agent`.
 
 ```python icon="python" focus={1}
 agent = settings.create_agent()
 ```
 
 You can then pass that agent into a `Conversation`, or derive another agent by changing the settings payload. For example, the full example below also shows how removing `FileEditorTool` and disabling the condenser produces a different agent configuration without rewriting the rest of the setup.
+
+### Select a Registered Agent Class
+
+Set `agent` to the exact class name in your settings or saved OpenHands profile.
+The selector never imports code. Trusted startup code must register a concrete,
+module-level `AgentBase` subclass with a unique SDK `kind`. Classes defined in
+`__main__`, inside functions or inside other classes are not supported.
+
+For example, install this module with your application as `my_app/agent_bootstrap.py`:
+
+```python
+from openhands.sdk.agent import Agent, register_agent
+
+
+class ProjectAgent(Agent):
+    pass
+
+
+register_agent(ProjectAgent)
+```
+
+<Tabs>
+<Tab title="In-process SDK">
+In a fresh process, build `settings` as above, then import the bootstrap before
+any call to `create_agent()`:
+
+```python
+import my_app.agent_bootstrap
+
+custom_settings = settings.model_copy(update={"agent": "ProjectAgent"})
+agent = custom_settings.create_agent()
+```
+</Tab>
+<Tab title="Agent Server">
+Set the saved profile's `agent` field to `"ProjectAgent"` and start the server
+with the fixed, operator-selected bootstrap module:
+
+```bash
+python -m openhands.agent_server --import-modules my_app.agent_bootstrap
+```
+
+The CLI seals registration after successful trusted preloads, before serving
+requests or restoring conversations.
+</Tab>
+</Tabs>
+
+The first settings lookup seals the registry, even if the selector is refused.
+To seal it earlier, call `seal_agent_registry()` from `openhands.sdk.agent`
+after registering all classes. Identical registrations are harmless until
+sealed; sealing itself is idempotent. Any registration after sealing raises
+`ValueError`.
+
+Custom selections must remain available and uniquely resolvable. Unknown,
+unregistered, unavailable or ambiguous classes raise `ValueError`. The selected
+class receives the complete resolved constructor configuration; unsupported or
+silently ignored fields and missing required configuration are rejected before
+the agent is returned.
+
+Start every fresh server process with the same trusted bootstrap, including
+processes that restore conversations. Restoration continues to use the existing
+serialized `kind` lookup, which needs the custom class loaded under its unique
+identity; it does not consult the settings-selection registry.
+
+<Note>
+Nondefault `agent` values that were previously ignored now require explicit
+registration. Invalid selections raise `ValueError` instead of falling back to
+the stock agent.
+</Note>
 
 ## Ready-to-run Example
 
