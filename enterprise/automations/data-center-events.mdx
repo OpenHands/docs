@@ -1,0 +1,222 @@
+---
+title: Jira and Bitbucket Data Center Event Automations
+description: Trigger automations from Jira Data Center issue and comment events and from Bitbucket Data Center pull request and repository events, using the integrations built into OpenHands Enterprise.
+icon: building
+---
+
+Jira Data Center and Bitbucket Data Center are built-in event sources in OpenHands Enterprise.
+Once the [Jira Data Center](/enterprise/integrations/jira-data-center) or
+[Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center) integration is set up and
+its webhook is installed, the same webhook that powers `@openhands` mentions also delivers events to
+automations. You do not register a second webhook.
+
+<Note>
+  These steps apply to OpenHands Enterprise 0.103.0 and later.
+</Note>
+
+<Info>
+  For GitHub events, see [GitHub Event Automations](/enterprise/automations/github-events). For
+  services without a built-in integration, such as Linear, see
+  [Event-Based Automations](/openhands/usage/automations/event-automations).
+</Info>
+
+## Prerequisites
+
+Both sources need the automation service and event forwarding enabled. Replicated installations
+turn these on when Automations are enabled in the Admin Console. Helm installations set
+`automationService.eventForwardingEnabled: true`; see
+[Automations on Kubernetes](/enterprise/k8s-install/automations). Without forwarding, manual runs
+work but events never arrive.
+
+### Jira Data Center
+
+1. Enable the Jira Data Center integration and install its webhook as described in
+   [Jira Data Center](/enterprise/integrations/jira-data-center#install-the-jira-webhook). The
+   webhook subscribes to issue and comment events only; automations can react to those six events
+   and nothing else.
+2. Create the automation in an organization that should receive Jira events (see
+   [Which organizations receive Jira events](#which-organizations-receive-jira-events)).
+
+### Bitbucket Data Center
+
+1. Enable Bitbucket Data Center authentication and install the repository webhook from
+   **Settings > Integrations** for every repository that should trigger automations, as described in
+   [Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center#install-repository-webhooks).
+2. **Claim the Bitbucket project for your OpenHands team organization.** Bitbucket Data Center events
+   are routed by the project key, the same way GitHub events are routed by the GitHub organization.
+   In **Organization Settings > Git Conversation Routing**, claim the project key (for example
+   `ENG`). An event for a project that no organization has claimed is dropped, with one exception:
+   when the installation's only team organization is its default organization, unclaimed events go
+   to that organization. Once a second team organization exists, the claim is required; the change
+   takes effect within five minutes. See
+   [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations).
+3. Create the automation under that team organization.
+
+Claim changes clear the routing cache. Send a new event after claiming the project;
+earlier events that were dropped are not replayed.
+
+<Note>
+  `@openhands` mentions on Bitbucket pull requests do not need the claim. Only automations do.
+</Note>
+
+## Available Events
+
+Both sources deliver the raw webhook payload to automations. The event key is the provider's own
+event name, so filters use the provider's field names.
+
+<Warning>
+  Use the keys below. GitHub-style keys such as `pull_request.opened` or `issues.opened`
+  never match these sources. Older releases may let you save them, but the automation will not run.
+</Warning>
+
+### Jira Data Center
+
+| Event key | When |
+| --- | --- |
+| `jira:issue_created` | An issue is created |
+| `jira:issue_updated` | An issue changes, including labels, status, and assignee |
+| `jira:issue_deleted` | An issue is deleted |
+| `comment_created` | A comment is added |
+| `comment_updated` | A comment is edited |
+| `comment_deleted` | A comment is deleted |
+
+Use `jira:issue_*` to match created, updated, and deleted together. Other Jira events, such as
+worklog or sprint events, are not subscribed and never reach automations.
+
+### Bitbucket Data Center
+
+| Event key | When |
+| --- | --- |
+| `pr:opened` | A pull request is opened |
+| `pr:from_ref_updated` | Commits are pushed to the pull request's source branch |
+| `pr:modified` | The title, description, or target branch changes |
+| `pr:reviewer:approved`, `pr:reviewer:unapproved`, `pr:reviewer:needs_work` | A reviewer changes their status |
+| `pr:merged`, `pr:declined`, `pr:deleted` | The pull request is merged, declined, or deleted |
+| `pr:comment:added`, `pr:comment:edited`, `pr:comment:deleted` | A pull request comment changes |
+| `repo:refs_changed` | Branches or tags are pushed, created, or deleted |
+| `repo:comment:added`, `repo:comment:edited`, `repo:comment:deleted` | A commit comment changes |
+
+Use `pr:*` to match every pull request event.
+
+## Filtering Events
+
+Filters are [JMESPath expressions](https://jmespath.org/) evaluated against the raw payload.
+The examples below use project `ENG` and repository `payments`; replace these with your own names.
+
+Run when an issue in project `ENG` is created with the `openhands` label, or when that label is added
+later (the changelog shows the label in the new value and not in the old one):
+
+```
+issue.fields.project.key == 'ENG' && (
+  (webhookEvent == 'jira:issue_created' && contains(issue.fields.labels || `[]`, 'openhands')) ||
+  (webhookEvent == 'jira:issue_updated' && length(changelog.items[?field == 'labels'
+    && contains(join('', [' ', to_string(toString), ' ']), ' openhands ')
+    && !contains(join('', [' ', to_string(fromString), ' ']), ' openhands ')] || `[]`) > `0`)
+)
+```
+
+Run when an issue in project `ENG` moves to Done:
+
+```
+issue.fields.project.key == 'ENG' && webhookEvent == 'jira:issue_updated'
+  && length(changelog.items[?field == 'status' && toString == 'Done'] || `[]`) > `0`
+```
+
+With `comment_*` as the event key, run on comments in one project:
+
+```
+issue.fields.project.key == 'ENG'
+```
+
+Run on new or updated, non-draft pull requests to one Bitbucket repository:
+
+```
+(eventKey == 'pr:opened' || eventKey == 'pr:from_ref_updated') && pullRequest.draft != `true`
+  && join('/', [pullRequest.toRef.repository.project.key, pullRequest.toRef.repository.slug]) == 'ENG/payments'
+```
+
+Run on pull requests targeting `main` anywhere in a project:
+
+```
+pullRequest.toRef.displayId == 'main' && pullRequest.toRef.repository.project.key == 'ENG'
+```
+
+<Note>
+  OpenHands also supports functions such as `icontains` and `glob`; see
+  [Filtering Events](/openhands/usage/automations/event-automations#filtering-events).
+</Note>
+
+Try a new automation on a test project or repository before pointing it at production work: it
+runs for every event its filter matches.
+
+## Which Organizations Receive Jira Events
+
+A Jira Data Center installation is shared by the whole OpenHands Enterprise installation, so Jira
+events carry no repository or organization of their own.
+
+Events go to the organization that owns the Jira Data Center connection and to every
+organization with an enabled `jira_dc` automation. When several teams share one Jira instance,
+filter by project key (`issue.fields.project.key == 'ENG'`) so each automation acts only on
+its team's projects.
+
+Bitbucket Data Center events go to the organization that claimed the project key, or to the
+default organization if it is the only team organization, as described above.
+
+## Templates
+
+In [Agent Canvas](/openhands/usage/agent-canvas/prebuilt-automations), two Data Center templates
+set the trigger, filter, and prompt for you:
+
+- **Jira Data Center issue to Bitbucket Data Center PR**: a label on an issue in a chosen Jira
+  project starts an agent that implements the request in a Bitbucket Data Center repository and
+  opens a pull request.
+- **Bitbucket Data Center code review**: new and updated pull requests to a chosen repository get a
+  review.
+
+Choose the Bitbucket repository from the picker, or enter its HTTP clone URL. The Jira template
+also asks for the Jira project key and trigger label.
+
+## What a Run Can Do
+
+- By default, the run uses the creator's connected Git accounts, secrets, and MCP servers.
+  If you set it to run as a service account, it uses that account's access instead.
+- To comment on the Jira issue from a run, give the automation a way to reach Jira: a saved secret
+  holding a Jira Data Center token (the Jira template takes its name as a setup argument) or a Jira
+  MCP server connected by the account the automation runs as.
+- To change code, select the Bitbucket Data Center repository when setting up the automation.
+  The run can clone it using the run account's Bitbucket Data Center connection.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Jira events never arrive">
+    Confirm the Jira webhook is installed and active (**Settings > Integrations > Jira Data
+    Center**), that the Jira server can reach the OpenHands app URL, and that the event is one of
+    the six subscribed events. On Helm installations confirm `automationService.eventForwardingEnabled`
+    and `jiraDc.enabled` are set.
+  </Accordion>
+  <Accordion title="Jira events arrive, but the automation in my organization does not run">
+    Check that the automation is enabled and its filter matches the project and event.
+    After enabling the first Jira automation in an organization, allow up to five minutes for
+    routing to refresh. Older releases may deliver only to the organization that owns the Jira
+    connection; upgrade to 0.103.0 for the behavior described here.
+  </Accordion>
+  <Accordion title="Bitbucket pull request events arrive, but no run starts">
+    Check the project key under **Organization Settings > Git Conversation Routing** and create
+    the automation in the claiming team organization. The default-organization exception above
+    also applies here. Confirm the repository webhook is installed, then send a new event.
+    On older releases, a new claim may take up to an hour to affect routing.
+  </Accordion>
+  <Accordion title="The event key list is empty or shows GitHub events">
+    The event list comes from the automation service. Choose the source first; if the list is still
+    wrong, type the event key from the tables above. Older releases may show GitHub events for
+    every source; upgrade to 0.103.0 for the correct lists.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+- [Jira Data Center](/enterprise/integrations/jira-data-center) - Set up the integration and its webhook
+- [Bitbucket Data Center](/enterprise/integrations/bitbucket-data-center) - Set up authentication and repository webhooks
+- [GitHub Event Automations](/enterprise/automations/github-events) - The GitHub equivalent of this page
+- [Automations in OpenHands Enterprise](/enterprise/automations) - Sharing, run identity, and permissions
