@@ -1,0 +1,278 @@
+---
+title: Environment Variables
+description: Configure LiteLLM and Laminar in OpenHands Enterprise with environment variables for Docker Compose and Helm installs.
+icon: terminal
+---
+
+Use environment variables to configure OpenHands Enterprise. This page lists the variables that
+connect the application to the bundled LiteLLM gateway and to Laminar, and shows how to set them in
+a [Docker Compose](/enterprise/docker-compose) or [Helm](/enterprise/k8s-install/installation)
+install.
+
+## Set Environment Variables
+
+<Tabs>
+  <Tab title="Docker Compose">
+    The `app` and `worker` services in `docker-compose.yml` list their environment variables
+    explicitly. A value in `.env` reaches a container only when a Compose file references it.
+
+    To add or change a variable, create an overlay file next to `docker-compose.yml`, for example
+    `docker-compose.custom.yml`:
+
+    ```yaml docker-compose.custom.yml
+    x-custom-env: &custom-env
+      LLM_TIMEOUT: '600'
+
+    services:
+      app:
+        environment: *custom-env
+      worker:
+        environment: *custom-env
+    ```
+
+    List every Compose file you use in `COMPOSE_FILE` in `.env`, so each command uses the same set.
+    Separate the files with `:` on Linux and macOS, or with `;` on Windows:
+
+    ```dotenv .env
+    COMPOSE_FILE=docker-compose.yml:docker-compose.custom.yml
+    ```
+
+    Then apply the change:
+
+    ```bash
+    docker compose up --wait
+    ```
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Set application variables under `env` in your `values.yaml`. A value under `env` replaces the
+    chart's value for the same variable:
+
+    ```yaml values.yaml
+    env:
+      LLM_TIMEOUT: "600"
+    ```
+
+    Then apply the change:
+
+    ```bash
+    helm upgrade openhands oci://registry.replicated.com/openhands/openhands \
+      --version <chart-version> \
+      --namespace openhands \
+      --values values.yaml
+    ```
+
+    Some variables on this page are set by the chart from other values. The tables show the value
+    that sets each one.
+  </Tab>
+</Tabs>
+
+### Variables Passed to Sandboxes
+
+The application passes every variable whose name starts with `LLM_`, `LMNR_`, or `OH_TELEMETRY_`
+to the agent server in each sandbox. To set any other variable in the sandbox, set
+`OH_AGENT_SERVER_ENV` on the application to a JSON object, such as `'{"DEBUG": "true"}'`. Values in
+`OH_AGENT_SERVER_ENV` take precedence over passed variables.
+
+A sandbox reads these variables when it starts. Sandboxes that are already running keep their
+previous values.
+
+## LiteLLM
+
+Use the bundled LiteLLM gateway to give each user a managed LLM key and to track usage and budgets
+per user and organization.
+
+### Enable LiteLLM
+
+<Tabs>
+  <Tab title="Docker Compose">
+    1. Add your LLM provider key and LiteLLM secrets to `.env`. Generate each secret with
+       `openssl rand -hex 32`, and prefix the master key with `sk-`:
+
+       ```dotenv .env
+       ANTHROPIC_API_KEY=<your-provider-key>
+       LITELLM_MASTER_KEY=sk-<random-string>
+       LITELLM_SALT_KEY=<random-string>
+       COMPOSE_FILE=docker-compose.yml:docker-compose.litellm.yml
+       ```
+
+    2. Start the stack:
+
+       ```bash
+       docker compose up --wait
+       ```
+
+    3. In the OpenHands settings, select the managed model `openhands/claude-haiku-4-5-20251001`
+       with the base URL `http://litellm:4000`.
+
+    The `docker-compose.litellm.yml` overlay uses Anthropic and Claude Haiku as an example. To use
+    another provider or model, edit `dev_config/litellm/config.yaml`, pass the provider's key to the
+    `litellm` service, and set `LITELLM_DEFAULT_MODEL` in the overlay to match.
+
+    Set `LITELLM_MASTER_KEY` and `LITELLM_SALT_KEY` before the gateway first starts, and don't
+    change the salt afterwards.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    1. Create the LiteLLM master key Secret and a Secret with your LLM provider key:
+
+       ```bash
+       kubectl -n openhands create secret generic lite-llm-api-key \
+         --from-literal=lite-llm-api-key=<random-string>
+
+       kubectl -n openhands create secret generic litellm-env-secrets \
+         --from-literal=ANTHROPIC_API_KEY=<your-provider-key>
+       ```
+
+    2. Enable the bundled LiteLLM, list your models, and set the default model in `values.yaml`:
+
+       ```yaml values.yaml
+       litellm-helm:
+         enabled: true
+         proxy_config:
+           model_list:
+             - model_name: claude-sonnet-4-5
+               litellm_params:
+                 model: anthropic/claude-sonnet-4-5
+                 api_key: os.environ/ANTHROPIC_API_KEY
+
+       env:
+         LITELLM_DEFAULT_MODEL: litellm_proxy/claude-sonnet-4-5
+       ```
+
+    3. Apply the change with `helm upgrade`.
+
+    The chart sets `LITE_LLM_API_URL`, `LITE_LLM_API_KEY`, and `LITE_LLM_TEAM_ID` for you. To route
+    the bundled LiteLLM to a gateway you already run, see
+    [External LLM Gateways](/enterprise/integrations/external-llm-gateways).
+  </Tab>
+</Tabs>
+
+### Application Variables
+
+Set these variables on the OpenHands application.
+
+| Variable | Default | Helm value | Description |
+|----------|---------|------------|-------------|
+| `ENABLE_LEGACY_LITELLM` | `true` | `env.ENABLE_LEGACY_LITELLM` | Set to `true` to use the LiteLLM gateway for managed LLM keys, usage, and budgets. Set to `false` to have each user add their own LLM provider key instead. The Docker Compose stack sets `false`, and `docker-compose.litellm.yml` sets `true`. Accepts `true` or `1`. |
+| `LITE_LLM_API_URL` | | `litellm.url`, or the bundled LiteLLM service when `litellm-helm.enabled` is `true` | URL of the LiteLLM gateway. Must be reachable from the application and from sandboxes. Docker Compose: `http://litellm:4000`. Helm with the bundled LiteLLM: `http://<release>-litellm.<namespace>.svc.cluster.local:4000`. |
+| `LITE_LLM_API_KEY` | | Secret `litellm-helm.masterkeySecretName`, key `litellm-helm.masterkeySecretKey` (both `lite-llm-api-key`). Without the bundled LiteLLM: Secret `litellm.auth.existingSecret`. | LiteLLM master key. The application uses it to create and manage user keys. Docker Compose sets it from `LITELLM_MASTER_KEY`. |
+| `LITE_LLM_TEAM_ID` | | `litellm.teamId` (`openhands`) | LiteLLM team that user keys belong to. If the team doesn't exist, it is created. |
+| `LITELLM_DEFAULT_MODEL` | | `env.LITELLM_DEFAULT_MODEL` | Default model for new users, in the form `litellm_proxy/<model_name>`. `<model_name>` must match a `model_name` in the LiteLLM model list. |
+| `OPENHANDS_PROVIDER_BASE_URL` | | Set to `env.LITE_LLM_API_URL` if present, otherwise to `LITE_LLM_API_URL` | Base URL of the OpenHands-managed LLM provider. If it is unset, the application uses `LLM_BASE_URL`. |
+
+### Docker Compose Gateway Variables
+
+Set these variables in `.env` when you use `docker-compose.litellm.yml`. Docker Compose
+substitutes them into the `litellm`, `app`, and `worker` services.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LITELLM_MASTER_KEY` | `sk-local-compose-master-key` | LiteLLM master key. Use a random value that starts with `sk-`. Don't enter it in a user's model settings. |
+| `LITELLM_SALT_KEY` | `local-compose-salt-key` | Key that LiteLLM uses to encrypt stored credentials. Use a random value, and keep it unchanged with your backups. |
+| `LITELLM_DB_NAME` | `litellm` | LiteLLM database in the stack's PostgreSQL service. Must differ from `DB_NAME` and `AUTOMATION_DB_NAME`. |
+| `ANTHROPIC_API_KEY` | Required | Provider key for the example Anthropic model. Replace it with your provider's variable when you change the model list. |
+
+## Laminar
+
+Use [Laminar](https://laminar.sh) to collect traces of agent conversations, including LLM calls and
+tool calls. Requests that go through the bundled LiteLLM gateway appear as LLM spans in the
+conversation trace.
+
+### Enable Laminar
+
+<Tabs>
+  <Tab title="Docker Compose">
+    The Docker Compose stack doesn't include Laminar. Use [Laminar Cloud](https://laminar.sh) or a
+    Laminar instance that you host.
+
+    1. Create a project in Laminar and an ingest-only project API key.
+    2. Create `docker-compose.laminar.yml` next to `docker-compose.yml`:
+
+       ```yaml docker-compose.laminar.yml
+       x-laminar: &laminar
+         LMNR_PROJECT_API_KEY: ${LMNR_PROJECT_API_KEY:?Set LMNR_PROJECT_API_KEY in .env}
+         # For a Laminar instance that you host, also set:
+         # LMNR_BASE_URL: http://<laminar-host>
+         # LMNR_HTTP_PORT: '8000'
+         # LMNR_FORCE_HTTP: 'true'
+
+       services:
+         app:
+           environment: *laminar
+         worker:
+           environment: *laminar
+       ```
+
+    3. Add the key and the overlay to `.env`:
+
+       ```dotenv .env
+       LMNR_PROJECT_API_KEY=<your-ingest-only-key>
+       COMPOSE_FILE=docker-compose.yml:docker-compose.litellm.yml:docker-compose.laminar.yml
+       ```
+
+       Leave out `docker-compose.litellm.yml` if you don't use LiteLLM.
+
+    4. Apply the change:
+
+       ```bash
+       docker compose up --wait
+       ```
+
+    Sandboxes join the stack's Docker network, so they can reach a Laminar service on the same
+    network by its service name.
+  </Tab>
+  <Tab title="Kubernetes (Helm)">
+    Deploy the bundled Laminar and create its project key by following
+    [Analytics](/enterprise/analytics). Then set the Laminar values in `values.yaml`:
+
+    ```yaml values.yaml
+    laminar:
+      enabled: true
+      apiKeyFromSecret:
+        name: lmnr-project-api-key
+        key: LMNR_PROJECT_API_KEY
+      baseUrlFromSecret:
+        name: lmnr-base-url
+        key: LMNR_BASE_URL
+      forceHttp: true
+    ```
+
+    Warm runtimes are claimed only when their environment matches the sandbox request exactly. Set
+    the same `LMNR_*` values on the default warm runtime:
+
+    ```yaml values.yaml
+    runtime-api:
+      warmRuntimes:
+        configsByName:
+          default:
+            environment:
+              LMNR_PROJECT_API_KEY: "<your-ingest-only-key>"
+              LMNR_BASE_URL: "<your-laminar-api-url>"
+              LMNR_FORCE_HTTP: "true"
+              LMNR_HTTP_PORT: ""
+    ```
+
+    Set `LMNR_HTTP_PORT` to the value of `laminar.httpPort` if you set one.
+  </Tab>
+</Tabs>
+
+### Laminar Variables
+
+Set these variables on the OpenHands application. The application passes them to each sandbox.
+
+| Variable | Default | Helm value | Description |
+|----------|---------|------------|-------------|
+| `LMNR_PROJECT_API_KEY` | | Secret `laminar.apiKeyFromSecret` (`lmnr-project-api-key`, key `LMNR_PROJECT_API_KEY`) | Laminar project API key. Setting it turns on tracing. Use an ingest-only key. |
+| `LMNR_BASE_URL` | `https://api.lmnr.ai` | Secret `laminar.baseUrlFromSecret` (`lmnr-base-url`, key `LMNR_BASE_URL`) | URL of the Laminar API. Set it for a Laminar instance that you host. |
+| `LMNR_HTTP_PORT` | `443` | `laminar.httpPort` | HTTP port of the Laminar API. Set it for a Laminar instance that you host, for example `8000`. |
+| `LMNR_GRPC_PORT` | `8443` | `env.LMNR_GRPC_PORT` | gRPC port of the Laminar API. Set it for a Laminar instance that you host. |
+| `LMNR_FORCE_HTTP` | `false` | `laminar.forceHttp` (`true`) | Set to `true` to send traces over HTTP instead of gRPC. |
+| `LMNR_INSTRUMENTS` | | `env.LMNR_INSTRUMENTS` | Comma-separated list of Laminar integrations to turn on, such as `litellm,mcp`. If it is unset, Laminar turns on all available integrations. |
+| `LAMINAR_WEB_HOST` | | `laminar.frontend.ingress.hostname`, or `laminar.<ingress.host>` | Helm only. Hostname of the Laminar UI. The chart uses it to configure Keycloak sign-in for Laminar. |
+
+When `laminar.enabled` is `false`, the chart sets the `LMNR_*` variables to empty values. To send
+traces to Laminar Cloud or a Laminar instance that you host without the bundled Laminar, set the
+`LMNR_*` variables under `env` instead.
+
+To send traces to another OpenTelemetry backend instead of Laminar, see
+[Observability Platforms](/enterprise/integrations/observability-platforms). For the full list of
+tracing variables, see [Observability & Tracing](/sdk/guides/observability).
