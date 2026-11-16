@@ -247,6 +247,84 @@ For a Helm installation, see [Enable Automations with Helm](/enterprise/k8s-inst
 | `AUTOMATION_SERVICE_TIMEOUT` | `30` | Seconds that OpenHands waits when it forwards an event. |
 | `ENABLE_SERVICE_ACCOUNTS` | `false` | Turn on [service accounts](/enterprise/automations/service-accounts). A value saved in the app takes precedence. |
 
+## Automation Service
+
+The automation service runs separately from OpenHands and reads its own variables. On Helm, the `automation`
+subchart sets most of them for you. To set one directly, add it under `automation.env` in your values. In the
+Docker Compose stack, add it to the `automation-server` service in a `docker-compose.override.yml`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AUTOMATION_OPENHANDS_API_BASE_URL` | `https://app.all-hands.dev` | URL that the automation service uses to reach OpenHands. |
+| `AUTOMATION_BASE_URL` | `http://localhost:8000` | URL of the automation service, without `/api/automation`. Sandboxes report run results to it, and webhook URLs for automations use it. A path in the URL, such as `https://openhands.example.com/automation`, becomes the prefix of the service's routes. |
+| `AUTOMATION_SANDBOX_INTERNAL_URL` | None | URL that the automation service uses to reach sandboxes, when the sandbox URLs that OpenHands returns don't resolve from the service. |
+| `AUTOMATION_CORS_ORIGINS` | `AUTOMATION_OPENHANDS_API_BASE_URL` | Comma-separated origins that can call the automation service from a browser. |
+| `AUTOMATION_SERVICE_KEY` | None | Key that the automation service uses to call OpenHands. It must match `AUTOMATIONS_SERVICE_KEY` on OpenHands. |
+| `AUTOMATION_WEBHOOK_SECRET` | None | Secret that verifies the events that OpenHands forwards. It must match `AUTOMATION_WEBHOOK_SECRET` on OpenHands. |
+| `AUTOMATION_KV_SECRET` | None | Key that signs automation KV tokens and encrypts the state that automations store. Setting it turns on the KV store. |
+| `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
+| `AUTOMATION_LOG_LEVEL` | `LOG_LEVEL` | Log level for the automation service's own messages. |
+| `AUTOMATION_POSTHOG_API_KEY` | None | PostHog project key. When unset, the automation service sends no analytics events. |
+| `AUTOMATION_POSTHOG_HOST` | `https://us.i.posthog.com` | PostHog host. |
+
+### Database
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AUTOMATION_DB_HOST` | `localhost` | Hostname of PostgreSQL. |
+| `AUTOMATION_DB_PORT` | `5432` | Port of PostgreSQL. |
+| `AUTOMATION_DB_NAME` | `automations` | Database for the automation service. |
+| `AUTOMATION_DB_USER` | `postgres` | Database user. |
+| `AUTOMATION_DB_PASS` | `postgres` | Database password. |
+| `AUTOMATION_DB_SSL_MODE` | `DB_SSL_MODE` | SSL mode: `prefer`, `require`, or `disable`. |
+| `AUTOMATION_DB_POOL_SIZE` | `10` | Connections in the database connection pool. |
+| `AUTOMATION_DB_MAX_OVERFLOW` | `5` | Connections that the pool can open above `AUTOMATION_DB_POOL_SIZE`. |
+| `AUTOMATION_RUN_MIGRATIONS_ON_STARTUP` | `false` | Migrate the database schema when the automation service starts. |
+| `AUTOMATION_CREATE_DATABASE_IF_MISSING` | `false` | Create `AUTOMATION_DB_NAME` before migrating, if it doesn't exist. The database user needs the `CREATEDB` privilege. |
+
+### Storage
+
+The automation service stores uploaded automation files. Its storage variables have the same names as the ones in
+[Conversation Storage](#conversation-storage), but they take different values.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `FILE_STORE` | `local` | Storage backend: `local`, `gcs`, or `s3`. |
+| `LOCAL_STORAGE_PATH` | `~/.openhands/automation/storage` | Directory for `local`. |
+| `GCS_BUCKET_NAME` | None | Bucket for `gcs`. Required with `gcs`. |
+| `AWS_S3_BUCKET` | None | Bucket for `s3`. Required with `s3`. |
+| `AWS_S3_ENDPOINT` | Amazon S3 | Endpoint of an S3-compatible store other than Amazon S3. |
+| `AWS_S3_SECURE` | `true` | Connect to `AWS_S3_ENDPOINT` over HTTPS. |
+| `AWS_S3_AUTO_CREATE_BUCKET` | `false` | Create the bucket if it doesn't exist. |
+| `AWS_ACCESS_KEY_ID`<br />`AWS_SECRET_ACCESS_KEY` | None | Access key pair for S3. When unset, the automation service uses the workload's AWS identity. |
+
+### Runs
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AUTOMATION_DEFAULT_RUN_DURATION` | `600` | Seconds that a run can take when its automation doesn't set a limit. |
+| `AUTOMATION_MAX_RUN_DURATION` | `1800` | Longest run time, in seconds, that users can set. |
+| `AUTOMATION_SCHEDULER_INTERVAL_SECONDS` | `60` | Seconds between checks for scheduled automations that are due. |
+| `AUTOMATION_SANDBOX_READY_TIMEOUT` | `300` | Seconds that a run waits for its sandbox to start. |
+| `AUTOMATION_SANDBOX_PROVISION_MAX_ATTEMPTS` | `3` | Sandboxes that a run tries when one fails to start. Set it to `1` to turn off retries. |
+| `AUTOMATION_SANDBOX_CLEANUP_DELAY_SECONDS` | `0` | Seconds after a run ends before its sandbox is deleted. Until then, the sandbox is paused and users can resume the run's conversation. |
+| `AUTOMATION_FAILURE_DISABLE_THRESHOLD` | `3` | Consecutive permanent failures, such as a revoked key, before the automation service turns off an automation. Set it to `0` to keep automations on. |
+| `AUTOMATION_CONSECUTIVE_FAILURE_DISABLE_THRESHOLD` | None | Consecutive failures of any kind before the automation service turns off an automation. When unset, this rule is off. |
+| `AUTOMATION_CONSECUTIVE_FAILURE_DISABLE_WINDOW_HOURS` | `24` | Hours without a successful run before `AUTOMATION_CONSECUTIVE_FAILURE_DISABLE_THRESHOLD` applies. |
+
+### Git Sync
+
+Each organization sets its own repository on the Git Sync page. These variables set the defaults.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `AUTOMATION_GIT_SYNC_SECRET` | `AUTOMATION_KV_SECRET` | Key that encrypts each organization's Git token and encryption key. Set this variable or `AUTOMATION_KV_SECRET` to use Git Sync. |
+| `AUTOMATION_GIT_SYNC_BRANCH` | `main` | Branch to sync. |
+| `AUTOMATION_GIT_SYNC_PATH` | `automations` | Directory in the repository that holds automations. |
+| `AUTOMATION_GIT_SYNC_AUTHOR_NAME` | `OpenHands Automation` | Author name of sync commits. |
+| `AUTOMATION_GIT_SYNC_AUTHOR_EMAIL` | `automation@openhands.dev` | Author email address of sync commits. |
+| `AUTOMATION_GIT_SYNC_GIT_TIMEOUT_SECONDS` | `300` | Seconds that each Git command can take. |
+
 ## Plugins
 
 See [Plugin Marketplace](/enterprise/plugin-marketplace).
