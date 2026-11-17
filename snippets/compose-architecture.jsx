@@ -271,14 +271,14 @@ export const ComposeArchitecture = () => {
             <path d="m 302 526 4 -6 4 6" />
           </g>
 
-          <Service x={300} y={164} width={200} name="Proxy" detail="Caddy, routes by path" icon="route" href="#proxy" />
-          <Service x={40} y={300} width={148} name="Sandboxes" detail="Run the agent" icon="box" href="#sandboxes" stacked />
-          <Service x={222} y={300} width={170} name="OpenHands App" detail="UI and API server" icon="server" href="#app" accent />
-          <Service x={412} y={300} name="Automation" detail="Scheduled runs" icon="clock" href="#automation-server" accent />
-          <Service x={598} y={300} name="Agent Canvas" detail="Static frontend" icon="panels" href="#canvas-server" accent />
-          <Service x={226} y={440} name="Redis" detail="Cache" icon="listOrdered" href="#redis" />
-          <Service x={412} y={440} name="PostgreSQL" detail="Application data" icon="database" href="#db" />
-          <Service x={598} y={440} name="Worker" detail="Background jobs" icon="blocks" href="#worker" accent />
+          <Service x={300} y={164} width={200} name="Proxy" detail="proxy" icon="route" href="#proxy" />
+          <Service x={40} y={300} width={148} name="Sandboxes" detail="oh-agent-server-*" icon="box" href="#sandboxes" stacked />
+          <Service x={222} y={300} width={170} name="OpenHands App" detail="app" icon="server" href="#app" accent />
+          <Service x={412} y={300} name="Automation" detail="automation-server" icon="clock" href="#automation-server" accent />
+          <Service x={598} y={300} name="Agent Canvas" detail="canvas-server" icon="panels" href="#canvas-server" accent />
+          <Service x={226} y={440} name="Redis" detail="redis" icon="listOrdered" href="#redis" />
+          <Service x={412} y={440} name="PostgreSQL" detail="db" icon="database" href="#db" />
+          <Service x={598} y={440} name="Worker" detail="worker" icon="blocks" href="#worker" accent />
 
           <g className="oh-arch-external-paths">
             <path d="M 120 392 V 640" />
@@ -308,7 +308,11 @@ export const ComposeArchitecture = () => {
             External services
           </span>
         </div>
-        <p>Select a component to read about it.</p>
+        <p>
+          Each box inside the Docker host is a container in the stack, labeled with its Compose
+          service name. Sandboxes aren't Compose services: the app starts one container per sandbox,
+          named oh-agent-server-*. Select a container to read about it.
+        </p>
       </figcaption>
     </figure>
   );
