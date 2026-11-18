@@ -204,6 +204,26 @@ human-readable message omits the machine code. This handling is part of the
 Earlier releases can treat these responses as temporary rate limits.
 </Note>
 
+## Provider Refusals
+
+Handle `LLMResponseRefusedError` when the provider reports a refusal in an HTTP 200 response:
+
+- **Chat Completions:** the finish reason is `content_filter` or `refusal`.
+- **Responses API:** an output message contains a `refusal` part, or
+  `incomplete_details.reason` is `content_filter`. Reaching `max_output_tokens` alone is not a refusal.
+
+Streaming callbacks may already have received partial text when the provider reports the
+refusal. The SDK records reported usage and raises the error instead of returning that
+text as a final answer. It does not retry, switch models, or retry a refused summary
+with a shorter conversation history.
+
+Use the exception’s `response_id`, when present, to find the call in SDK telemetry.
+During an agent run, the non-retryable `ConversationErrorEvent` has the code
+`LLMResponseRefusedError` and includes the response ID in its detail.
+
+An HTTP 400 content-policy error is handled separately: the agent can ask the model
+to rephrase. That recovery does not apply to a refusal in an HTTP 200 response.
+
 ## Exception reference
 
 All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
@@ -223,6 +243,7 @@ All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
 |  | `FunctionCallValidationError` | Tool/function call arguments failed validation. |
 |  | `FunctionCallNotExistsError` | Model referenced an unknown tool or function. |
 |  | `LLMNoResponseError` | Provider returned an empty or invalid response (rare; observed with some Gemini models). |
+|  | `LLMResponseRefusedError` | The provider reported a refusal in a Chat Completions or Responses API response. |
 | **Cancellation** | `UserCancelledError` | A user explicitly aborted the operation. |
 |  | `OperationCancelled` | A running operation was cancelled programmatically. |
 
