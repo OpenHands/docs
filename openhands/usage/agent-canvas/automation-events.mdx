@@ -85,6 +85,7 @@ If you pasted your own secret, the page confirms `Event source created. Your sup
 | **Webhook source ID** | Yes | — | Lowercase letters, numbers, and hyphens, up to 50 characters. It must start and end with a letter or number. It must be unique in your organization and can't be changed later. |
 | **Event key expression** | Yes | `type` | A [JMESPath](https://jmespath.org/) expression that reads the event name from each payload. See [Choose an Event Key Expression](#choose-an-event-key-expression). |
 | **Signature header** | Yes | `X-Signature-256` | The HTTP header that carries the request signature. Use the header name the external service sends. |
+| **Signature scheme** | Yes | HMAC SHA-256 hex | How OpenHands verifies the value in **Signature header**. **HMAC SHA-256 hex** works for Linear and GitHub-style signing. **Standard Webhooks** verifies the `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers. **Slack v0** verifies Slack's Events API signature — see [Connect Slack Events API](#connect-slack-events-api). |
 | **Signing secret** | No | Generated | Leave blank to have OpenHands generate a secret. If the external service gives you a secret, paste it here. It must be 8 to 255 characters. |
 
 ## Connect the External Service
@@ -105,14 +106,35 @@ OpenHands checks each request with an **HMAC-SHA256** signature of the raw reque
 X-Signature-256: sha256=<hex HMAC-SHA256 of the raw request body>
 ```
 
-Services that sign this way, such as Linear and services that follow GitHub's format, work directly. Services that sign something other than the raw body, or use a different format, can't be verified and every delivery is rejected with `401`. This includes:
+Services that sign this way, such as Linear and services that follow GitHub's format, work directly. **Standard Webhooks** and **Slack** sign differently, but work directly too — set **Signature scheme** accordingly when you register the source. Slack's Events API is covered in [Connect Slack Events API](#connect-slack-events-api).
+
+Services that OpenHands can't verify reject every delivery with `401`. This includes:
 
 - **Stripe** — signs a timestamp with the body and sends `t=…,v1=…`.
-- **Slack** — signs `v0:<timestamp>:<body>` and sends `v0=…`.
 - **Twilio** — signs the request URL and parameters with HMAC-SHA1.
-- **Standard Webhooks** — signs the message ID, timestamp, and body, and sends base64.
 
 To connect one of these services, put a small relay in between. The relay checks the service's own signature, then forwards the body to OpenHands signed with HMAC-SHA256.
+
+## Connect Slack Events API
+
+Slack signs its deliveries with an `v0=<timestamp>:<body>` HMAC-SHA256 digest, so a Slack source needs the **Slack v0** signature scheme instead of the default. No relay is needed:
+
+1. Register an event source with any source ID, such as `slack`. Set **Signature scheme** to **Slack v0**. This scheme verifies the `X-Slack-Signature` header.
+2. Set **Event key expression** to `event.type`. Slack wraps every event in an envelope, so the event name sits under `event`, not at the top level.
+3. Copy the **Signing secret** from your Slack app (**App Settings → Basic Information → App Credentials → Signing Secret**) into **Signing secret**.
+4. In your Slack app settings under **Event Subscriptions**, set the **Request URL** to the source's webhook URL and subscribe to the events you want.
+
+The Slack-specific handshake and replay protection are handled for you:
+
+- **URL verification** — the first delivery to a new Request URL is a signed `url_verification` challenge. OpenHands answers it with the challenge string automatically. The challenge is not recorded as an event and starts no run.
+- **Replay protection** — deliveries signed with a timestamp older than 5 minutes are rejected, as Slack recommends.
+
+Two settings beyond the form make the HTTP transport behave like Slack's socket transport:
+
+- **Deduplication** — Slack retries deliveries it hasn't been able to acknowledge, and a retried event would start a second run. Set `event_id_expr` to `event_id`, Slack's per-event delivery ID, with the API as shown in [Manage Existing Sources](#manage-existing-sources). Don't use `event.ts`: when an app subscribes to both messages and mentions, the same message arrives as a `message` and an `app_mention` event that share a `ts` but have different `event_id`s.
+- **Filters** — Slack's socket transport drops bot messages and non-matching event types before the trigger runs. Over HTTP the event arrives as-is, so the automation's **Event key** patterns and **Event filters** do that work.
+
+A custom source named `slack` and a configured Slack app share the same source name, so one automation matches events from both transports.
 
 ## Trigger an Automation from the Source
 
@@ -158,6 +180,8 @@ Script automations receive the same data as JSON in the `AUTOMATION_EVENT_PAYLOA
 ## Choose an Event Key Expression
 
 The event key expression tells OpenHands where to find the event name in each payload. The default, `type`, works for services that send a top-level `type` field. Look at a sample payload from the service and point the expression at the field that names the event.
+
+Slack wraps every event in an envelope, so a Slack source needs `event.type`. See [Connect Slack Events API](#connect-slack-events-api).
 
 | Payload | Expression | Event key |
 |---------|------------|-----------|
@@ -246,10 +270,10 @@ curl -X PATCH "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>" \
   -H "$AUTH_HEADER" -H "Content-Type: application/json" \
   -d '{"enabled": false}'
 
-# Change the name, event key expression, or signature header
+# Change the name, event key expression, signature header, or delivery ID
 curl -X PATCH "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>" \
   -H "$AUTH_HEADER" -H "Content-Type: application/json" \
-  -d '{"event_key_expr": "event.type"}'
+  -d '{"event_id_expr": "event_id"}'
 
 # Generate a new signing secret (the old one stops working immediately)
 curl -X POST "$OPENHANDS_HOST/api/automation/v1/webhooks/<id>/rotate-secret" -H "$AUTH_HEADER"
