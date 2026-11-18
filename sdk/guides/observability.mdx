@@ -12,6 +12,7 @@ The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowi
 - **[Laminar](https://laminar.sh/)** - AI-focused observability with trace inspection, signals, and browser session replay
 - **[MLflow](https://mlflow.org/)** - Open-source AI platform with tracing, evaluation, and LLM governance
 - **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
+- **[Rius](https://www.glassflow.ai/rius)** - Agent observability with per-call cost, loop and context alerts, and trace queries over MCP
 - **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
 
 The SDK automatically traces:
@@ -62,6 +63,48 @@ Laminar is especially useful when you want to understand how an agent behaved ac
 - Watch browser automation alongside trace spans with [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability).
 - Define [signals](https://laminar.sh/docs/signals/introduction) to classify failures, user friction, or success patterns across many traces.
 - Keep each OpenHands conversation grouped under a single session ID so multi-turn debugging is easier.
+
+### Using Rius
+
+[Rius](https://www.glassflow.ai/rius) takes the SDK's traces over plain OTLP, so you don't need a Laminar key or any extra package.
+
+1. Create an account at [console.rius-glassflow.com](https://console.rius-glassflow.com).
+2. Under `Settings → API keys`, create a key with the `Send telemetry` scope.
+3. Set the OTLP variables:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://ingest.eu.console.rius-glassflow.com/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20<your-rius-key>"
+```
+
+Leave every `LMNR_*` variable unset. A Laminar project key takes precedence over the `OTEL_*` settings, and the traces would go to Laminar instead.
+
+Each conversation appears in Rius as one trace. The agent is named after the script (`run_agent.py` shows as `run_agent`). To set the name yourself, pass it as conversation metadata:
+
+```python icon="python" wrap
+conversation = Conversation(
+    agent=agent,
+    workspace=".",
+    observability_metadata={"agent.name": "deploy-checker"},
+)
+```
+
+<Note>
+For a full walkthrough, see the [Rius guide for OpenHands](https://docs.glassflow.ai/rius/guides/coding-agents/openhands) and the runnable example in [glassflow/openhands-rius](https://github.com/glassflow/openhands-rius).
+</Note>
+
+### Why use Rius with OpenHands?
+
+Rius is useful once you run more conversations than you can read one by one:
+
+- See each conversation as a waterfall of agent steps, model calls, and tool calls, with the command and output of every `TerminalAction`.
+- Get tokens and cost on every model call, so you can see which step of a conversation was expensive.
+- On each model call, see what changed in the prompt since the previous call, so you can tell what a step added to the context.
+- The built-in Tool Loop alert fires when a conversation calls the same tool with the same arguments three or more times in a row. It also catches short loops that the [stuck detector](/sdk/guides/agent-stuck-detector) lets finish normally. Alerts can go to Slack, email, or a webhook.
+- When token counts are recorded (SDK scripts, not the web app's streamed calls), the built-in Context rot alert flags conversations whose context gets too full.
+- If root-cause analysis is turned on for the workspace, an alert comes with a written finding, for example that a prompt asked the agent to poll with no retry limit.
+- Query the same traces from Claude, Cursor, or any MCP client through the [Rius MCP server](https://docs.glassflow.ai/rius/mcp).
 
 ### Using OpenTelemetry (OTLP) Backends
 
@@ -295,6 +338,28 @@ export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/trace
 export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
 ```
+
+### Rius Setup
+
+1. Sign up at [console.rius-glassflow.com](https://console.rius-glassflow.com)
+2. Create an API key with the `Send telemetry` scope under `Settings → API keys`
+3. Configure the environment:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://ingest.eu.console.rius-glassflow.com/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20YOUR_RIUS_KEY"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+Rius accepts OTLP over HTTP only, so keep `http/protobuf`. Write out the full `/v1/traces` path.
+
+**Local web app (Docker)**: in our tests with the `openhands` app image (agent server 1.36.0), the app forwarded only `LLM_*` and `LMNR_*` variables into each agent sandbox, so `OTEL_*` set on the app container didn't reach the agent. Passing the three values as a JSON object in `OH_AGENT_SERVER_ENV` on the app container worked:
+
+```bash icon="terminal" wrap
+-e OH_AGENT_SERVER_ENV='{"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":"https://ingest.eu.console.rius-glassflow.com/v1/traces","OTEL_EXPORTER_OTLP_TRACES_PROTOCOL":"http/protobuf","OTEL_EXPORTER_OTLP_TRACES_HEADERS":"Authorization=Bearer%20YOUR_RIUS_KEY"}'
+```
+
+The agent server streams model responses, and no token usage is recorded for streamed calls, so these traces show every model and tool call but no token counts.
 
 ### Jaeger Setup
 
