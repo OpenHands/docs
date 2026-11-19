@@ -1,0 +1,48 @@
+---
+title: Conversation Recovery Reports
+sidebarTitle: Recovery Reports
+description: Inspect the latest run outcome and the evidence recorded before it stopped.
+---
+
+Use a recovery report to inspect the latest conversation run after it stops. The report is a bounded projection of persisted conversation events. It does not infer what happened from an error message or ask an LLM to summarize the run.
+
+## Read A Report
+
+Call `get_recovery_report()` after a run completes or fails:
+
+```python
+from openhands.sdk import RunOutcome
+
+report = conversation.get_recovery_report()
+
+if report is None:
+    print("No recovery report is available.")
+elif report.outcome == RunOutcome.FAILED:
+    print(report.summary)
+    for operation in report.uncertain_operations:
+        print(operation.tool_name, operation.reason)
+```
+
+`get_recovery_report()` returns a `RecoveryReport` or `None`. Remote conversations read the report from the Agent Server. The server exposes the same data at `GET /api/conversations/{conversation_id}/recovery_report`.
+
+## Interpret The Report
+
+The report includes the run outcome, a short reason code, a safe summary, timestamps, recent activity, incomplete task-list entries, and any operations without a recorded final result. It can also include the agent's last public update, with secrets masked and the text truncated.
+
+`outcome` is one of `completed`, `failed`, `stuck`, `paused`, `waiting`, or `interrupted_unknown`. `reason_code` is a short code when one is available. It does not contain the exception message.
+
+Check `evidence_coverage` before relying on the event details:
+
+- `complete` means the report reached the start of the run's recorded event history.
+- `partial` means the event history was bounded or the run predates persisted run boundaries.
+- `unavailable` means the report could not read its source evidence.
+
+An entry in `uncertain_operations` means the event history has no final result for that action. The operation may have taken effect. Verify its effects before you repeat it.
+
+## Restart Recovery
+
+For Agent Server conversations, the server finalizes a persisted in-progress run when it reloads that conversation after restart. The report marks the outcome `interrupted_unknown` when the event history does not establish whether the run completed. Older conversations without a saved run boundary receive a partial report when the server can recover one.
+
+A report describes only the latest run. Starting another run replaces the saved report. Use the conversation event history when you need a longer audit trail.
+
+See the [`BaseConversation` API reference](/sdk/api-reference/openhands.sdk.conversation) for the method signature and report types.
