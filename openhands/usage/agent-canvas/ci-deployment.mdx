@@ -13,20 +13,22 @@ This guide explains the API steps your CI pipeline needs to create and update au
 
 ## Decide Whether Git Sync Already Meets Your Needs
 
-Git sync already lets you review automation changes through pull requests. It connects your backend's automations to one repository, branch and directory, with a separate configuration per organization in Enterprise. Changes made in OpenHands are copied to Git, and changes merged into Git are brought back into OpenHands during a sync.
+[Git sync](/openhands/usage/agent-canvas/git-sync) already lets you review automation changes through pull requests. It connects your backend's automations to one repository, branch and directory, with a separate configuration per organization in Enterprise. Changes made in OpenHands are copied to Git, and changes merged into Git are brought back into OpenHands during a sync.
 
-That can be enough if your teams are happy to share one repository and want to keep editing automations in the UI. You can review changes in Git without building a separate deployment job.
+That can be enough if your teams are happy to share one repository and want to keep editing automations in the UI. You can review changes in Git without building a separate deployment job. A test backend can sync a staging branch while production syncs `main`. You promote changes by merging them into the production branch.
 
-A CI deployment is useful when each team wants to keep its automations in its own repository, choose its own approval steps, or try a version in a test environment before sending it to production. CI means the automatic checks that run when code changes. The pipeline can also have a deployment step that sends an approved definition to OpenHands.
+A CI deployment is useful when each team wants to keep its automations in its own repository, choose its own approval steps, or control exactly when an approved version moves from test to production. CI means the automatic checks that run when code changes. The pipeline can also have a deployment step that sends an approved definition to OpenHands.
 
 | Your team wants to... | Consider... |
 | --- | --- |
 | Edit in OpenHands and keep a copy in Git | Git sync |
-| Review changes in a shared Git repository and import them into OpenHands | Git sync |
+| Review changes in a shared Git repository and import them into OpenHands | Git sync, with pull requests into a branch that lets the sync credential push directly. |
 | Deploy from separate team repositories after their own checks and approvals | CI deployment through the API |
-| Deploy the same approved version to test, then production | CI deployment through the API |
+| Choose which version to promote from test to production and when | CI deployment through the API |
 
-If you use CI, decide where people should make changes. Suppose someone edits the payments prompt in the UI, but the next pipeline run sends the older prompt still stored in Git. The pipeline can replace that person's edit. Git sync introduces another place those definitions can be changed and imported. Agree that changes to a CI-managed automation go through its team repository, and account for any shared Git sync before using both on the same automation.
+If you use CI, decide where people should make changes. Suppose someone edits the payments prompt in the UI, but the next pipeline run sends the older prompt still stored in Git. The pipeline can replace that person's edit. With Git sync enabled, OpenHands also exports CI-managed automations to the sync repository, where anyone with direct push access can edit them.
+
+If CI and Git change the same automation before it syncs, the pending API change takes precedence and the export overwrites the Git edit. When there is no pending API change, Git sync imports the edit. The next CI deployment can overwrite it if it sends the same fields. Agree that changes to a CI-managed automation go through its team repository.
 
 ## Keep the Instructions and Configuration Together
 
@@ -43,7 +45,7 @@ The files you deploy depend on the kind of automation:
 | Prompt-based | Prompt and configuration | A request containing the prompt and settings |
 | Custom script | Executable code and configuration | An uploaded code archive, followed by a request that references it |
 
-For example, the payments team could keep its reviewer in `automations/payments-pr-review/`, with `prompt.txt` and `config.json` in that directory. These filenames are your team's convention, not a required OpenHands format. Plugin-spec automations use a separate path and are outside this guide's scope.
+For example, the payments team could keep its reviewer in `automations/payments-pr-review/`, with `prompt.txt` and `config.json` in that directory. These filenames are your team's convention. Git sync writes `automations/<slug>/automation.yaml` by default and expands bundle files into a `tarball/` directory next to it. Plugin-spec automations use a separate path and are outside this guide's scope.
 
 ## Make Each Team’s Automations Easy to Find
 
@@ -57,18 +59,22 @@ Names and tags help with organization. They do not restrict who can view or edit
 
 Store the target backend URL and API key in your CI system, with the key kept as a secret. The API paths below use the `/api/automation` prefix exposed by the Canvas or Enterprise backend.
 
-| Setup | Key to use | Request header |
+| Setup | Key to use | Example request header |
 | --- | --- | --- |
 | Open-source Agent Canvas | The backend API key from **Manage Backends** | `X-Session-API-Key: <backend-api-key>` |
 | OpenHands Enterprise | An organization-bound key from **Settings → API Keys** | `Authorization: Bearer <organization-bound-api-key>` |
+
+Both setups accept either header shown above.
 
 The CI runner must be able to reach the backend. For a hosted runner, `localhost` points to the runner, not your laptop. Use a reachable backend URL or a runner with access to your backend.
 
 In open-source local mode, CI uses the same backend identity as other clients using that key. You can create and update automations without setting up an organization or a separate bot user. Configure the models, repository access and secrets your automation needs on that backend.
 
-In Enterprise, an admin or owner account can deploy updates to teammates' automations. Ordinary members can update their own. This lets one CI deployment account manage automations created by different people. By default, a new automation runs as the account that creates it, including when CI creates it through the API. Decide which identity it should run as before the first deployment. Updating its definition does not change that identity or the credentials it uses.
+In Enterprise, an admin or owner account can deploy updates to teammates' automations. Ordinary members can update their own user-run automations. This lets one CI deployment account manage automations created by different people. By default, a new automation runs as the account that creates it, including when CI creates it through the API. Decide which identity it should run as before the first deployment. Updating its definition does not change that identity or the credentials it uses.
 
-If your Enterprise instance has service accounts enabled, an admin or owner can choose a service account as the automation's execution identity. CI still uses an authorized admin or owner account to deploy it; the service account's own key cannot create automations. Shared editing works without enabling service accounts.
+If your Enterprise instance has service accounts enabled, an admin or owner can choose a service account as the automation's execution identity. CI still uses an authorized admin or owner account to deploy it; the service account's own key cannot create automations. Shared editing works without enabling service accounts. An admin or owner can change the execution identity later. The automation becomes inactive, and the change is refused while a run is pending or running. See [Enterprise automations](/enterprise/automations) for roles and service accounts.
+
+With Git sync in Enterprise, an automation created from a new folder runs as the admin who last saved the sync settings. Git sync skips new folders until an admin saves those settings.
 
 ## Check the Definition Before Deploying It
 
@@ -86,7 +92,7 @@ For later deployments, validate the full proposed definition in the same create-
 
 Check `valid` in the response, not just the HTTP status. An invalid definition can return HTTP 200 with `valid=false`. For sample events, check `sampleEventMatched` as well.
 
-These checks catch configuration mistakes. To judge whether the reviewer gives useful feedback, try it on sample tasks and inspect actual runs. A passing configuration check cannot establish the quality of the agent's decisions.
+Validation uses the CI caller's context for model and profile access and checks event sources in the caller's organization. These checks catch configuration mistakes. To judge whether the reviewer gives useful feedback, try it on sample tasks and inspect actual runs. A passing configuration check cannot establish the quality of the agent's decisions.
 
 ## Deploy a Prompt-Based Automation
 
@@ -96,7 +102,7 @@ For the first deployment, send the prompt and configuration to:
 POST /api/automation/v1/preset/prompt
 ```
 
-OpenHands generates the execution bundle. You do not need to build or upload a tarball yourself. Set `state` to `INACTIVE` to save the automation without letting its schedule or events start runs yet.
+OpenHands generates the execution bundle. You do not need to build or upload a tarball yourself. New API-created automations default to active. Set `state` to `INACTIVE` to save the automation without letting its schedule or events start runs yet.
 
 Save the automation ID returned by OpenHands. For later deployments, send the changed fields to:
 
@@ -104,7 +110,7 @@ Save the automation ID returned by OpenHands. For later deployments, send the ch
 PATCH /api/automation/v1/{automation_id}
 ```
 
-When you are ready to turn an inactive automation on, use this PATCH endpoint with `state` set to `ACTIVE`. Treat activation as a separate approved step.
+When you are ready to turn an inactive automation on, use this PATCH endpoint with `state` set to `ACTIVE`. Treat activation as a separate approved step. A new Git sync folder with neither `state` nor `enabled` imports as inactive. Exports include `state`, so a copy of an active automation imports as active.
 
 For the payments example, the job would send the new prompt to the same automation ID. It would leave `trigger`, `state` and `enabled` out of the request unless those settings are part of the intended change.
 
@@ -118,7 +124,7 @@ If you supply executable code, such as a Python script, package that code into a
 POST /api/automation/v1/uploads?name=payments-nightly-checks
 ```
 
-Use the returned `tarball_path` when creating the automation:
+Set a tarball `Content-Type` such as `application/gzip` and send the archive as the request body. Once the upload status is `COMPLETED`, include the returned `tarball_path` in the create request:
 
 ```http
 POST /api/automation/v1
@@ -134,8 +140,8 @@ Record the target backend URL, automation ID and approved Git commit for each de
 
 If test and production receive events from the same repositories, an active test copy of the payments reviewer can also comment on real pull requests. Point the test copy at a test repository, or keep it inactive while checking the definition and sample events.
 
-Use the same automation ID for subsequent releases and run one deployment at a time for that automation. If a create request times out, check whether it succeeded before trying again. Retrying a create can produce duplicates. Check the target and ownership before adopting an existing automation; a matching name alone is not enough.
+Use the same automation ID for subsequent releases and run one deployment at a time for that automation. If Git sync imports the removal of a synced folder, it deactivates and soft-deletes the automation. The next PATCH to that ID fails. If a create request times out, check whether it succeeded before trying again. Retrying a create can produce duplicates. Check the target and ownership before adopting an existing automation; a matching name alone is not enough.
 
-Keep CI approvals and deployment results alongside the commit that was deployed. Enterprise's automation change history can also identify the account making an edit. Clients using the same open-source backend key share an identity, so use your CI records to track who approved and deployed each change.
+Keep CI approvals and deployment results alongside the commit that was deployed. Enterprise's automation change history identifies the account making an API or UI edit. It records imported changes under the Git Sync actor. Use the sync repository's history to identify the committer. Clients using the same open-source backend key share an identity, so use your CI records to track who approved and deployed each change.
 
 For a rollback, deploy an earlier approved definition to the same automation ID. Rebuild and upload the earlier code bundle if needed. This restores the automation's instructions and settings; it does not undo comments, commits or other actions from previous runs.
