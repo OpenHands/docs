@@ -11,7 +11,7 @@ flow to the in-cluster Laminar service. If your organization already operates a
 different OpenTelemetry-compatible observability platform — Langfuse, Honeycomb,
 Tempo, Datadog, or any backend that speaks OTLP — you can redirect all OHE
 conversation traces to it without modifying OHE source or patching the Helm
-chart. The change is a set of environment variables on the runtime pod.
+chart. Configure the exporter environment in the agent-server runtime.
 
 This guide walks an operator through pointing OHE at an external observability
 platform and confirms what you get versus the built-in Laminar experience.
@@ -53,7 +53,7 @@ There are two integration paths:
   runtime and your backend. Use this when you need batching, retry, fan-out to
   multiple backends, or a non-OTLP destination.
 
-Both paths leave OHE stock. The only change is pod environment variables.
+Both paths use the stock OHE application and agent-server images.
 
 ## Prerequisites
 
@@ -61,14 +61,12 @@ Before you start, confirm:
 
 - **OHE is installed and reachable.** You can sign in at
   `https://app.<your-base-domain>`.
-- **Your observability backend is reachable from the OHE cluster.** The runtime
-  pod makes outbound HTTP/S calls to the backend, so DNS and network paths must
-  resolve from inside the `openhands` namespace.
+- **Your observability backend is reachable from the agent sandbox.** Use an
+  endpoint that resolves from the sandbox network, rather than `localhost`.
 - **You have an ingest endpoint and credentials on your backend.** You need the
   OTLP traces URL and whatever auth the backend expects (an API key, Basic auth,
   or a bearer token).
-- **You have cluster access** to edit Helm values or the Replicated Admin
-  Console, and can restart the runtime pod.
+- **You can update your deployment configuration** and launch a fresh sandbox.
 
 ## Choose your backend
 
@@ -185,6 +183,97 @@ Pick the path that matches how OHE is deployed.
     ```bash
     kubectl -n openhands rollout restart deploy/openhands
     ```
+  </Tab>
+
+  <Tab title="Docker Compose">
+    For [Docker Compose](/enterprise/docker-compose), configure both `app`
+    and `worker` to launch agent sandboxes with the exporter settings below.
+
+    Create `docker-compose.observability.yml` beside your Compose files.
+    Replace the endpoint and auth header with the values for your
+    [backend](#backend-specific-configuration).
+    If you already customize your sandbox environment, keep those settings
+    in `initial_env`.
+
+    ```yaml docker-compose.observability.yml
+    x-observability-environment: &observability-environment
+      # An explicit spec pins the image and passes settings into the sandbox.
+      OH_SANDBOX_SPEC_KIND: DockerSandboxSpecServiceInjector
+      OH_SANDBOX_SPEC_SPECS: >-
+        [{"id":"ghcr.io/openhands/agent-server@sha256:f9280c5aef5f37adb9212398bdf9f424613c7046ff83403bb2b51730fcc4eac1",
+        "command":["--port","8000"],
+        "working_dir":"/workspace/project",
+        "initial_env":{
+          "AGENT_SERVER_PORT":"8000",
+          "OPENVSCODE_SERVER_ROOT":"/openhands/.openvscode-server",
+          "OH_ENABLE_VNC":"0",
+          "LOG_JSON":"true",
+          "OH_CONVERSATIONS_PATH":"/workspace/conversations",
+          "OH_BASH_EVENTS_DIR":"/workspace/bash_events",
+          "PYTHONUNBUFFERED":"1",
+          "ENV_LOG_LEVEL":"20",
+          "LMNR_BASE_URL":"",
+          "LMNR_PROJECT_API_KEY":"",
+          "LMNR_FORCE_HTTP":"",
+          "LMNR_HTTP_PORT":"",
+          "LMNR_GRPC_PORT":"",
+          "LMNR_SPAN_CONTEXT":"",
+          "LMNR_INSTRUMENTS":"",
+          "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":"http://<your-backend>/api/public/otel/v1/traces",
+          "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL":"http/protobuf",
+          "OTEL_EXPORTER_OTLP_TRACES_HEADERS":"Authorization=Basic <base64(user:pass)>"
+        }}]
+
+    services:
+      app:
+        environment:
+          <<: *observability-environment
+      worker:
+        environment:
+          <<: *observability-environment
+    ```
+
+    If this file contains API keys or passwords, do not commit it to Git.
+    Clearing the Laminar connection settings selects generic OTLP export;
+    `LMNR_INSTRUMENTS` disables duplicate LiteLLM instrumentation. Setting
+    `OTEL_*` only on `app` or `worker` does not forward it into the sandbox.
+
+    Apply the overlay last. Keep your existing project name and every
+    existing Compose file. For a stack using only `docker-compose.yml`, run:
+
+    ```bash
+    docker compose \
+      -f docker-compose.yml \
+      -f docker-compose.observability.yml \
+      up -d --no-deps --force-recreate app worker
+    ```
+
+    If you already use other overlays, include their `-f` arguments before
+    the observability overlay. Then launch a fresh sandbox; existing sandboxes
+    retain their old image and environment. Verify LLM content, token counts,
+    and tool spans in your backend, then stop the runtime gracefully to
+    export its completed root span.
+
+    <Accordion title="Agent-server image requirements">
+      Use an image containing both the [LLM content fix](https://github.com/OpenHands/software-agent-sdk/pull/6573)
+      and the [shutdown flush fix](https://github.com/OpenHands/software-agent-sdk/pull/6578).
+      The pinned image is the official `4c2cae3-python` build for
+      **linux/amd64**, tested with Enterprise **1.87.0**. No custom Python
+      hook or locally built image is needed. Enterprise
+      1.87.0's bundled `1.60.1-python` image predates these fixes.
+
+      On that release, setting only `AGENT_SERVER_IMAGE_TAG` in the default
+      repository rewrites a different version back to the bundled version.
+      Use the explicit image `id` above and check the image of the newly
+      created sandbox. For other architectures or releases, select an
+      appropriate image containing both fixes and validate compatibility.
+    </Accordion>
+
+    For Langfuse, use the [Langfuse endpoint and auth header](#langfuse).
+    To send to **both Laminar and Langfuse**, run a collector reachable from
+    the sandbox and use its `/v1/traces` endpoint in this overlay. Keep backend
+    credentials in the collector and configure its two exporters as described
+    in [Keep Laminar and add a second backend](#keep-laminar-and-add-a-second-backend).
   </Tab>
 
   <Tab title="Replicated VM (Admin Console)">
