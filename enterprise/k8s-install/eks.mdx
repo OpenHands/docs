@@ -48,24 +48,20 @@ OpenHands services and add-ons on the general pool with a node selector.
 
 ### Karpenter for the Sysbox Pool
 
-Use a stable pool label to select sandbox nodes. Use a startup taint to hold sandbox pods until
-the Sysbox installer finishes. This configuration was validated with EKS 1.35, Karpenter 1.15.1,
-OpenHands Helm chart 0.90.1 (Runtime API 0.11.1), and Sysbox installer 0.7.1 on Canonical's
-EKS-optimized Ubuntu 24.04 AMI with containerd 2.2.1.
+Use the `sysbox-install=yes` label to select sandbox nodes. A startup taint keeps sandbox pods
+off new nodes until the Sysbox installer finishes.
 
 #### Configure the NodePool
 
 Create an [EC2NodeClass](https://karpenter.sh/v1.15/concepts/nodeclasses/) named `sysbox-ubuntu`
 with an [EKS-optimized Ubuntu AMI](https://ubuntu.com/aws/docs/aws-how-to/kubernetes/) for your
-cluster version. The validated setup pinned an Ubuntu AMI ID, used `amiFamily: Custom`, and ran
-the AMI's `/etc/eks/bootstrap.sh` in user data. Pass the EKS cluster name, API endpoint, CA and
-cluster DNS IP to bootstrap, and register kubelet with the `karpenter.sh/unregistered:NoExecute`
-taint. Configure the NodeClass with your cluster's subnets, security groups, and node IAM role.
+cluster version. Use `amiFamily: Custom` with a pinned AMI and the AMI's EKS bootstrap in user
+data. During bootstrap, register the node with the `karpenter.sh/unregistered:NoExecute` taint.
+Configure the NodeClass with your cluster's subnets, security groups, and node IAM role.
 
-Apply the following NodePool. Adjust the instance types and CPU limit for your expected sandbox
-requests. This lab example disables consolidation and age-based expiry so you can control
-when the test node is removed. Idle nodes keep incurring charges until removed. To reclaim empty
-nodes automatically, choose a finite `consolidateAfter` and keep `consolidationPolicy: WhenEmpty`.
+Use this NodePool as a starting point. Choose instance types and a CPU limit for your expected
+sandbox demand. This example keeps idle nodes running and disables age-based expiry. Set a
+finite `consolidateAfter` with `consolidationPolicy: WhenEmpty` to reclaim empty nodes automatically.
 
 ```yaml
 apiVersion: karpenter.sh/v1
@@ -131,8 +127,9 @@ scheduling:
     sysbox-install: "yes"
 ```
 
-Add these values to your OpenHands Helm configuration. The empty JSON list overrides the Runtime
-API's default Sysbox toleration. If your sandbox pool requires other tolerations, include them in
+Use a Runtime API release that supports `RUNTIME_TOLERATIONS` and a Sysbox node image that
+supports native Kubernetes user namespaces. Add the following values to your OpenHands Helm
+configuration. The empty JSON list overrides the Runtime API's default Sysbox toleration. If your sandbox pool requires other tolerations, include them in
 the JSON list and leave out `sysbox-runtime=not-running:NoSchedule`. Also check tolerations on the
 RuntimeClass and on admitted sandbox pods. Set `STORAGE_CLASS` to your EBS CSI StorageClass with
 `WaitForFirstConsumer` volume binding.
