@@ -178,10 +178,19 @@ example's `README.md` or `example.yaml` in that repository.
   ---
   ```
 - Follow the style rules in `openhands/DOC_STYLE_GUIDE.md`.
+- Follow the writing rules in `.agents/skills/docs-writing/SKILL.md` when you write or edit page prose.
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 - When documenting prompt/context behavior, avoid ambiguous transport phrasing like “sent with each request” unless discussing the actual API transport. Prefer precise wording such as “included in the initial system prompt” and “remains part of the conversation/LLM context for subsequent turns.”
 - Cloud integration docs live under `openhands/usage/cloud/`, and pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
+
+### Agent Canvas release notes
+
+- Keep only the six newest releases (current plus five previous), newest first, in the
+  Agent Canvas `Release Notes` group in `docs.json`, followed by the `Previous Release Notes` page
+  (`openhands/usage/agent-canvas/release-notes/previous.mdx`).
+- When adding a release, move any release that falls outside those six from the sidebar to
+  the previous-release page. Keep its links newest first, and preserve existing release files and URLs.
 
 ### Mintlify tab ownership
 
