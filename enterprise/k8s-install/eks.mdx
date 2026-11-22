@@ -46,6 +46,119 @@ when empty, never while a session is running.
 Sandboxes are pinned to the Sysbox pool automatically by the `sysbox-runc` RuntimeClass. Keep the
 OpenHands services and add-ons on the general pool with a node selector.
 
+### Karpenter for the Sysbox Pool
+
+Use a stable pool label to select sandbox nodes. Use a startup taint to hold sandbox pods until
+the Sysbox installer finishes. This configuration was validated with EKS 1.35, Karpenter 1.15.1,
+OpenHands Helm chart 0.90.1 (Runtime API 0.11.1), and Sysbox installer 0.7.1 on Canonical's
+EKS-optimized Ubuntu 24.04 AMI with containerd 2.2.1.
+
+#### Configure the NodePool
+
+Create an [EC2NodeClass](https://karpenter.sh/v1.15/concepts/nodeclasses/) named `sysbox-ubuntu`
+with an [EKS-optimized Ubuntu AMI](https://ubuntu.com/aws/docs/aws-how-to/kubernetes/) for your
+cluster version. For a Custom AMI family, supply bootstrap user data that joins the cluster and
+registers the node with the `karpenter.sh/unregistered:NoExecute` taint. Configure the NodeClass
+with your cluster's subnets, security groups, and node IAM role.
+
+Apply the following NodePool. Adjust the instance types and CPU limit for your expected sandbox
+requests. This example disables automatic consolidation and age-based expiry.
+
+```yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: sysbox-runtime
+spec:
+  limits:
+    cpu: "8"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: Never
+  template:
+    metadata:
+      labels:
+        sysbox-install: "yes"
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: sysbox-ubuntu
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["m6i.xlarge"]
+      expireAfter: Never
+      startupTaints:
+        - key: sysbox-runtime
+          value: not-running
+          effect: NoSchedule
+```
+
+Follow [Installing Sysbox](/enterprise/k8s-install/sysbox) to install the DaemonSet. It targets
+`sysbox-install=yes` nodes, tolerates the startup taint, and removes it when installation
+completes. Karpenter can provision for a pending sandbox while Kubernetes holds that sandbox off
+the tainted node. Leave the changing `sysbox-runtime` label under the installer's control.
+See [Karpenter startup taints](https://karpenter.sh/v1.15/concepts/nodepools/#spectemplatespecstartuptaints).
+
+#### Configure the RuntimeClass and Helm values
+
+Override the installer manifest's `sysbox-runc` RuntimeClass with the stable pool selector below.
+Keep the override in your installer manifest or deployment configuration so it survives updates.
+The RuntimeClass is cluster-wide. Ensure every node matched by the selector uses this readiness
+gate or already has a working Sysbox runtime.
+
+```yaml
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: sysbox-runc
+handler: sysbox-runc
+scheduling:
+  nodeSelector:
+    sysbox-install: "yes"
+```
+
+Add these values to your OpenHands Helm configuration. The empty JSON list overrides the Runtime
+API's default Sysbox toleration. If your sandbox pool requires other tolerations, include them in
+the JSON list and leave out `sysbox-runtime=not-running:NoSchedule`. Also check tolerations on the
+RuntimeClass and on admitted sandbox pods. Set `STORAGE_CLASS` to your EBS CSI StorageClass with
+`WaitForFirstConsumer` volume binding.
+
+```yaml
+runtime-api:
+  env:
+    RUNTIME_CLASS: sysbox-runc
+    RUNTIME_TOLERATIONS: "[]"
+    SET_HOST_USERS: "true"
+    STORAGE_CLASS: gp3
+```
+
+#### Verify scale-up and replacement
+
+1. In a test cluster with [sandbox DNS and TLS configured](/enterprise/k8s-install/dns-and-tls),
+   start an OpenHands sandbox with zero nodes in the runtime pool. Watch for a NodeClaim.
+
+   ```bash
+   kubectl get nodeclaims -l karpenter.sh/nodepool=sysbox-runtime --watch
+   ```
+
+2. Check the sandbox pod's events and the new node's taints. The pod should stay unscheduled
+   while `sysbox-runtime=not-running:NoSchedule` is present. After the installer clears it,
+   confirm the pod runs with the `sysbox-runc` RuntimeClass, its workspace volume is bound,
+   and the sandbox becomes ready in OpenHands.
+3. Stop the test sandbox and remove its now-idle NodeClaim. Start a new sandbox and verify
+   the same sequence on a different node.
+
 ### Sizing the Sandbox Nodes
 
 Per-sandbox CPU, memory, and ephemeral storage are set on the
