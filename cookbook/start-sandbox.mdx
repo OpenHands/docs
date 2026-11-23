@@ -1,0 +1,136 @@
+---
+title: Start Sandbox
+description: Start a sandbox without a conversation and run commands via the agent-server REST API.
+icon: play
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@main (start-sandbox/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/main/start-sandbox" horizontal />
+
+A short script that creates an OpenHands Cloud sandbox via the V1 API,
+waits for it to reach `RUNNING`, then talks directly to the sandbox's
+agent-server REST API to run shell commands.
+
+No conversation is created — useful when you want a managed remote workspace
+to drive yourself (e.g. for tooling, batch jobs, or programmatic agents).
+
+Two versions are provided:
+
+- [`sandbox_demo_brief.py`](https://github.com/OpenHands/enterprise-cookbook/blob/main/start-sandbox/sandbox_demo_brief.py) — \~25 lines,
+  one-numbered-step-per-block, minimal error handling. Best for quickly
+  understanding the API shape.
+- [`sandbox_demo.py`](https://github.com/OpenHands/enterprise-cookbook/blob/main/start-sandbox/sandbox_demo.py) — same flow but split into a
+  `main()` function with docstrings and type hints, more in line with
+  the rest of the repo.
+
+Both do the same thing and both intentionally leave the sandbox running
+at the end.
+
+> Want to go further? [`clone-and-attach`](/cookbook/clone-and-attach) builds on this
+> example: it clones a repo and runs its `.openhands/setup.sh` in the sandbox,
+> then **attaches a conversation** to the prepared sandbox.
+
+## APIs Used
+
+### 1. Cloud App Server — manages the sandbox lifecycle
+
+- Base URL: `https://app.all-hands.dev`
+- Auth header: `X-Session-API-Key: <OH_API_KEY>`
+- Endpoints:
+  - `POST /api/v1/sandboxes` — start a sandbox (optional `?sandbox_spec_id=…`)
+  - `GET  /api/v1/sandboxes?id=<id>` — batch-get sandboxes by id
+    (returns `SandboxInfo` with `status`, `session_api_key`, `exposed_urls`, …)
+
+### 2. Agent Server — runs inside the sandbox
+
+- Base URL: the entry in `sandbox.exposed_urls` with `name == "AGENT_SERVER"`.
+  Inside the container the agent server listens on port **60000** (you'll see
+  that in the sample `ps -ef` output below and in the `port` field of the
+  `exposed_urls` entry); it is reverse-proxied to the public HTTPS URL, so you
+  always talk to it over `https://…` (port 443) — never the internal port.
+- Auth header: `X-Session-API-Key: <session_api_key>` returned by the
+  sandbox-create call (different from your Cloud API key)
+- All routes are under `/api/...`. This example uses:
+  - `POST /api/bash/execute_bash_command` — run a bash command and wait
+    for its result; body `{ "command": "...", "timeout": 30, "cwd": "..." }`,
+    response includes `stdout`, `stderr`, `exit_code`
+
+> Full Agent Server schema is available at
+> `<agent_server_url>/openapi.json` once the sandbox is `RUNNING`.
+
+## What it prints
+
+```text
+sandbox: 59Ji2kvkUtZZSm7zAkAxwN
+  status: RUNNING
+agent: https://rzwfxneubhwcfpav.prod-runtime.all-hands.dev
+
+=== ls -la /workspace ===
+drwxr-sr-x bash_events
+drwxr-sr-x conversations
+drwxrws--- lost+found
+
+=== agent-server process ===
+openhan+ 1  /usr/local/bin/openhands-agent-server --port 60000
+openhan+ 38 /usr/local/bin/openhands-agent-server --port 60000
+```
+
+`/workspace` is the sandbox's working tree. The agent-server is the binary
+target built from the
+[software-agent-sdk Dockerfile](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-agent-server/openhands/agent_server/docker/Dockerfile).
+You'll see two processes: a uvicorn parent and a worker.
+
+## Run it
+
+```bash
+export OH_API_KEY=...       # your https://app.all-hands.dev API key
+pip install requests
+python sandbox_demo_brief.py   # or sandbox_demo.py
+```
+
+`sandbox_demo.py` also takes flags / env vars so you can reuse it as-is:
+
+| Flag                | Env var           | Default                      |
+| ------------------- | ----------------- | ---------------------------- |
+| `--api-key`         | `OH_API_KEY`      | — (required)                 |
+| `--base-url`        | `OH_API_BASE`     | `https://app.all-hands.dev`  |
+| `--sandbox-spec-id` | `SANDBOX_SPEC_ID` | none (account default image) |
+| `--poll-timeout`    | `POLL_TIMEOUT`    | `180` (seconds)              |
+
+Neither script deletes the sandbox at the end so you can poke at it.
+Clean up with the `DELETE` endpoint — note the sandbox id goes in **both** the
+path and a required `sandbox_id` query parameter:
+
+```bash
+SID=<sandbox_id>
+curl -X DELETE "https://app.all-hands.dev/api/v1/sandboxes/${SID}?sandbox_id=${SID}" \
+     -H "X-Session-API-Key: $OH_API_KEY"
+```
+
+## Notes
+
+- A freshly created sandbox starts in `STARTING`; `session_api_key` and
+  `exposed_urls` are `null` until it becomes `RUNNING`. Polling every few
+  seconds is sufficient.
+- The Cloud API has no single-sandbox `GET /sandboxes/{id}` — use the
+  batch-get endpoint `GET /sandboxes?id=<id>` and read the first item.
+- To pick a specific runtime image, pass `?sandbox_spec_id=<id>` to the
+  `POST /api/v1/sandboxes` call. List available specs with
+  `GET /api/v1/sandbox-specs/search`.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="clone-and-attach" href="/cookbook/clone-and-attach" icon="code-branch">
+    Clone a repo and attach a conversation
+  </Card>
+
+  <Card title="archive-sandbox" href="/cookbook/archive-sandbox" icon="box-archive">
+    Delete conversations and release PVCs
+  </Card>
+
+  <Card title="OpenHands API Reference" href="https://app.all-hands.dev/docs" icon="arrow-up-right-from-square">
+    Full API documentation
+  </Card>
+</CardGroup>

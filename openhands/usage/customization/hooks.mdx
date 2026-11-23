@@ -6,7 +6,7 @@ description: Use lifecycle hooks to control agent behavior - block dangerous com
 ## Overview
 
 Hooks let you run custom shell scripts at key moments during an OpenHands session. They are configured per-repository
-via a `.openhands/hooks.json` file and work across **Cloud**, **CLI**, and **local GUI** setups. The hooks format is
+via a `.openhands/hooks.json` file and work across **Agent Canvas**, **OpenHands Cloud**, and **OpenHands Enterprise**. The hooks format is
 compatible with [Claude Code hooks](https://code.claude.com/docs/en/hooks), so you can reuse hook scripts across both tools.
 
 Common use cases include:
@@ -36,7 +36,26 @@ can never block, regardless of event type.
   <Step>
     ### Create the Hooks Directory
 
-    In your repository root, create the `.openhands` directory if it doesn't already exist:
+    Create `.openhands` in the conversation's working folder. For a cloned repository,
+    this is the repository root.
+
+    In Agent Canvas:
+    - If you select a `Working folder` through `Open Workspace`, place `hooks.json` at
+      `<selected-folder>/.openhands/hooks.json`.
+    - If you do not select a working folder, OpenHands uses the Agent Server's default
+      working directory. In the Docker setup described here, this is
+      `/home/openhands/workspace/project`, so the configuration is at
+      `/home/openhands/workspace/project/.openhands/hooks.json`.
+
+    <Note>
+      These paths are inside the backend environment. If you configured a different
+      default working directory, use that directory instead. Hooks are loaded from
+      the working folder itself; OpenHands does not search its parent folders. For 
+      example, `/home/openhands/workspace/.openhands/hooks.json` is not loaded when
+      the working folder is `/home/openhands/workspace/project`.
+    </Note>
+
+    From that working folder, create the hooks directory:
 
     ```bash
     mkdir -p .openhands/hooks
@@ -156,6 +175,38 @@ The `matcher` field determines which tools trigger the hook (only relevant for `
 
 For hooks that aren't tool-specific (`Stop`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`), set the matcher to `"*"` or omit it.
 
+### Hooks Bundled in Plugins
+
+Plugins can ship hooks in `hooks/hooks.json`, or in `dev.openhands/hooks/hooks.json` for
+[Agent Plugins packages](/overview/agent-plugins). These hooks still run from the conversation's
+working folder, but OpenHands sets `PLUGIN_ROOT` in their environment to the resolved root
+directory of the plugin that supplied them. A hook can call a script bundled in its plugin
+without knowing where OpenHands cached the plugin:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "terminal",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/check.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The shell expands the variable, so quote it in case the path contains spaces. This example uses
+POSIX shell syntax; on Windows, use `%PLUGIN_ROOT%`. Each plugin's hooks see their own root, bound
+to the plugin revision loaded for the conversation, so two plugins that bundle a script with the
+same name each run their own copy. Hooks from `.openhands/hooks.json` are not supplied by a plugin
+and do not receive `PLUGIN_ROOT`.
+
 ## How Hook Scripts Work
 
 ### Input
@@ -184,6 +235,7 @@ The following **environment variables** are also set:
 | `OPENHANDS_TOOL_NAME` | The tool being used (for tool hooks) |
 | `OPENHANDS_PROJECT_DIR` | The project working directory |
 | `OPENHANDS_SESSION_ID` | The current session ID |
+| `PLUGIN_ROOT` | The resolved root directory of the plugin that supplied the hook (plugin hooks only; see [Hooks Bundled in Plugins](#hooks-bundled-in-plugins)) |
 
 ### Output
 
@@ -356,15 +408,8 @@ You can configure multiple hook types and multiple hooks per event:
 
 ## Viewing Active Hooks
 
-<Tabs>
-  <Tab title="CLI">
-    Use the `/skills` command in the CLI to see loaded skills, hooks, and MCPs for the current session.
-  </Tab>
-  <Tab title="Cloud / Web">
-    Active hooks are loaded automatically when a conversation starts. Hook execution events appear in the
-    conversation log, showing whether each hook allowed or blocked an operation.
-  </Tab>
-</Tabs>
+Active hooks are loaded automatically when a conversation starts in Agent Canvas, OpenHands Cloud, or OpenHands Enterprise.
+Hook execution events appear in the conversation log, showing whether each hook allowed or blocked an operation.
 
 ## Tips
 

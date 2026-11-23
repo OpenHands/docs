@@ -42,26 +42,29 @@ Documentation should describe these boundaries accurately. If a documentation PR
 
 ## llms.txt / llms-full.txt (V1-only)
 
-Mintlify auto-generates `/llms.txt` and `/llms-full.txt`, but this repo **overrides** them by committing
-`llms.txt` and `llms-full.txt` at the repo root.
+Mintlify generates and hosts `/llms.txt` and `/llms-full.txt` on deployment.
+Do not commit custom files at those paths: they override Mintlify's generated files.
 
-We do this so LLMs get **V1-only** context while legacy V0 pages remain available for humans.
+The indexing policy lives in the repository:
 
-- Generator script: `scripts/generate-llms-files.py`
-- Sync workflow: `.github/workflows/check-llms-files.yml` runs weekly (and on demand) to open a PR when the files drift.
-- Regenerate (recommended):
-  ```bash
-  make llms
-  ```
-  Or directly:
-  ```bash
-  python3 scripts/generate-llms-files.py
-  ```
-- Local verify (optional):
-  ```bash
-  make llms-check
-  ```
-- Exclusions: `openhands/usage/v0/` and any `V0*`-prefixed page files.
+- `docs.json` explicitly sets `seo.indexing` to `"navigable"`. Keep this setting;
+  `"all"` opts hidden and noindex pages back into the generated LLM files.
+- Legacy pages under `openhands/usage/v0/`, `V0*`-prefixed page files, and the former
+  monorepo `openhands/usage/architecture/backend.mdx` and `runtime.mdx` use
+  `noindex: true` in their frontmatter. Add it to any new legacy pages too.
+- `noindex` preserves page URLs and navigation entries, but excludes pages from
+  both LLM files, site search, sitemaps, search engines, and AI assistant context.
+- Pages outside navigation are omitted automatically. Add current documentation
+  to `docs.json` when it should be included; the old generator scanned all MDX files.
+- Do not use `.mintignore` for legacy pages that must remain accessible to readers.
+
+See [Mintlify's llms.txt documentation](https://www.mintlify.com/docs/ai/llmstxt)
+and [indexing controls](https://www.mintlify.com/docs/organize/hidden-pages#search-seo-and-ai-indexing).
+
+After deployment, check `/llms.txt` and `/llms-full.txt` for current SDK, Agent Canvas,
+Cloud, and CLI pages, and confirm legacy page entries are absent. Links to legacy
+pages inside current page bodies can still appear; these settings filter page
+entries, not every mention of V0.
 
 ## Local development
 
@@ -153,6 +156,18 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
 - Runs the agent-server OpenAPI generator
 - Updates `openapi/agent-sdk.json` via an automated PR
 
+### 4) Cookbook tab generated from `OpenHands/enterprise-cookbook`
+
+Every page under `cookbook/` and the `Cookbook` tab in `docs.json` are generated from example READMEs in
+`OpenHands/enterprise-cookbook` by its `tools/docs-render` converter. **Do not edit them here**; change the
+example's `README.md` or `example.yaml` in that repository.
+
+- Each enterprise-cookbook PR gets a draft `cookbook-preview/pr-<N>` PR here for its Mintlify preview. These
+  are never merged and close with the source PR.
+- Merged changes arrive in a single `cookbook-sync` PR, opened by `openhands-release-bot` and refreshed nightly.
+- `.github/workflows/cookbook-generated.yml` fails PRs from any other branch that touch `cookbook/`, and
+  `sync_code_blocks.py` skips `cookbook/` because its code-block paths are relative to each example.
+
 ## Docs writing conventions
 
 - Most pages are `.mdx` with frontmatter:
@@ -163,10 +178,19 @@ Workflow: `.github/workflows/sync-agent-sdk-openapi.yml`
   ---
   ```
 - Follow the style rules in `openhands/DOC_STYLE_GUIDE.md`.
+- Follow the writing rules in `.agents/skills/docs-writing/SKILL.md` when you write or edit page prose.
 - Use Mintlify components (`<Note>`, `<Warning>`, `<Tabs>`, etc.) where appropriate.
 - When linking internally, prefer **absolute** doc paths (e.g. `/overview/quickstart`).
 - When documenting prompt/context behavior, avoid ambiguous transport phrasing like “sent with each request” unless discussing the actual API transport. Prefer precise wording such as “included in the initial system prompt” and “remains part of the conversation/LLM context for subsequent turns.”
 - Cloud integration docs live under `openhands/usage/cloud/`, and pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
+
+### Agent Canvas release notes
+
+- Keep only the six newest releases (current plus five previous), newest first, in the
+  Agent Canvas `Release Notes` group in `docs.json`, followed by the `Previous Release Notes` page
+  (`openhands/usage/agent-canvas/release-notes/previous.mdx`).
+- When adding a release, move any release that falls outside those six from the sidebar to
+  the previous-release page. Keep its links newest first, and preserve existing release files and URLs.
 
 ### Mintlify tab ownership
 

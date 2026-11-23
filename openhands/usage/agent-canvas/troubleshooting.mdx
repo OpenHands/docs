@@ -1,31 +1,36 @@
 ---
 title: Troubleshooting
 description: Fix common Agent Canvas install, startup, backend, model, workspace, and uninstall issues.
+icon: life-ring
 ---
 
 Use this page when Agent Canvas does not start, the browser cannot reach it, the backend is disconnected, model setup fails, or uninstall/update commands get stuck.
 
 ## Choose Your Situation
 
-**Agent Canvas cannot start**
-
-- ["agent-canvas" Command Not Found](#agent-canvas-command-not-found),
-- [Missing `uv` or `uvx`](#missing-uv-or-uvx)
-- [Port Already In Use](#port-already-in-use)
-- [Docker Daemon Not Running](#docker-daemon-not-running).
-
-**The browser works but Canvas cannot reach its backend**
-- [Backend Is Unreachable](#backend-is-unreachable)
-- [Wrong Backend URL Or API Key](#wrong-backend-url-or-api-key).
-
-**The backend works but the model fails**
-- [Model Or API Key Errors](#model-or-api-key-errors)
-- [`LLM Provider NOT provided`](#llm-provider-not-provided)
-- [ACP Agent Credentials Are Not Used](#acp-agent-credentials-are-not-used).
-
-**You need to remove or reset Canvas**
-- [Update Or Uninstall Is Stuck](#update-or-uninstall-is-stuck)
-- [Uninstall Agent Canvas](/openhands/usage/agent-canvas/setup#uninstall-agent-canvas) for clean removal and reinstall.
+<CardGroup cols={2}>
+  <Card title="Agent Canvas cannot start" icon="circle-exclamation">
+    - [`agent-canvas` Command Not Found](#agent-canvas-command-not-found)
+    - [Missing `uv` Or `uvx`](#missing-uv-or-uvx)
+    - [Port Already In Use](#port-already-in-use)
+    - [Docker Daemon Not Running](#docker-daemon-not-running)
+    - [Docker Image Crash-Loops At Startup](#docker-image-crash-loops-at-startup)
+  </Card>
+  <Card title="Canvas cannot reach its backend" icon="plug-circle-xmark">
+    - [Backend Is Unreachable](#backend-is-unreachable)
+    - [Wrong Backend URL Or API Key](#wrong-backend-url-or-api-key)
+    - [DigitalOcean sign-in and session errors](/openhands/usage/agent-canvas/backend-setup/digitalocean#troubleshooting)
+  </Card>
+  <Card title="The model fails" icon="brain">
+    - [Model Or API Key Errors](#model-or-api-key-errors)
+    - [`LLM Provider NOT provided`](#llm-provider-not-provided)
+    - [ACP Agent Credentials Are Not Used](#acp-agent-credentials-are-not-used)
+  </Card>
+  <Card title="You need to remove or reset Canvas" icon="trash">
+    - [Update Or Uninstall Is Stuck](#update-or-uninstall-is-stuck)
+    - [Uninstall Agent Canvas](/openhands/usage/agent-canvas/setup#uninstall-agent-canvas)
+  </Card>
+</CardGroup>
 
 ## Start With These Checks
 
@@ -181,8 +186,8 @@ If you are using Docker, map a different host port:
 
 ```bash
 docker run -it --rm \
-  -p 3000:8000 \
-  -v ~/.openhands:/home/openhands/.openhands \
+  -p 127.0.0.1:3000:8000 \
+  -v openhands-data:/home/openhands/.openhands \
   -v ~/projects:/projects \
   ghcr.io/openhands/agent-canvas:latest
 ```
@@ -204,6 +209,30 @@ If Docker commands fail with a daemon or connection error:
 
 On Windows, use PowerShell command syntax from [Install](/openhands/usage/agent-canvas/setup#install-and-run). PowerShell uses backticks (`` ` ``) for line continuation instead of backslashes.
 
+## Docker Image Crash-Loops At Startup
+
+If a Docker container starts but restarts in a loop instead of serving Canvas, check the container logs:
+
+```bash
+docker logs <container-id-or-name>
+```
+
+If the logs show a missing module — for example, `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/opt/agent-canvas/<name>.mjs'` — the image was published with files missing, so it cannot start. This is not a problem with your configuration or mounts.
+
+1. Run a known-good image tag instead of the broken one. `ghcr.io/openhands/agent-canvas:latest` follows the most recent published version, so pin an earlier tag while the fault is fixed:
+
+   ```bash
+   docker run -it --rm \
+     -p 127.0.0.1:8000:8000 \
+     -v openhands-data:/home/openhands/.openhands \
+     -v ~/projects:/projects \
+     ghcr.io/openhands/agent-canvas:1.26.0
+   ```
+
+2. Pull the latest image again after a patch is published and retry `:latest`.
+
+To pin an exact build instead of a tag, use its digest, for example `ghcr.io/openhands/agent-canvas@sha256:<digest>`.
+
 ## Backend Is Unreachable
 
 If Agent Canvas loads but the active backend is disconnected:
@@ -217,6 +246,16 @@ If Agent Canvas loads but the active backend is disconnected:
 For the default local setup, you usually do not need to manually enter a backend API key. Agent Canvas can generate and persist one locally.
 
 For `--public`, VM, Modal, or other remote backends, use the `LOCAL_BACKEND_API_KEY` configured for that backend. Anyone with that key can access the backend, so keep it private.
+
+## Backend Logs
+
+Agent Canvas starts its backends at log level `WARNING`, so a default launch prints little beyond startup and error messages. To see `DEBUG` output, run with `--verbose`:
+
+```bash
+agent-canvas --verbose
+```
+
+An explicit `LOG_LEVEL` (for the agent server) or `AUTOMATION_LOG_LEVEL` (for the automation service) takes priority over the default, and Uvicorn's `--log-level` follows the same value. For example, `LOG_LEVEL=INFO agent-canvas` logs at `INFO`. The Docker entrypoint uses the same `WARNING` default.
 
 ## Wrong Backend URL Or API Key
 
@@ -233,9 +272,11 @@ Common examples:
 
 If you changed the port with `--port`, use the port you selected.
 
+If Docker shows an API-key prompt before you can connect, it needs the **session/backend key**, not your model-provider key. Follow [Session Keys And The API-Key Prompt](/openhands/usage/agent-canvas/setup#session-keys-and-the-api-key-prompt) to retrieve the generated key, configure your own, or enable automatic connection for a localhost-only Docker install.
+
 ## Model Or API Key Errors
 
-If a conversation fails before the agent responds, check `Settings > LLM`.
+If a conversation fails before the agent responds, check `Settings > LLM`. To choose the right provider, local endpoint, LiteLLM proxy, OpenRouter, or ACP path, start with [Configure a Model](/openhands/usage/agent-canvas/model-configuration).
 
 Common causes:
 
@@ -359,7 +400,7 @@ Before updating or uninstalling, stop Agent Canvas.
   </Tab>
 </Tabs>
 
-Uninstalling the package or image does not automatically delete persisted settings, secrets, or conversation history. Those live in the persistence directory you used, such as `~/.openhands`.
+Uninstalling the package or image does not automatically delete persisted settings, secrets, or conversation history. Those live in `~/.openhands` for npm and npx, or in the `openhands-data` volume for Docker. See [Uninstall Agent Canvas](/openhands/usage/agent-canvas/setup#uninstall-agent-canvas) to remove them.
 
 ## Get Help
 
