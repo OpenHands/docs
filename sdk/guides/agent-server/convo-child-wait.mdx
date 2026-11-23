@@ -1,0 +1,127 @@
+---
+title: Wait for Child Conversations
+description: Await existing child conversations on the agent server without polling.
+---
+
+<Note>
+This guide describes [SDK PR #6177](https://github.com/OpenHands/software-agent-sdk/pull/6177). Use a server and client build containing that change. These APIs and tools are not available in the v1.58.1 release.
+</Note>
+
+Use one server request to wait for existing direct child conversations. The server uses execution lifecycle notifications, so the parent and children can run without an attached browser or WebSocket.
+
+## Wait Request
+
+Call `POST /api/conversations/{parent_id}/children/wait` with the server's session API key. The children must belong directly to that parent on the same agent-server instance.
+
+```json
+{
+  "conversation_ids": ["a-child-conversation-uuid"],
+  "timeout_seconds": 60,
+  "delete_on_finish": false,
+  "on_timeout": "retain"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `conversation_ids` | Between 1 and 64 unique, existing direct child UUIDs. |
+| `timeout_seconds` | Finite wait duration from 0 to 300 seconds; default 60. |
+| `delete_on_finish` | Delete settled children after waiting; default false. |
+| `on_timeout` | `retain` (default), `stop`, or `delete` for children still pending at the deadline. |
+
+The deadline starts after validation and runtime loading. Stop/delete cleanup follows the existing conversation lifecycle and can extend the total request duration. Synchronous workers retain their existing cooperative interruption limitations.
+
+## Response
+
+```json
+{
+  "children": [{
+    "conversation_id": "a-child-conversation-uuid",
+    "execution_status": "finished",
+    "settled": true,
+    "deleted": false,
+    "mailbox_message_id": "a-persisted-message-id"
+  }],
+  "timed_out": false,
+  "interrupted": false
+}
+```
+
+Each entry describes the child's state **before cleanup**. `settled` means its run completed, failed, became stuck, was explicitly paused, or its service began closing. A provisional `finished` state inside a running step does not settle the wait before the run and stop hooks finish.
+
+On timeout, the server returns HTTP 200 with `timed_out: true` and the pending children's current observed execution states. Completed children remain marked `settled: true`. The timeout is a normal result.
+
+A parent pause, interrupt, or close returns `interrupted: true` without applying timeout cleanup. Disconnecting or cancelling a pending wait releases the waiters and leaves child execution running. Any destructive cleanup that has already started is drained before the request exits.
+
+Cleanup skips a child that has started another run. Check `deleted` to see whether this request removed it. Keep the default retention policy if you still need the child's full history.
+
+Before deleting a settled child, the server persists its final result in the parent's mailbox. `mailbox_message_id` identifies that event. Its typed `decision` body contains JSON with `conversation_id`, `execution_status`, and `result`. Repeating a wait for the same settled run reuses its message identity. A deleted or still-pending child has no result message. The wait response carries the message ID; the persisted mailbox event carries the result.
+
+## Agent Tools
+
+Include the registered tools when constructing an agent hosted by the same server:
+
+```python
+from openhands.sdk import Agent, Tool
+from openhands.tools.child_conversation import (
+    SendMailboxMessageTool,
+    WaitForChildrenTool,
+)
+
+agent = Agent(
+    llm=llm,
+    tools=[
+        Tool(name=WaitForChildrenTool.name),
+        Tool(name=SendMailboxMessageTool.name),
+    ],
+)
+```
+
+`wait_for_children` accepts the wait request fields above. It releases the parent's conversation state lock while awaiting the canonical HTTP endpoint. Other tools in the same batch run separately, so state mutations do not race the released lock. Interrupting the parent cancels the request and drains its worker before the lock is reacquired.
+
+The tools use `OH_INTERNAL_SERVER_URL` (default `http://127.0.0.1:8000`) and the server's existing `OH_SESSION_API_KEYS_0` or `SESSION_API_KEY`. Configure the internal URL when the server listens on a different port. These tools coordinate conversations on that backend; they do not launch children or provide cross-server orchestration.
+
+## Typed Mailbox Messages
+
+Call `POST /api/conversations/{sender_id}/mailbox` to send agent input to a parent, child, or sibling in the same conversation tree:
+
+```json
+{
+  "recipient_id": "recipient-conversation-uuid",
+  "idempotency_key": "review-commit-abc",
+  "kind": "review-request",
+  "body": "Please review this change",
+  "evidence": ["commit abc; test run passed"],
+  "delivery": "steer"
+}
+```
+
+The `send_mailbox_message` tool accepts this object under its `message` argument. Available kinds are `question`, `proposal`, `review-request`, `blocker`, and `decision`. `proposal`, `review-request`, and `blocker` require nonempty evidence.
+
+Each message is an agent-attributed `MessageEvent` with `source: "environment"`, the sender's conversation ID, and typed `mailbox` metadata. It remains in the recipient's persisted event history and appears in its model context as agent mailbox input. It is not presented as a human instruction or the recipient's own response.
+
+Use a stable `idempotency_key` per intended message. An identical retry returns the same `message_id` with `duplicate: true`; different contents under that key return 409. Keys are scoped to sender and recipient. An unrelated recipient or a self-send returns 404.
+
+Default `steer` preserves the recipient's in-flight work and active goal. Active runs incorporate new input on a following step. An idle recipient stays idle and receives the persisted message on its next run, including after a server restart. Explicit `interrupt` stops its active run and goal; the typed persisted message records the sender, delivery mode, and reason in `body`. Retrying it does not interrupt twice.
+
+## TypeScript Client
+
+A client build containing `ConversationClient.waitForChildren` can call the same endpoint:
+
+```typescript
+const result = await client.waitForChildren(parentId, {
+  conversation_ids: childIds,
+  timeout_seconds: 120,
+});
+
+const delivered = await client.sendMailboxMessage(parentId, {
+  recipient_id: childId,
+  idempotency_key: 'handoff-1',
+  kind: 'decision',
+  body: 'Use the revised acceptance criteria',
+});
+```
+
+An optional third argument accepts an `AbortSignal` and a transport timeout. By default, the transport timeout is 30 seconds longer than the requested wait. Increase it if runtime loading or cleanup may take longer.
+
+Unknown parents or non-child IDs return 404. Invalid IDs, duplicate IDs, empty lists and out-of-range timeouts return 422. Authentication follows the existing session-key policy.
