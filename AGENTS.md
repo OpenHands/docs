@@ -80,7 +80,7 @@ mint dev
 Useful checks:
 
 ```bash
-mintlify broken-links
+mint broken-links
 ```
 
 ### Python tooling (sync/generation scripts)
