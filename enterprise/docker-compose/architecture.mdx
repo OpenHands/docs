@@ -1,0 +1,179 @@
+---
+title: Docker Compose Architecture
+sidebarTitle: Architecture
+description: The workloads, network flows, and external connections in the OpenHands Enterprise Docker Compose stack
+icon: sitemap
+---
+
+import { ComposeArchitecture } from "/snippets/compose-architecture.jsx";
+
+This page describes each workload in the [Docker Compose](/enterprise/docker-compose) stack, how
+the workloads connect, and which external systems the stack talks to. For the Kubernetes
+deployment, see [Architecture](/enterprise/architecture).
+
+## Overview
+
+All workloads run as containers on one Docker host and share one Docker network. A
+[Caddy](https://caddyserver.com/docs/) reverse proxy is the only workload that publishes a port on
+the host. The application starts a separate sandbox container for the agent, and the proxy routes
+browser traffic to it.
+
+<ComposeArchitecture />
+
+A typical request follows these steps:
+
+1. A user signs in to the application through the proxy and starts a conversation.
+2. The application starts a sandbox container, or reuses one of the user's running sandboxes.
+3. The agent in the sandbox calls the LLM provider, runs tools such as shell commands and file
+   edits, and works with the user's Git repositories.
+4. The sandbox sends conversation events back to the application, and the browser connects to the
+   sandbox through the proxy to stream them.
+5. The application stores conversation data in PostgreSQL and on its file store volume.
+
+## Workloads
+
+### proxy
+
+Routes all incoming HTTP requests to the other workloads by path. It's the only workload that
+publishes a host port (`9043` by default).
+
+| Path | Destination |
+|---|---|
+| `/api/automation/*` | `automation-server` |
+| `/canvas/*` | `canvas-server` |
+| `/runtime/<sandbox>/<port>/*` | That port on the matching sandbox container. Only container names that start with `oh-agent-server-` match. |
+| `/api/service/*` | Blocked. Returns `404`. This internal API is only reachable inside the Compose network. |
+| Everything else | `app` |
+
+- **Image**: [`caddy`](https://hub.docker.com/_/caddy)
+- **Volumes**: None
+
+The proxy serves plain HTTP. To serve the stack over HTTPS at your own domain, see
+[VM with HTTPS](/enterprise/docker-compose/https).
+
+### app
+
+Serves the web UI and REST API, handles sign-in, and manages conversations. It starts, pauses, and
+resumes sandbox containers through the host's Docker socket, and runs database migrations on
+startup.
+
+- **Image**: [`ghcr.io/openhands/enterprise-server`](https://github.com/orgs/OpenHands/packages/container/package/enterprise-server)
+- **Connects to**: `db`, `redis`, sandboxes, and your Git providers
+- **Volumes**: `app-filestore` for conversation history and files, and the encryption key. Also
+  mounts the host's Docker socket.
+
+The `app` container runs as root so it can use the Docker socket. Only `app` and `worker` mount the
+Docker socket. Access to the Docker socket gives control of the Docker host. We recommend running
+the stack on a host dedicated to OpenHands, and limiting who can sign in to that host.
+
+Users sign in with an email and password that the application manages. Passwords are hashed with
+Argon2id. The stack doesn't include Keycloak or require an external identity provider. The first
+user becomes the Super Admin and invites other users. See the
+[setup guide](/enterprise/super-admin#setup-guide).
+
+The application encrypts stored secrets, such as LLM API keys and Git provider tokens, with
+AES-256-GCM before it writes them to the database. On the first start, it generates a random
+encryption key and saves it on the `app-filestore` volume. To supply your own key instead, set
+`JWT_SECRET` in `.env`.
+
+### worker
+
+Runs background jobs, such as sandbox lifecycle management and the license usage report. It uses
+the Docker socket for sandbox lifecycle management, and runs with the same image, settings, and
+privileges as `app`.
+
+- **Image**: [`ghcr.io/openhands/enterprise-server`](https://github.com/orgs/OpenHands/packages/container/package/enterprise-server)
+- **Connects to**: `db`, `redis`, and the Docker socket
+- **Volumes**: `app-filestore`, shared with `app`. Also mounts the host's Docker socket.
+
+### automation-server
+
+Runs [automations](/openhands/usage/automations/overview): scheduled or event-driven agent runs.
+Each run executes in a sandbox, the same as an interactive conversation. It authenticates to `app`
+with a shared service key.
+
+- **Image**: [`ghcr.io/openhands/automation`](https://github.com/orgs/OpenHands/packages/container/package/automation)
+- **Connects to**: `db` (in a separate `automations` database) and `app`
+- **Volumes**: `automation-data` for uploaded automation packages and run files
+
+### canvas-server
+
+Serves the Agent Canvas frontend as static files at `/canvas`. It runs with its own telemetry
+turned off.
+
+- **Image**: [`ghcr.io/openhands/agent-canvas`](https://github.com/orgs/OpenHands/packages/container/package/agent-canvas)
+- **Connects to**: None
+- **Volumes**: None
+
+### db
+
+Stores application and automation data in PostgreSQL.
+
+- **Image**: [`postgres`](https://hub.docker.com/_/postgres)
+- **Volumes**: `db-data`
+
+### redis
+
+Holds short-lived keys, such as cache entries and coordination state. It's an ephemeral cache, so
+it doesn't have a persistent volume.
+
+- **Image**: [`redis`](https://hub.docker.com/_/redis)
+- **Volumes**: None
+
+### Sandboxes
+
+Run the agent. The application creates one container per sandbox, named `oh-agent-server-<id>`.
+Sandboxes aren't defined in the Compose file. The application starts each one with these settings:
+
+- **No added privileges**: Sandboxes don't run in privileged mode and get no added Linux
+  capabilities or devices.
+- **No host access**: Sandboxes don't mount the Docker socket or any host directory, and publish
+  no host ports. The workspace lives inside the container until the sandbox is deleted.
+- **Per-user ownership**: Each sandbox belongs to one user. Conversations only reuse sandboxes that
+  belong to the same user.
+- **Per-sandbox credential**: Each sandbox gets a random session API key when it's created. The
+  agent server in the sandbox requires this key on every request, and the application stores only
+  a hash of it.
+
+The agent runs as a non-root user with `sudo` inside the container, so it can install packages for
+the task it's working on. This gives it root inside the container only.
+
+Sandboxes join the Compose network so the proxy can route to them. They send events to `app` and
+call `automation-server` through the proxy. Like the other workloads, they can also reach `db` and
+`redis` by name, so set your own [secrets](#secrets-and-credentials) before the first start.
+
+Sandboxes have outbound network access, so the agent can reach the LLM provider, Git providers,
+and package registries. When you run `docker compose down`, the application pauses running
+sandboxes. It resumes a sandbox when a user reopens one of its conversations.
+
+- **Image**: [`ghcr.io/openhands/agent-server`](https://github.com/orgs/OpenHands/packages/container/package/agent-server)
+- **Volumes**: None
+
+## Secrets and credentials
+
+Set these values in `.env` in the repository directory before the first start:
+
+| Variable | Used for |
+|---|---|
+| `DB_PASS` | The PostgreSQL password for all workloads. |
+| `AUTOMATION_SERVICE_KEY` | Authenticates `automation-server` to `app`. |
+| `AUTOMATION_WEBHOOK_SECRET` | Signs events between `app` and `automation-server`. |
+| `AUTOMATION_KV_SECRET` | Signs tokens for, and encrypts values stored by, automations. |
+
+The Compose file sets a default for each of these, so the stack starts without them.
+
+Each user adds their own LLM API key and Git provider credentials in the application, which stores
+them encrypted.
+
+## External connections
+
+| Destination | From | Purpose |
+|---|---|---|
+| Container registries (`ghcr.io`, Docker Hub) | Docker daemon | Pull workload and sandbox images. |
+| Your LLM provider | Sandboxes | Send the agent's model requests. |
+| Your Git providers | Sandboxes and `app` | List repositories, and clone, push, and open pull requests. |
+| PostHog | `app` and `automation-server` | Send product analytics. On by default. To turn it off, set an empty `POSTHOG_CLIENT_KEY=` in `.env`. |
+| OpenHands Customer Center (`customercenter.openhands.dev`) | `worker` | Send usage reports for license enforcement, when a license key is set. |
+
+The agent can also reach any other address the Docker host can reach, such as package registries
+and websites, while it works on a task.

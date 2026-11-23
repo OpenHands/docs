@@ -12,6 +12,7 @@ The OpenHands SDK provides built-in OpenTelemetry (OTEL) tracing support, allowi
 - **[Laminar](https://laminar.sh/)** - AI-focused observability with trace inspection, signals, and browser session replay
 - **[MLflow](https://mlflow.org/)** - Open-source AI platform with tracing, evaluation, and LLM governance
 - **[Honeycomb](https://www.honeycomb.io/)** - High-performance distributed tracing
+- **[Rius](https://www.glassflow.ai/rius)** - Agent observability with per-call cost, loop and context alerts, and trace queries over MCP
 - **Any OTLP-compatible backend** - Including Jaeger, Datadog, New Relic, and more
 
 The SDK automatically traces:
@@ -25,16 +26,19 @@ The SDK automatically traces:
 
 Tracing is automatically enabled when you set the appropriate environment variables. The SDK detects the configuration on startup and initializes tracing without requiring code changes.
 
-### Using Laminar
+### Using hosted Laminar
 
 [Laminar](https://laminar.sh/) provides specialized AI observability features for OpenHands, including full conversation traces, browser session replay, and higher-level analysis features like signals.
 
+Hosted Laminar only needs your Laminar project API key in the environment where your application runs:
+
 ```bash icon="terminal" wrap
-# Set your Laminar project API key
-export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_PROJECT_API_KEY="your-laminar-project-api-key"
 ```
 
-That's it. Run your agent code normally and traces will be sent to Laminar automatically.
+| Variable | Required? | Description |
+|----------|-----------|-------------|
+| `LMNR_PROJECT_API_KEY` | Yes | Laminar project API key. The SDK detects this variable and initializes Laminar telemetry automatically. |
 
 <Note>
 For Laminar-specific walkthroughs, see the official docs for [OpenHands SDK tracing](https://laminar.sh/docs/tracing/integrations/openhands-sdk), [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability), [viewing traces](https://laminar.sh/docs/platform/viewing-traces), and [signals](https://laminar.sh/docs/signals/introduction).
@@ -59,6 +63,48 @@ Laminar is especially useful when you want to understand how an agent behaved ac
 - Watch browser automation alongside trace spans with [session replay for browser agents](https://laminar.sh/docs/tracing/browser-agent-observability).
 - Define [signals](https://laminar.sh/docs/signals/introduction) to classify failures, user friction, or success patterns across many traces.
 - Keep each OpenHands conversation grouped under a single session ID so multi-turn debugging is easier.
+
+### Using Rius
+
+[Rius](https://www.glassflow.ai/rius) takes the SDK's traces over plain OTLP, so you don't need a Laminar key or any extra package.
+
+1. Create an account at [console.rius-glassflow.com](https://console.rius-glassflow.com).
+2. Under `Settings → API keys`, create a key with the `Send telemetry` scope.
+3. Set the OTLP variables:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://ingest.eu.console.rius-glassflow.com/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20<your-rius-key>"
+```
+
+Leave every `LMNR_*` variable unset. A Laminar project key takes precedence over the `OTEL_*` settings, and the traces would go to Laminar instead.
+
+Each conversation appears in Rius as one trace. The agent is named after the script (`run_agent.py` shows as `run_agent`). To set the name yourself, pass it as conversation metadata:
+
+```python icon="python" wrap
+conversation = Conversation(
+    agent=agent,
+    workspace=".",
+    observability_metadata={"agent.name": "deploy-checker"},
+)
+```
+
+<Note>
+For a full walkthrough, see the [Rius guide for OpenHands](https://docs.glassflow.ai/rius/guides/coding-agents/openhands) and the runnable example in [glassflow/openhands-rius](https://github.com/glassflow/openhands-rius).
+</Note>
+
+### Why use Rius with OpenHands?
+
+Rius is useful once you run more conversations than you can read one by one:
+
+- See each conversation as a waterfall of agent steps, model calls, and tool calls, with the command and output of every `TerminalAction`.
+- Get tokens and cost on every model call, so you can see which step of a conversation was expensive.
+- On each model call, see what changed in the prompt since the previous call, so you can tell what a step added to the context.
+- The built-in Tool Loop alert fires when a conversation calls the same tool with the same arguments three or more times in a row. It also catches short loops that the [stuck detector](/sdk/guides/agent-stuck-detector) lets finish normally. Alerts can go to Slack, email, or a webhook.
+- When token counts are recorded (SDK scripts, not the web app's streamed calls), the built-in Context rot alert flags conversations whose context gets too full.
+- If root-cause analysis is turned on for the workspace, an alert comes with a written finding, for example that a prompt asked the agent to poll with no retry limit.
+- Query the same traces from Claude, Cursor, or any MCP client through the [Rius MCP server](https://docs.glassflow.ai/rius/mcp).
 
 ### Using OpenTelemetry (OTLP) Backends
 
@@ -141,6 +187,31 @@ Each conversation gets its own session ID (the conversation UUID), allowing you 
 
 In `tool.execute`, the tool calls are traced individually, such as `bash`, `file_editor`, or `task_tracker`.
 
+### Named Child Spans for Signals
+
+<Note>
+`observability_span_name` is available in OpenHands SDK `v1.30.0` and later.
+</Note>
+
+By default, each conversation trace starts with a root span named `conversation`. Keep that root span name stable for trace grouping. When you need an observability backend to route or classify a run by span name, set `observability_span_name` on the conversation. The SDK emits that value as an immediate child span under the `conversation` root.
+
+This is useful for Laminar signals or other backend rules that match a specific span name:
+
+```python icon="python" wrap
+conversation = Conversation(
+    agent=agent,
+    workspace=".",
+    observability_span_name="pr_review_evaluation",
+    observability_tags=["pr-review", "evaluation"],
+    observability_metadata={
+        "repo": "OpenHands/software-agent-sdk",
+        "workflow": "nightly-eval",
+    },
+)
+```
+
+Use stable, low-cardinality names such as `pr_review_evaluation`, `support_triage`, or `release_note_check`. Span names must be non-empty strings up to 128 characters and may contain letters, numbers, dots, underscores, colons, slashes, and hyphens.
+
 ## Configuration Reference
 
 ### Environment Variables
@@ -149,8 +220,8 @@ The SDK checks for these environment variables (in order of precedence):
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `LMNR_PROJECT_API_KEY` | Laminar project API key | `your-laminar-api-key` |
-| `LMNR_BASE_URL` | Base URL for self-hosted Laminar | `http://localhost` |
+| `LMNR_PROJECT_API_KEY` | Laminar project API key; required for hosted Laminar | `your-laminar-project-api-key` |
+| `LMNR_BASE_URL` | Base URL override for self-hosted Laminar; leave unset for hosted Laminar | `http://localhost` |
 | `LMNR_HTTP_PORT` | HTTP port for self-hosted Laminar | `8000` |
 | `LMNR_GRPC_PORT` | gRPC port for self-hosted Laminar | `8001` |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL | `https://api.honeycomb.io:443/v1/traces` |
@@ -184,15 +255,17 @@ The SDK supports both HTTP and gRPC protocols:
 
 ### Laminar Setup
 
+For hosted Laminar:
+
 1. Sign up at [laminar.sh](https://laminar.sh/)
-2. Create a project and copy your API key
-3. Set the environment variable:
+2. Create a project and copy your project API key
+3. Set `LMNR_PROJECT_API_KEY` in the same shell, CI job, or deployment environment that runs your application
 
 ```bash icon="terminal" wrap
-export LMNR_PROJECT_API_KEY="your-laminar-api-key"
+export LMNR_PROJECT_API_KEY="your-laminar-project-api-key"
 ```
 
-**Self-hosted Laminar**: If you are running a self-hosted Laminar instance, configure its base URL and the HTTP and gRPC ports via environment variables:
+**Self-hosted Laminar**: If you are running a self-hosted Laminar instance, configure the client to use your Laminar deployment instead of Laminar Cloud:
 
 ```bash icon="terminal" wrap
 export LMNR_PROJECT_API_KEY="your-laminar-api-key"
@@ -200,6 +273,15 @@ export LMNR_BASE_URL=http://localhost
 export LMNR_HTTP_PORT=8000
 export LMNR_GRPC_PORT=8001
 ```
+
+Use the values exposed by your Laminar deployment:
+
+| Variable | Description |
+|----------|-------------|
+| `LMNR_PROJECT_API_KEY` | Project API key from your self-hosted Laminar project. |
+| `LMNR_BASE_URL` | Scheme and host for your Laminar instance, such as `http://localhost` or `https://analytics.example.com`. |
+| `LMNR_HTTP_PORT` | HTTP port for Laminar's app/API endpoint. Use the externally reachable port if Laminar is behind a proxy or load balancer. |
+| `LMNR_GRPC_PORT` | gRPC port for Laminar's trace ingest endpoint. Use the externally reachable port if Laminar is behind a proxy or load balancer. |
 
 **Browser session replay**: When using Laminar with browser-use tools, session replays are automatically captured, allowing you to see exactly what the browser automation did.
 
@@ -256,6 +338,28 @@ export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.honeycomb.io:443/v1/trace
 export OTEL_EXPORTER_OTLP_TRACES_HEADERS="x-honeycomb-team=YOUR_API_KEY"
 export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
 ```
+
+### Rius Setup
+
+1. Sign up at [console.rius-glassflow.com](https://console.rius-glassflow.com)
+2. Create an API key with the `Send telemetry` scope under `Settings → API keys`
+3. Configure the environment:
+
+```bash icon="terminal" wrap
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://ingest.eu.console.rius-glassflow.com/v1/traces"
+export OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer%20YOUR_RIUS_KEY"
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL="http/protobuf"
+```
+
+Rius accepts OTLP over HTTP only, so keep `http/protobuf`. Write out the full `/v1/traces` path.
+
+**Local web app (Docker)**: in our tests with the `openhands` app image (agent server 1.36.0), the app forwarded only `LLM_*` and `LMNR_*` variables into each agent sandbox, so `OTEL_*` set on the app container didn't reach the agent. Passing the three values as a JSON object in `OH_AGENT_SERVER_ENV` on the app container worked:
+
+```bash icon="terminal" wrap
+-e OH_AGENT_SERVER_ENV='{"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":"https://ingest.eu.console.rius-glassflow.com/v1/traces","OTEL_EXPORTER_OTLP_TRACES_PROTOCOL":"http/protobuf","OTEL_EXPORTER_OTLP_TRACES_HEADERS":"Authorization=Bearer%20YOUR_RIUS_KEY"}'
+```
+
+The agent server streams model responses, and no token usage is recorded for streamed calls, so these traces show every model and tool call but no token counts.
 
 ### Jaeger Setup
 

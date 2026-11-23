@@ -23,10 +23,10 @@ Boards work items or pull request comments as context for OpenHands workflows.
 - Azure DevOps users with access to the projects and repositories they will use
   with OpenHands.
 - Network access from OpenHands to `login.microsoftonline.com` and
-  `dev.azure.com`.
-- If you plan to trigger automations from Azure DevOps Service Hooks, network
-  access from Azure DevOps back to the OpenHands app URL or automation webhook
-  URL.
+  `dev.azure.com`, and `app.vssps.visualstudio.com` (profile and organization
+  discovery).
+- For `@openhands` comments and automations, network access from Azure DevOps
+  back to the OpenHands app URL, where its Service Hooks deliver events.
 
 ## Register a Microsoft Entra Application
 
@@ -62,9 +62,10 @@ openid email profile offline_access https://app.vssps.visualstudio.com/.default
 ## Configure Azure DevOps Access
 
 Make sure the users who will sign in to OpenHands have access to the Azure
-DevOps organization, projects, and repositories they need. OpenHands uses the
+DevOps organizations, projects, and repositories they need. OpenHands uses the
 signed-in user's Azure DevOps access token for repository discovery and Git
-operations.
+operations. You don't configure an organization: each user sees every
+organization they belong to.
 
 Repository names in OpenHands use this format:
 
@@ -91,17 +92,9 @@ Pick the path that matches how OpenHands Enterprise is deployed.
 
     1. Enable **Azure DevOps Authentication**.
     2. Enter the **Microsoft Entra Tenant ID**.
-    3. Enter the **Azure DevOps Organization** if you want to set a default
-       organization.
-    4. Enter the **Azure DevOps Client ID**.
-    5. Enter the **Azure DevOps Client Secret**.
-    6. Save and deploy the updated configuration.
-
-    <Note>
-      The Azure DevOps Organization field is the organization name only, for
-      example `contoso` for `https://dev.azure.com/contoso`. Do not include
-      `https://dev.azure.com/`.
-    </Note>
+    3. Enter the **Azure DevOps Client ID**.
+    4. Enter the **Azure DevOps Client Secret**.
+    5. Save and deploy the updated configuration.
   </Tab>
 
   <Tab title="Standalone Helm">
@@ -113,16 +106,9 @@ Pick the path that matches how OpenHands Enterprise is deployed.
     azureDevOps:
       enabled: true
       tenantId: "<your-microsoft-entra-tenant-id>"
-      organization: "<your-azure-devops-organization>"
       auth:
         existingSecret: azure-devops-app
     ```
-
-    <Note>
-      The organization value is the organization name only, for example
-      `contoso` for `https://dev.azure.com/contoso`. Do not include
-      `https://dev.azure.com/`.
-    </Note>
 
     In your `values.yaml` for the `openhands-secrets` chart:
 
@@ -155,8 +141,10 @@ operations as that user.
 After signing in, users can select Azure DevOps repositories from the OpenHands
 repository picker. OpenHands can:
 
-- List Azure DevOps projects and repositories available to the signed-in user.
-- Clone Azure Repos using the signed-in user's OAuth token.
+- List and search Azure DevOps repositories in every organization the signed-in
+  user belongs to. Users who belong to only one organization see only that
+  one.
+- Clone Azure Repos using the signed-in user's OAuth token. SSH remote URLs (`git@ssh.dev.azure.com:v3/...`) are also recognized.
 - Read branch and pull request context.
 - Create branches and pull requests.
 - Read and post Azure Repos pull request comments.
@@ -165,35 +153,115 @@ repository picker. OpenHands can:
 OpenHands does not require users to paste a personal access token for Azure
 DevOps repository access when Microsoft Entra sign-in is configured.
 
+## Check Connection and Hook Permissions
+
+A **Connected** Azure DevOps account means the user has completed Microsoft
+sign-in. It does not grant permission to create service hooks. The installer
+needs **View subscriptions** and **Edit subscriptions** at the Azure DevOps
+organization scope. An organization owner or Project Collection Administrator
+has these permissions; repository access alone is not sufficient. See
+[Microsoft's ServiceHooks permissions](https://learn.microsoft.com/en-us/azure/devops/organizations/security/namespace-reference#servicehooks).
+
+Hook creation and event delivery use separate network connections:
+
+| Operation | Connection |
+| --- | --- |
+| Sign in and obtain tokens | OpenHands and the user's browser reach Microsoft identity endpoints. |
+| Install or list hooks | OpenHands reaches the Azure DevOps API. |
+| Deliver comments and PR events | Azure DevOps reaches `https://<app-hostname>/integration/azure-devops/events`. |
+
+A successful sign-in or installation does not test the last connection. Azure
+must be able to reach the callback over HTTPS for mentions or automations to run.
+
+## Respond to @openhands Comments
+
+OpenHands can respond when someone mentions `@openhands` in an Azure Repos pull
+request comment or an Azure Boards work item comment. Service hooks are
+installed per organization:
+
+1. In the OpenHands web app, go to **Settings** > **Integrations**. The
+   **Azure DevOps webhooks** section lists each Azure DevOps organization you
+   belong to.
+2. Select **Install** for each organization that should respond to mentions.
+
+The person installing needs the OpenHands permission to manage integrations
+and the Azure DevOps permission to create service hooks in that organization
+(for example, an organization owner or Project Collection Administrator). The hooks cover every
+project and user in the organization, so one install per organization is
+enough. OpenHands reads the organization from each event, checks that the
+commenter has write access to the repository in that organization, and replies
+in the same pull request or work item. The commenter needs an OpenHands account.
+
+Members who cannot view service hooks see OpenHands' saved installation
+history. That history does not prove the hooks still exist, are enabled, or can
+deliver events. A user with **View subscriptions** can check their current state
+by opening the webhook section. Only users who can manage hooks see installation
+actions. Azure DevOps lists only
+project-level hooks on a project's **Service hooks** page, so the
+organization-wide hooks OpenHands creates do not appear there. An organization
+owner can list them with an authenticated Azure DevOps REST API request:
+
+```text
+GET https://dev.azure.com/{organization}/_apis/hooks/subscriptions?api-version=7.1
+```
+
 ## Trigger OpenHands from Azure DevOps
 
-Azure DevOps events can be connected to OpenHands automations through Azure
-DevOps Service Hooks and OpenHands custom webhooks. Use this pattern for
-workflows such as:
-
-- A work item comment that asks OpenHands to create an implementation pull
-  request.
-- A pull request comment that asks OpenHands to review the change.
-- A pull request comment that asks OpenHands to generate tests or validation
-  evidence.
-- A pipeline or incident event that asks OpenHands to inspect logs and propose a
-  fix.
-
-To configure this pattern:
-
-1. Register a custom webhook in OpenHands. See
-   [Event-Based Automations](/openhands/usage/automations/event-automations#custom-webhooks).
-2. Create an Azure DevOps Service Hook that sends the selected event to the
-   webhook URL.
-3. Create an OpenHands automation that filters for the event type, repository,
-   project, or trigger phrase you want to support.
-4. Test with a non-production repository or project before enabling the
-   automation broadly.
-
 <Note>
-  GitHub has built-in event routing in OpenHands. Azure DevOps event routing is
-  configured through service hooks or custom webhooks.
+  These steps apply to OpenHands Enterprise 0.103.0 and later.
 </Note>
+
+Azure DevOps is a built-in event source for OpenHands automations. The hooks
+installed above also deliver pull request events, so no custom webhook or
+hand-made Service Hook is needed. Use this for workflows such as:
+
+- Reviewing every new pull request, or re-reviewing when commits are pushed.
+- Reacting to an approval or a status change on a pull request.
+- Acting on pull request or work item comments that do not mention
+  `@openhands`.
+
+First, enable Automations in the Admin Console. For Helm installations, follow
+[Automations on Kubernetes](/enterprise/k8s-install/automations), including
+`automationService.eventForwardingEnabled: true`.
+
+To create an automation:
+
+1. Install the organization's hooks in **Settings** > **Integrations** as
+   described above. If the section shows **Partial**, select **Reinstall** to
+   add the pull request hooks. Older installs may have only the comment hooks.
+2. In **Organization Settings > Git Conversation Routing**, claim the Azure
+   DevOps organization for your OpenHands team organization. Create the
+   automation in that team organization. If your installation's only team
+   organization is its default organization, it receives unclaimed events.
+   See [Claiming Git Organizations](/openhands/usage/cloud/organizations/settings#claiming-git-organizations).
+3. Set the **Event source** to **Azure DevOps** and the **Event key** to one of
+   the event types below, or a wildcard such as `git.pullrequest.*`. These are
+   Azure DevOps' own event type names; GitHub-style keys such as
+   `pull_request.opened` or `pr.*` never match.
+
+| Event key | When Azure DevOps sends it |
+|-----------|----------------------------|
+| `git.pullrequest.created` | A pull request is opened. |
+| `git.pullrequest.updated` | Commits are pushed, reviewers change, the status changes, or a reviewer votes. |
+| `git.pullrequest.merged` | A merge was attempted. This also arrives when a pull request is created without conflicts, so it does not mean the pull request completed. |
+| `ms.vss-code.git-pullrequest-comment-event` | Someone comments on a pull request. |
+| `workitem.commented` | Someone comments on a work item. |
+
+An update event does not say what changed, so OpenHands adds the kind of change
+to the payload as `openhands.notificationType`: `PushNotification`,
+`ReviewersUpdateNotification`, `StatusUpdateNotification` or
+`ReviewerVoteNotification`. Filter on it to react to one kind of update, for
+example to run only when a reviewer votes:
+
+```text
+openhands.notificationType == 'ReviewerVoteNotification'
+```
+
+To act only on completed pull requests, filter updates on
+`resource.status == 'completed'`. The rest of the payload is the Azure DevOps
+Service Hook event as sent, for example `resource.repository.name` and
+`resource.pullRequestId`. Test with a non-production repository before enabling
+an automation broadly.
 
 ## Troubleshooting
 
@@ -202,7 +270,13 @@ To configure this pattern:
 | The Azure DevOps login option is not visible | Confirm **Azure DevOps Authentication** is enabled in the Admin Console or Helm values and the deployment has been applied. |
 | OAuth redirects fail | Confirm the Entra redirect URI exactly matches `https://<your-auth-hostname>/realms/allhands/broker/azure_devops/endpoint`. |
 | Microsoft sign-in shows an invalid client or secret error | Confirm the Azure DevOps Client ID and Client Secret match the Microsoft Entra app registration. If the secret expired, create a new one and redeploy. |
-| Microsoft sign-in succeeds but no repositories are listed | Confirm the user has access to the Azure DevOps organization, project, and repositories. Also confirm the default organization value is the organization name only. |
+| Microsoft sign-in succeeds but no repositories are listed | Confirm the user is a member of the Azure DevOps organization and has access to its projects and repositories. |
+| `@openhands` comments in an organization get no response | Confirm that organization shows **Installed** under **Azure DevOps webhooks** in **Settings** > **Integrations**, and that the commenter has an OpenHands account and write access to the repository. |
 | Consent fails or Azure DevOps API calls are denied | Confirm the Entra application has the required Azure DevOps delegated permission and that admin consent has been granted if your tenant requires it. |
 | Repository selection or Git operations fail | Confirm OpenHands can reach `dev.azure.com` and that the repository is referenced as `organization/project/repository`. |
-| Azure DevOps Service Hook deliveries do not trigger an automation | Confirm the custom webhook is registered, the Service Hook URL is correct, the event type matches the automation, and the automation is enabled. |
+| Install/Reinstall fails or no organization-wide hooks appear | Check the installing user's organization-level Service Hooks permissions and OpenHands' outbound access to Azure. Send support the error shown, organization name, approximate attempt time, and a support bundle collected immediately afterward. |
+| Hooks exist but comments or PR events do not arrive | Check that the hooks are enabled and Azure can reach the OpenHands callback over HTTPS. An **Installed** label does not prove delivery. |
+| Events arrive but do not trigger an automation | Confirm Automations and event forwarding are enabled, and the enabled automation uses **Azure DevOps** with a matching event key and filter. Check that the organization claim routes to the team containing the automation. |
+
+If installation fails, collect a support bundle promptly and include the attempt
+time and any error shown.

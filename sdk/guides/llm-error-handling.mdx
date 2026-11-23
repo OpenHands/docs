@@ -170,6 +170,40 @@ except LLMError as e:
     print(f"LLM error: {e}")
 ```
 
+## Rate Limits, Quota, and Budget Denials
+
+`LLMRateLimitError` can represent a temporary rate limit or an exhausted allowance.
+Use `is_quota_exhaustion_error()` to distinguish them instead of parsing the
+error message in your application:
+
+```python icon="python" wrap
+from openhands.sdk.llm.exceptions import (
+    LLMRateLimitError,
+    is_quota_exhaustion_error,
+)
+
+def report_rate_limit(error: LLMRateLimitError) -> str:
+    if is_quota_exhaustion_error(error):
+        return "Allowance exhausted. Check the provider's quota or budget."
+    return "Temporary rate limit. Retry with backoff."
+```
+
+Temporary rate limits use the configured SDK retry policy. Recognized hard quota
+errors, such as `insufficient_quota` and `usage_limit_reached`, skip retries and
+can use a configured fallback model. Explicit `budget_exceeded` denials stop
+both retries and fallback. A fallback model still uses its own retry policy for
+temporary failures.
+
+Profile pre-flight validation follows the same distinction: an exhausted quota
+or budget returns `valid: false`, while a temporary 429 returns `valid: true`.
+
+<Note>
+Structured provider `code` and `type` fields are recognized even when the
+human-readable message omits the machine code. This handling is part of the
+[unreleased structured quota fix](https://github.com/OpenHands/software-agent-sdk/issues/6185).
+Earlier releases can treat these responses as temporary rate limits.
+</Note>
+
 ## Exception reference
 
 All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
@@ -178,7 +212,7 @@ All exceptions live under `openhands.sdk.llm.exceptions` unless noted.
 |--------|------|-------------|
 | **Provider / transport (provider-agnostic)** | `LLMContextWindowExceedError` | Conversation exceeds the model’s context window. Without a condenser, thrown for both Chat and Responses paths. |
 |  | `LLMAuthenticationError` | Invalid or missing credentials (401/403 patterns). |
-|  | `LLMRateLimitError` | Provider rate limit exceeded. |
+|  | `LLMRateLimitError` | Temporary provider rate limit or exhausted quota/budget. |
 |  | `LLMTimeoutError` | SDK or lower-level timeout while waiting for the provider. |
 |  | `LLMServiceUnavailableError` | Temporary connectivity or service outage (e.g., 5xx responses, connection issues). |
 |  | `LLMBadRequestError` | Client-side request issues (invalid parameters, malformed input). |

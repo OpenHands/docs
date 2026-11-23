@@ -20,10 +20,17 @@ import sys
 from pathlib import Path
 
 
+# Generated from OpenHands/enterprise-cookbook, whose code-block paths are
+# relative to each example, not to software-agent-sdk.
+EXCLUDED_DIRS = {"cookbook"}
+
+
 def find_mdx_files(docs_path: Path) -> list[Path]:
     """Find all MDX files in the docs directory."""
     mdx_files: list[Path] = []
-    for root, _, files in os.walk(docs_path):
+    for root, dirs, files in os.walk(docs_path):
+        if Path(root) == docs_path:
+            dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
         for file in files:
             if file.endswith(".mdx"):
                 mdx_files.append(Path(root) / file)

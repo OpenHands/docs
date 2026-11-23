@@ -1,0 +1,192 @@
+---
+title: Watch Terminal State
+description: Detect confirmed terminal execution_status over WebSocket with proper event handling.
+icon: terminal
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@main (watch-terminal-state/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/main/watch-terminal-state" horizontal />
+
+A follow-on to [`react-to-state-websocket`](/cookbook/react-to-state-websocket). That
+example covers the basics — start a Cloud sandbox, **attach** a conversation (no
+LLM key needed), open the agent-server WebSocket
+(`/sockets/events/{conversation_id}`), and print every `execution_status`
+transition. **Read it first.**
+
+This example keeps the *same Cloud approach* and layers on what you need to know
+to answer one specific question reliably: **"is this conversation actually
+done?"** — and then exit. It adds three things on top of the basics:
+
+1. **Both event shapes.** `ConversationStateUpdateEvent` arrives two ways; a
+   robust "am I done?" check reads both.
+2. **`finished` is advisory; `error`/`stuck` are immediate.** A per-field
+   `finished` can be reverted by a Stop hook, so it is confirmed with a
+   `full_state` snapshot.
+3. **First-message auth**, keeping the session key out of URLs and proxy logs.
+
+One file:
+
+- [`watch_terminal_state.py`](https://github.com/OpenHands/enterprise-cookbook/blob/main/watch-terminal-state/watch_terminal_state.py) — start a sandbox,
+  attach a conversation, watch the socket, and report the **confirmed** terminal
+  state.
+
+## Prerequisites
+
+Start with [`react-to-state-websocket`](/cookbook/react-to-state-websocket) for the
+Cloud sandbox lifecycle (create → attach → start-task poll → delete) and the
+socket subscription. Everything here builds directly on that; the sandbox and
+attach code is intentionally identical so you can focus on the new parts.
+
+## What This Adds
+
+### 1. Both `ConversationStateUpdateEvent` shapes
+
+The agent-server reports state over the socket in **two** shapes, and they carry
+the same `execution_status` field in different places:
+
+| Shape          | Frame                                                                                                  | Where `execution_status` lives |
+| -------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------ |
+| **per-field**  | `{"kind":"ConversationStateUpdateEvent","key":"execution_status","value":"finished"}`                  | `value` (a string)             |
+| **full-state** | `{"kind":"ConversationStateUpdateEvent","key":"full_state","value":{…,"execution_status":"finished"}}` | `value["execution_status"]`    |
+
+`react-to-state-websocket` reads only the per-field shape — perfect for printing
+transitions as they happen. For a reliable *terminal* check you want both,
+because the authoritative confirmation comes in the full-state snapshot (next
+point). `watch_terminal_state.py` handles both in `_status_from_event()`.
+
+### 2. `finished` is advisory; `error` / `stuck` are immediate
+
+The SDK treats a per-field `finished` as **provisional**: a `Stop` hook can
+intercept the stop and resume the run (that is exactly what
+[`finish-callback`](/cookbook/finish-callback) does). The **authoritative** signal is
+the `full_state` snapshot emitted once the run settles. So this example:
+
+- remembers a per-field `finished` but does **not** exit on it,
+- exits when a `full_state` snapshot reports `finished`,
+- exits **immediately** on `error` or `stuck` in either shape (those are not
+  revertible).
+
+You can see both steps in the real run below: a provisional per-field `finished`,
+then the confirming `full_state`.
+
+### 3. First-message auth (log-safe)
+
+The socket accepts the session key three ways: an `X-Session-API-Key` header, a
+`?session_api_key=…` query parameter (**deprecated**), or a first WebSocket
+frame `{"type":"auth","session_api_key":"…"}`. This example uses the **first
+frame**, so the key never appears in the URL — and therefore never lands in
+reverse-proxy or load-balancer access logs. (`resend_mode=all` stays in the
+query string; it is not a secret.)
+
+## Run It
+
+```bash
+export OH_API_KEY=...        # your https://app.all-hands.dev API key
+pip install requests websockets
+
+python watch_terminal_state.py
+```
+
+No LLM key is required: attaching through the Cloud app server injects your
+account's configured LLM.
+
+### Flags
+
+| Flag                | Env var           | Default                                       |
+| ------------------- | ----------------- | --------------------------------------------- |
+| `--api-key`         | `OH_API_KEY`      | — (required)                                  |
+| `--base-url`        | `OH_API_BASE`     | `https://app.all-hands.dev`                   |
+| `--sandbox-spec-id` | `SANDBOX_SPEC_ID` | none (account default image)                  |
+| `--message`         | —                 | `Say hello in one short sentence, then stop.` |
+| `--poll-timeout`    | `POLL_TIMEOUT`    | `180` (sandbox / start-task)                  |
+| `--watch-timeout`   | —                 | `180` (socket watch)                          |
+| `--keep`            | —                 | off (deletes the sandbox at the end)          |
+
+## What It Prints
+
+```text
+sandbox: 5GcGcTMU1BSlCWzQBl7hhk
+  sandbox status: STARTING
+  sandbox status: RUNNING
+agent: https://ffucfbirggvuhswm.prod-runtime.all-hands.dev
+
+=== attaching conversation (start-task poll) ===
+  start-task status: SETTING_UP_SKILLS
+  start-task status: STARTING_CONVERSATION
+  start-task status: READY
+conversation: 3477437940124f9c9adfef04f8cc5bb4
+
+=== watching for terminal state (WebSocket) ===
+ws: connected — waiting for terminal state (no REST polling)
+
+  >> execution_status=running (full_state)
+  .. SystemPromptEvent
+  .. MessageEvent
+  >> execution_status=running (per-field)
+  .. StreamingDeltaEvent
+  .. MessageEvent
+  >> execution_status=finished (per-field)
+     (provisional — awaiting full_state confirmation)
+  >> execution_status=finished (full_state)
+
+terminal state reached: finished
+(confirmed over the WebSocket — no polling)
+
+Cleaning up sandbox…
+```
+
+## Notes
+
+- **No conversation-state polling.** Only the sandbox lifecycle and the
+  start-task are polled, and only for provisioning. Every `execution_status`
+  signal comes off the socket.
+- **The terminal set** is `finished`, `error`, `stuck`
+  (`ConversationExecutionStatus.is_terminal()`). `idle` is excluded — it is also
+  the *initial* state before a run starts.
+- **Simpler variant.** If you do not care about the advisory/confirmed
+  distinction, reading only the per-field shape (as
+  `react-to-state-websocket` does) and stopping on the first `finished` is
+  shorter — just slightly less precise if a Stop hook is in play.
+
+## Running Locally Without Cloud
+
+The audience for this example is **Cloud**. If you have no Cloud account, the
+identical socket also runs against an agent-server you start yourself in Docker —
+point `ws://localhost:<port>/sockets/events/{id}` at it and pass the
+`SESSION_API_KEY` you launched the container with. See
+[`start-sandbox`](/cookbook/start-sandbox) for the agent-server image and
+[`server-info-idle`](/cookbook/server-info-idle) for a local Docker fallback pattern.
+The event handling in `watch_terminal_state.py` is unchanged; only how you obtain
+the agent-server URL + session key differs.
+
+## APIs Used
+
+Same as [`react-to-state-websocket`](/cookbook/react-to-state-websocket):
+
+- **Cloud app server** (`https://app.all-hands.dev`, `X-Session-API-Key: <OH_API_KEY>`):
+  - `POST /api/v1/sandboxes` — start a sandbox
+  - `GET  /api/v1/sandboxes?id=<id>` — poll until `RUNNING`
+  - `POST /api/v1/app-conversations` — attach a conversation (returns a start task)
+  - `GET  /api/v1/app-conversations/start-tasks?ids=<id>` — poll for the id
+  - `DELETE /api/v1/sandboxes/{id}?sandbox_id=<id>` — clean up
+- **Agent server** (the sandbox's `AGENT_SERVER` exposed URL, `session_api_key`):
+  - `GET /sockets/events/{conversation_id}` — the **WebSocket** event stream
+    (`wss://…`), first-frame auth, `?resend_mode=all` to replay events emitted
+    before the socket connected.
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="react-to-state-websocket" href="/cookbook/react-to-state-websocket" icon="bolt">
+    start here: the basics of subscribing to the socket and reacting to every transition, with two ways to create the conversation (Cloud-attach vs. agent-direct)
+  </Card>
+
+  <Card title="server-info-idle" href="/cookbook/server-info-idle" icon="clock">
+    the coarse pull alternative: poll /server_info.idle_time for "the workspace has gone quiet"
+  </Card>
+
+  <Card title="finish-callback" href="/cookbook/finish-callback" icon="bell">
+    a Stop-hook callback on FINISHED (why per-field finished is advisory)
+  </Card>
+</CardGroup>
