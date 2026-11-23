@@ -1,0 +1,121 @@
+---
+title: Fetch Workspace Contents
+description: Copy the workspace files out of every sandbox on a Docker Compose install with docker cp.
+icon: download
+---
+
+{/* GENERATED from OpenHands/enterprise-cookbook@0ef22a67281ae85095b1b3296ecc9574f23bc09c (fetch-workspace-contents/README.md). Edit the source, not this file. */}
+
+<Card title="View source on GitHub" icon="github" href="https://github.com/OpenHands/enterprise-cookbook/tree/0ef22a67281ae85095b1b3296ecc9574f23bc09c/fetch-workspace-contents" horizontal />
+
+On a Docker Compose install of OpenHands Enterprise, the files agents work on
+live inside the sandbox containers. This example copies them out of every
+sandbox on the host with `docker cp`, for a backup, an audit, or to hand the
+work to another tool.
+
+## How It Works
+
+The script lists every container named `oh-agent-server-*` with `docker ps -a`,
+so it finds every user's sandboxes, both running and paused. It then copies
+`/workspace/project` out of each one with `docker cp`, which works on stopped
+containers too. It talks to the Docker daemon directly, so it needs no OpenHands
+API key.
+
+## Prerequisites
+
+- Access to the Docker daemon on the Docker Compose host: run on the host itself
+  as a user who can run `docker`, or set `DOCKER_HOST` to point at it.
+
+## Where the Workspace Files Live
+
+- **Inside each sandbox container.** Each sandbox is a container named
+  `oh-agent-server-<sandbox_id>`, and its files are under `/workspace/project`.
+  Repositories are cloned into folders under it.
+- **Not in a Docker volume.** The `app-filestore` volume belongs to the app
+  server and holds no workspace files. If you set `SANDBOX_VOLUMES` in `.env`,
+  the host paths it names are bind-mounted into every sandbox, and you can read
+  them on the host directly.
+- **Pausing keeps the files, deleting removes them.** Pausing a sandbox stops its
+  container, which keeps its filesystem. Deleting a sandbox removes the container
+  and its files with it.
+- **Conversations can share a sandbox.** The Compose file sets
+  `OH_APP_CONVERSATION_SANDBOX_GROUPING_STRATEGY=FEWEST_CONVERSATIONS`, so
+  several conversations can share one sandbox and its `/workspace/project`.
+
+## Run It
+
+```bash
+./fetch_with_docker.sh ./workspaces
+```
+
+```text
+3kTq9mYbWZf2  running  48M
+7hLp2xRcVd8n  exited  12M
+Copied 2 workspace(s) to ./workspaces
+```
+
+Each sandbox's files land in `./workspaces/<sandbox_id>/`. Running it again
+refreshes the same folders.
+
+```bash fetch_with_docker.sh expandable
+#!/usr/bin/env bash
+# Copy the workspace out of every OpenHands sandbox container on this Docker host.
+# Works on running and stopped (paused) containers. Needs no OpenHands API key.
+set -euo pipefail
+
+OUTPUT_DIR="${1:-${OUTPUT_DIR:-./workspaces}}"
+WORKSPACE_PATH="${WORKSPACE_PATH:-/workspace/project}"
+CONTAINER_PREFIX="${CONTAINER_PREFIX:-oh-agent-server-}"
+
+mkdir -p "$OUTPUT_DIR"
+
+containers=$(docker ps -a --filter "name=^${CONTAINER_PREFIX}" --format '{{.Names}}')
+if [ -z "$containers" ]; then
+  echo "No containers named ${CONTAINER_PREFIX}* on this Docker host."
+  exit 0
+fi
+
+copied=0
+for container in $containers; do
+  sandbox_id="${container#"$CONTAINER_PREFIX"}"
+  state=$(docker inspect --format '{{.State.Status}}' "$container")
+  dest="$OUTPUT_DIR/$sandbox_id"
+  mkdir -p "$dest"
+  # The trailing /. copies the directory's contents, so a second run refreshes
+  # the same folder instead of nesting a new copy inside it.
+  if docker cp "$container:$WORKSPACE_PATH/." "$dest" 2>/dev/null; then
+    echo "$sandbox_id  $state  $(du -sh "$dest" | cut -f1)"
+    copied=$((copied + 1))
+  else
+    rmdir "$dest" 2>/dev/null || true
+    echo "$sandbox_id  $state  skipped: $WORKSPACE_PATH not found"
+  fi
+done
+
+echo "Copied $copied workspace(s) to $OUTPUT_DIR"
+```
+
+<Warning>
+  Treat the copy as sensitive. It includes each repository's `.git` folder, whose
+  `config` can hold the token the repository was cloned with.
+</Warning>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Docker Compose Deployment" href="/enterprise/docker-compose" icon="book-open">
+    Installing OpenHands Enterprise with Docker Compose
+  </Card>
+
+  <Card title="Conversations and Sandboxes" href="/enterprise/conversations-and-sandboxes" icon="book-open">
+    How conversations share sandboxes, and sandbox status states
+  </Card>
+
+  <Card title="start-sandbox" href="/cookbook/start-sandbox" icon="play">
+    Start a sandbox and run commands in it through the API
+  </Card>
+
+  <Card title="archive-sandbox" href="/cookbook/archive-sandbox" icon="box-archive">
+    Delete conversations to free sandbox storage
+  </Card>
+</CardGroup>
