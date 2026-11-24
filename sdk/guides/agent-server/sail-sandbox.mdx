@@ -1,0 +1,346 @@
+---
+title: Sail Sandbox
+description: Run the agent server in a hosted Sail Research sandbox and connect to it from the SDK.
+---
+
+> A ready-to-run example is available [here](#ready-to-run-example)!
+
+A [Sailbox](https://docs.sailresearch.com) is a hosted sandbox from Sail Research. This guide starts one from the agent-server image, starts the server in it, and connects to it with a remote `Workspace`. The SDK has no workspace class for Sail: a Sailbox is only the place where the agent server runs, and the SDK talks to it like to any other remote agent server.
+
+## Prerequisites
+
+- A Sail API key from [app.sailresearch.com](https://app.sailresearch.com), exported as `SAIL_API_KEY`
+- The Sail Python SDK: `pip install sail`
+- An LLM API key, exported as `LLM_API_KEY`
+
+## Key Concepts
+
+### Creating the Sandbox
+
+The sandbox is created from a pre-built agent-server image, with the server's port published:
+
+```python icon="python" focus={4-5}
+sailbox = sail.Sailbox.create(
+    app=sail.App.find("openhands-sdk-examples", mint_if_missing=True),
+    name=f"agent-server-{uuid.uuid4().hex[:8]}",
+    image=sail.Image.from_registry(server_image),
+    ingress_ports=[8000],
+    max_lifetime_seconds=1800,
+)
+```
+
+Sail imports the image from the registry the first time it is used and reuses it afterwards. `ingress_ports` gives the port an HTTPS URL, and `max_lifetime_seconds` ends the sandbox even if your script is killed before it can terminate it.
+
+### Starting the Agent Server
+
+A Sailbox does not run the image's `ENTRYPOINT`, so the server is started with an explicit command:
+
+```python icon="python" focus={2, 4}
+sailbox.exec(
+    "/usr/local/bin/openhands-agent-server --host 0.0.0.0 --port 8000",
+    background=True,
+    env={"OH_SESSION_API_KEYS_0": session_api_key},
+)
+listener = sailbox.wait_for_listener(8000, timeout=120)
+```
+
+`wait_for_listener` returns once the server answers through the sandbox URL.
+
+<Warning>
+The sandbox URL is reachable from the internet. The session key in `OH_SESSION_API_KEYS_0` is what protects the server: every request must carry it. The agent runs on the agent server, so your LLM settings, including the API key, are sent to the sandbox.
+</Warning>
+
+### Connecting with a Remote Workspace
+
+With the URL and the session key, the rest is the same as for any remote agent server:
+
+```python icon="python" focus={2-3}
+workspace = Workspace(
+    host=listener.endpoint.url,
+    api_key=session_api_key,
+    working_dir="/workspace/project",
+)
+```
+
+Passing this workspace to `Conversation` gives a `RemoteConversation` that streams events over a WebSocket.
+
+### Cleaning Up
+
+Terminate the sandbox when you are done, in a `finally` block so it also happens on errors:
+
+```python icon="python"
+sailbox.terminate()
+```
+
+## Ready-to-run Example
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/18_convo_with_sail_sandboxed_server.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/18_convo_with_sail_sandboxed_server.py)
+</Note>
+
+```python icon="python" expandable examples/02_remote_agent_server/18_convo_with_sail_sandboxed_server.py
+"""Example: agent server in a Sail sandbox.
+
+This example runs the agent-server image in a Sailbox, a hosted sandbox from
+Sail Research (https://docs.sailresearch.com), and connects to it with a remote
+Workspace. The sandbox publishes the server's port as an HTTPS URL, so the SDK
+talks to it like to any other remote agent server.
+
+Usage:
+  uv run examples/02_remote_agent_server/18_convo_with_sail_sandboxed_server.py
+
+Requirements:
+  - LLM_API_KEY: API key for LLM access
+  - SAIL_API_KEY: API key from https://app.sailresearch.com
+  - pip install sail
+
+The LLM is called from inside the sandbox (the agent runs on the agent server),
+so the LLM settings, including the API key, are sent to it.
+"""
+
+import os
+import time
+import uuid
+
+import sail
+from pydantic import SecretStr
+
+from openhands.sdk import (
+    LLM,
+    Conversation,
+    RemoteConversation,
+    Workspace,
+    get_logger,
+)
+from openhands.tools.preset.default import get_default_agent
+
+
+logger = get_logger(__name__)
+
+
+api_key = os.getenv("LLM_API_KEY")
+assert api_key, "LLM_API_KEY required"
+assert os.getenv("SAIL_API_KEY"), "SAIL_API_KEY required"
+
+llm = LLM(
+    usage_id="agent",
+    model=os.getenv("LLM_MODEL", "gpt-5.5"),
+    base_url=os.getenv("LLM_BASE_URL"),
+    api_key=SecretStr(api_key),
+)
+
+# SDK_SHA is the canonical commit SHA set by CI workflows (avoids the
+# built-in GITHUB_SHA which resolves to the merge-commit on PRs).
+server_image_sha = os.getenv("SDK_SHA") or os.getenv("GITHUB_SHA") or "main"
+server_image = f"ghcr.io/openhands/agent-server:{server_image_sha[:7]}-python-amd64"
+logger.info(f"Using server image: {server_image}")
+
+# The sandbox URL is reachable from the internet, so the server gets a session
+# key that every request must carry.
+session_api_key = uuid.uuid4().hex
+
+sailbox = sail.Sailbox.create(
+    app=sail.App.find("openhands-sdk-examples", mint_if_missing=True),
+    name=f"agent-server-{uuid.uuid4().hex[:8]}",
+    image=sail.Image.from_registry(server_image),
+    ingress_ports=[8000],
+    # Ends the sandbox even if this script is killed before it can terminate it.
+    max_lifetime_seconds=1800,
+)
+try:
+    # A Sailbox does not run the image's ENTRYPOINT, so start the server here.
+    sailbox.exec(
+        "/usr/local/bin/openhands-agent-server --host 0.0.0.0 --port 8000",
+        background=True,
+        env={"OH_SESSION_API_KEYS_0": session_api_key},
+    )
+    listener = sailbox.wait_for_listener(8000, timeout=120)
+    assert isinstance(listener.endpoint, sail.HttpEndpoint)
+    logger.info(f"Agent server is up at {listener.endpoint.url}")
+
+    workspace = Workspace(
+        host=listener.endpoint.url,
+        api_key=session_api_key,
+        working_dir="/workspace/project",
+    )
+    agent = get_default_agent(llm=llm, cli_mode=True)
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    result = workspace.execute_command(
+        "echo 'Hello from sandboxed environment!' && pwd"
+    )
+    logger.info(f"Command completed: {result.exit_code}, {result.stdout}")
+
+    conversation = Conversation(
+        agent=agent, workspace=workspace, callbacks=[event_callback]
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    try:
+        conversation.send_message(
+            "Write 3 facts about the operating system of this sandbox into FACTS.txt."
+        )
+        conversation.run()
+
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+
+        conversation.send_message("Great! Now delete that file.")
+        conversation.run()
+        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        print(f"EXAMPLE_COST: {cost}")
+    finally:
+        conversation.close()
+finally:
+    sailbox.terminate()
+```
+
+```bash Running the Example
+export LLM_API_KEY="your-api-key"
+export SAIL_API_KEY="your-sail-api-key"
+cd software-agent-sdk
+uv run python examples/02_remote_agent_server/18_convo_with_sail_sandboxed_server.py
+```
+
+## ACP Agent in a Sail Sandbox
+
+The same sandbox can run an `ACPAgent`. The only difference is the environment of the server process, which carries the variables the ACP CLI needs. See the [ACP Agent guide](/sdk/guides/agent-acp) for how ACP agents work.
+
+<Note>
+This example is available on GitHub: [examples/02_remote_agent_server/19_acp_agent_with_sail_sandbox.py](https://github.com/OpenHands/software-agent-sdk/blob/main/examples/02_remote_agent_server/19_acp_agent_with_sail_sandbox.py)
+</Note>
+
+```python icon="python" expandable examples/02_remote_agent_server/19_acp_agent_with_sail_sandbox.py
+"""Example: ACPAgent in a Sail sandbox.
+
+This example runs an ACPAgent (Claude Code via the ACP protocol) on an agent
+server inside a Sailbox, a hosted sandbox from Sail Research
+(https://docs.sailresearch.com). It follows the same pattern as
+18_convo_with_sail_sandboxed_server.py but uses ACPAgent instead of the default
+LLM-based Agent.
+
+Usage:
+  uv run examples/02_remote_agent_server/19_acp_agent_with_sail_sandbox.py
+
+Requirements:
+  - LLM_BASE_URL: LiteLLM proxy URL (routes Claude Code requests)
+  - ACP_LLM_API_KEY: LiteLLM virtual API key whose alias bypasses the proxy's
+    OpenHands-identity guardrail (Claude Code sends its own system prompt,
+    which the guardrail would 403). Falls back to LLM_API_KEY.
+  - SAIL_API_KEY: API key from https://app.sailresearch.com
+  - pip install sail
+"""
+
+import os
+import time
+import uuid
+
+import sail
+
+from openhands.sdk import (
+    Conversation,
+    RemoteConversation,
+    Workspace,
+    get_logger,
+)
+from openhands.sdk.agent import ACPAgent
+
+
+logger = get_logger(__name__)
+
+
+# ACP agents (Claude Code) route through the OpenHands LiteLLM proxy. Claude
+# Code sends its own non-OpenHands system prompt, so the proxy's identity
+# guardrail would 403 it; ACP_LLM_API_KEY is a dedicated key whose LiteLLM
+# alias (`acp-llm-api-key`) is in the proxy's `ignored_key_aliases`.
+llm_base_url = os.getenv("LLM_BASE_URL")
+llm_api_key = os.getenv("ACP_LLM_API_KEY") or os.getenv("LLM_API_KEY")
+assert llm_base_url and llm_api_key, (
+    "LLM_BASE_URL and ACP_LLM_API_KEY (or LLM_API_KEY) required"
+)
+assert os.getenv("SAIL_API_KEY"), "SAIL_API_KEY required"
+
+# SDK_SHA is the canonical commit SHA set by CI workflows (avoids the
+# built-in GITHUB_SHA which resolves to the merge-commit on PRs).
+server_image_sha = os.getenv("SDK_SHA") or os.getenv("GITHUB_SHA") or "main"
+server_image = f"ghcr.io/openhands/agent-server:{server_image_sha[:7]}-python-amd64"
+logger.info(f"Using server image: {server_image}")
+
+# The sandbox URL is reachable from the internet, so the server gets a session
+# key that every request must carry.
+session_api_key = uuid.uuid4().hex
+
+sailbox = sail.Sailbox.create(
+    app=sail.App.find("openhands-sdk-examples", mint_if_missing=True),
+    name=f"acp-agent-server-{uuid.uuid4().hex[:8]}",
+    image=sail.Image.from_registry(server_image),
+    ingress_ports=[8000],
+    # Ends the sandbox even if this script is killed before it can terminate it.
+    max_lifetime_seconds=1800,
+)
+try:
+    # A Sailbox does not run the image's ENTRYPOINT, so start the server here.
+    # Claude Code is started by the server and inherits the ANTHROPIC_* variables
+    # that route it through LiteLLM.
+    sailbox.exec(
+        "/usr/local/bin/openhands-agent-server --host 0.0.0.0 --port 8000",
+        background=True,
+        env={
+            "OH_SESSION_API_KEYS_0": session_api_key,
+            "ANTHROPIC_BASE_URL": llm_base_url,
+            "ANTHROPIC_API_KEY": llm_api_key,
+        },
+    )
+    listener = sailbox.wait_for_listener(8000, timeout=120)
+    assert isinstance(listener.endpoint, sail.HttpEndpoint)
+    logger.info(f"Agent server is up at {listener.endpoint.url}")
+
+    workspace = Workspace(
+        host=listener.endpoint.url,
+        api_key=session_api_key,
+        working_dir="/workspace/project",
+    )
+    agent = ACPAgent(
+        acp_command=["claude-agent-acp"],  # Pre-installed in the server image
+    )
+
+    received_events: list = []
+    last_event_time = {"ts": time.time()}
+
+    def event_callback(event) -> None:
+        received_events.append(event)
+        last_event_time["ts"] = time.time()
+
+    conversation = Conversation(
+        agent=agent, workspace=workspace, callbacks=[event_callback]
+    )
+    assert isinstance(conversation, RemoteConversation)
+
+    try:
+        conversation.send_message(
+            "List the files in /workspace and describe what you see."
+        )
+        conversation.run()
+
+        while time.time() - last_event_time["ts"] < 2.0:
+            time.sleep(0.1)
+
+        # Report cost
+        cost = conversation.conversation_stats.get_combined_metrics().accumulated_cost
+        print(f"EXAMPLE_COST: {cost:.4f}")
+    finally:
+        conversation.close()
+finally:
+    sailbox.terminate()
+```
+
+## Next Steps
+
+- **[Docker Sandboxed Server](/sdk/guides/agent-server/docker-sandbox)** - Run the agent server in a local container
+- **[API-based Sandbox](/sdk/guides/agent-server/api-sandbox)** - Connect to a runtime API deployment
+- **[Agent Server Overview](/sdk/guides/agent-server/overview)** - Architecture and implementation details
