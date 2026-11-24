@@ -80,6 +80,14 @@ If your automation doesn't trigger on GitHub events:
   <Accordion title="workflow_run events never arrive">
     The GitHub App must subscribe to the **Workflow runs** event. Apps created before this event was added to the setup helper subscribe only to issue comments, pull requests, and pull request review comments. In the app's settings on GitHub, open **Permissions & events**, enable **Workflow runs** under **Subscribe to events**, and save. The app's existing **Actions** permission already covers this event.
   </Accordion>
+  <Accordion title="status, check_suite, or check_run events never arrive">
+    The GitHub App must subscribe to these events, and apps created before the setup helper added them do not. In the app's settings on GitHub, open **Permissions & events**, make the changes below, and save:
+
+    - For `status`, enable **Status** under **Subscribe to events**. The app's existing **Commit statuses** permission already covers this event.
+    - For `check_suite` and `check_run`, set the **Checks** repository permission to **Read-only**, then enable **Check suite** or **Check run** under **Subscribe to events**. Each organization that installed the app must accept the new permission before GitHub sends these events.
+
+    The setup helper does not subscribe to **Check run**, because GitHub sends that event for every job in every CI run. Enable it only when an automation needs the result of a single check.
+  </Accordion>
 </AccordionGroup>
 
 ---
@@ -114,6 +122,38 @@ in an issue comment. It should analyze the issue context and provide
 a helpful response.
 ```
 
+### Example: Gate on CI Results
+
+Send work back to an agent when CI fails, or move it forward when CI passes:
+
+```
+Create an event-based automation called "CI Gate" that triggers when a
+GitHub Actions check suite completes with a failure in any of my repos.
+
+It should read the failing checks, fix the cause, and push the fix to
+the same branch.
+```
+
+The agent will create an automation with:
+- **Trigger type**: `event`
+- **Source**: `github`
+- **Event**: `check_suite.completed`
+- **Filter**: `check_suite.conclusion == 'failure' && check_suite.app.slug == 'github-actions'`
+
+Choose the event by how your CI reports its results:
+
+| CI reports through | Event | Fields to filter on |
+|--------------------|-------|---------------------|
+| GitHub Actions | `workflow_run.completed` | `workflow_run.conclusion`, `workflow_run.name`, `workflow_run.head_branch` |
+| GitHub checks | `check_suite.completed`, or `check_run.completed` for a single check | `check_suite.conclusion`, `check_suite.app.slug`, `check_suite.head_branch`, `check_run.conclusion`, `check_run.name` |
+| Commit statuses | `status` | `state`, `context`, `branches[].name` |
+
+Every event names the commit: `workflow_run.head_sha`, `check_suite.head_sha`, `check_run.head_sha`, or `sha`. Workflow run and check events also list the commit's pull requests in a `pull_requests` array, which is empty for a pull request from a fork.
+
+<Note>
+GitHub reports each CI result separately and sends no event for a commit as a whole. A commit with three workflows produces three `workflow_run.completed` events and three `check_suite.completed` events, and a `status` event fires on every change, including `pending`. To act on a failure, trigger on any failed result. To act on success, filter on the one workflow, check, or status context that must pass, such as `workflow_run.name == 'CI'` or `context == 'ci/build'`.
+</Note>
+
 ### Available GitHub Events
 
 | Event | Common Actions | Use Case |
@@ -124,6 +164,9 @@ a helpful response.
 | `push` | — | Branch-based triggers |
 | `release` | `published` | Release workflows |
 | `workflow_run` | `completed` | CI failure remediation |
+| `check_suite` | `completed` | CI results from GitHub checks |
+| `check_run` | `created`, `completed` | Result of a single check |
+| `status` | — | CI results from commit statuses |
 
 Use wildcards like `pull_request.*` to match all actions for an event type.
 

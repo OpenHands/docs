@@ -184,6 +184,14 @@ example's `README.md` or `example.yaml` in that repository.
 - When documenting prompt/context behavior, avoid ambiguous transport phrasing like “sent with each request” unless discussing the actual API transport. Prefer precise wording such as “included in the initial system prompt” and “remains part of the conversation/LLM context for subsequent turns.”
 - Cloud integration docs live under `openhands/usage/cloud/`, and pages surfaced in **Documentation → Integrations → Cloud API** must also be added to the `Cloud API` group in `docs.json`.
 
+### Agent Canvas release notes
+
+- Keep only the six newest releases (current plus five previous), newest first, in the
+  Agent Canvas `Release Notes` group in `docs.json`, followed by the `Previous Release Notes` page
+  (`openhands/usage/agent-canvas/release-notes/previous.mdx`).
+- When adding a release, move any release that falls outside those six from the sidebar to
+  the previous-release page. Keep its links newest first, and preserve existing release files and URLs.
+
 ### Mintlify tab ownership
 
 When the same page path appears under multiple top-level tabs in `docs.json`, Mintlify resolves the page to one tab/sidebar (effectively the first matching tab). If you want a page to show a distinct left navigation for a new tab, that page should live **exclusively** under that tab rather than being duplicated across tabs.
