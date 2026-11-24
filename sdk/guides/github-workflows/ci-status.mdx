@@ -1,0 +1,83 @@
+---
+title: CI Status
+description: Read pull request CI status reliably under GitHub App tokens by using the Actions API instead of gh pr checks
+---
+
+Check whether a pull request's head commit is green — and which check failed — without hitting the `403` that GitHub App installation tokens get from the check-runs rollup APIs.
+
+## The problem with `gh pr checks`
+
+`gh pr checks`, the check-runs API (`GET /repos/{owner}/{repo}/commits/{sha}/check-runs`), and the GraphQL `statusCheckRollup` all read the same checks rollup. GitHub App installation tokens need the **Checks: read** permission for that rollup, and many GitHub Apps are issued without it (Actions and metadata only). Under those tokens the rollup endpoints answer `403`, which forces automation onto manual `actions/runs` polling.
+
+The Actions API does not have this problem: `GET /repos/{owner}/{repo}/actions/runs` and `GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs` are readable with **Actions: read** alone, and they cover everything a GitHub Actions-based CI reports.
+
+## The `github_ci_status` tool
+
+The Agent SDK ships a first-class tool that packages this workaround: `github_ci_status` in `openhands-tools`. Give it a pull request number or a commit SHA and it returns a rollup verdict (`success` / `failure` / `pending` / `neutral`) plus per-workflow results with the failing job and step names.
+
+```python
+from openhands.sdk import Agent, Tool
+from openhands.tools.github_ci_status import GithubCiStatusAction, GithubCiStatusTool
+
+agent = Agent(
+    llm=llm,
+    tools=[Tool(name=GithubCiStatusTool.name)],
+)
+
+# The agent can now call the tool with:
+# GithubCiStatusAction(repository="owner/repo", pull_number=123)
+```
+
+The tool resolves the PR head SHA, reads `actions/runs?head_sha=...`, drills into `actions/runs/{id}/jobs` for non-passing runs, and merges in check runs and commit statuses only when the token can read them. When it cannot, the report names the missing permission instead of failing — the workflow-run results are complete on their own.
+
+<Note>
+The rollup counts every visible signal: any failing check makes the overall status `failure` even while other runs are still in progress; otherwise any pending run makes it `pending`; all-passing is `success`; no signals at all is `neutral`.
+</Note>
+
+## The endpoint recipe
+
+For scripts and automations outside the SDK, the same three calls are all you need:
+
+```bash
+# 1. Resolve the head SHA of the PR (Pull requests: read)
+SHA=$(gh api repos/OWNER/REPO/pulls/123 --jq '.head.sha')
+
+# 2. List workflow runs for that commit (Actions: read)
+gh api "repos/OWNER/REPO/actions/runs?head_sha=$SHA" \
+  --jq '.workflow_runs[] | {name, status, conclusion, html_url}'
+
+# 3. For a failing run, get the failing jobs and steps (Actions: read)
+gh api repos/OWNER/REPO/actions/runs/RUN_ID/jobs \
+  --jq '.jobs[] | select(.conclusion == "failure")
+        | {name, failed_steps: [.steps[] | select(.conclusion == "failure") | .name]}'
+```
+
+With `curl`, the only requirement is the bearer header — GitHub App installation tokens and PATs both use the same form:
+
+```bash
+curl -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/repos/OWNER/REPO/actions/runs?head_sha=$SHA"
+```
+
+Filter `workflow_runs` by `head_sha` yourself if you want to be safe against pagination quirks — the response of step 2 is already filtered, but comparing `head_sha` per run costs nothing.
+
+## Token permissions
+
+| Endpoint | GitHub App permission | Notes |
+| --- | --- | --- |
+| `GET /repos/{owner}/{repo}/pulls/{n}` | Pull requests: read | Only needed to resolve the PR head SHA |
+| `GET /repos/{owner}/{repo}/actions/runs` | Actions: read | Workflow runs, filterable by `head_sha` |
+| `GET /repos/{owner}/{repo}/actions/runs/{id}/jobs` | Actions: read | Jobs and steps of one run |
+| `GET /repos/{owner}/{repo}/commits/{sha}/check-runs` | Checks: read | Optional; `403` without it |
+| `GET /repos/{owner}/{repo}/commits/{sha}/statuses` | Statuses: read | Optional; `403` without it |
+
+The first three are the App-token-compatible core. The last two are best-effort enrichment for third-party checks (a linter posted through the Checks API, or a legacy commit status) — skip them if your App does not have those permissions.
+
+## GitHub Enterprise
+
+Point `GITHUB_API_URL` at the instance API base and the tool (and recipe) work unchanged:
+
+```bash
+export GITHUB_API_URL="https://github.example.com/api/v3"
+```
