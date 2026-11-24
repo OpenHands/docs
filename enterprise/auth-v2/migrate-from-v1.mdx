@@ -1,0 +1,125 @@
+---
+title: Migrate From V1 to V2
+sidebarTitle: "Migrate From V1"
+description: Turn on Auth V2 for an existing OpenHands Enterprise installation and review the providers it creates from your V1 configuration.
+icon: arrow-right-arrow-left
+---
+
+Use this guide to turn on [Auth V2](/enterprise/auth-v2/overview) for an installation that uses V1 authentication.
+
+The upgrade migrations convert your existing configuration into auth providers. **You don't need to change your
+external configuration, and you don't need to do anything else.** Your OAuth apps, callback URLs, and Keycloak setup stay
+as they are.
+
+**If you already set up authentication with Keycloak, no change is required.** The upgrade migrates your settings, and
+they keep using Keycloak. The only differences are that the settings are stored in the database instead of the
+environment, and that a Super Admin configures them in the Super Admin dashboard. For new integrations, connect directly
+to the provider instead of through Keycloak.
+
+Removing Keycloak isn't covered in this guide.
+
+If all goes well, you and your users won't notice a change. Enterprise SSO (SAML) from V1 is migrated in releases after
+0.112.0, and isn't migrated in earlier releases. See
+[Add Providers That Are Not Migrated](#add-providers-that-are-not-migrated).
+
+## Prerequisites
+
+- OpenHands Enterprise 0.105.0 or later.
+- A Super Admin account.
+- The Super Admin dashboard enabled. See [Super Admin Dashboard](/enterprise/super-admin).
+- If you sign in with SAML and run 0.112.0 or earlier, a `Generic SAML` provider added before you enable Auth V2. See
+  [Add Providers That Are Not Migrated](#add-providers-that-are-not-migrated).
+
+## Enable Auth V2
+
+<Tabs>
+  <Tab title="Replicated">
+    1. Open the Replicated Admin Console for your installation and go to the application configuration page.
+    2. In the `Experimental` section, turn on `Enable OAuth V2 Login`.
+    3. Save and deploy the updated configuration.
+  </Tab>
+
+  <Tab title="Kubernetes (Helm)">
+    In your `values.yaml` for the `openhands` chart, set these environment variables:
+
+    ```yaml
+    env:
+      ENABLE_OAUTH_V2_LOGIN: "true"
+      OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_OAUTH_V2_LOGIN: "true"
+    ```
+
+    The Super Admin dashboard needs two more variables. Add them if they are not already set:
+
+    ```yaml
+    env:
+      ENABLE_SUPER_ADMIN: "true"
+      OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_SUPER_ADMIN: "true"
+    ```
+
+    Then redeploy the `openhands` chart.
+  </Tab>
+
+  <Tab title="Docker Compose">
+    The Docker Compose install has Auth V2 turned on and uses the integrated password login, so there is nothing to
+    migrate. To add more providers, see [Configure Auth Providers](/enterprise/auth-v2/configure-providers).
+  </Tab>
+</Tabs>
+
+After you enable Auth V2:
+
+- The login screen shows a button for each enabled login provider, instead of a fixed button for each Git provider.
+- `Settings > Integrations` lists the Git providers that are enabled on the `Auth Providers` page.
+
+## Review the Migrated Providers
+
+Open the Super Admin dashboard and choose `Auth Providers`. The upgrade creates these providers from the configuration
+that was in place when you upgraded, and they are enabled:
+
+| Provider | Created when | Use |
+| --- | --- | --- |
+| `GitHub`, `GitLab`, `Bitbucket`, `Bitbucket Data Center`, `Azure DevOps` | The provider's OAuth app is configured on your installation. | Integration only. Users connect it from `Settings > Integrations`. |
+| `Log in with GitHub`, `Log in with GitLab`, `Log in with Bitbucket` | The provider was available as a login option in V1. | Sign in, through your existing Keycloak client. |
+| Your `Identity Provider Display Name`, or `Company SSO` (provider `Enterprise SSO`) | Enterprise SSO (SAML) was enabled. Releases after 0.112.0 only. | Sign in, through your existing Keycloak SAML identity provider. |
+| `Login with Password` (type `Integrated Password`) | Integrated password login was enabled. | Sign in with an email and password. |
+
+Leave `Keycloak-federated git provider` as it is on the `Log in with` providers.
+
+After the upgrade, change these providers on the `Auth Providers` page. Changing the original settings in the Admin
+Console or in your Helm values doesn't update them. For example, turning Enterprise SSO off in the Admin Console doesn't
+disable its provider. Turn off `Enabled` on the provider instead. To change the name on the login button, edit the
+provider's `Title`.
+
+## Add Providers That Are Not Migrated
+
+In releases up to 0.112.0, the Enterprise SSO (SAML) login from V1 isn't migrated. If you run one of these releases and
+use SAML, add your identity provider with the `Generic SAML` preset before you enable Auth V2. See the SAML tab in
+[Configure Auth Providers](/enterprise/auth-v2/configure-providers#provider-details).
+
+You can also add providers that were not available in V1, such as Okta or Google.
+
+## Check Sign-In
+
+1. Open OpenHands in a private browser window.
+2. Sign in with each login provider you expect to see.
+3. Confirm that you reach OpenHands and that `Settings > Integrations` lists your Git providers.
+
+Existing users keep their accounts. On a user's first sign-in through a provider, OpenHands links them to the existing
+account with the same email, when that provider's `Link existing accounts by email` setting is on. If two accounts share
+one email address, OpenHands refuses the sign-in and a Super Admin has to resolve it.
+
+## Turn Auth V2 Off
+
+To return to V1 sign-in, turn off the setting that you turned on in [Enable Auth V2](#enable-auth-v2).
+
+<Tabs>
+  <Tab title="Replicated">
+    Turn off `Enable OAuth V2 Login` in the `Experimental` section, then save and deploy the configuration.
+  </Tab>
+
+  <Tab title="Kubernetes (Helm)">
+    Set `ENABLE_OAUTH_V2_LOGIN` and `OH_WEB_CLIENT_FEATURE_FLAGS_ENABLE_OAUTH_V2_LOGIN` to `"false"`, or remove them,
+    then redeploy the `openhands` chart.
+  </Tab>
+</Tabs>
+
+A later release will remove V1 sign-in, and you will no longer be able to turn Auth V2 off.

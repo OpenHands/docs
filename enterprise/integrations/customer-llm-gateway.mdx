@@ -1,0 +1,253 @@
+---
+title: Use Per-Member Keys
+icon: key
+description: Use each OpenHands Enterprise member’s virtual key for inference and track their spend in your external gateway.
+---
+
+Connect OpenHands to the external gateway your organization uses to manage model access, budgets, and spend. OpenHands uses the member’s organization and user IDs to select their virtual key, so the gateway can apply its existing policies to their inference requests.
+
+The examples use LiteLLM, which we validated with the relay. For Bifrost or another gateway, verify that the relay can authenticate with each member’s key and that the gateway attributes spend and enforces limits for that key.
+
+```text
+Sandbox → OpenHands inference relay → Your gateway → Model provider
+          OpenHands inference token   Member’s virtual key
+```
+
+OpenHands stores the virtual key encrypted in its server database. The sandbox receives a short-lived OpenHands token scoped to its inference requests. The relay sends a request to the gateway’s OpenAI-compatible `POST /chat/completions` endpoint using the member’s key. Create keys, set budgets, and review spend in your gateway. The relay needs only the member keys for inference. A missing, disabled, or rejected key stops the request.
+
+This is a rapidly evolving feature, so ask your account team for updates. It will get easier!
+
+## Prerequisites
+
+- A working [Enterprise Docker Compose installation](/enterprise/docker-compose) or Helm installation using the OpenHands Runtime API, an organization with active human members, and operator access to the application container.
+- An HTTPS gateway endpoint that supports OpenAI-compatible Chat Completions and is reachable directly from the OpenHands app container. The relay does not use HTTP proxy environment variables. Each sandbox must also be able to reach the OpenHands relay and token URLs.
+- One restricted gateway virtual key per member. Set the models and spending limit for each key in your gateway. Use a sandbox image with the Enterprise build’s pinned agent-server and SDK versions so the sandbox can refresh its inference token.
+
+The relay supports local Docker and the remote-runtime backend. On Helm, use the OpenHands Runtime API backend. The separate managed Kubernetes agent sandbox backend is outside the relay’s runtime support. For organization-wide forwarding through bundled LiteLLM, see [Forward Through Bundled LiteLLM](/enterprise/integrations/external-llm-gateways).
+
+## Enable the relay on the deployment
+
+### Docker Compose
+
+Run the commands from the Enterprise Compose directory. Set these values in the Compose `.env` file. Use an HTTPS hostname that routes to the OpenHands application API and that your sandbox containers can resolve and reach. In this example, `app.example.com` is the hostname of the [Compose HTTPS reverse proxy](/enterprise/docker-compose/https). A private hostname is fine if it routes both paths to the application and the sandboxes trust its TLS certificate. Put your gateway’s URL in the model catalog below.
+
+```dotenv
+CUSTOMER_GATEWAY_RELAY_URL=https://app.example.com/api/customer-gateway/v1
+CUSTOMER_GATEWAY_TOKEN_URL=https://app.example.com/api/customer-gateway/token
+```
+
+The relay URL ends in `/v1`. Inference tokens default to 900 seconds. If you set `CUSTOMER_GATEWAY_TOKEN_TTL_SECONDS`, use an integer from 1 to 3600. The overlay enables the relay on the app and worker and turns off user-managed LLM provider settings for the deployment. Organization routing starts when you enable the organization’s gateway profile.
+
+```bash
+oh_compose() {
+  docker compose -f docker-compose.yml -f docker-compose.customer-gateway.yml "$@"
+}
+
+oh_compose config --quiet
+oh_compose up -d
+oh_compose images app worker
+```
+
+Include any existing HTTPS or deployment overrides in the Compose command you use for your installation. Check that both services use the gateway-capable image. The application applies the database migrations at startup in the stock Compose configuration.
+
+### Helm with the OpenHands Runtime API
+
+Use a chart and Enterprise image that include the relay. The Helm qualification used chart `0.114.1` with Enterprise `1.96.0` and the chart’s standard Runtime API. Verify that a normal sandbox starts before enabling per-member routing.
+
+Add the following to your existing Helm values. Keep the current Runtime API connection and bundled LiteLLM configuration. The URLs point to the OpenHands **application API ingress** that your sandboxes can reach over HTTPS.
+
+```yaml
+env:
+  CUSTOMER_GATEWAY_ENABLED: "true"
+  CUSTOMER_GATEWAY_RELAY_URL: "https://app.example.com/api/customer-gateway/v1"
+  CUSTOMER_GATEWAY_TOKEN_URL: "https://app.example.com/api/customer-gateway/token"
+  OH_ALLOW_USER_LLM_CONFIGURATION: "false"
+```
+
+Apply these values to the Enterprise app and any separate Enterprise worker using your normal Helm
+upgrade process. Check the running images after rollout. From the sandbox network, confirm that
+both URLs reach the application with a trusted TLS certificate. To check that the models route is
+active, send a GET request to `/api/customer-gateway/v1/models` with
+`Authorization: Bearer probe`. The relay returns HTTP 401 with error code `invalid_token`.
+The sandbox uses GET on `/api/customer-gateway/token` to refresh its token.
+
+The Helm validation covered web inference with two members on the OpenHands Runtime API. Test
+resolver and automation paths separately if you use them on Helm.
+
+### Open an operator command session
+
+Define these functions for your deployment. The following steps use them to run commands inside the app container.
+
+<Tabs>
+  <Tab title="Docker Compose">
+
+```bash
+gateway_exec() {
+  oh_compose exec -T app "$@"
+}
+```
+
+  </Tab>
+  <Tab title="Helm">
+
+```bash
+NAMESPACE="<openhands-namespace>"
+APP_DEPLOYMENT="openhands"
+
+gateway_exec() {
+  kubectl -n "$NAMESPACE" exec -i "deployment/$APP_DEPLOYMENT" \
+    -c openhands -- "$@"
+}
+```
+
+The deployment and container names here are examples. Use the names for the container serving
+the application API. The CLI uses that container’s database and encryption configuration.
+
+  </Tab>
+</Tabs>
+
+## Stage the organization and its members
+
+### 1. Define the model catalog
+
+Create `customer-gateway.json` using the LiteLLM example below. The relay appends `/chat/completions` to `base_url`. The keys in `models` are aliases OpenHands uses. The values must match the model names your gateway expects in requests.
+
+```json
+{
+  "base_url": "https://llm.example.com/v1",
+  "protocol": "openai_chat_completions",
+  "credential_header": "authorization",
+  "capabilities": ["stream", "tools"],
+  "models": {
+    "team-sonnet": "claude-sonnet",
+    "team-deepseek": "deepseek-chat"
+  }
+}
+```
+
+With `credential_header` set to `authorization`, the relay sends the member’s key as an `Authorization: Bearer` credential. If your gateway uses a different credential header, configure its name. The relay sends the key as the value of that header. Declare only capabilities your gateway supports. The relay builds the member’s model list from the catalog and their allowlist.
+
+Use the OpenHands organization UUID and member user UUID. The organization members API, `GET /api/organizations/{org_id}/members`, lists the member identifiers.
+
+```bash
+ORG_ID="<openhands-organization-uuid>"
+USER_ID="<openhands-member-user-uuid>"
+GATEWAY_ID="team-gateway"
+
+gateway_exec python -m server.customer_gateway.cli set-org \
+  --org "$ORG_ID" --gateway-id "$GATEWAY_ID" \
+  --profile-file /dev/stdin --disable < customer-gateway.json
+```
+
+### 2. Import one key per member
+
+Key provisioning and rotation use the operator CLI in the app container. Pass the key on standard input from your secret source. If you use a file, restrict access to the operator and store only the member’s key in it.
+
+```bash
+KEY_FILE="/path/to/protected/member-key"
+
+gateway_exec python -m server.customer_gateway.cli set-key \
+  --org "$ORG_ID" --user "$USER_ID" --models team-sonnet,team-deepseek \
+  < "$KEY_FILE"
+
+gateway_exec python -m server.customer_gateway.cli status \
+  --org "$ORG_ID"
+```
+
+Repeat `set-key` for each member. The status output shows the member’s enabled state, model allowlist, key fingerprint, and credential and policy versions. To rotate a key, keep the same member UUID and repeat the current model aliases in `--models`. The next request uses the new key. Check that your gateway records the request against the new key before revoking the old one. Rotating a key preserves the member’s enabled or disabled state.
+
+### 3. Set an organization LLM profile
+
+For each alias you want users to select, save a new keyless organization LLM profile. An organization admin with permission to edit settings can use `POST /api/organizations/{org_id}/profiles/{name}` with a body like this.
+
+```json
+{
+  "include_secrets": false,
+  "llm": {
+    "model": "openai/team-sonnet"
+  }
+}
+```
+
+During the cutover, activate a profile from the organization’s LLM Profiles settings or with
+`POST /api/organizations/{org_id}/profiles/{name}/activate`. Activation applies the model to the
+admin who activates the profile. Before enabling routing, confirm that each member’s effective
+model uses `openai/<alias>` with an alias in their allowlist. Use the same alias format in any
+agent or automation configuration that selects a model. The relay checks the member’s allowlist,
+and your gateway applies its own key policy.
+
+### 4. Enable routing and start fresh conversations
+
+Verify the intended profiles and individual keys, then stop the organization’s existing sandboxes
+before enabling routing. The standard Compose configuration can reuse a running sandbox, and
+the relay requires a sandbox started after the switch.
+
+```bash
+gateway_exec python -m server.customer_gateway.cli set-org \
+  --org "$ORG_ID" --gateway-id "$GATEWAY_ID" \
+  --profile-file /dev/stdin < customer-gateway.json
+```
+
+Start a fresh conversation in the organization after enabling routing.
+
+## Verify attribution and access
+
+Use two signed-in members with distinct keys in the same organization. Start a fresh
+conversation as each member and select a saved LLM profile with an alias in their allowlist.
+To select the profile explicitly, send `POST /api/v1/app-conversations` as that member in the
+gateway-enabled organization. Set `llm_profile` to the saved profile’s name:
+
+```json
+{
+  "llm_profile": "team-sonnet",
+  "initial_message": {
+    "role": "user",
+    "content": [{ "type": "text", "text": "Reply with GATEWAY_OK." }]
+  }
+}
+```
+
+Verify that your gateway records each request under the expected key. Test an allowed model,
+a model outside one member’s allowlist, and a member without a configured key. Check spend and
+budget enforcement in your gateway.
+
+| Launch path | Key used |
+| --- | --- |
+| Web conversations and native conversation API | The human member who owns the conversation’s sandbox |
+| GitHub, GitLab, Bitbucket, Bitbucket Data Center, and Azure DevOps resolvers | The platform actor mapped to an active OpenHands member in the organization that owns the repository |
+| Native automations | The human member who owns the automation’s conversation sandbox |
+
+Test the resolver and automation paths you run in production. For a resolver, verify the repository resolves to the intended organization and your gateway records spend under the mapped actor’s key. For an automation, verify which member owns the sandbox. Service-account launches, Slack and Jira conversation triggers, and standalone SDK inference through `CloudWorkspace.get_llm()` are outside this mode’s supported entry points.
+
+## Suspend a key or roll back
+
+Use `disable` to suspend one member. Subsequent inference requests are denied even if the sandbox still holds an unexpired token. Use `enable` with the same arguments to let that member start a new conversation.
+
+```bash
+gateway_exec python -m server.customer_gateway.cli disable \
+  --org "$ORG_ID" --user "$USER_ID"
+```
+
+For organization rollback, stop gateway conversations and rerun `set-org` with the same gateway ID
+and catalog file, adding `--disable`. Restore the previous organization LLM profile and confirm
+its provider is configured before starting fresh conversations.
+
+To turn the relay off for the deployment, disable routing for every gateway-enabled organization
+first. Then remove the gateway overlay on Compose and recreate the app and worker. On Helm, set
+`env.CUSTOMER_GATEWAY_ENABLED` to `"false"`, restore the previous value of
+`OH_ALLOW_USER_LLM_CONFIGURATION`, and apply your values. Keep the database and its application
+encryption configuration together to retain access to the stored keys.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| `this sandbox predates the customer gateway; start a new conversation` | Start a fresh sandbox in the gateway-enabled organization. |
+| `no_credential` or `credential_disabled` | Run CLI `status` for the organization and check the member UUID, active membership, and enabled state. |
+| `model_not_permitted` | Check the alias in the organization catalog and the member’s CLI allowlist, then check the virtual key’s model permissions in your gateway. |
+| `customer_gateway_key_rejected` | Check whether the member’s key expired or was revoked in your gateway. Rotate it through the CLI if needed. |
+| `llm_gateway_authorization_timeout` or `sandbox_status_unknown` | The request stopped in OpenHands before reaching the model provider. Check app and sandbox runtime health. |
+| Token refresh fails | Check that the sandbox can reach the token URL and that its agent-server image matches the Enterprise build. |
+| `relay_capacity` | The relay was at capacity or no slot opened during its two-second wait. Reduce concurrent runs and try again. |
+
+For support, collect the OpenHands version, timestamp, error code, request ID if present, and sanitized app and runtime log excerpts. Keep virtual keys and authorization headers out of the report.
