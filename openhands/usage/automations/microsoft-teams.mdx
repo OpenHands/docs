@@ -5,49 +5,29 @@ icon: /openhands/static/img/microsoft-teams.svg
 description: Send notifications to Teams and start automations from channel commands.
 ---
 
-Connect Microsoft Teams and OpenHands with two webhook connections: a Teams Workflow receives notifications from OpenHands, and a Teams Outgoing Webhook starts automations from channel mentions. The [Teams example in extensions](https://github.com/OpenHands/extensions/tree/main/examples/teams-webhook) has the scripts, configuration and an optional API setup.
+Connect Microsoft Teams and OpenHands with two webhook connections: post notifications to a Teams Workflow, and receive channel mentions through a Teams Outgoing Webhook. Receiving Teams commands requires Automation 1.34.0 or later.
 
-<Note>
-This UI flow requires the unreleased Teams source option in Agent Canvas and the Automation callback-preview update. See the example's requirements before starting.
-</Note>
+Use a Teams work or school account and a standard (public) channel for testing. Outgoing Webhooks support channel mentions only; DMs, conversational follow-ups and channel history need a Teams application and are out of scope here.
 
-Use a Teams work or school account and a standard test channel. The OpenHands callback must be reachable over public HTTPS.
+## Send Notifications to Teams
 
-## Send notifications to Teams
+A Teams Workflow gives your channel a webhook URL that accepts notifications.
 
-A Teams Workflow gives your channel a webhook URL: an address that accepts notifications. Your automation sends a message to that address, and the Workflow posts it in the channel.
+1. In the Teams channel, open **More options → Workflows** and choose **Send webhook alerts to a channel**. Select the team, channel and posting connection, then save the Workflow.
+2. In OpenHands, save the Workflow URL in **Settings → Secrets** under the name your automation reads, for example `TEAMS_INBOUND_DEMO_WEBHOOK_URL`.
 
-1. In the Teams channel, open **More options → Workflows** and choose **Send webhook alerts to a channel**.
-2. Select the team, channel and posting connection, then save the Workflow.
-3. In OpenHands, save the Workflow URL in **Settings → Secrets** under the name your automation reads, for example `TEAMS_INBOUND_DEMO_WEBHOOK_URL`.
+An automation only posts to Teams if it explicitly reads that secret and sends to it. Saving the URL as a secret does not route messages to Teams by itself. The Workflow uses **Anyone** authentication, so anyone with the URL can post to it. Keep it secret.
 
-The extensions example is already configured to read `TEAMS_INBOUND_DEMO_WEBHOOK_URL` and send its result to that address. For your own automation, tell it which named secret to use for Teams notifications. Saving the URL as a secret does not automatically configure an automation to send messages.
+## Start Automations from Teams
 
-The Workflow uses **Anyone** authentication, so anyone who has the full URL can post to it. Keep it secret.
+Agent Canvas's [Events page](/openhands/usage/agent-canvas/automation-events) can list a Teams source once it exists, but its **Add event source** form doesn't expose Teams-specific settings. Register the source with the automation API instead:
 
-## Start automations from Teams
+1. Create a source with `POST /v1/webhooks` using the [Teams source configuration](https://github.com/OpenHands/automation/blob/1.34.0/docs/teams-webhooks.md#register-the-source). Require your tenant, team, channel and allowed sender Entra object IDs to match. Use a strong random base64 value as the temporary `webhook_secret`.
+2. Copy `webhook_url` from the response. In Teams, open **Manage team → Apps → Create an outgoing webhook**, paste that callback URL and create the webhook. Save the security token Teams shows once.
+3. Replace the temporary secret with the Teams-issued token using `PATCH /v1/webhooks/<id>`. Keep tokens in private request files. Complete this step before enabling an automation for the source.
+4. Create an [event automation](/openhands/usage/automations/event-automations) with your source name and `message` as its event type. Configure the task it should run. To send results back to Teams, configure that task to use the Workflow URL secret above.
+5. In the Teams channel, mention the outgoing webhook by name and send a command your automation handles. Check the acknowledgement and the automation's run history separately; the acknowledgement confirms receipt, not task completion.
 
-Have your tenant, team, channel and allowed sender IDs ready; display names do not work. The [extensions example](https://github.com/OpenHands/extensions/tree/main/examples/teams-webhook#receive-teams-commands-directly) explains which IDs to use.
+Use your deployment's Automation API base path and management authentication, as described in [Custom Webhooks](/openhands/usage/automations/event-automations#custom-webhooks). The Teams configuration verifies the signature, restricts the four identity IDs and deduplicates deliveries. Changing a generic webhook's signature header alone is insufficient.
 
-Screenshots use illustrative values; the security token is omitted.
-
-1. Open **Automate → Events → Add event source** and set **Source type** to **Microsoft Teams outgoing webhook**.
-2. Enter a name and a **Webhook source ID**, such as `teams-demo`. Copy the **Teams callback URL** that appears.
-3. In Teams, open **Manage team → Apps → Create an outgoing webhook**. Name it **OpenHands Demo**, paste the callback URL and create it. Teams shows a security token once.
-4. In OpenHands, enter the **Teams security token**, **Tenant ID**, **Team ID**, **Channel ID** and **Sender Entra object ID**, then select **Add event source**.
-
-   ![Complete Teams event source form with example callback URL, empty token and placeholder identity IDs](/openhands/static/img/teams-event-source.jpg)
-
-5. On the **Automate** Dashboard, open **Custom automation** and select **Continue**. Choose **Upload tarball** and **Event**, select your source, and enter `message` as the **Event type**. Upload the [packaged example](https://github.com/OpenHands/extensions/tree/main/examples/teams-webhook#connect-the-deterministic-example), use `python3 main.py` as the entrypoint, then select **Continue → Confirm and create**.
-
-   ![Reviewing a script automation with the teams-demo event source and message event type](/openhands/static/img/teams-automation-review.jpg)
-
-6. In the channel, pick the webhook from Teams' mention suggestions and send:
-
-```text
-@OpenHands Demo verify TEAMS-INBOUND-001
-```
-
-Teams shows an immediate acknowledgement, the run appears in Canvas, and a separate result card is posted in the channel. The example posts a fixed synthetic result and doesn't run an AI task.
-
-OpenHands verifies the Teams signature and requires all four IDs to match. Outgoing Webhooks support channel mentions. DMs, conversational follow-ups and channel history require a Teams application and appropriate APIs.
+A runnable example with the inbound script and sample configuration is in [extensions PR #960](https://github.com/OpenHands/extensions/pull/960), a draft that is not yet merged to `main`.
