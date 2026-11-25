@@ -28,7 +28,7 @@ Before you begin, complete the [Quick Start guide](/enterprise/quick-start).
 
 ## Enable Analytics
 
-<Tabs>
+<Tabs sync={false}>
   <Tab title="VM Install (Admin Console)">
     <Info>
       VM installs currently support trace collection, but do not support Laminar signals. The Admin Console configures the Laminar Project API Key only; the installer sets the remaining Laminar connection values automatically.
@@ -92,11 +92,41 @@ Before you begin, complete the [Quick Start guide](/enterprise/quick-start).
 
     Keep `laminar.enabled: false` until your ingress, TLS, and storage class settings match your cluster.
   </Tab>
+  <Tab title="Docker Compose">
+    The Docker Compose stack doesn't include Laminar. Run Laminar separately and point OpenHands at it.
+
+    For a trial on the same machine, start Laminar with its own Docker Compose stack. We recommend moving the Laminar
+    API from its default host ports (`8000`, `8001`, and `8002`) to `18100`, `18101`, and `18102`, so it doesn't
+    collide with other services on port `8000`:
+
+    ```bash
+    git clone https://github.com/lmnr-ai/lmnr.git
+    cd lmnr
+    cat >> .env <<'EOF'
+    APP_SERVER_HOST_PORT=18100
+    APP_SERVER_GRPC_HOST_PORT=18101
+    APP_SERVER_RT_HOST_PORT=18102
+    EOF
+    docker compose up -d
+    ```
+
+    Laminar serves its UI at `http://localhost:5667` and its API on host port `18100`.
+
+    To use Laminar Cloud or another Laminar deployment instead, see Laminar's
+    [hosting options](https://laminar.sh/docs/hosting-options).
+
+    To enable analytics, you set these variables in the `.env` file next to the OpenHands `docker-compose.yml` in
+    later steps:
+
+    - `LMNR_PROJECT_API_KEY`, in [Set the Laminar Project API Key](#set-the-laminar-project-api-key).
+    - `LMNR_BASE_URL`, `LMNR_HTTP_PORT`, and `LMNR_FORCE_HTTP`, in
+      [Configure Runtime Environment Variables](#configure-runtime-environment-variables).
+  </Tab>
 </Tabs>
 
 ## Deploy
 
-<Tabs>
+<Tabs sync={false}>
   <Tab title="VM Install (Admin Console)">
     OpenHands will begin deploying. You can expect the deployment status to transition from **Missing** to **Unavailable** to **Ready**. This typically takes 10-15 minutes.
 
@@ -117,6 +147,9 @@ Before you begin, complete the [Quick Start guide](/enterprise/quick-start).
 
     Wait for the Laminar workloads, ingress, and TLS resources to become ready.
   </Tab>
+  <Tab title="Docker Compose">
+    Open `http://localhost:5667`. You should see the Laminar sign-in page.
+  </Tab>
 </Tabs>
 
 ## Access the Laminar UI
@@ -125,8 +158,10 @@ Once the deployment status shows **Ready**, navigate to the Laminar frontend URL
 
 - VM install: `https://analytics.<your-base-domain>`
 - Kubernetes install: the hostname configured in `laminar.frontend.ingress.hostname`
+- Docker Compose install: `http://localhost:5667`, or the URL of your Laminar deployment
 
-Click the **Continue with Keycloak** button:
+With Laminar's Docker Compose stack, sign in with an email address. For VM and Kubernetes installs, click the
+**Continue with Keycloak** button:
 
 ![Laminar Keycloak Auth](./images/laminar-keycloak-auth.png)
 
@@ -160,7 +195,7 @@ Ingest-only keys are recommended because OHE only needs permission to write trac
 
 This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guide](/sdk/guides/observability).
 
-<Tabs>
+<Tabs sync={false}>
   <Tab title="VM Install (Admin Console)">
     Set the ingest-only key as the **Laminar Project API Key** in the Admin Console configuration.
 
@@ -201,11 +236,21 @@ This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guid
 
     If your self-hosted Laminar app server exposes a non-default HTTP port, set `laminar.httpPort`.
   </Tab>
+  <Tab title="Docker Compose">
+    Add the ingest-only key to the `.env` file next to the OpenHands `docker-compose.yml`:
+
+    ```bash .env
+    LMNR_PROJECT_API_KEY=<your-ingest-only-key>
+    ```
+
+    For Laminar Cloud, this is the only Laminar variable that you need. Skip to
+    [Deploy Updated Configuration](#deploy-updated-configuration).
+  </Tab>
 </Tabs>
 
 ## Configure Runtime Environment Variables
 
-<Tabs>
+<Tabs sync={false}>
   <Tab title="VM Install (Admin Console)">
     VM installs configure analytics through the Admin Console. After analytics is enabled and the Laminar Project API Key is saved, the installer automatically configures:
 
@@ -248,13 +293,31 @@ This is the same `LMNR_PROJECT_API_KEY` described in the [SDK observability guid
 
     For the full set of supported values, see Laminar's official [self-hosting configuration reference](https://laminar.sh/docs/self-hosting/configuration).
   </Tab>
+  <Tab title="Docker Compose">
+    OpenHands forwards the `LMNR_*` variables in `.env` to the agent sandboxes. For a self-hosted Laminar, add its
+    address below the project key:
+
+    ```bash .env
+    LMNR_PROJECT_API_KEY=<your-ingest-only-key>
+    LMNR_BASE_URL=http://host.docker.internal
+    LMNR_HTTP_PORT=18100
+    LMNR_FORCE_HTTP=true
+    ```
+
+    - `LMNR_BASE_URL`: an address that the agent sandboxes can reach, without a port. Use
+      `http://host.docker.internal` when Laminar runs on the same machine as OpenHands, not `localhost`.
+    - `LMNR_HTTP_PORT`: the host port of the Laminar API, the same value as `APP_SERVER_HOST_PORT` in Laminar's `.env`.
+    - `LMNR_FORCE_HTTP`: `true`, to send traces to the Laminar API over HTTP instead of gRPC.
+
+    For defaults, see [Telemetry and Observability](/enterprise/environment-variables#telemetry-and-observability).
+  </Tab>
 </Tabs>
 
 ## Deploy Updated Configuration
 
 Deploy the configuration change after setting the Laminar Project API Key.
 
-<Tabs>
+<Tabs sync={false}>
   <Tab title="VM Install (Admin Console)">
     Click **Deploy** in the Admin Console.
 
@@ -277,13 +340,24 @@ Deploy the configuration change after setting the Laminar Project API Key.
       --values values.yaml
     ```
   </Tab>
+  <Tab title="Docker Compose">
+    In the directory that contains the OpenHands `docker-compose.yml`, restart the stack:
+
+    ```bash
+    docker compose up -d --wait
+    ```
+
+    OpenHands passes the `LMNR_*` variables to a sandbox when it creates the sandbox. Start a new conversation to
+    send traces.
+  </Tab>
 </Tabs>
 
 Wait for the deployment to complete.
 
 ## Start a Conversation
 
-Navigate to the OpenHands UI at `https://app.<your-base-domain>`. Start a new conversation and try a prompt.
+Navigate to the OpenHands UI at `https://app.<your-base-domain>`, or at your `WEB_URL` for a Docker Compose install,
+such as `http://localhost:9043`. Start a new conversation and try a prompt.
 
 ![Start a Conversation](./images/laminar-openhands-conversation.png)
 
