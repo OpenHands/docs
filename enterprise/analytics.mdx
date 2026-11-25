@@ -291,6 +291,61 @@ Your conversations will now automatically send traces to Laminar.
 
 ![Laminar Trace](./images/laminar-trace.png)
 
+## Find a User's Traces
+
+OHE attaches a Laminar **user id** to every conversation trace so you can find all
+traces for a given user. What that user id is changed in recent versions, so the
+right way to search depends on which OHE version produced the trace.
+
+### What changed and why
+
+Before the fix shipped in **OHE 0.81** (Oct 2026), the app server sent the
+user's **email address** as the Laminar user id, so a trace for
+`example@email.com` was filed under that email.
+
+That made traces easy to find by email, but it broke PostHog funnel correlation:
+frontend, signup, and app-server events landed on the stable app user identity,
+while `agent_server.conversation_created` events landed on an email-based person.
+See the root-cause fix in
+[OpenHands/enterprise#937](https://github.com/OpenHands/enterprise/pull/937)
+(merged 2026-10-22).
+
+Starting with **OHE 0.81**, the app server sends the **stable app user ID** (a
+UUID, for example `d61ac522-b294-47d4-9874-6df90cc4889f`) as the Laminar user id,
+and keeps the user's **email in trace metadata** under `user_email` instead.
+
+| OHE version | Laminar user id | Where the email lives |
+|-------------|-----------------|-----------------------|
+| `< 0.81`    | user email (e.g. `example@email.com`) | used as the user id directly |
+| `>= 0.81`   | app user UUID (e.g. `d61ac522-…`)     | `metadata.user_email` |
+
+<Warning>
+  Historical traces produced before the 0.81 fix are **not** re-written. They
+  still carry the email as the user id. Search both ways if the user has traces
+  that span the upgrade.
+</Warning>
+
+### How to search
+
+- **OHE `< 0.81`** — search by the user's email directly in the Laminar user-id
+  filter, or with SQL `WHERE user_id = 'example@email.com'`.
+- **OHE `>= 0.81`** — search by the user's email in trace metadata:
+
+  ```sql
+  SELECT *
+  FROM traces
+  WHERE labels['user_email'] = 'example@email.com'
+  ORDER BY start_time DESC
+  ```
+
+  In the Laminar UI, use the metadata filter `user_email = example@email.com`.
+  The `user_id` field for these traces is the app user UUID, not the email.
+
+To look up a user's app UUID, call the OHE app-server API as an admin
+(`GET /api/v1/users/<username-or-email>`) and read the `id` field from the
+response. The same UUID appears as the Laminar `user_id` on 0.81+ traces for
+that user.
+
 ## Query Traces with SQL
 
 Use [Laminar's CLI](https://laminar.sh/docs/platform/cli) for expected read-only access to trace data. The CLI authenticates as your Laminar user, not with the ingest-only project API key configured for OpenHands trace collection.
