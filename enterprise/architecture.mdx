@@ -101,6 +101,71 @@ The core loop is:
 6. Conversation state and artifacts are persisted to PostgreSQL, Redis (cache/sessions),
    and an object store (S3/GCS/MinIO — the "conversation bucket").
 
+## Key Repos
+
+OpenHands Enterprise is assembled from a handful of repositories. Some are open source and shared with the
+community edition; others are commercially licensed and make up the enterprise-only layer.
+
+### Enterprise Application
+
+| Repo | License | What It Provides |
+|---|---|---|
+| [`OpenHands`](https://github.com/OpenHands/OpenHands) | [Open source (MIT)](https://github.com/OpenHands/OpenHands/blob/main/LICENSE) | The web UI, shared by the open source and Enterprise editions. |
+| [`software-agent-sdk`](https://github.com/OpenHands/software-agent-sdk) | [Open source (MIT)](https://github.com/OpenHands/software-agent-sdk/blob/main/LICENSE) | The Python SDK and the **agent server** that runs inside every sandbox: the agent loop, tools, conversations, and events. |
+| [`automation`](https://github.com/OpenHands/automation) | [Open source (MIT)](https://github.com/OpenHands/automation/blob/main/LICENSE) | The automation service: cron and webhook triggers, dispatch, run history. |
+| [`enterprise`](https://github.com/OpenHands/enterprise) | [Commercial](https://github.com/OpenHands/enterprise/blob/main/LICENSE) | The Enterprise Server: REST/V1 API, conversation orchestration, Git-provider and chat/ticketing integrations, org and user management, and billing. |
+| [`runtime-api`](https://github.com/OpenHands/runtime-api) | Commercial | The Runtime API: warm pool and lifecycle of sandbox pods. This is a private repository. |
+| [`OpenHands-Cloud`](https://github.com/OpenHands/OpenHands-Cloud) | [Commercial](https://github.com/OpenHands/OpenHands-Cloud/blob/main/LICENSE) | Helm charts and installer packaging used to deploy the whole stack. |
+
+### Extensions
+
+| Repo | License | What It Provides |
+|---|---|---|
+| [`extensions`](https://github.com/OpenHands/extensions) | [Open source (MIT)](https://github.com/OpenHands/extensions/blob/main/LICENSE) | The public registry of skills, plugins, and automations that agents load. |
+
+### Documentation
+
+| Repo | What It Provides |
+|---|---|
+| [`docs`](https://github.com/OpenHands/docs) | This documentation site. |
+| [`enterprise-cookbook`](https://github.com/OpenHands/enterprise-cookbook) | Code examples and tutorials for OpenHands Enterprise ([MIT](https://github.com/OpenHands/enterprise-cookbook/blob/main/LICENSE)). |
+
+### How They Fit Together
+
+```mermaid
+flowchart LR
+    Cloud["OpenHands-Cloud<br/><i>Helm charts / installer</i>"]
+    UI["OpenHands<br/><i>Web UI</i>"]
+    Ent["enterprise<br/><i>Enterprise Server</i>"]
+    RT["runtime-api<br/><i>Sandbox pool</i>"]
+    SDK["software-agent-sdk<br/><i>Agent server in each sandbox</i>"]
+    Auto["automation<br/><i>Scheduled / event-driven runs</i>"]
+    Ext["extensions<br/><i>Skills, plugins, automations</i>"]
+
+    Cloud -. deploys .-> Ent
+    Cloud -. deploys .-> RT
+    Cloud -. deploys .-> Auto
+    UI -- "served with" --> Ent
+    Ent -- "request sandbox" --> RT
+    RT -- "starts" --> SDK
+    Ent -- "conversations" --> SDK
+    Auto -- "dispatch runs" --> RT
+    Ext -. "loaded by" .-> SDK
+```
+
+- **`OpenHands-Cloud`** packages and deploys the other components onto Kubernetes (or a single VM through the
+  installer).
+- **`OpenHands`** supplies the web UI, which the Enterprise Server serves to users alongside its own API.
+- **`enterprise`** is the control plane. It authenticates users, receives webhooks, and asks **`runtime-api`**
+  for a sandbox for each conversation.
+- **`runtime-api`** keeps warm sandbox pods ready and starts them from the agent-server image built from
+  **`software-agent-sdk`**.
+- **`software-agent-sdk`** is what actually runs in each sandbox: the agent loop that calls the LLM and executes
+  tools, streaming events back to the Enterprise Server.
+- **`automation`** triggers agent runs on a schedule or from events. Each run executes in a sandbox, like an
+  interactive conversation.
+- **`extensions`** supplies the skills, plugins, and automation templates that agents and the Plugin Directory use.
+
 ## Components And Services
 
 ### Core Components
