@@ -10,8 +10,8 @@ automations overview page.
 The generated card grid lives between marker comments:
   {/* BEGIN:use-case-automations */}  …  {/* END:use-case-automations */}
 
-Each card links to the use-case page's ``#automate-this`` section where the
-full prompt and instructions live.
+Each card links to the top of the use-case page, which includes the full prompt
+and instructions in its ``#automate-this`` section.
 
 Required frontmatter fields inside ``automation:``:
   - ``icon``    — Font Awesome icon name for the card
@@ -97,7 +97,7 @@ def collect_use_cases() -> list[tuple[str, str, dict]]:
 def generate_card_section(use_cases: list[tuple[str, str, dict]]) -> str:
     """Generate the ``use-case-automations`` card grid.
 
-    Each card links to the use-case page's #automate-this section.
+    Each card links to the top of the use-case page.
     """
     parts: list[str] = []
 
@@ -113,7 +113,7 @@ def generate_card_section(use_cases: list[tuple[str, str, dict]]) -> str:
             f'  <Card\n'
             f'    title="{title}"\n'
             f'    icon="{auto["icon"]}"\n'
-            f'    href="/openhands/usage/use-cases/{slug}#automate-this"\n'
+            f'    href="/openhands/usage/use-cases/{slug}"\n'
             f'  >\n'
             f'    {auto["summary"]}\n'
             f'  </Card>'
