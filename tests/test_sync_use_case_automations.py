@@ -36,7 +36,7 @@ class TestGenerateCardSection:
         output = generate_card_section(use_cases)
         assert 'title="My Page Title"' in output
         assert 'icon="star"' in output
-        assert 'href="/openhands/usage/use-cases/my-page#automate-this"' in output
+        assert 'href="/openhands/usage/use-cases/my-page"' in output
         assert "Short desc." in output
         assert "<CardGroup" in output
         assert "</CardGroup>" in output
