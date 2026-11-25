@@ -6,8 +6,8 @@ description: Connect an approved MCP client to self-hosted OpenHands Enterprise 
 Use the External MCP Server to work with OpenHands tasks from an MCP client such as Claude Code. For example, ask the
 client to start a task in a Git repository, check back for the result, and open the same task in Agent Canvas.
 
-The server is available in OpenHands Enterprise app version **1.96.0 and later**. A Super Admin enables access, and
-each user signs in to OpenHands and approves the client. The client can access only the user's own V1 tasks in the
+The server is available in OpenHands Enterprise app version **1.96.0 and later** on Docker Compose and Kubernetes.
+Each user signs in to OpenHands and approves the client. The client can access only the user's own V1 tasks in the
 organization they connect.
 
 ## Available Tools
@@ -22,26 +22,39 @@ organization they connect.
 ## Set Up OpenHands Enterprise
 
 Use the HTTPS URL of your OpenHands instance. For an instance at `https://openhands.example.com`, the Streamable HTTP
-endpoint is `https://openhands.example.com/external-mcp/mcp`.
+endpoint is `https://openhands.example.com/external-mcp/mcp`. For Docker Compose, see
+[Run on a VM with HTTPS](/enterprise/docker-compose/https).
 
 ### Register an OAuth Client
 
-Set `OPENHANDS_EXTERNAL_MCP_CLIENTS` to a JSON array with an entry for each approved client. The example registers a
-read-only Claude Code client in Helm's `env` map. On Docker Compose, set the same JSON array as an environment variable.
-See [Set a Variable](/enterprise/environment-variables#set-a-variable).
+Set `OPENHANDS_EXTERNAL_MCP_CLIENTS` to a JSON array with an entry for each approved client. These examples register
+the same read-only Claude Code client. See [Set a Variable](/enterprise/environment-variables#set-a-variable).
 
-```yaml values.yaml
-env:
-  OPENHANDS_EXTERNAL_MCP_CLIENTS: |-
-    [
-      {
-        "client_id": "openhands-demo",
-        "name": "Claude Code",
-        "redirect_uris": ["http://localhost:53682/callback"],
-        "scopes": ["tasks:read"]
-      }
-    ]
-```
+<Tabs>
+  <Tab title="Docker Compose">
+    Add the client to the `.env` file next to `docker-compose.yml`, then run `docker compose up --wait`.
+
+    ```bash .env
+    OPENHANDS_EXTERNAL_MCP_CLIENTS='[{"client_id":"openhands-demo","name":"Claude Code","redirect_uris":["http://localhost:53682/callback"],"scopes":["tasks:read"]}]'
+    ```
+  </Tab>
+  <Tab title="Helm">
+    Add the client under `env` in your Helm values and apply the change with `helm upgrade`.
+
+    ```yaml values.yaml
+    env:
+      OPENHANDS_EXTERNAL_MCP_CLIENTS: |-
+        [
+          {
+            "client_id": "openhands-demo",
+            "name": "Claude Code",
+            "redirect_uris": ["http://localhost:53682/callback"],
+            "scopes": ["tasks:read"]
+          }
+        ]
+    ```
+  </Tab>
+</Tabs>
 
 - Register the exact callback URL the client uses. Use HTTPS for remote callbacks or HTTP for loopback callbacks such as
   `http://localhost:53682/callback`.
@@ -49,14 +62,18 @@ env:
   store its `client_secret` in your deployment's secrets and configure the client to use `client_secret_post`.
 - Include `tasks:read` for every client. Add `tasks:write` only for clients that need to start tasks or send follow-ups.
 
-Apply the configuration and let the OpenHands application restart. The server uses the instance web URL with
-`/external-mcp` appended as its OAuth issuer. If you need to override the issuer, set
+The server uses the instance web URL with `/external-mcp` appended as its OAuth issuer. If you need to override the issuer, set
 `OPENHANDS_EXTERNAL_MCP_BASE_URL` to an HTTPS URL ending in `/external-mcp`.
 
 ### Enable User Access
 
-The `ENABLE_EXTERNAL_MCP` feature flag is off by default. To enable access for a pilot user, use the following Admin API
-requests with an OpenHands API key from a [Super Admin](/enterprise/super-admin) account. Send the key in the
+The `ENABLE_EXTERNAL_MCP` feature flag is off by default. For deployment-wide access, add `ENABLE_EXTERNAL_MCP=true`
+to the Compose `.env` file or `ENABLE_EXTERNAL_MCP: "true"` under `env` in Helm values and apply the change. This path
+requires access to the deployment configuration. If a database flag of the same name exists, its enabled state and
+rules take precedence.
+
+For a pilot user or a specific organization, manage the database flag through the Admin API. Use an OpenHands API key
+from an account with the instance-wide [Super Admin](/enterprise/super-admin) role. Send the key in the
 `Authorization: Bearer` header. Replace the example user and organization IDs. If the flag already exists, review its
 rules before changing access.
 
@@ -70,9 +87,6 @@ rules before changing access.
 
 The evaluation should return `{"enabled":true}` for the pilot user. Repeat it with a user outside the pilot to verify
 that it returns `{"enabled":false}`. Omit `user_id` from the include rule to grant access to the entire organization.
-
-For deployment-wide access, set the environment variable `ENABLE_EXTERNAL_MCP=true` if you have no database flag of
-the same name. If the database flag exists, its enabled state and rules control access.
 
 ### Check OAuth Discovery
 
@@ -93,36 +107,31 @@ If you need OpenAI app domain verification, set `OPENAI_APPS_CHALLENGE_TOKEN` to
 
 ## Connect Claude Code
 
-1. Add the `openhands` entry to the `.mcp.json` file in your project. Use your instance URL and the client ID and
-   loopback port registered by your Super Admin.
+1. From your project, run the following command. Use your instance URL and the client ID and loopback port from the
+   deployment's client registration.
 
-   ```json .mcp.json
-   {
-     "mcpServers": {
-       "openhands": {
-         "type": "http",
-         "url": "https://openhands.example.com/external-mcp/mcp",
-         "oauth": {
-           "clientId": "openhands-demo",
-           "callbackPort": 53682,
-           "scopes": "tasks:read"
-         }
-       }
+   ```bash
+   claude mcp add-json openhands '{
+     "type": "http",
+     "url": "https://openhands.example.com/external-mcp/mcp",
+     "oauth": {
+       "clientId": "openhands-demo",
+       "callbackPort": 53682,
+       "scopes": "tasks:read"
      }
-   }
+   }'
    ```
 
 2. Sign in to OpenHands in your browser and switch to the organization you want to connect. Launch `claude` from the
-   project and approve the project configuration if prompted. Run `/mcp`, select `openhands`, and authenticate. Approve
-   the requested access in your browser.
+   project. Run `/mcp`, select `openhands`, and authenticate. Approve the requested access in your browser.
 3. Ask Claude Code to list your tasks.
 
    > Use `list_my_tasks` on the OpenHands MCP server to show my five most recent tasks with their links.
 
-To start a task or send a follow-up, have your Super Admin add `tasks:write` to the client registration. Set
-`oauth.scopes` to `tasks:read tasks:write`, then reconnect and approve the updated access. Try asking Claude Code to
-start a task that summarizes the README in a repository you can access. Use `get_task` with the returned ID to check its
-status and result.
+To start a task or send a follow-up, have your deployment administrator add `tasks:write` to the client registration.
+Remove the local entry with `claude mcp remove openhands`, then run the add command again with `oauth.scopes` set to
+`tasks:read tasks:write`. Reconnect and approve the updated access. Try asking Claude Code to start a task that
+summarizes the README in a repository you can access. Use `get_task` with the returned ID to check its status and result.
 
 For more client configuration options, see the
 [Claude Code MCP documentation](https://code.claude.com/docs/en/mcp#use-pre-configured-oauth-credentials).
