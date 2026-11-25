@@ -217,6 +217,7 @@ Pick the path that matches how OHE is deployed.
     slack:
       enabled: true
       clientId: "<your-slack-client-id>"
+      contextMode: legacy
 
     env:
       ENABLE_V1_SLACK_RESOLVER: "true"
@@ -259,7 +260,8 @@ kubectl -n openhands set env deployment/openhands-integrations --list \
 ```
 
 You should see `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`, and
-`SLACK_WEBHOOKS_ENABLED=true`.
+`SLACK_WEBHOOKS_ENABLED=true`. On standalone Helm, also check `SLACK_CONTEXT_MODE`
+against your `slack.contextMode` value.
 
 ## Step 3: Install the Slack App into your workspace
 
@@ -299,9 +301,9 @@ this once. They have two options:
 - **From Slack**: the first time they mention `@openhands`, the bot will reply with a
   one-time login link that completes the same flow.
 
-Either path produces the same record in the `slack_users` table, mapping the Slack user
-ID to a Keycloak (OpenHands) user. Once linked, any conversation started from Slack runs
-as that OpenHands user — using their LLM keys, provider tokens, and organization.
+Both paths link your Slack account to your OpenHands account. Conversations you
+start with `@OpenHands` run as your linked OpenHands user. Account linking checks
+your Slack user ID and uses the app's bot permissions to look up your profile.
 
 ## Verify the Integration
 
@@ -319,55 +321,51 @@ Day-to-day usage is identical to OpenHands Cloud — see
 [Working With the Slack App](/openhands/usage/cloud/slack-installation#working-with-the-slack-app)
 for screenshots and the "mention `@openhands` in a thread" follow-up flow.
 
-### What context the agent receives
+### Choose the Slack Context Mode
 
-When `@openhands` is mentioned, the bot does two things before starting (or
-continuing) an OpenHands conversation:
+On standalone Helm, set `slack.contextMode` in your `openhands` chart values and
+redeploy. The chart sets `SLACK_CONTEXT_MODE` on the native integrations
+service. Before choosing a restricted mode, install a chart that exposes
+`slack.contextMode` and an Enterprise image that supports `SLACK_CONTEXT_MODE`.
+The stock Enterprise 1.98.0 image stays in `legacy` even when the chart sets a
+restricted mode. Replicated installs use the `legacy` default.
 
-1. It strips the `<@BOT_ID>` mention out of the triggering message and uses the
-   remainder as the agent's initial user prompt.
-2. It fetches surrounding Slack history via the Slack Web API and appends those
-   messages to the agent's system prompt as additional context.
+| Mode | New top-level mention | New threaded mention |
+| --- | --- | --- |
+| `legacy` (default) | The mention and up to 20 earlier channel messages | The mention and up to 20 earlier messages from the fetched thread history |
+| `mention_only` | The mention | The mention |
+| `requester_only` | The mention | The mention and up to 20 earlier text messages by the same Slack user from the fetched thread history |
 
-**Channel vs. thread — different sources, never mixed.** The bot branches on
-whether the triggering Slack event has a `thread_ts`:
+Upgrades keep `legacy` unless you choose a mode. The restricted modes use the
+verified Slack mention as the user message. In `requester_only`, each included
+history message is labeled with the author's Slack user ID and included in the
+user message. For a long thread, a single bounded history page can omit recent
+replies or include fewer than 20 qualifying messages. If Slack history is
+unavailable, the restricted modes start with the mention and its supported
+attachments. Legacy mode reports `SLACK_ERR_009` when a required history scope
+is missing.
 
-| Where `@openhands` is mentioned     | What the bot fetches                                                                | API method used         |
-| ----------------------------------- | ----------------------------------------------------------------------------------- | ----------------------- |
-| Inside a thread                     | Only that thread's replies (up to 21 — the trigger plus 20 prior)                   | `conversations.replies` |
-| At the top level of a channel       | The channel's recent message stream (up to 21 — the trigger plus 20 prior)          | `conversations.history` |
+For example, invite the bot to a private Slack channel and set
+`slack.contextMode: requester_only`. When a user mentions the bot in a thread,
+the agent receives that user's earlier text from the thread and the current
+mention. Use Slack bot membership and any workspace app channel restrictions to
+control where users can invoke the integration.
 
-A top-level mention will **not** surface any thread the bot is not part of, and
-an in-thread mention will **not** surface broader channel discussion outside the
-thread. Where you mention the bot directly controls which Slack messages it can
-see.
+### Attachments and Follow-ups
 
-**New conversation vs. follow-up.**
+OpenHands reads supported files attached to the triggering mention, including
+images, PDFs, Word documents, and supported text files. The bot needs
+`files:read`. OpenHands reads up to five attached files and skips files larger
+than 5 MiB. Earlier Slack messages contribute text only.
 
-- A **top-level** mention always starts a brand-new OpenHands conversation.
-- An **in-thread** mention where the thread already has an OpenHands
-  conversation tied to it (matched on `(channel_id, thread_ts)`) appends a
-  message to that conversation instead. See "Thread ownership" below for who is
-  allowed to do this.
-- On a follow-up, **only the single triggering reply** is forwarded — the
-  agent's running memory is expected to carry the rest. Follow-ups are
-  noticeably leaner than the initial mention.
+A top-level mention starts a new conversation. A mention in a thread with an
+existing OpenHands conversation continues that conversation when the conversation
+owner sends it. Each continuation adds the triggering message and its supported
+attachments. A mode change applies to future inputs. Content already in an
+existing conversation remains in its history.
 
-**What is dropped.** Only the `text` field of each surrounding message is
-forwarded. The integration does **not** pass message authors / display names,
-timestamps, file or image attachments, reactions, edits, permalinks, or Slack
-canvases. There is also no summarization or condensation today — once the
-21-message window is full, older messages are simply not included.
-
-<Tip>
-  Practical guidance for end users:
-  - For broad channel context, mention `@openhands` at the channel's top level.
-  - For focused work on a specific discussion, mention it **inside** the
-    relevant thread.
-  - Do not expect attached files, images, or canvases to be visible to the
-    agent — only message text is forwarded. If a screenshot or document is
-    important, describe its contents in the message you send.
-</Tip>
+For repeatable Slack workflows, see [Event-Based Automations](/openhands/usage/automations/event-automations)
+and [Service Accounts](/enterprise/automations/service-accounts).
 
 ### Self-hosted specifics
 
@@ -381,10 +379,6 @@ canvases. There is also no summarization or condensation today — once the
   selects repositories or continues without one. The picker calls back to
   `/slack/on-options-load` on your domain and lists repositories the user can access
   through their linked Git provider.
-- **Thread ownership.** Only the user who started a thread conversation can `@openhands`
-  in follow-up replies — other workspace members mentioning the bot in the same thread
-  will get an "not authorized to send messages to this conversation" response. This is
-  intentional until per-org access lands.
 - **Conversation links.** The bot's "I'm on it!" reply links to
   `https://app.<your-base-domain>/conversations/<id>`. Users must be signed in to OHE
   to view it.
@@ -440,8 +434,10 @@ canvases. There is also no summarization or condensation today — once the
     ```
   </Accordion>
 
-  <Accordion title="`missing_scope` error in pod logs">
-    The Slack App is missing one of the bot scopes listed in Step 1. Open the app's
+  <Accordion title="`SLACK_ERR_009` or missing history in a restricted mode">
+    A missing history scope results in `SLACK_ERR_009` in legacy mode. In
+    `requester_only`, a threaded mention can still start without earlier messages,
+    and the integrations service logs `slack_history_missing_scope`. Open the app's
     **OAuth & Permissions** page in Slack, add the missing scope, then re-install via
     `https://app.<your-base-domain>/slack/install`. Users do **not** need to re-link.
   </Accordion>
