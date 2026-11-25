@@ -17,21 +17,48 @@ already set up access, go to [Connect an MCP Client](#connect-an-mcp-client).
 You need OpenHands Enterprise **app version 1.96.0 or later** and access to the deployment configuration. The same
 setup works on Docker Compose and Kubernetes. Serve the instance over HTTPS and use its HTTPS URL in the client.
 For example, if users open `https://openhands.example.com`, the MCP URL is
-`https://openhands.example.com/external-mcp/mcp`. For Compose, see
-[Run on a VM with HTTPS](/enterprise/docker-compose/https).
+`https://openhands.example.com/external-mcp/mcp`.
+
+### Choose Who Can Connect and What They Can Do
+
+Choose who can connect to the server. Users sign in with their own OpenHands accounts and approve the connection.
+
+| Who can connect | How to enable access |
+| --- | --- |
+| Users across the deployment | Set `ENABLE_EXTERNAL_MCP` to `true` in the deployment configuration. |
+| One organization or one user in that organization | Set `ENABLE_EXTERNAL_MCP` to `false` in the deployment configuration and use the Admin API to [enable access for those users](#enable-user-access-for-a-pilot). |
+
+<Note>
+  The feature is off by default. If a database flag named `ENABLE_EXTERNAL_MCP` already exists, its enabled state and
+  rules take precedence over the deployment variable.
+</Note>
+
+Choose which permissions each registered client can request.
+
+| Client permissions | What users can do | `scopes` value |
+| --- | --- | --- |
+| Read-only | List tasks and check their status and results. | `["tasks:read"]` |
+| Read and write | View tasks, start new tasks, and send follow-ups. Agents run with the signed-in user's access. | `["tasks:read", "tasks:write"]` |
+
+If you omit `scopes`, the client can request `tasks:read`.
 
 ### Register the Client and Enable Access
 
-These examples register a read-only MCP client and enable it across the deployment. To limit access to one
-user or organization, set `ENABLE_EXTERNAL_MCP` to `false` in the example and follow
-[Enable User Access for a Pilot](#enable-user-access-for-a-pilot).
+Set `ENABLE_EXTERNAL_MCP` and `scopes` to the values you chose above before applying the configuration. The examples
+enable deployment-wide access and register a public client with read and write permissions.
 
-If you already have clients in `OPENHANDS_EXTERNAL_MCP_CLIENTS`, add the new entry to the existing JSON array. Set
-`redirect_uris` to the exact callback URL your client uses, including the hostname, port, and path. Use HTTPS for
-remote callbacks or HTTP for loopback callbacks. The sample loopback URL works with the Claude Code example below.
+- Add one entry per approved client to the `OPENHANDS_EXTERNAL_MCP_CLIENTS` JSON array. Keep existing entries for clients
+  you intend to keep using.
+- Set `redirect_uris` to the exact callback URL your client uses. Use HTTPS for remote callbacks or HTTP on a loopback
+  address. The sample callback works with the Claude Code example below.
+- Public clients use PKCE with `S256` and omit `client_secret`. For a confidential client, set `client_secret` from your
+  deployment's secrets and configure the client to use `client_secret_post` for token exchange.
 
 <Tabs>
   <Tab title="Docker Compose">
+    If your instance still uses an HTTP URL, [configure HTTPS for Docker Compose](/enterprise/docker-compose/https)
+    first.
+
     Add these settings to the `.env` file next to `docker-compose.yml`. Then run `docker compose up --wait`.
 
     ```bash .env
@@ -41,7 +68,7 @@ remote callbacks or HTTP for loopback callbacks. The sample loopback URL works w
         "client_id": "example-mcp-client",
         "name": "Example MCP Client",
         "redirect_uris": ["http://localhost:53682/callback"],
-        "scopes": ["tasks:read"]
+        "scopes": ["tasks:read", "tasks:write"]
       }
     ]'
     ```
@@ -58,17 +85,12 @@ remote callbacks or HTTP for loopback callbacks. The sample loopback URL works w
             "client_id": "example-mcp-client",
             "name": "Example MCP Client",
             "redirect_uris": ["http://localhost:53682/callback"],
-            "scopes": ["tasks:read"]
+            "scopes": ["tasks:read", "tasks:write"]
           }
         ]
     ```
   </Tab>
 </Tabs>
-
-<Note>
-  The feature is off by default. If a database flag named `ENABLE_EXTERNAL_MCP` already exists, its enabled state and
-  rules take precedence over the deployment variable.
-</Note>
 
 After the deployment updates, check that the OAuth discovery URL returns JSON with `resource` set to your MCP URL.
 
@@ -83,8 +105,9 @@ This confirms that the endpoint is reachable. To verify user access, sign in wit
 Use a client that supports Streamable HTTP and lets you configure a pre-registered OAuth client ID. Get your MCP URL,
 client ID, and registered callback URL from your administrator.
 
-1. Add the MCP URL as a remote server in your client. Use the registered client ID and callback URL, and request the
-   `tasks:read` scope. If your client asks for the OAuth resource, use the same MCP URL.
+1. Add the MCP URL as a remote server in your client. Use the registered client ID and callback URL. Request
+   `tasks:read` and add `tasks:write` if you need write access and your administrator registered it. If your client asks
+   for the OAuth resource, use the same MCP URL.
 2. Sign in to OpenHands in your browser and switch to the organization you want to connect. Start authentication from
    your MCP client and approve the access request in your browser.
 3. Ask your client to list your tasks.
@@ -96,7 +119,7 @@ client ID, and registered callback URL from your administrator.
 
 <Accordion title="Claude Code example">
   Run this command from the project where you want to use OpenHands. Use your deployment's MCP URL and the client ID
-  and callback port from your administrator.
+  and callback port from your administrator. For a read-only registration, set `oauth.scopes` to `tasks:read`.
 
   ```bash
   claude mcp add-json openhands '{
@@ -105,7 +128,7 @@ client ID, and registered callback URL from your administrator.
     "oauth": {
       "clientId": "example-mcp-client",
       "callbackPort": 53682,
-      "scopes": "tasks:read"
+      "scopes": "tasks:read tasks:write"
     }
   }'
   ```
@@ -116,13 +139,12 @@ client ID, and registered callback URL from your administrator.
 
 ## Start Tasks and Send Follow-ups
 
-With write access, the client can launch agents using your OpenHands permissions. If you specify a repository, connect
-its Git provider in OpenHands first.
+After connecting with write access, try asking your client to start a task that summarizes the README in a repository
+you can access. Connect the repository's Git provider in OpenHands first. Ask for the task link, then use the same task
+ID to check the result or send a follow-up.
 
-1. Ask your deployment administrator to add `tasks:write` to the registered client's scopes and apply the configuration.
-2. Update your client to request both `tasks:read` and `tasks:write`. Authenticate again and approve the new access.
-3. Try asking your client to start a task that summarizes the README in a repository you can access. Ask for the task
-   link, then use the same task ID to check the result or send a follow-up.
+If you originally connected with read-only access, have your administrator add `tasks:write` to the client registration
+and apply the configuration. Request both scopes in your client and authenticate again to approve the new access.
 
 | Tool | Scope | Action |
 | --- | --- | --- |
@@ -135,10 +157,6 @@ its Git provider in OpenHands first.
 
 OpenHands uses Streamable HTTP and OAuth for client connections. The server is built with
 [FastMCP](https://gofastmcp.com/docs/getting-started/welcome).
-
-OpenHands requires administrator registration for each client. For a public client, omit `client_secret` and use PKCE
-with `S256`. For a confidential client, populate `client_secret` from your deployment's secrets and use
-`client_secret_post` for token exchange.
 
 ## Enable User Access for a Pilot
 
