@@ -1,0 +1,80 @@
+---
+title: Turn Off Public Defaults
+sidebarTitle: Turn Off Public Defaults
+description: Disable the default public OpenHands skills and catalogs while keeping your organization's registered marketplaces.
+icon: puzzle-piece
+---
+
+An organization can use its own skills instead of the default public OpenHands extensions.
+For example, its registered marketplace can provide a custom `github` skill while the
+public defaults are off. This turns off the entire default public source, so the organization's
+`github` skill no longer competes by name with a built-in one, unlike disabling a single public
+skill by name (see [Troubleshooting](/enterprise/skills-and-plugins#troubleshooting)). Registered
+marketplaces remain available; their existing Auto-Load and conversation attachment settings
+still apply.
+
+<Note>
+  These controls require Agent Server/SDK 1.63.0 or later and an OpenHands Enterprise release
+  that includes this feature. Upgrade both before configuring them. An Agent Server older than
+  1.63.0 ignores independent registered-marketplace loading, so turning off public skills also
+  removes registered-marketplace skills on a resumed pre-upgrade sandbox or a custom image built
+  on an older Agent Server. Start a new conversation on a compatible 1.63.0+ image, and rebuild
+  older custom images on 1.63.0+ first.
+</Note>
+
+Two independent environment settings default to `true`:
+
+| Setting | Set to `false` to disable |
+|---|---|
+| `OH_PUBLIC_SKILLS_ENABLED` | Automatic skill loading from the default public OpenHands collection |
+| `OH_PUBLIC_CATALOG_ENABLED` | Fetching the default public skill and plugin catalogs at the Agent Server's `/api/skills/marketplace` and `/api/plugins/marketplace` endpoints |
+
+The steps below cover Helm and Docker Compose. Replicated/VM installations do not yet
+expose these controls in the Admin Console.
+
+## Helm Configuration
+
+Set the application policy and the Agent Server policy in your Helm values:
+
+```yaml
+env:
+  OH_PUBLIC_SKILLS_ENABLED: "false"
+global:
+  agentServerEnv:
+    OH_PUBLIC_SKILLS_ENABLED: "false"
+    OH_PUBLIC_CATALOG_ENABLED: "false"
+```
+
+`env` configures Enterprise's skill discovery. `global.agentServerEnv` configures Agent
+Servers and the warm-runtime configuration used for matching. Use the global map for
+Agent Server policy rather than setting only the application variable.
+Apply the values through your normal Helm upgrade process and recreate existing runtimes
+so they use the new environment. To restore the defaults, remove these overrides and apply
+the configuration again.
+
+## Docker Compose
+
+For Compose, set `OH_PUBLIC_SKILLS_ENABLED=false` in a `.env` file next to `docker-compose.yml`.
+`docker-compose.yml` sets the `app` service's `OH_AGENT_SERVER_ENV` directly, so a `.env` value
+for it has no effect; edit that line instead, keeping `AGENT_SERVER_PORT` and any other keys
+already there:
+
+```yaml
+OH_AGENT_SERVER_ENV: '{"AGENT_SERVER_PORT": "8000", "OH_PUBLIC_SKILLS_ENABLED": "false", "OH_PUBLIC_CATALOG_ENABLED": "false"}'
+```
+
+Restart the stack to apply the change.
+
+## Scope and Verification
+
+After applying the settings, start a fresh conversation with your registered marketplace
+attached or enabled for Auto-Load. Confirm that your own skill, such as `github`, is listed
+and can be invoked. With catalog fetching off, both Agent Server catalog endpoints return
+an empty collection and `disabled: true`.
+
+These are instance-wide deployment controls, not per-organization UI switches. The catalog
+setting does not configure the separate [Instance Plugin Marketplace](/enterprise/plugin-marketplace).
+They do not remove skills already supplied by a client or saved in a conversation, and they
+do not change name-conflict precedence. Disabling automatic public skills also removes
+OpenHands-provided workflow guidance from that source; include any guidance your organization
+needs in its own reviewed collection.
