@@ -18,35 +18,48 @@ Hooks let you observe and customize key lifecycle moments in the SDK without for
 
 | Hook | When it runs | Can block? |
 |------|--------------|------------|
-| PreToolUse | Before tool execution | Yes (exit 2) |
+| PreToolUse | Before tool execution | Yes (exit 2 or JSON denial) |
 | PostToolUse | After tool execution | No |
-| UserPromptSubmit | Before processing user message | Yes (exit 2) |
-| Stop | When agent tries to finish | Yes (exit 2) |
+| UserPromptSubmit | Before processing user message | Yes (exit 2 or JSON denial) |
+| Stop | When agent tries to finish | Yes (exit 2 or JSON denial) |
 | SessionStart | When conversation starts | No |
 | SessionEnd | When conversation ends | No |
 
 ## Exit Codes
 
-Command hooks (shell scripts) signal their result through their exit code.
-[Prompt-based hooks](#prompt-based-hooks) and
-[agent-based hooks](#agent-based-hooks) return a JSON decision instead. The SDK matches the
-[Claude Code hook contract](https://docs.claude.com/en/docs/claude-code/hooks):
+For synchronous command hooks, the exit code belongs to the configured shell
+command. The SDK records whether that command succeeded separately from whether
+it blocks the triggering operation. A hook that invokes another program must
+translate that program's exit status into the hook protocol when necessary.
 
-- **`0` — success.** The operation proceeds. `stdout` is parsed as JSON for
-  structured output (`decision`, `reason`, `additionalContext`, `continue`).
-- **`2` — block.** The operation is denied. For `PreToolUse` and
-  `UserPromptSubmit` this rejects the action; for `Stop` it prevents the
-  agent from finishing and the conversation continues. `stderr` / `reason`
-  is surfaced as feedback.
-- **Any other non-zero exit code — non-blocking error.** `success` is set to
-  `False` and the error is logged via `HookExecutionEvent`, but the
-  operation still proceeds.
+| Command exit code | `HookResult.success` | Blocking decision |
+| --- | --- | --- |
+| `0` | `True` | A JSON denial can still block. |
+| `2` | `False` | Blocks, even if JSON says to allow or continue. |
+| Other non-zero, including `1` | `False` | Does not block by itself; a JSON denial can still block. |
 
-<Warning>
-Only exit code `2` blocks. Exit code `1` (the conventional Unix failure
-code) is treated as a non-blocking error. A hook intended to enforce a
-policy must exit with `2`.
-</Warning>
+The SDK attempts to parse stdout as a JSON object regardless of the exit code.
+`"decision": "deny"` or `"continue": false` blocks the operation. For example,
+exit `1` with plain-text output is non-blocking, while exit `1` with
+`{"decision": "deny"}` blocks and still has `success=False`. Empty or non-JSON
+stdout leaves the exit-code decision unchanged.
+
+JSON `reason` and `additionalContext` are retained on non-zero exits, including
+`2`. Blocking explanations prefer `reason`, then stderr, then a default message.
+For `Stop` hooks, blocking prevents the agent from finishing and lets it continue
+working; feedback uses `additionalContext` when present, otherwise the blocking
+reason. For `PreToolUse` and `UserPromptSubmit`, blocking rejects the triggering
+tool call or user message.
+
+<Note>
+For new command hooks, use exit `0` with a JSON decision, or exit `2` with a reason
+on stderr. JSON `allow` or `continue: true` never overrides exit `2`.
+</Note>
+
+Background command hooks (`async: true`) do not wait for an exit code or use their
+output to block. [Prompt-based hooks](#prompt-based-hooks) and
+[agent-based hooks](#agent-based-hooks) obtain their decisions from model output
+instead of a command exit code.
 
 ## Key Concepts
 
