@@ -5,9 +5,9 @@ icon: slack
 ---
 
 This guide walks an operator through enabling the `@OpenHands` Slack integration on a
-self-hosted **OpenHands Enterprise (OHE)** installation — both the Replicated VM-based
-install (see the [Quick Start](/enterprise/quick-start)) and standalone Helm
-([Kubernetes Installation](/enterprise/k8s-install/index)).
+self-hosted **OpenHands Enterprise (OHE)** installation using
+[Docker Compose](/enterprise/docker-compose), standalone Helm
+([Kubernetes Installation](/enterprise/k8s-install/index)), or Replicated.
 
 Once enabled, end users can mention `@openhands` in any Slack channel or thread to start
 and follow up on conversations from Slack, exactly like they can on OpenHands Cloud.
@@ -50,13 +50,19 @@ Before you start, confirm:
 - **Valid TLS certificate** on `app.<your-base-domain>`. Slack will reject webhook URLs
   with untrusted certificates.
 - **A Slack workspace admin/owner** is available to install the app and generate a
-  short-lived Slack App Configuration Token.
+  short-lived Slack App Configuration Token if using the helper script.
 - **A workstation with `uv` installed** and outbound network access to `slack.com` (only
-  needed for the optional helper script in Step 2).
+  needed for the optional helper script in Step 1).
 
 <Note>
   Replace `<your-base-domain>` throughout this guide with the same domain you used during
   installation (the value behind `KOTS_HOSTNAME` or the `ingress.host` Helm value).
+  For a local Docker Compose evaluation, use the ngrok setup described in the
+  Docker Compose tab below when your installation has no public HTTPS URL.
+  If using ngrok, use your assigned hostname exactly: replace the entire `app.<your-base-domain>`
+  in every URL below with your ngrok hostname, such as `example-name.ngrok-free.app`.
+  Use the manifest in Option B so you can set all four callback URLs to that origin.
+  For laptop tests, keep Docker and ngrok running and the laptop awake.
 </Note>
 
 ## Step 1: Create the Slack App
@@ -175,7 +181,7 @@ requested during installation, including `files:read`.
   When Slack verifies your **Event Subscriptions Request URL**, your OHE install must
   already be reachable at `https://app.<your-base-domain>/slack/on-event`. If you create
   the Slack App before OHE is running, Slack will mark the URL as unverified and you'll
-  need to click "Retry" after finishing Step 3.
+  need to click **Retry**, then **Save Changes**, after configuring OHE in Step 2.
 </Warning>
 
 ## Step 2: Configure OpenHands Enterprise
@@ -183,6 +189,70 @@ requested during installation, including `files:read`.
 Pick the path that matches how OHE is deployed.
 
 <Tabs>
+  <Tab title="Docker Compose">
+    Use ngrok when evaluating OpenHands on a laptop or local machine that Slack
+    cannot reach directly. Slack sends HTTP events to your installation and cannot
+    reach its `localhost` address. Follow [Serve with ngrok](/enterprise/docker-compose/ngrok)
+    to give the stack a public HTTPS URL without configuring router port forwarding
+    or your own DNS. The tunnel must stay running for Slack to deliver events.
+
+    If your installation already has a publicly reachable HTTPS URL with a trusted
+    certificate, use that URL and skip ngrok. In either case, use the same public
+    hostname for the stack and all four Slack callback URLs. The example below uses
+    an ngrok hostname; replace it with your installation's hostname.
+
+    In the `enterprise` checkout from the [Compose installation](/enterprise/docker-compose),
+    add the following to your existing `.env`. Replace the hostname and credentials
+    with your own values. Keep this file private and out of Git.
+
+    ```bash .env
+    WEB_HOST=example-name.ngrok-free.app
+    WEB_URL=https://example-name.ngrok-free.app
+    AGENT_CANVAS_LOCK_TO_CLOUD=https://example-name.ngrok-free.app
+    SLACK_CLIENT_ID=REPLACE_WITH_CLIENT_ID
+    SLACK_CLIENT_SECRET='REPLACE_WITH_CLIENT_SECRET'
+    SLACK_SIGNING_SECRET='REPLACE_WITH_SIGNING_SECRET'
+    ```
+
+    Create `compose.slack.yaml` beside `docker-compose.yml`:
+
+    ```yaml compose.slack.yaml
+    x-slack-environment: &slack-environment
+      SLACK_WEBHOOKS_ENABLED: "true"
+      SLACK_CLIENT_ID: ${SLACK_CLIENT_ID:?Set SLACK_CLIENT_ID in .env}
+      SLACK_CLIENT_SECRET: ${SLACK_CLIENT_SECRET:?Set SLACK_CLIENT_SECRET in .env}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?Set SLACK_SIGNING_SECRET in .env}
+      PERMITTED_CORS_ORIGINS: ${WEB_URL:?Set the public HTTPS WEB_URL in .env}
+
+    services:
+      app:
+        environment: *slack-environment
+      worker:
+        environment: *slack-environment
+    ```
+
+    Compose reads `.env` for interpolation; adding credentials there alone does not
+    pass them into containers. This override enables Slack on both `app` and `worker`
+    and sets CORS to your public browser origin.
+
+    Validate the configuration and recreate the services:
+
+    ```bash
+    docker compose -f docker-compose.yml -f compose.slack.yaml config --quiet
+    docker compose -f docker-compose.yml -f compose.slack.yaml up --wait
+    ```
+
+    Confirm the services are running:
+
+    ```bash
+    docker compose -f docker-compose.yml -f compose.slack.yaml ps
+    ```
+
+    Include both files in subsequent Compose commands so the Slack configuration
+    remains applied. Open your HTTPS URL, sign in, and select the organization and
+    model profile you want to use from Slack. Continue with Step 3 using that same
+    HTTPS origin.
+  </Tab>
   <Tab title="Replicated (VM/embedded cluster)">
     1. Open the Replicated admin console at
        `https://<admin-console-host>:30000` and sign in.
@@ -206,6 +276,16 @@ Pick the path that matches how OHE is deployed.
     - Sets `slack.enabled=true`, `slack.clientId=<client-id>`, and
       `ENABLE_V1_SLACK_RESOLVER=true` on the integrations service.
     - Exposes `/slack/*` on the integrations ingress on port 3000.
+
+    Confirm the integrations pod restarted with the new environment:
+
+    ```bash
+    kubectl -n openhands set env deployment/openhands-integrations --list \
+      | grep '^SLACK_'
+    ```
+
+    You should see `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`, and
+    `SLACK_WEBHOOKS_ENABLED=true`.
 
   </Tab>
   <Tab title="Standalone Helm">
@@ -248,18 +328,21 @@ Pick the path that matches how OHE is deployed.
       that secret, and reads `client-id` from the `slack.clientId` Helm value.
     </Tip>
 
+    Confirm the integrations pod restarted with the new environment:
+
+    ```bash
+    kubectl -n openhands set env deployment/openhands-integrations --list \
+      | grep '^SLACK_'
+    ```
+
+    You should see `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`, and
+    `SLACK_WEBHOOKS_ENABLED=true`.
+
   </Tab>
 </Tabs>
 
-Confirm the integrations pod restarted with the new environment:
-
-```bash
-kubectl -n openhands set env deployment/openhands-integrations --list \
-  | grep '^SLACK_'
-```
-
-You should see `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`, and
-`SLACK_WEBHOOKS_ENABLED=true`.
+In Slack's **Event Subscriptions**, retry URL verification if needed and select
+**Save Changes** once the request URL is verified.
 
 ## Step 3: Install the Slack App into your workspace
 
@@ -269,12 +352,13 @@ With OHE configured, point your browser at:
 https://app.<your-base-domain>/slack/install
 ```
 
-This redirects through Slack's OAuth v2 flow and then through OpenHands' Keycloak login.
+This redirects through Slack's OAuth v2 flow and your installation's OpenHands login.
+Docker Compose uses its built-in login; it does not require a separate Keycloak setup.
+
 A workspace admin/owner should complete this step **first** — they will be granting
 the OpenHands bot permission to read mentions and post messages in your workspace.
 
-After approval you'll see **OpenHands Authentication Successful!** Slack will also mark
-the Event Subscriptions Request URL as verified.
+After approval you'll see **OpenHands Authentication Successful!**
 
 Slack may describe `files:read` as permission to read files shared in conversations
 the bot can access. This is expected: the helper script creates the initial seven
@@ -300,16 +384,20 @@ this once. They have two options:
   one-time login link that completes the same flow.
 
 Either path produces the same record in the `slack_users` table, mapping the Slack user
-ID to a Keycloak (OpenHands) user. Once linked, any conversation started from Slack runs
+ID to an OpenHands user. Once linked, any conversation started from Slack runs
 as that OpenHands user — using their LLM keys, provider tokens, and organization.
 
 ## Verify the Integration
 
-1. In OpenHands, connect a Git provider and confirm the user can access a test
-   repository. Use the same OpenHands account that was linked to Slack.
-2. Mention the bot in a Slack channel with a short, read-only request. If the bot asks
-   for a repository, select the test repository and press **Start**. Confirm that the
-   bot posts a progress link and then the final answer in the same thread.
+1. In OpenHands, confirm the linked user can complete a conversation with the intended
+   model profile. If testing repository work, also connect a Git provider and confirm
+   access to a test repository.
+2. Invite the bot to a dedicated test channel and mention it with a short request,
+   such as `@OpenHands what is 2+2`. Keep the channel open to see the private repository
+   picker. Choose **No Repository** for this test. For repository work, select your
+   test repository and press **Start**. Confirm that the bot posts a progress link
+   and then the final answer in the same thread. Open the link and confirm the
+   conversation uses the intended model.
 3. Mention the bot again in that thread. Confirm that it continues the existing
    OpenHands conversation and posts its answer in the thread.
 
@@ -454,6 +542,35 @@ canvases. There is also no summarization or condensation today — once the
     4. Existing user account links remain valid — no need to re-run Step 4.
   </Accordion>
 </AccordionGroup>
+
+## Tips
+
+### Optional: Reduce Reply Delivery Delay
+
+Agent events are buffered before OpenHands receives them. The agent-server SDK's
+standard flush delay is 30 seconds for a partial batch. For a more responsive Slack
+demo, you can shorten this to 0.25 seconds. This changes event delivery timing;
+it does not reduce model inference time or Slack's initial HTTP acknowledgement time.
+
+For the Docker Compose configuration above, add this entry to the
+`x-slack-environment` mapping in `compose.slack.yaml` so both `app` and `worker`
+pass it to new agent sandboxes:
+
+```yaml
+OH_AGENT_SERVER_ENV: '{"AGENT_SERVER_PORT":"8000","OH_WEBHOOKS_0_FLUSH_DELAY":"0.25"}'
+```
+
+If you already customize `OH_AGENT_SERVER_ENV`, merge the flush-delay key into your
+existing JSON and preserve the other values. The delay must be greater than zero.
+Apply the configuration with:
+
+```bash
+docker compose -f docker-compose.yml -f compose.slack.yaml up --wait
+```
+
+Use a newly started sandbox to test the change. Existing sandboxes retain their old
+environment, and a new conversation can reuse an existing sandbox. Stop your disposable
+test sandbox through OpenHands before starting another test conversation.
 
 ## Reference
 
