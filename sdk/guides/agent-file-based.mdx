@@ -56,6 +56,7 @@ The YAML frontmatter configures the agent. The Markdown body becomes the agent's
 | `mcp_servers` | No | `None` | MCP server configurations for this agent (see [MCP Servers](#mcp-servers)) |
 | `hooks` | No | `None` | Hook configuration for lifecycle events (see [Hooks](#hooks)) |
 | `permission_mode` | No | `None` | Controls how the subagent handles action confirmations (see [Permission Mode](#permission-mode)) |
+| `condenser` | No | `None` | Context condenser configuration (see [Condenser](#condenser)) |
 | `profile_store_dir` | No | `None` | Custom directory path for LLM profiles when using a named `model` |
 
 ### `<example>` Tags
@@ -451,6 +452,67 @@ Permission mode is particularly useful for specialized sub-agents. For example, 
 </Note>
 
 For more details on security and confirmation policies, see the [Security guide](/sdk/guides/security).
+
+### Condenser
+
+Every sub-agent gets a context condenser by default: an `LLMSummarizingCondenser` with
+`max_size=80` and `keep_first=4`, using the agent's own LLM. It compacts once the history
+exceeds `max_size` events, reducing it to roughly `max_size // 2` while keeping the first
+`keep_first` events verbatim. See the [Context Condenser guide](/sdk/guides/context-condenser)
+for how condensation works.
+
+Tune the window with a `condenser` mapping in frontmatter:
+
+```markdown icon="markdown"
+---
+name: deep-explorer
+description: Explores large codebases without compacting too early.
+condenser:
+  max_size: 600
+  keep_first: 8
+  max_tokens: 120000
+---
+
+You are a code explorer working through a large repository.
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_size` | `80` | Maximum number of events kept before the condenser runs |
+| `keep_first` | `4` | Initial events preserved verbatim; must be at most `max_size // 2 - 2` |
+| `max_tokens` | `None` | Optional token threshold; when unset, condensation is driven by event count only |
+| `enabled` | `true` | Set to `false` to disable condensation |
+
+Only the keys you set override the defaults. The condenser LLM is the agent's own LLM,
+injected when the sub-agent is spawned, so don't put `llm` in a tuning mapping.
+
+**Disabling condensation.** `condenser: none`, `condenser: false`, and
+`condenser: {enabled: false}` all build a `NoOpCondenser`.
+
+**Full condenser specs.** A mapping that carries `llm` (or a `kind` other than
+`LLMSummarizingCondenser`) is validated as a complete condenser spec, so you can give the
+sub-agent a dedicated summarizer LLM:
+
+```markdown icon="markdown"
+---
+name: separate-summarizer
+description: Uses a dedicated summarizer model.
+condenser:
+  kind: LLMSummarizingCondenser
+  llm:
+    model: gpt-4o
+    usage_id: subagent-condenser
+  max_size: 240
+  keep_first: 8
+---
+```
+
+`kind: LLMSummarizingCondenser` without `llm` is treated as tuning parameters.
+
+An invalid or unbuildable mapping (for example, a `keep_first` that leaves no room for
+condensation) raises `AgentDefinitionError` naming the definition file and the offending
+field. The broken definition is skipped, other agents still load, and looking up its name
+reports the error instead of only `Unknown agent '<name>'`.
 
 ## Agents in Plugins
 
